@@ -90,9 +90,11 @@ Known blocked scopes retain new observations for later replay; they do not
 prevent unrelated scopes from posting. The first failed send remains failed in
 GitHub. Subsequent read-only observations report **Action required** in their
 summaries without attempting that send again. Operational recovery and Slack
-delivery completion are separate states. If a signed episode already has verified
-recovery and a known parent, that parent can still turn green while an older
-uncertain retry remains blocked; the retry is never resent automatically.
+delivery completion are separate states. A known open parent continues tracking
+failed attempts while a retry's delivery is uncertain. Recovery must cover all
+recorded and deferred failures before that parent can turn green; the uncertain
+retry remains blocked and is never resent automatically. An unconfirmed original
+parent still requires owner inspection before any parent update or new send.
 
 ## Configure and activate
 

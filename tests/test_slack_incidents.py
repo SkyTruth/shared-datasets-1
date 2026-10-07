@@ -92,6 +92,18 @@ class FakeSlack:
         return "https://example.slack.com/archives/" + IDENTITY["channel"] + "/p" + ts.replace(".", "")
 
 
+def delivered_parent_with_uncertain_retry(first=None):
+    first = first or observation()
+    retry = {**first, "run_id": 102, "time": "2026-10-06T09:00:00Z"}
+    ledger, slack = MemoryLedger(), FakeSlack(crash=2)
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [first], success=lambda *_: None), slack)
+    records = incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: None)
+    with pytest.raises(SlackError, match="unconfirmed"):
+        incidents.deliver(ledger, records, slack)
+    slack.calls.clear()
+    return ledger, slack, retry
+
+
 def test_real_preview_sync_failures_are_distinct_from_bootstrap_and_other_jobs():
     targets = incidents.job_targets()
     scope, kind, label = incidents.scope_for_job(
@@ -220,6 +232,106 @@ def test_unconfirmed_parent_or_failed_attempt_is_never_automatically_repeated(cr
     call_count = len(slack.calls)
     assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
     assert len(slack.calls) == call_count
+
+
+@pytest.mark.parametrize("kind,scope", [
+    ("deployment", SCOPE), ("job", "job:exact-job"),
+    ("workflow", "workflow:bucket-hygiene-audit.yml"), ("publication", "publication:pr-208:apply"),
+])
+def test_actual_uncertain_retry_then_exact_recovery_updates_known_parent_automatically(kind, scope):
+    first = observation(kind=kind, scope=scope)
+    recovery = success() if kind == "deployment" else {
+        **first, "conclusion": "success", "run_id": 103, "sha": "b" * 40, "time": "2026-10-06T10:18:44Z",
+    }
+    ledger, slack, retry = delivered_parent_with_uncertain_retry(first)
+    before = copy.deepcopy(ledger.states[scope]["incident"])
+    assert before["resolution"] is None
+    check = mock.Mock(return_value=recovery if kind == "deployment" else None)
+    slack.calls.clear()
+    records = incidents.prepare(ledger, IDENTITY, [] if kind == "deployment" else [recovery],
+                                ancestor=lambda *_: True, success=check)
+    assert len(records) == 1
+    if kind == "deployment":
+        check.assert_called_once_with(ledger.api, scope)
+    else:
+        check.assert_not_called()
+    incidents.deliver(ledger, records, slack)
+    after = ledger.states[scope]["incident"]
+    assert after["id"] == before["id"] and after["posts"] == before["posts"]
+    assert after["failures"] == [first, retry] and after["resolution"] == recovery
+    assert ledger.states[scope]["deferred"] == []
+    assert [item[0] for item in slack.calls] == ["update"]
+    assert slack.calls[0][2]["ts"] == before["posts"]["parent"]["ts"]
+    assert "Resolved" in slack.calls[0][1]["text"]
+    assert after["posts"]["attempt:" + incidents.observation_key(retry)] == {"state": "claimed", "ts": None}
+    # A new failure cannot erase an uncertain old reply or create another post.
+    later = {**first, "run_id": 104, "sha": "b" * 40, "time": "2026-10-06T11:00:00Z"}
+    slack.calls.clear()
+    assert incidents.prepare(ledger, IDENTITY, [later], success=lambda *_: None) == []
+    assert ledger.states[scope]["deferred"] == [later]
+    assert ledger.states[scope]["incident"]["posts"] == before["posts"]
+    assert slack.calls == []
+
+
+@pytest.mark.parametrize("failure_kind", ["covered", "divergent", "later-same-revision"])
+def test_blocked_retry_recovery_covers_every_deferred_failure_before_green_update(failure_kind):
+    ledger, slack, _ = delivered_parent_with_uncertain_retry()
+    failed = observation(run_id=104, time="2026-10-06T09:30:00Z")
+    if failure_kind == "divergent":
+        failed["sha"] = "c" * 40
+    elif failure_kind == "later-same-revision":
+        failed.update(sha="b" * 40, time="2026-10-06T11:00:00Z")
+    # This is retained signed input from an earlier blocked worker invocation.
+    ledger.states[SCOPE]["deferred"] = [failed]
+    before = copy.deepcopy(ledger.states[SCOPE]["incident"])
+    def ancestor(old, new):
+        return old != "c" * 40
+    records = incidents.prepare(ledger, IDENTITY, [], ancestor=ancestor, success=lambda *_: success())
+    after = ledger.states[SCOPE]["incident"]
+    assert after["id"] == before["id"] and after["posts"] == before["posts"]
+    assert failed in after["failures"] and ledger.states[SCOPE]["deferred"] == []
+    assert len(after["posts"]) == 2  # No new claim for the previously deferred failure.
+    if failure_kind == "covered":
+        assert len(records) == 1 and after["resolution"] == success()
+        incidents.deliver(ledger, records, slack)
+        assert [item[0] for item in slack.calls] == ["update"]
+    else:
+        assert records == [] and after["resolution"] is None and slack.calls == []
+
+
+@pytest.mark.parametrize("kind", ["deployment", "job"])
+def test_unconfirmed_original_parent_never_admits_automatic_recovery(kind):
+    first = observation(kind=kind)
+    ledger, slack = MemoryLedger(), FakeSlack(crash=1)
+    records = incidents.prepare(ledger, IDENTITY, [first], success=lambda *_: None)
+    with pytest.raises(SlackError, match="unconfirmed"):
+        incidents.deliver(ledger, records, slack)
+    recovery = success() if kind == "deployment" else {**first, "conclusion": "success", "run_id": 103,
+                                                        "time": "2026-10-06T10:18:44Z"}
+    check = mock.Mock(return_value=recovery)
+    slack.calls.clear()
+    assert incidents.prepare(ledger, IDENTITY, [] if kind == "deployment" else [recovery], success=check) == []
+    check.assert_not_called()
+    assert ledger.states[SCOPE]["incident"]["resolution"] is None
+    assert ledger.states[SCOPE]["incident"]["posts"] == {"parent": {"state": "claimed", "ts": None}}
+    if kind == "job":
+        assert ledger.states[SCOPE]["deferred"] == [recovery]
+    assert slack.calls == []
+
+
+@pytest.mark.parametrize("state,description", [("pending", "started"), ("failure", "failed")])
+def test_blocked_retry_cannot_recover_from_older_success_when_latest_record_is_not_success(state, description):
+    ledger, slack, _ = delivered_parent_with_uncertain_retry()
+    older, newest = {"id": 10, "sha": "b" * 40}, {"id": 11, "sha": "b" * 40}
+    ledger.api.pages.return_value = [older, newest]
+    payload = {"target": "pmtiles-cdn", "artifact": "terraform@sha256:" + "f" * 64}
+    with mock.patch.object(deployments, "verify_record", return_value=payload) as verify, mock.patch.object(
+        deployments, "verified_statuses", return_value=[{"state": state, "description": description}],
+    ) as statuses:
+        assert incidents.prepare(ledger, IDENTITY, []) == []
+    verify.assert_called_once_with(ledger.api, incidents.REPOSITORY, newest)
+    statuses.assert_called_once_with(ledger.api, incidents.REPOSITORY, newest)
+    assert ledger.states[SCOPE]["incident"]["resolution"] is None and slack.calls == []
 
 
 def test_uncertain_target_does_not_block_other_alerts_and_retains_new_events():

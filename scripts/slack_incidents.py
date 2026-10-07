@@ -445,6 +445,13 @@ def needs_parent_delivery(state):
             or incident["parent_view_sha256"] != parent_view_sha256(state))
 
 
+def admits_blocked_observations(state):
+    """A known open parent can recover without replaying its uncertain replies."""
+    incident = state["incident"]
+    parent = incident["posts"].get("parent")
+    return incident["resolution"] is None and parent and parent["state"] == "delivered"
+
+
 def worker_context(api, environment=os.environ):
     require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
             and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + WORKFLOW + "@refs/heads/main", "incidents require the trusted main workflow")
@@ -563,13 +570,14 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
     replay = list(observations)
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
-        if scope not in blocked:
+        if scope not in blocked or admits_blocked_observations(state):
             replay.extend(state["deferred"])
             state["deferred"] = []
     for observation in sorted(replay, key=lambda item: (instant(item["time"]), observation_key(item))):
         validate_observation(observation)
         scope = observation["scope"]
-        if scope in blocked or (scope in states and pending_recovery_update(states[scope])):
+        if ((scope in blocked and not admits_blocked_observations(states[scope]))
+                or (scope in states and pending_recovery_update(states[scope]))):
             state = states[scope]
             known = state["incident"]["failures"] + state["deferred"]
             if state["incident"]["resolution"]:
@@ -581,7 +589,7 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             continue
         states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
     for scope, state in list(states.items()):
-        if scope not in blocked and state["kind"] == "deployment":
+        if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
             evidence = success(ledger.api, scope)
             if evidence:
                 states[scope] = fold(state, evidence, identity, ancestor=ancestor)
