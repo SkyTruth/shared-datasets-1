@@ -470,7 +470,11 @@ def command_rebuild_release_index(args: argparse.Namespace) -> int:
         print("No catalog asset release indexes requested for rebuild.")
         return 0
 
+    promoted_destinations = {item["destination_uri"] for item in plan["promotions"]}
     for asset_slug in asset_slugs:
+        if f"gs://{bucket_name()}/_catalog/releases/{asset_slug}.json" in promoted_destinations:
+            print(f"Keeping the explicitly promoted release index for {asset_slug}; its reviewed bytes and generation precondition already define this update.")
+            continue
         subprocess.run(
             gcs_asset_args("release-index", "rebuild", "--asset-slug", asset_slug),
             check=True,

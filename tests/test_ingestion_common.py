@@ -569,7 +569,7 @@ class GcsPublisherTests(unittest.TestCase):
                 {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.pmtiles", "generation": 3},
             ],
             "row_count": 10,
-            "sha256": {"fgb": "abc", "pmtiles": "def"},
+            "sha256": {"fgb": "a" * 64, "pmtiles": "b" * 64},
         }
 
         publisher.write_run_record(asset=asset, run_date=run_date, payload=payload)
@@ -829,6 +829,99 @@ class GcsPublisherTests(unittest.TestCase):
         files = release_index.files_from_run_record(record)
         self.assertEqual({entry["path"]: entry["sha256"] for entry in files}, hashes)
 
+    def test_release_checksums_normalize_before_comparing_declarations(self):
+        path = "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz"
+        record = {
+            "release_paths": [{"path": path, "sha256": "sha256:" + "a" * 64}],
+            "sha256": {"metadata": "A" * 64},
+            "artifacts": [
+                {"path": path, "sha256": "a" * 64},
+                {"release_uri": path, "sha256": "sha256:" + "a" * 64},
+                {"format": "metadata", "sha256": "sha256:" + "A" * 64},
+            ],
+        }
+        self.assertEqual(release_index.files_from_run_record(record)[0]["sha256"], "a" * 64)
+        record["artifacts"][1]["sha256"] = "sha256:" + "b" * 64
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "conflicting SHA-256"):
+            release_index.files_from_run_record(record)
+
+    def test_rebuild_normalizes_run_and_gcs_hashes_for_strict_sdk(self):
+        from types import SimpleNamespace
+        from skytruth_shared_datasets import CatalogLoadError
+        from skytruth_shared_datasets.catalog import _validate_release_index
+
+        bucket = FakeBucket()
+        record = valid_metadata_contract_record(FakeAsset(), "2026-05-01")
+        metadata = record["release_paths"][2]
+        metadata["sha256"] = "sha256:" + record["sha256"]["metadata"]
+        record["artifacts"] = [{"path": metadata["path"], "sha256": metadata["sha256"]}]
+        for entry in record["release_paths"]:
+            blob = bucket.blob(entry["path"].removeprefix("gs://test-bucket/"))
+            blob.exists = True
+            blob.generation = entry["generation"]
+            role = release_index.infer_format(blob.name)
+            blob.metadata = {f"{role}_sha256": "sha256:" + record["sha256"][role]}
+        run = bucket.blob("asset/runs/2026-05-01.json")
+        run.exists = True
+        run.text = json.dumps(record)
+        row = {"asset_slug": "test-asset", "canonical_path": "gs://test-bucket/asset/latest/asset.fgb"}
+
+        index = release_index.rebuild_index_from_bucket(bucket, row)
+        _validate_release_index(index, SimpleNamespace(slug="test-asset", canonical_path=row["canonical_path"]))
+        for release in [index["latest_release"], *index["releases"]]:
+            self.assertEqual([file["sha256"] for file in release["files"]], [record["sha256"][file["format"]] for file in release["files"]])
+        # Even when requesting the FGB, a malformed companion remains invalid.
+        sidecar = next(file for file in index["releases"][0]["files"] if file["format"] == "metadata")
+        sidecar["sha256"] = "sha256:" + sidecar["sha256"]
+        with self.assertRaisesRegex(CatalogLoadError, "64 hexadecimal"):
+            _validate_release_index(index, SimpleNamespace(slug="test-asset", canonical_path=row["canonical_path"]))
+
+    def test_writer_normalizes_historical_checksums_without_mutating_input(self):
+        bucket = FakeBucket()
+        index = release_index.empty_release_index("test-asset")
+        index["releases"] = [{"date": "2026-05-01", "files": [
+            {"path": "gs://test-bucket/asset/releases/2026-05-01/asset.fgb", "format": "fgb", "sha256": "sha256:" + "a" * 64},
+        ]}]
+        index["latest_release"] = index["releases"][0]
+        release_index.write_release_index(bucket, "test-asset", index, generation=None)
+        blob = bucket.blob("_catalog/releases/test-asset.json")
+        written = json.loads(blob.text)
+        self.assertEqual(written["latest_release"]["files"][0]["sha256"], "a" * 64)
+        self.assertEqual(written["latest_release"], written["releases"][0])
+        self.assertEqual(index["latest_release"]["files"][0]["sha256"], "sha256:" + "a" * 64)
+        self.assertEqual(blob.uploads, [("string", 0, "application/json")])
+        with self.assertRaises(PreconditionFailed):
+            release_index.write_release_index(bucket, "test-asset", index, generation=999)
+
+    def test_invalid_checksums_fail_at_each_index_input_boundary(self):
+        path = "gs://test-bucket/asset/releases/2026-05-01/asset.fgb"
+        for sha in ("", "a" * 63, "a" * 65, "g" * 64, "sha256:" + "a" * 63,
+                    "sha256:sha256:" + "a" * 64, "a" * 64 + "\n", 123, False, None):
+            records = (
+                {"release_paths": [{"path": path, "sha256": sha}]},
+                {"release_paths": [path], "sha256": {"fgb": sha}},
+                {"release_paths": [path], "artifacts": [{"path": path, "sha256": sha}]},
+                {"release_paths": [path], "artifacts": [{"format": "fgb", "sha256": sha}]},
+            )
+            for record in records:
+                with self.subTest(sha=sha, record=record):
+                    with self.assertRaisesRegex(release_index.ReleaseIndexError, "64 hexadecimal"):
+                        release_index.files_from_run_record(record)
+            bucket = FakeBucket()
+            blob = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+            blob.metadata = {"sha256": sha}
+            with self.subTest(sha=sha, source="gcs"):
+                with self.assertRaisesRegex(release_index.ReleaseIndexError, "64 hexadecimal"):
+                    release_index.release_file_entries_from_blobs(bucket.name, [blob])
+            for section in ("releases", "latest_release"):
+                index = release_index.empty_release_index("test-asset")
+                entry = {"files": [{"path": path, "sha256": sha}]}
+                index[section] = [entry] if section == "releases" else entry
+                with self.subTest(sha=sha, section=section):
+                    with self.assertRaisesRegex(release_index.ReleaseIndexError, "64 hexadecimal"):
+                        release_index.write_release_index(bucket, "test-asset", index, generation=None)
+                self.assertEqual(bucket.blob("_catalog/releases/test-asset.json").uploads, [])
+
     def test_localized_sidecar_never_borrows_canonical_metadata_checksum(self):
         files = release_index.files_from_run_record({
             "release_paths": ["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"],
@@ -1053,7 +1146,7 @@ class GcsPublisherTests(unittest.TestCase):
         pmtiles.exists = True
         pmtiles.generation = 42
         pmtiles.size = 99
-        pmtiles.metadata = {"pmtiles_sha256": "newpmtiles"}
+        pmtiles.metadata = {"pmtiles_sha256": "c" * 64}
         run_record = bucket.blob("asset/runs/2026-05-01.json")
         run_record.exists = True
         run_record.text = json.dumps(
@@ -1077,7 +1170,7 @@ class GcsPublisherTests(unittest.TestCase):
                     },
                 ],
                 "row_count": 10,
-                "sha256": {"fgb": "fgbsha", "pmtiles": "oldpmtiles"},
+                "sha256": {"fgb": "a" * 64, "pmtiles": "b" * 64},
             }
         )
 
@@ -1091,10 +1184,10 @@ class GcsPublisherTests(unittest.TestCase):
 
         files = {entry["format"]: entry for entry in index["latest_release"]["files"]}
         self.assertEqual(files["fgb"]["generation"], 8)
-        self.assertEqual(files["fgb"]["sha256"], "fgbsha")
+        self.assertEqual(files["fgb"]["sha256"], "a" * 64)
         self.assertEqual(files["pmtiles"]["generation"], 42)
         self.assertEqual(files["pmtiles"]["size"], 99)
-        self.assertEqual(files["pmtiles"]["sha256"], "newpmtiles")
+        self.assertEqual(files["pmtiles"]["sha256"], "c" * 64)
 
     def test_rebuild_index_backfills_legacy_successful_run_records(self):
         bucket = FakeBucket()
