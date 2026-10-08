@@ -329,9 +329,24 @@ class RebuildReleaseIndexTests(unittest.TestCase):
         with (
             workspace(files),
             mock.patch.object(publish_workflow.subprocess, "run") as run,
+            mock.patch.dict(os.environ, {"SHARED_DATASETS_BUCKET": BUCKET}),
         ):
             exit_code = publish_workflow.main(["rebuild-release-index", "--plan-json", "publish-plan.json"])
         return exit_code, run
+
+    def test_preserves_explicit_index_promotion_and_rebuilds_other_assets(self):
+        catalog_csv = CATALOG_CSV + f"other-asset,Other,gs://{BUCKET}/a/latest/other-asset.fgb\n"
+        plan = {
+            "asset_slug": "demo-asset",
+            "promotions": [{"destination_uri": f"gs://{BUCKET}/_catalog/releases/demo-asset.json"}],
+            "release_index_asset_slugs": ["demo-asset", "other-asset"],
+        }
+        exit_code, run = self.run_command(plan, catalog_csv)
+        self.assertEqual(exit_code, 0)
+        run.assert_called_once_with(
+            publish_workflow.gcs_asset_args("release-index", "rebuild", "--asset-slug", "other-asset"),
+            check=True,
+        )
 
     def test_skips_when_plan_asset_is_not_a_catalog_asset(self):
         exit_code, run = self.run_command({"asset_slug": "not-in-catalog", "promotions": []})

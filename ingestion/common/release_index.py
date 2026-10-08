@@ -37,6 +37,13 @@ class ReleaseIndexError(RuntimeError):
     """Raised when a release index cannot be read, merged, or written."""
 
 
+def normalize_sha256(value: Any, *, label: str) -> str:
+    """Translate stored artifact hash notation to the index's plain digest."""
+    if not isinstance(value, str) or not re.fullmatch(r"(?:sha256:)?[0-9a-fA-F]{64}", value):
+        raise ReleaseIndexError(f"{label}: sha256 must contain exactly 64 hexadecimal characters (optional sha256: prefix)")
+    return value.removeprefix("sha256:").lower()
+
+
 @dataclass(frozen=True)
 class LoadedReleaseIndex:
     payload: dict[str, Any]
@@ -82,6 +89,11 @@ def coerce_release_index(payload: dict[str, Any] | None, asset_slug: str) -> dic
     releases = index.setdefault("releases", [])
     if not isinstance(releases, list):
         raise ReleaseIndexError("release index releases must be a list")
+    for release in [*releases, index["latest_release"]]:
+        if release is not None:
+            for entry in release.get("files", []):
+                if "sha256" in entry:
+                    entry["sha256"] = normalize_sha256(entry["sha256"], label=entry.get("path", "release file"))
     return index
 
 
@@ -181,18 +193,18 @@ def blob_file_entry(
     if locale:
         entry["role"] = "metadata"
         entry["locale"] = locale
-    for key in ("generation", "size", "content_type", "sha256"):
+    for key in ("generation", "size", "content_type"):
         if value.get(key) is not None:
             entry[key] = value[key]
     checksum_key = f"metadata_{locale}" if locale else format_name
     checksums = {
-        str(sha)
-        for sha in (
-            entry.get("sha256"),
-            (sha256_by_path or {}).get(path),
-            (sha256_by_format or {}).get(checksum_key),
+        normalize_sha256(source[key], label=path)
+        for source, key in (
+            (value, "sha256"),
+            (sha256_by_path or {}, path),
+            (sha256_by_format or {}, checksum_key),
         )
-        if sha
+        if key in source
     }
     if len(checksums) > 1:
         raise ReleaseIndexError(f"conflicting SHA-256 declarations for {path}")
@@ -205,7 +217,7 @@ def sha256_by_format(record: dict[str, Any]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     raw_sha = record.get("sha256")
     if isinstance(raw_sha, dict):
-        mapping.update({str(key): str(value) for key, value in raw_sha.items() if value})
+        mapping.update({str(key): normalize_sha256(value, label=f"format {key}") for key, value in raw_sha.items()})
     for artifact in record.get("artifacts") or []:
         if not isinstance(artifact, dict):
             continue
@@ -215,10 +227,11 @@ def sha256_by_format(record: dict[str, Any]) -> dict[str, str]:
             continue
         format_name = str(artifact.get("format") or "")
         sha = artifact.get("sha256")
-        if format_name and sha:
-            if mapping.get(format_name) and mapping[format_name] != str(sha):
+        if format_name and "sha256" in artifact:
+            sha = normalize_sha256(sha, label=f"format {format_name}")
+            if mapping.get(format_name) and mapping[format_name] != sha:
                 raise ReleaseIndexError(f"conflicting SHA-256 declarations for format {format_name}")
-            mapping[format_name] = str(sha)
+            mapping[format_name] = sha
     return mapping
 
 
@@ -229,10 +242,11 @@ def sha256_by_path(record: dict[str, Any]) -> dict[str, str]:
             continue
         path = str(artifact.get("path") or artifact.get("release_uri") or "")
         sha = artifact.get("sha256")
-        if path and sha:
-            if mapping.get(path) and mapping[path] != str(sha):
+        if path and "sha256" in artifact:
+            sha = normalize_sha256(sha, label=path)
+            if mapping.get(path) and mapping[path] != sha:
                 raise ReleaseIndexError(f"conflicting SHA-256 declarations for {path}")
-            mapping[path] = str(sha)
+            mapping[path] = sha
     return mapping
 
 
@@ -402,7 +416,7 @@ def merge_successful_release(
     latest_run: dict[str, Any] | None = None,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    merged = coerce_release_index(index, str(index.get("asset_slug") or ""))
+    merged = copy.deepcopy(index)
     release_date = release_entry.get("date")
     if not release_date:
         raise ReleaseIndexError("release entry is missing date")
@@ -417,7 +431,7 @@ def merge_successful_release(
     merged["latest_release"] = copy.deepcopy(releases[0]) if releases else None
     merged["latest_run"] = copy.deepcopy(latest_run) if latest_run else run_entry_from_release(release_entry)
     merged["updated_at"] = updated_at or utc_now_iso()
-    return merged
+    return coerce_release_index(merged, str(index.get("asset_slug") or ""))
 
 
 def run_entry_from_release(release_entry: dict[str, Any]) -> dict[str, Any]:
@@ -487,9 +501,9 @@ def release_file_entries_from_blobs(bucket_name: str, blobs: list[Any]) -> list[
             "size": int(blob.size or 0),
         }
         metadata = blob.metadata or {}
-        sha256 = metadata.get("sha256") or metadata.get(f"{format_name}_sha256")
-        if sha256:
-            entry["sha256"] = str(sha256)
+        checksum_key = "sha256" if "sha256" in metadata else f"{format_name}_sha256"
+        if checksum_key in metadata:
+            entry["sha256"] = normalize_sha256(metadata[checksum_key], label=path)
         entries.append(entry)
     return entries
 
