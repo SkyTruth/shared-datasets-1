@@ -51,6 +51,17 @@ prepare/status/read boundary: only `updated_at` may differ, every other claim
 field remains exact, and signed status verification still precedes Slack writes.
 State-machine tests alone did not cover this CLI comparison.
 
+Main CI [37721458560](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37721458560)
+passed all seven selected suites, then mutation discovery rejected a nonempty
+PR list because document serialization inserted newlines into a single-line
+Actions output. Discovery helper tests and code-only merge runs missed the CLI
+handoff. The actual `discover` command now writes compact matrix JSON; CLI tests
+parse its real `GITHUB_OUTPUT` file for zero, one and multiple eligible PRs,
+including merge ordering and duplicate associations. Fork/code-only merges
+remain empty; invalid refs, force pushes, changed plans, malformed identifiers,
+incomplete enumeration and API failures remain refusals with no outputs.
+Reviewed plan and authorization serialization and their hashes are unchanged.
+
 Passing a fake service response or reconciling zero incidents does not prove the
 corresponding live boundary. Preserve the observed failure states in fixtures,
 exercise startup with deliberately incomplete operational configuration, and
