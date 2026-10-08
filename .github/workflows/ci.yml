@@ -355,10 +355,19 @@ jobs:
       - name: Run shared lint, workflow syntax and Terraform validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-lint-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/lint
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-lint-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/lint/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -384,10 +393,19 @@ jobs:
       - name: Run shared secret history, admission, guardrails and Python validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-tests-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/tests
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-tests-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/tests/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -431,10 +449,19 @@ jobs:
             --plan /evidence/ci-plans --suite geospatial-integration \
             --output /evidence/ci-results/geospatial-integration
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/geospatial-integration
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-geospatial-integration-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/geospatial-integration/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -459,11 +486,20 @@ jobs:
       - name: Test the actual production image recipes
         run: python scripts/ci_preflight.py run-suite --plan "$(find "$RUNNER_TEMP/ci-plans" -name plan.json | sort -V | tail -1)" --suite production-images --output "$RUNNER_TEMP/ci-results/production-images"
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-production-images-attempt${{ github.run_attempt }}
           compression-level: 0
           path: ${{ runner.temp }}/ci-results/production-images
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-production-images-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/production-images/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -496,10 +532,19 @@ jobs:
       - name: Run shared SDK version, runtime and packed consumer validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -526,10 +571,19 @@ jobs:
       - name: Run shared real-browser validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
       - uses: actions/upload-artifact@v4
+        id: retained-results
         if: always()
         with:
           name: ci-result-browser-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/browser
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results.outcome == 'success' }}
+        with:
+          name: ci-gate-result-browser-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/browser/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -561,7 +615,7 @@ jobs:
           path: ${{ runner.temp }}/ci-plans
       - uses: actions/download-artifact@v4
         with:
-          pattern: ci-result-*
+          pattern: ci-gate-result-*
           path: ${{ runner.temp }}/ci-results
       - name: Require every selected suite and matrix entry
         env:
