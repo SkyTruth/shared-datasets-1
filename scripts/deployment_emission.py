@@ -17,6 +17,7 @@ import re
 import subprocess
 import tempfile
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -135,6 +136,25 @@ def verify_result(results, value, expected, *, batch=False):
     raise EmissionError("DEPLOYMENT_EMISSION: signed receipt does not bind the exact record, phase and protected emitter")
 
 
+def verified_output(command, repository, digest):
+    """Retry the observed read-only service outage, never failed verification."""
+    outage = re.compile(
+        r"Error: HTTP 503: trust-metadata-api service unavailable \(https://api\.github\.com/repos/"
+        + re.escape(repository) + r"/attestations/sha256:" + digest + r"(?:\?[^\s)]*)?\)"
+    )
+    for attempt, delay in enumerate((5, 15, None), 1):
+        try:
+            return subprocess.check_output(command, text=True, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as error:
+            stderr = error.stderr or ""
+            print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
+            errors = [line for line in stderr.splitlines() if line.startswith("Error:")]
+            if delay is None or len(errors) != 1 or not outage.fullmatch(errors[0]):
+                raise
+            print(f"DEPLOYMENT_EMISSION: attestation service unavailable; retrying verification ({attempt + 1}/3) in {delay}s", file=sys.stderr)
+            time.sleep(delay)
+
+
 def verify(api, repository, record, status, *, original_signer, batch=False):
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
@@ -164,9 +184,9 @@ def verify(api, repository, record, status, *, original_signer, batch=False):
             "--source-digest", expected["sourceRepositoryDigest"],
             "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json",
         ]
-        # A nonzero exit (including unavailable attestations or trusted roots)
-        # is fatal. Never parse a raw bundle as verified evidence.
-        results = json.loads(subprocess.check_output(command, text=True))
+        # Only a confirmed transient service outage retries this same read.
+        # A final nonzero exit is fatal; raw bundles never become evidence.
+        results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
     verify_result(results, value, expected, batch=batch)
 
 

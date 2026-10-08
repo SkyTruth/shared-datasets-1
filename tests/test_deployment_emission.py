@@ -143,6 +143,101 @@ class EmissionTests(unittest.TestCase):
             e.verify_result([], value, e.policy(REPO, 17, value, run(), SIGNER))
         self.api.post.assert_not_called()
 
+    def fake_verifier(self, responses):
+        """Replace only the external gh executable, preserving verifier policy."""
+        binary = self.root / "bin/gh"
+        binary.parent.mkdir(exist_ok=True)
+        log = self.root / "attestation-invocations"
+        binary.write_text(
+            "#!" + sys.executable + "\nimport hashlib, json, pathlib, sys\n"
+            + f"responses={responses!r}\nlog=pathlib.Path({str(log)!r})\n"
+            + "args=sys.argv[1:]\n"
+            + "assert args[:2] == ['attestation', 'verify'], args\n"
+            + "count=len(log.read_text().splitlines()) if log.exists() else 0\n"
+            + "with log.open('a') as output: output.write(json.dumps({'args':args,'digest':hashlib.sha256(pathlib.Path(args[2]).read_bytes()).hexdigest()})+'\\n')\n"
+            + "response=responses[min(count,len(responses)-1)]\n"
+            + "print(response.get('stdout',''))\n"
+            + "print(response.get('stderr',''),file=sys.stderr)\n"
+            + "sys.exit(response.get('code',0))\n"
+        )
+        binary.chmod(0o755)
+        return patch.dict(os.environ, {"PATH": str(binary.parent) + os.pathsep + os.environ["PATH"]}), log
+
+    def unavailable(self, *, code=503, repository=REPO):
+        value = e.receipt(REPO, record(), status())
+        digest = hashlib.sha256(e.canonical(value)).hexdigest()
+        return {
+            "code": 1,
+            "stderr": f"Error: HTTP {code}: trust-metadata-api service unavailable (https://api.github.com/repos/{repository}/attestations/sha256:{digest}?per_page=30&predicate_type=https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1)",
+        }
+
+    def test_actual_verifier_recovers_transient_503_without_changing_receipt_or_policy(self):
+        value = e.receipt(REPO, record(), status())
+        success = {"stdout": json.dumps(verified(value))}
+        outage = self.unavailable()
+        outage["stderr"] = "Loaded digest for receipt\n" + outage["stderr"]
+        environment, log = self.fake_verifier([outage, self.unavailable(), success])
+        with environment, patch("time.sleep") as sleep:
+            e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
+        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls, [calls[0]] * 3)
+        self.assertEqual(calls[0]["digest"], hashlib.sha256(e.canonical(value)).hexdigest())
+        command = calls[0]["args"]
+        for flag, expected in (("--repo", REPO), ("--signer-workflow", REPO + "/" + SIGNER), ("--signer-digest", SHA), ("--source-digest", SHA), ("--source-ref", "refs/heads/main")):
+            self.assertEqual(command[command.index(flag) + 1], expected)
+        self.assertIn("--deny-self-hosted-runners", command)
+        self.api.post.assert_not_called()
+
+    def test_actual_verifier_exhausted_503_remains_failure(self):
+        response = self.unavailable()
+        response["stdout"] = json.dumps(verified(e.receipt(REPO, record(), status())))
+        environment, log = self.fake_verifier([response])
+        with environment, patch("time.sleep") as sleep, self.assertRaises(subprocess.CalledProcessError) as failed:
+            e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
+        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
+        self.assertEqual(len(log.read_text().splitlines()), 3)
+        self.assertIn("HTTP 503: trust-metadata-api service unavailable", failed.exception.stderr)
+        self.api.post.assert_not_called()
+
+    def test_actual_verifier_does_not_retry_non_transient_or_unverified_results(self):
+        value = e.receipt(REPO, record(), status())
+        bad_signature = verified(value)
+        bad_signature[0]["verificationResult"]["signature"]["certificate"]["sourceRepositoryRef"] = "refs/pull/7/merge"
+        cases = [
+            ({"code": 7, "stderr": "cryptographic verification failed"}, subprocess.CalledProcessError),
+            ({"stdout": "not json"}, json.JSONDecodeError),
+            ({"stdout": json.dumps(bad_signature)}, e.EmissionError),
+            ({"stdout": json.dumps([{"rawBundle": verified(value)}])}, e.EmissionError),
+            (self.unavailable(repository="other/repository"), subprocess.CalledProcessError),
+            ({"code": 1, "stderr": "Error: HTTP 503: service unavailable (https://api.github.com/repos/" + REPO + ")"}, subprocess.CalledProcessError),
+            ({**self.unavailable(), "stderr": self.unavailable()["stderr"].replace(hashlib.sha256(e.canonical(value)).hexdigest(), "0" * 64)}, subprocess.CalledProcessError),
+            ({**self.unavailable(), "stderr": self.unavailable()["stderr"] + "\nError: cryptographic verification failed"}, subprocess.CalledProcessError),
+        ]
+        cases.extend((self.unavailable(code=code), subprocess.CalledProcessError) for code in (401, 403, 404, 502, 504))
+        for response, expected in cases:
+            with self.subTest(response=response):
+                environment, log = self.fake_verifier([response, {"stdout": json.dumps(verified(value))}])
+                if log.exists():
+                    log.unlink()
+                with environment, patch("time.sleep") as sleep, self.assertRaises(expected):
+                    e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
+                sleep.assert_not_called()
+                self.assertEqual(len(log.read_text().splitlines()), 1)
+                self.api.post.assert_not_called()
+
+    def test_actual_verifier_stops_if_retry_returns_invalid_signature(self):
+        value = e.receipt(REPO, record(), status())
+        invalid = verified(value)
+        invalid[0]["verificationResult"]["statement"]["subject"][0]["digest"]["sha256"] = "0" * 64
+        environment, log = self.fake_verifier([self.unavailable(), {"stdout": json.dumps(invalid)}, {"stdout": json.dumps(verified(value))}])
+        with environment, patch("time.sleep") as sleep, self.assertRaises(e.EmissionError):
+            e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
+        sleep.assert_called_once_with(5)
+        self.assertEqual(len(log.read_text().splitlines()), 2)
+        self.api.post.assert_not_called()
+
     def test_observer_and_recovery_updates_require_their_own_exact_signed_runs(self):
         claim = record()
         for path, event in ((e.OBSERVER, "schedule"), (e.RECOVERY, "workflow_dispatch")):
