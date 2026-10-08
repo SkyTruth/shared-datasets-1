@@ -14,6 +14,7 @@ Do not keep a second live copy under a bare repo-root `skills/` directory.
 Current skills:
 
 - `align-virtual-environment`
+- `ci-incident-recovery`
 - `deploy-scheduled-ingestion`
 - `feature-preview`
 - `gcp-shared-datasets`

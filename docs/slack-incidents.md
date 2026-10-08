@@ -50,6 +50,11 @@ privileged users; they are not an undeletable audit store.
 Each checkpoint is bound to its exact main workflow revision/run/attempt by the
 existing Sigstore receipt mechanism. Notification batches permit multiple signed
 subjects; production receipt verification keeps its single-subject default.
+The read-only verifier retries the exact GitHub attestation-service HTTP 503 for
+the same repository and receipt digest at most three times, waiting 5 then 15
+seconds. Every attempt uses the same bytes and signer/source policy. Exhausted
+outages, unavailable signatures, invalid evidence and all other errors remain
+failures; no production mutation or Slack delivery is retried by this helper.
 Unsigned/forged snapshots cannot choose a parent timestamp or suppress alerts.
 Signed state retains the workspace, bot, channel, parent timestamp/permalink,
 failed attempts, original recovery evidence, latest healthy evidence, deferred

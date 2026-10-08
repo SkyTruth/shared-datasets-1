@@ -65,6 +65,18 @@ Prefer fixes in this order:
 
 Do not add consumer-side repair for data that a producer owns unless the data already exists in persisted form and needs a migration or compatibility bridge.
 
+## Boundary Regression Proof
+
+When fixing an observed failure, first reproduce it at the boundary that failed. Show that the regression fails against the old implementation and passes with the fix.
+
+Exercise the real producer entrypoint through its transport or persisted representation to the consumer. Examples include CLI output written to a workflow output file, a saved record reread after an API operation, a packaged SDK, or a container's actual entrypoint.
+
+Mocks may replace external services, but must not replace the serialization, comparison, command entrypoint, or consumer contract being tested.
+
+Include the relevant empty, single-item, and multiple-item cases. For provider and SDK contracts, cover legitimate representations and optional values supported by the actual dependency. For persisted state, include legitimate metadata changes as well as incompatible state.
+
+Retain negative controls proving that unauthorized inputs, corrupted state, and real validation failures remain rejected. A green broad suite does not substitute for proof at the changed boundary.
+
 ## Required Removal Pass
 
 Before finishing a change, inspect the touched area for removable code.

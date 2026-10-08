@@ -61,6 +61,7 @@ they apply, after explicit user instructions and this file.
 Current repo-local skills:
 
 - `.claude/skills/align-virtual-environment/SKILL.md`
+- `.claude/skills/ci-incident-recovery/SKILL.md`
 - `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
 - `.claude/skills/feature-preview/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
@@ -75,6 +76,9 @@ Current repo-local skills:
 
 High-priority triggers:
 
+- Use `ci-incident-recovery` when investigating a failed GitHub Actions run,
+  recovering a deployment or publication, reconciling an unresolved workflow
+  incident, or diagnosing repeated recovery failures or incident-related delays.
 - Use `gcp-shared-datasets` before inspecting, downloading, uploading, editing,
   replacing, publishing, or validating shared GCS objects.
 - Use `publish-shared-dataset` before manually adding, updating, publishing, or
@@ -175,6 +179,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Dataset taxonomy guidance | `docs/standards/dataset-taxonomy.md` |
 | Asset layout, formats, naming, README requirements | `docs/standards/asset-layout-and-formats.md` |
 | Temporary local file/workspace hygiene | `docs/standards/local-temp-workspaces.md` |
+| CI incident diagnosis, recovery, and alert reconciliation | `.claude/skills/ci-incident-recovery/SKILL.md` |
 | Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
