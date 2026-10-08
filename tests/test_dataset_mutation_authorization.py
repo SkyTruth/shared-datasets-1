@@ -676,6 +676,75 @@ class MainPushDiscoveryTests(unittest.TestCase):
             history.assert_called_once_with(["git", "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"], text=True)
             return result
 
+    def run_discovery_cli(self, *, event=None, env=None, commits=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_path, output = root / "event.json", root / "outputs"
+            event_path.write_bytes(plans.canonical_bytes(event or self.event))
+            context = {**(env or self.env), "GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output)}
+            with mock.patch.dict(auth.os.environ, context, clear=True), mock.patch.object(
+                auth, "GitHub", return_value=self.api
+            ), mock.patch.object(auth.subprocess, "run"), mock.patch.object(
+                auth.subprocess, "check_output", return_value="\n".join(commits or [HEAD, MERGE, EXECUTOR]) + "\n"
+            ):
+                result = auth.main(["discover"])
+            return result, output.read_text() if output.exists() else ""
+
+    def test_cli_discovery_outputs_round_trip_empty_one_multiple_and_fork_prs(self):
+        for scenario in ("code-only", "one", "multiple", "fork"):
+            with self.subTest(scenario=scenario):
+                self.setUp()
+                expected, commits = [7], [HEAD, MERGE, EXECUTOR]
+                if scenario == "code-only":
+                    self.api.files = [{"filename": "README.md", "status": "modified"}]
+                    expected = []
+                elif scenario == "fork":
+                    self.api.pr["head"]["repo"] = {**REPO, "id": 200, "full_name": "fork/shared-datasets-1"}
+                    expected = []
+                elif scenario == "multiple":
+                    other_merge = "e" * 40
+                    other = {**deepcopy(self.api.pr), "number": 8, "merge_commit_sha": other_merge}
+                    self.api.overrides[f"repos/{REPO['full_name']}/pulls/8"] = other
+                    original_pages = self.api.pages
+
+                    def pages(path, *, field=None):
+                        if "/commits/" in path:
+                            return [deepcopy(self.api.pr), deepcopy(other)]
+                        return original_pages(path, field=field)
+
+                    self.api.pages = pages
+                    # API association order and duplicate associations do not
+                    # change merge order in the Actions matrix.
+                    commits, expected = [HEAD, other_merge, MERGE, EXECUTOR], [8, 7]
+                result, raw = self.run_discovery_cli(commits=commits)
+                self.assertEqual(result, 0)
+                fields = dict(line.split("=", 1) for line in raw.splitlines())
+                self.assertEqual(set(fields), {"pr_numbers", "has_mutations"})
+                self.assertEqual(len(raw.splitlines()), 2)
+                self.assertEqual(json.loads(fields["pr_numbers"]), expected)
+                self.assertEqual(fields["has_mutations"], "true" if expected else "false")
+
+    def test_cli_discovery_refuses_invalid_push_plan_or_api_without_outputs(self):
+        for scenario in ("pr-ref", "forced", "changed-plan", "api-failure", "incomplete-files", "invalid-id"):
+            with self.subTest(scenario=scenario):
+                self.setUp()
+                event = deepcopy(self.event)
+                if scenario == "pr-ref":
+                    event["ref"] = "refs/pull/7/merge"
+                elif scenario == "forced":
+                    event["forced"] = True
+                elif scenario == "changed-plan":
+                    self.api.raw = b"changed unreviewed plan"
+                elif scenario == "api-failure":
+                    self.api.get = mock.Mock(side_effect=subprocess.CalledProcessError(1, "gh api"))
+                elif scenario == "invalid-id":
+                    self.api.pr["number"] = "7\nhas_mutations=true"
+                else:
+                    self.api.pr["changed_files"] += 1
+                result, raw = self.run_discovery_cli(event=event)
+                self.assertEqual(result, 2)
+                self.assertEqual(raw, "")
+
     def test_range_enumeration_deduplicates_associations_ignores_payload_truncation(self):
         self.event["commits"] = []
         self.assertEqual(self.discover(), [7])

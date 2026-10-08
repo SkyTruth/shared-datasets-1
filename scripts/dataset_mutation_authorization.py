@@ -11,6 +11,7 @@ import argparse
 import base64
 import datetime as dt
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -802,7 +803,7 @@ def main(argv: list[str] | None = None) -> int:
             event = plans.strict_json_loads(Path(args.event_path).read_bytes())
             if args.command == "discover":
                 numbers = discover_push_prs(api, event, dict(os.environ))
-                write_outputs({"pr_numbers": plans.canonical_bytes(numbers).decode().strip(),
+                write_outputs({"pr_numbers": json.dumps(numbers, separators=(",", ":")),
                                "has_mutations": bool(numbers)}, args.github_output)
                 return 0
             if args.command == "preview":
