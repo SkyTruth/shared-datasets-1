@@ -127,6 +127,15 @@ base/tree/toolchain contract matches. The latest result for each suite wins;
 a newer failed result cannot reuse an older success. `ci-ready-evidence` names
 the exact selected plan and suite artifacts for consumers of tested bytes.
 
+Each suite first uploads its complete `ci-result-<suite>-attempt<N>` artifact,
+then uploads `ci-gate-result-<suite>-attempt<N>` containing only `result.json`.
+The compact upload requires successful retention of the complete artifact and
+fails if its result file is missing. `ci-ready` downloads only compact results,
+preserving its revision, tree, contract, toolchain and producing-job checks.
+Its `suite_artifacts` evidence still names the complete artifacts. Deployment
+consumers continue verifying and loading the retained image or SDK bytes;
+diagnostic logs and deployment bundles remain available for 14 days.
+
 The pinned actionlint version predates GitHub's `concurrency.queue` field.
 `scripts/check_workflow_syntax.py` independently requires `queue: max` together
 with explicit `cancel-in-progress: false`, then omits only that validated scalar
