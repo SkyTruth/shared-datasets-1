@@ -1,0 +1,242 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "resource_changes": [
+    {
+      "address": "google_logging_project_exclusion.dataset_usage_duplicate",
+      "mode": "managed",
+      "type": "google_logging_project_exclusion",
+      "name": "dataset_usage_duplicate",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "description": "Keep tracker evidence in its short-lived private GCS export.",
+          "disabled": true,
+          "filter": "(resource.type=\"gcs_bucket\" AND resource.labels.bucket_name=\"skytruth-shared-datasets-1\" AND logName:\"cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\") OR\n(resource.type=\"http_load_balancer\" AND resource.labels.url_map_name=\"shared-datasets-pmtiles-cdn\" AND httpRequest.requestMethod=(\"GET\" OR \"HEAD\")) OR\n(((resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"catalog-viewer\") OR (resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"dataset-usage\")) AND jsonPayload.event=(\"dataset_usage\" OR \"dataset_usage_probe\"))",
+          "name": "dataset-usage-exported-copy",
+          "project": "shared-datasets-1"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_logging_project_sink.dataset_usage",
+      "mode": "managed",
+      "type": "google_logging_project_sink",
+      "name": "dataset_usage",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "custom_writer_identity": null,
+          "description": null,
+          "destination": "storage.googleapis.com/skytruth-shared-datasets-1-usage-raw",
+          "disabled": true,
+          "exclusions": [],
+          "filter": "(resource.type=\"gcs_bucket\" AND resource.labels.bucket_name=\"skytruth-shared-datasets-1\" AND logName:\"cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\") OR\n(resource.type=\"http_load_balancer\" AND resource.labels.url_map_name=\"shared-datasets-pmtiles-cdn\" AND httpRequest.requestMethod=(\"GET\" OR \"HEAD\")) OR\n(((resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"catalog-viewer\") OR (resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"dataset-usage\")) AND jsonPayload.event=(\"dataset_usage\" OR \"dataset_usage_probe\"))",
+          "name": "dataset-usage",
+          "project": "shared-datasets-1",
+          "unique_writer_identity": true
+        },
+        "after_unknown": {
+          "bigquery_options": true,
+          "exclusions": [],
+          "id": true,
+          "writer_identity": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "bigquery_options": [],
+          "exclusions": []
+        }
+      }
+    },
+    {
+      "address": "google_storage_bucket.dataset_usage_raw",
+      "mode": "managed",
+      "type": "google_storage_bucket",
+      "name": "dataset_usage_raw",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "default_event_based_hold": null,
+          "effective_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "enable_object_retention": null,
+          "encryption": [],
+          "force_destroy": false,
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "labels": null,
+          "lifecycle_rule": [
+            {
+              "action": [
+                {
+                  "storage_class": "",
+                  "type": "Delete"
+                }
+              ],
+              "condition": [
+                {
+                  "age": 7,
+                  "created_before": "",
+                  "custom_time_before": "",
+                  "days_since_custom_time": null,
+                  "days_since_noncurrent_time": null,
+                  "matches_prefix": [],
+                  "matches_storage_class": [],
+                  "matches_suffix": [],
+                  "noncurrent_time_before": "",
+                  "num_newer_versions": null,
+                  "send_age_if_zero": null,
+                  "send_days_since_custom_time_if_zero": null,
+                  "send_days_since_noncurrent_time_if_zero": null,
+                  "send_num_newer_versions_if_zero": null,
+                  "with_state": "ANY"
+                }
+              ]
+            }
+          ],
+          "location": "US",
+          "logging": [],
+          "name": "skytruth-shared-datasets-1-usage-raw",
+          "project": "shared-datasets-1",
+          "public_access_prevention": "enforced",
+          "requester_pays": null,
+          "retention_policy": [],
+          "soft_delete_policy": [
+            {
+              "retention_duration_seconds": 0
+            }
+          ],
+          "storage_class": "STANDARD",
+          "terraform_labels": {
+            "goog-terraform-provisioned": "true"
+          },
+          "timeouts": null,
+          "uniform_bucket_level_access": true
+        },
+        "after_unknown": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "id": true,
+          "ip_filter": [],
+          "lifecycle_rule": [
+            {
+              "action": [
+                {}
+              ],
+              "condition": [
+                {
+                  "matches_prefix": [],
+                  "matches_storage_class": [],
+                  "matches_suffix": []
+                }
+              ]
+            }
+          ],
+          "logging": [],
+          "project_number": true,
+          "retention_policy": [],
+          "rpo": true,
+          "self_link": true,
+          "soft_delete_policy": [
+            {
+              "effective_time": true
+            }
+          ],
+          "terraform_labels": {},
+          "time_created": true,
+          "updated": true,
+          "url": true,
+          "versioning": true,
+          "website": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "autoclass": [],
+          "cors": [],
+          "custom_placement_config": [],
+          "effective_labels": {},
+          "encryption": [],
+          "hierarchical_namespace": [],
+          "ip_filter": [],
+          "lifecycle_rule": [
+            {
+              "action": [
+                {}
+              ],
+              "condition": [
+                {
+                  "matches_prefix": [],
+                  "matches_storage_class": [],
+                  "matches_suffix": []
+                }
+              ]
+            }
+          ],
+          "logging": [],
+          "retention_policy": [],
+          "soft_delete_policy": [
+            {}
+          ],
+          "terraform_labels": {},
+          "versioning": [],
+          "website": []
+        }
+      }
+    },
+    {
+      "address": "google_storage_bucket_iam_member.dataset_usage_sink_writer",
+      "mode": "managed",
+      "type": "google_storage_bucket_iam_member",
+      "name": "dataset_usage_sink_writer",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "bucket": "skytruth-shared-datasets-1-usage-raw",
+          "condition": [],
+          "role": "roles/storage.objectCreator",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "member": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    }
+  ]
+}

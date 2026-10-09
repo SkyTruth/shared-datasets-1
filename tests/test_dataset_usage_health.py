@@ -11,14 +11,14 @@ from ingestion.dataset_usage.health import Health
 DEFAULT_LOGGING = object()
 
 
-def health(*, pages, logging=DEFAULT_LOGGING, exemptions=None):
+def health(*, pages, logging=DEFAULT_LOGGING, exemptions=None, raw_days=7, exclusion=None, sink_exclusions=()):
     checker = Health.__new__(Health)
     checker.raw_bucket = 'raw'
     checker.project = 'project'
-    checker.classifier = SimpleNamespace(bucket='shared', config={'sink_filter': 'reviewed filter'})
+    checker.classifier = SimpleNamespace(bucket='shared', config={'sink_filter': 'reviewed filter', 'raw_retention_days': 7})
     if logging is DEFAULT_LOGGING:
         logging = {'logBucket': 'raw', 'logObjectPrefix': 'storage-usage'}
-    checker.client = SimpleNamespace(get_bucket=lambda *args, **kwargs: SimpleNamespace(get_logging=lambda: logging))
+    checker.client = SimpleNamespace(get_bucket=lambda *args, **kwargs: SimpleNamespace(get_logging=lambda: logging, lifecycle_rules=[{'action': {'type': 'Delete'}, 'condition': {'age': raw_days}}]))
     class Response:
         def __init__(self, data):
             self.data = data
@@ -29,7 +29,9 @@ def health(*, pages, logging=DEFAULT_LOGGING, exemptions=None):
     class Session:
         def get(self, url, **kwargs):
             if '/sinks/' in url:
-                return Response({'destination': 'storage.googleapis.com/raw', 'filter': 'reviewed filter'})
+                return Response({'destination': 'storage.googleapis.com/raw', 'filter': 'reviewed filter', 'exclusions': list(sink_exclusions)})
+            if '/exclusions/' in url:
+                return Response(exclusion if exclusion is not None else {'filter': 'reviewed filter'})
             return Response(pages.pop(0))
         def post(self, url, **kwargs):
             return Response({'auditConfigs': [{'service': 'storage.googleapis.com', 'auditLogConfigs': [{'logType': 'DATA_READ', 'exemptedMembers': exemptions or []}]}]})
@@ -46,6 +48,20 @@ def test_read_audit_exemption_and_wrong_usage_prefix_suspend_coverage():
     assert health(pages=[], exemptions=['serviceAccount:exempted']).configuration_healthy() is False
     assert health(pages=[], logging={'logBucket': 'raw', 'logObjectPrefix': 'wrong'}).configuration_healthy() is False
     assert health(pages=[{}]).configuration_healthy() is True
+
+
+@pytest.mark.parametrize('options', [
+    {'raw_days': 1}, {'raw_days': 30},
+    {'exclusion': {'filter': 'unreviewed broad filter'}},
+    {'exclusion': {'filter': 'reviewed filter', 'disabled': True}},
+    {'sink_exclusions': [{'filter': 'sample(insertId, 0.5)'}]},
+])
+def test_retention_or_routing_drift_suspends_verified_collection(options):
+    assert health(pages=[], **options).configuration_healthy() is False
+
+
+def test_disabled_raw_sink_exclusion_does_not_drop_records():
+    assert health(pages=[{}], sink_exclusions=[{'filter': 'unused', 'disabled': True}]).configuration_healthy() is True
 
 
 def test_actual_storage_bucket_without_logging_suspends_coverage_without_other_api_calls():
