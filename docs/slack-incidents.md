@@ -7,6 +7,13 @@ Verified recovery edits the original parent to green **Resolved**, retaining the
 original failure and recovery evidence. It creates no reply or new channel
 message. Healthy runs stay quiet. There is no live synthetic notification test.
 
+The `Workflow health and Slack reconciliation` workflow runs on both successful
+and failed workflow completions. Its presence in Actions does not mean a failure
+occurred or a Slack message was sent. `Deployment completion check` runs hourly;
+its completion also triggers the incident replay described below. Historical
+runs under its former name, `Deployment terminal verification`, remain recognized
+under the same workflow and incident identity.
+
 ## Recovery contract
 
 The scope includes the exact deployment target, or exact workflow and job when
