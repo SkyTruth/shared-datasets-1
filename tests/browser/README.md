@@ -117,4 +117,4 @@ independently from mutable index pointers to exercise replacement/retention.
 The three `usage.spec.mjs` scenarios also exercise the private usage endpoint's
 authentication/missing-summary behavior, report sorting/filters and safe DOM
 rendering, and independent stale-worker detection. The complete browser contract
-requires all eighteen scenarios, with no skips or retries.
+requires all nineteen scenarios, with no skips or retries.

@@ -16,6 +16,7 @@ from scripts.catalog_csv import read_catalog_rows_text
 RESOURCES = {
     'google_storage_bucket.dataset_usage_raw', 'google_storage_bucket.dataset_usage_state',
     'google_logging_project_sink.dataset_usage',
+    'google_logging_project_exclusion.dataset_usage_duplicate',
     'module.dataset_usage_service_account.google_service_account.this',
     'module.dataset_usage_scheduler_service_account.google_service_account.this',
     'module.dataset_usage_job.google_cloud_run_v2_job.this',
@@ -30,7 +31,7 @@ RESOURCES = {
     'google_storage_bucket.shared_bucket',
     *('google_storage_bucket_iam_member.dataset_usage_' + name for name in (
         'sink_writer', 'storage_logger', 'raw_reader', 'state_writer', 'viewer',
-        'probe_reader', 'configuration_reader')),
+        'probe_reader', 'configuration_reader', 'raw_configuration_reader')),
 }
 
 
@@ -46,6 +47,7 @@ def validate_rollout(root):
 
 
 def validate_plan(plan, image, *, verified):
+    config = json.loads((Path(__file__).resolve().parents[1] / 'catalog/dataset-usage.json').read_text())
     if not re.fullmatch(r'[a-z0-9./_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('An immutable tested image is required')
     rows = {row['address']: row for row in plan.get('resource_changes', [])}
@@ -103,6 +105,29 @@ def validate_plan(plan, image, *, verified):
         elif address.startswith('google_storage_bucket.dataset_usage_'):
             if after.get('public_access_prevention') != 'enforced' or not after.get('uniform_bucket_level_access') or after.get('force_destroy'):
                 raise ValueError('Usage storage must be private and protected')
+            if address == 'google_storage_bucket.dataset_usage_raw':
+                # Providers include optional condition/action defaults. Only one
+                # unconditional age-based deletion is permitted for raw evidence.
+                actual = after.get('lifecycle_rule', [])
+                if len(actual) != 1 or unknown(change.get('after_unknown', {}).get('lifecycle_rule', False)):
+                    raise ValueError('Unknown or missing raw evidence retention')
+                rule = actual[0]
+                if len(rule.get('action', [])) != 1 or len(rule.get('condition', [])) != 1:
+                    raise ValueError('Unexpected raw evidence retention')
+                action, condition = rule['action'][0], rule['condition'][0]
+                extra_conditions = {key: value for key, value in condition.items() if key not in {'age', 'with_state'}}
+                if action.get('type') != 'Delete' or condition.get('age') != config['raw_retention_days'] or condition.get('with_state') not in (None, '', 'ANY') or any(value not in (None, [], '', 0) for value in extra_conditions.values()) or action.get('storage_class'):
+                    raise ValueError('Raw evidence retention must match the reviewed configuration')
+        elif address in {'google_logging_project_sink.dataset_usage', 'google_logging_project_exclusion.dataset_usage_duplicate'}:
+            exclusion = address == 'google_logging_project_exclusion.dataset_usage_duplicate'
+            fields = {'project', 'filter', 'disabled', 'name'} | (set() if exclusion else {'destination', 'exclusions'})
+            if after.get('project') != 'shared-datasets-1' or after.get('filter') != config['sink_filter'] or after.get('disabled', False) != (not config['collection_enabled']) or any(unknown(change.get('after_unknown', {}).get(field, False)) for field in fields):
+                raise ValueError('Logging export and duplicate exclusion must match the reviewed configuration')
+            if exclusion:
+                if after.get('name') != 'dataset-usage-exported-copy':
+                    raise ValueError('Unexpected logging exclusion identity')
+            elif after.get('name') != 'dataset-usage' or after.get('destination') != 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw' or any(not item.get('disabled', False) for item in after.get('exclusions', [])):
+                raise ValueError('The raw usage export must remain complete and unsampled')
         elif address == 'module.dataset_usage_job.google_cloud_run_v2_job.this':
             task = after['template'][0]['template'][0]
             if task['containers'][0]['image'] != image or task['max_retries'] != 0 or task['timeout'] != '1800s':
