@@ -577,7 +577,7 @@ payload until the cache expires).
 The initial `0.1.0` release was published manually because npm trusted-publisher
 configuration requires an existing package. An npm maintainer bootstraps a new
 package with `npm publish --access public`; ordinary releases use the
-[Publish TypeScript SDK workflow](../../.github/workflows/publish-typescript-sdk.yml).
+`Publish TypeScript SDK` GitHub Actions workflow.
 Trusted Publishing is configured; do not create a long-lived `NPM_TOKEN`.
 
 Prepare each release in a reviewed PR. Changes to SDK source, this packed README,
