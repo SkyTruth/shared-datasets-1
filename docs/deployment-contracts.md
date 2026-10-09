@@ -176,8 +176,8 @@ An SDK publication that completed but failed its registry confirmation supports
 read-only reconciliation through the same workflow. The main reconciler retains
 its trusted checkout and reads the original executor in a separate directory.
 It verifies the original successful CI plan, SDK producing job, artifact archive
-and tested package digest, then downloads that exact version's public npm tarball
-and requires byte-for-byte equality before signing a verified status on the
+and tested package digest, confirms live npm version/integrity metadata, then
+downloads that exact version's public tarball and requires byte-for-byte equality before signing a verified status on the
 original record. Missing or expired evidence, different bytes, a different
 executor or any later attempt fails closed. It never republishes a package.
 Normal publication metadata polling forces online cache checks so a pre-publish

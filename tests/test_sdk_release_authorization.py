@@ -235,7 +235,7 @@ def test_sdk_recovery_inputs_accept_only_exact_sdk_artifact_without_terraform_sc
     api.post.assert_not_called()
 
 
-@pytest.mark.parametrize('failure', [None, 'wrong-bytes', 'wrong-artifact', 'wrong-checkout', 'later-attempt', 'missing-artifact'])
+@pytest.mark.parametrize('failure', [None, 'wrong-bytes', 'wrong-artifact', 'wrong-checkout', 'later-attempt', 'missing-artifact', 'missing-version', 'registry-error'])
 def test_sdk_reconciliation_consumes_tested_archive_and_live_tarball_before_signed_outcome(tmp_path, monkeypatch, failure):
     from contextlib import nullcontext
     from types import SimpleNamespace
@@ -256,6 +256,10 @@ def test_sdk_reconciliation_consumes_tested_archive_and_live_tarball_before_sign
     def command(args, **kwargs):
         if args[:3] == ['git', 'rev-parse', 'HEAD']:
             return 'b' * 40 if failure == 'wrong-checkout' else SHA
+        if args[0] == 'node' and args[2] == 'registry':
+            if failure == 'registry-error':
+                raise DeploymentError('registry denied or returned different integrity')
+            return 'should_publish=true' if failure == 'missing-version' else 'should_publish=false'
         return original_command(args, **kwargs)
     monkeypatch.setattr(deployment.subprocess, 'check_output', command)
     responses = []

@@ -438,6 +438,11 @@ def reconcile_sdk(record, payload, root):
                                payload["ci_run_id"], payload["ci_run_attempt"], record["sha"],
                                Path(os.environ["RUNNER_TEMP"]) / "sdk-reconciliation", root)
     require(outputs.get("artifact") == payload["artifact"] and outputs.get("release_needed") == "true", "SDK record differs from the original tested release")
+    policy = Path(__file__).resolve().parents[1] / "api/typescript/scripts/release-policy.mjs"
+    confirmed = subprocess.check_output(["node", str(policy), "registry", outputs["candidate"]],
+                                        cwd=root / "api/typescript", text=True,
+                                        env={**os.environ, "GITHUB_OUTPUT": ""}).strip()
+    require(confirmed == "should_publish=false", "registry has not confirmed the original SDK version and integrity")
     candidate = json.loads(Path(outputs["candidate"]).read_text())
     require(re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", candidate["version"]), "invalid published SDK version")
     url = "https://registry.npmjs.org/@skytruth/shared-datasets/-/shared-datasets-" + candidate["version"] + ".tgz"
