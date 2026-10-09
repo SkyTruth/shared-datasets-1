@@ -620,7 +620,11 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
             )
             required = {
                 "main ref validation": (WORKFLOW_MAIN_REF_GUARD,),
-                "resource-change allowlist": ("allowed_exact", "python scripts/metadata_retirement_plan.py "),
+                "resource-change allowlist": (
+                    "python scripts/terraform_plan_allowlist.py ",
+                    "allowed_exact",
+                    "python scripts/metadata_retirement_plan.py ",
+                ),
             }
             if rel.as_posix() == ".github/workflows/dataset-usage-deploy.yml":
                 required["resource-change allowlist"] += ("python scripts/dataset_usage_deploy.py --plan-json ",)
