@@ -280,44 +280,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - "${RUNNER_TEMP}/eamlis-monthly.tfplan.json" "${EAMLIS_MONTHLY_IMAGE}" <<'PY'
-          import json
-          import sys
-
-          plan = json.load(open(sys.argv[1]))
-          expected_image = sys.argv[2]
-          allowed_exact = {
-              "module.eamlis_monthly_job.google_cloud_run_v2_job.this",
-          }
-
-          blocked = []
-          for resource in plan.get("resource_changes", []):
-              actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
-                  continue
-              address = resource.get("address", "")
-              if address not in allowed_exact:
-                  blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              if actions != ["update"]:
-                  blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              after = resource.get("change", {}).get("after", {})
-              containers = (
-                  after.get("template", [{}])[0]
-                  .get("template", [{}])[0]
-                  .get("containers", [{}])
-              )
-              image = containers[0].get("image") if containers else None
-              if image != expected_image:
-                  blocked.append(f"unexpected image for {address}: {image!r}")
-
-          if blocked:
-              print("Refusing eamlis-monthly deploy because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
-              raise SystemExit(1)
-          PY
+          python scripts/terraform_plan_allowlist.py "${RUNNER_TEMP}/eamlis-monthly.tfplan.json" \
+            --allowed-exact="module.eamlis_monthly_job.google_cloud_run_v2_job.this" \
+            --job-image-target=eamlis-monthly --expected-image="${EAMLIS_MONTHLY_IMAGE}" \
+            --refusal-prefix="Refusing eamlis-monthly deploy"
 
       - name: Verify complete saved-plan mutation permissions
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}

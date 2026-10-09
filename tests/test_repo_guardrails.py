@@ -70,6 +70,18 @@ class RepoGuardrailsTests(unittest.TestCase):
                             errors = self.check_workflow_fixture(changed)
                             self.assertTrue(any('job apply: missing prod Terraform state concurrency' in e for e in errors), errors)
 
+    def test_shared_plan_validator_satisfies_allowlist_without_embedded_python(self):
+        workflow = self.production_workflow('terraform -chdir=terraform/envs/prod apply plan.tfplan')
+        step = workflow['jobs']['apply']['steps'][0]
+        step['run'] = step['run'].replace(
+            'allowed_exact="example"',
+            'python scripts/terraform_plan_allowlist.py plan.json --allowed-exact=example --refusal-prefix=Refusing',
+        )
+        self.assertEqual(self.check_workflow_fixture(workflow), [])
+        step['run'] = step['run'].replace('python scripts/terraform_plan_allowlist.py ', 'python scripts/other.py ')
+        errors = self.check_workflow_fixture(workflow)
+        self.assertTrue(any('missing resource-change allowlist' in error for error in errors), errors)
+
     def test_unrelated_job_or_workflow_concurrency_does_not_protect_writer(self):
         for location in ('unrelated_job', 'parent_workflow'):
             workflow = self.production_workflow('terraform -chdir=terraform/envs/prod apply plan.tfplan')

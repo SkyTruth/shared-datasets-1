@@ -1,0 +1,79 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "resource_changes": [
+    {
+      "address": "module.eamlis_monthly_job.google_cloud_run_v2_job.this",
+      "module_address": "module.eamlis_monthly_job",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_job",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "name": "eamlis-monthly",
+          "location": "us-central1",
+          "project": "shared-datasets-1",
+          "template": [
+            {
+              "template": [
+                {
+                  "containers": [
+                    {
+                      "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/eamlis-monthly@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "after": {
+          "name": "eamlis-monthly",
+          "location": "us-central1",
+          "project": "shared-datasets-1",
+          "template": [
+            {
+              "template": [
+                {
+                  "containers": [
+                    {
+                      "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/eamlis-monthly@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_storage_bucket.shared_bucket",
+      "mode": "managed",
+      "type": "google_storage_bucket",
+      "name": "shared_bucket",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "name": "skytruth-shared-datasets-1",
+          "labels": {}
+        },
+        "after": {
+          "name": "skytruth-shared-datasets-1",
+          "labels": {
+            "unrelated": "change"
+          }
+        },
+        "after_unknown": {}
+      }
+    }
+  ]
+}
