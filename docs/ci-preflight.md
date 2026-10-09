@@ -97,9 +97,9 @@ bucket-hygiene PR workflow. A finding or invalid decision fails that suite.
 It adds native, SDK, image and browser suites according to component dependencies.
 Documentation-only component paths and proven script exceptions use the single
 selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry records
-its consumer proof. Unclassified scripts, workflow changes, lockfiles, unknown
-paths and unavailable comparisons select all suites. Test selection does not
-change deployment selection.
+its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
+`uv.lock`, unknown paths and unavailable comparisons select all suites. Test
+selection does not change deployment selection.
 The standard Python run permits only the five named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.
