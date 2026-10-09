@@ -577,9 +577,15 @@ test('unchanged filters survive basemap changes and release changes reset filter
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
   const union = await viewport(page);
+  await legend.locator('[data-change="metadata_changed"]').click();
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
+  await expect.poll(async () => (await viewport(page)).zoom).toBeGreaterThan(union.zoom + 1);
+  await legend.locator('[data-change="metadata_changed"]').click();
+  await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
+  const beforeUnchanged = await viewport(page);
   await legend.locator('[data-change="unchanged"]').click();
   await expect(page.locator('#compare-page')).toHaveText('1–3 of 3');
-  expect(await viewport(page)).toEqual(union);
+  expect(await viewport(page)).toEqual(beforeUnchanged);
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => (await viewport(page)).zoom).toBeLessThan(union.zoom + 1);
   await canvas.screenshot();
