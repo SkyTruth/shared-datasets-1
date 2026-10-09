@@ -1,14 +1,23 @@
 # CI and production execution contracts
 
-The baseline is `docs/ci-failure-baseline.json`: every unsuccessful attempt and
-job inspected between September 21 and October 5, 2026, with its failure family
-and source URL. It preserves 77 failed attempts and three cancelled attempts;
+The baseline covers 1,683 distinct workflow runs and 1,688 run attempts between
+September 21 and October 5, 2026, including every unsuccessful attempt and job
+inspected, with its failure family and source URL. It preserves 77 failed
+attempts and three cancelled attempts;
 multiple failed jobs in one attempt are not additional failed attempts. The 27
 main-push failures whose PR provenance was checked followed successful final-head
 PR CI. The complete inventory also includes a 28th failed main-push run,
 TypeScript SDK validation run 37368847189, which never acquired a hosted runner.
 Coverage and release prerequisites must improve alongside agents' local
 validation; external capacity failures remain separately visible.
+
+The full inventories are retained in git history at commit
+[`3f28e4a69b4adb456fd9f036df96c0b291790bd5`](https://github.com/SkyTruth/shared-datasets-1/commit/3f28e4a69b4adb456fd9f036df96c0b291790bd5),
+with SHA-256 digests
+`e2a55aeec8107cfed2b920bea9a60bd5771e698ddd60775c3f4beb4ce0141f9e` for
+[`docs/ci-failure-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-failure-baseline.json)
+and `36e698e6fd5cd0bf2add760e26dd1c207fa7f84bf33fcd2efe05e3375c571576` for
+[`docs/ci-job-allocation-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-job-allocation-baseline.json).
 
 ## Reviewed dataset publication
 
@@ -77,7 +86,7 @@ definitions in [the failure-family mapping](ci-failure-guardrails.md). Workflow
 consolidation changes the number of workflows per deployment, so report both
 workflow attempts and selected target deployment attempts. The retained baseline
 contains only unsuccessful job observations. The separate
-[main-push allocation baseline](ci-job-allocation-baseline.json) supplies 755
+main-push allocation baseline supplies 755
 API-created jobs and 553 runner-allocated jobs across 67 observed main head SHAs;
 it excludes other event types and cascades. Broader allocation comparisons remain
 unavailable. Keep legitimate PR rejections, external outages, controlled probes,
