@@ -231,6 +231,10 @@ source recipe and promotion plan remain in the repository. Monthly deployment
 consumes the pinned registry image and retained bundle; it does not rerun the
 campaign or download its expiring hosted image archive. Local replay and input
 probe helpers remain for the monthly image and boundary tests.
+`scripts/release_contracts.py --target wdpa` verifies the retained
+`cloud-facts.json` hash and its terminal execution identity, image and success
+before image promotion. This check uses the immutable snapshot; the monthly
+canary and execution observer continue to verify live monthly executions.
 
 Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
 time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes

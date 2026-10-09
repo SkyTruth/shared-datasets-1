@@ -121,6 +121,8 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
   retained evidence and the immutable `.github/dataset-plans/wdpa-build-{bundle-sha256}.json`
   promotion plan. `scripts/wdpa_processing_gate.py` validates acceptance;
   `scripts/wdpa_build_authorization.py` verifies the exact reviewed plan.
+  `scripts/release_contracts.py --target wdpa` verifies the hash-bound terminal
+  execution snapshot before promotion; it does not query the retired producer.
 - Production consumes that exact `WDPA_PROMOTION_BUNDLE` without regenerating
   artifacts. The publication-only image inherits the verified producer image and
   copies only approved publication dependencies. Verify needed staged files and
