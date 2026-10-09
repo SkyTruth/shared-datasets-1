@@ -36,7 +36,10 @@ resource "google_storage_bucket" "dataset_usage_raw" {
   soft_delete_policy { retention_duration_seconds = 0 }
   lifecycle_rule {
     action { type = "Delete" }
-    condition { age = 30 }
+    condition {
+      age        = local.dataset_usage_config.raw_retention_days
+      with_state = "ANY"
+    }
   }
   lifecycle { prevent_destroy = true }
 }
@@ -70,6 +73,17 @@ resource "google_storage_bucket_iam_member" "dataset_usage_sink_writer" {
   bucket = google_storage_bucket.dataset_usage_raw.name
   role   = "roles/storage.objectCreator"
   member = google_logging_project_sink.dataset_usage.writer_identity
+}
+
+# Only the duplicate in the project's _Default sink is excluded. The separate
+# complete GCS export remains unsampled, and other sinks retain their policies.
+resource "google_logging_project_exclusion" "dataset_usage_duplicate" {
+  project     = var.project_id
+  name        = "dataset-usage-exported-copy"
+  description = "Keep tracker evidence in its short-lived private GCS export."
+  filter      = local.dataset_usage_config.sink_filter
+  disabled    = !local.dataset_usage_collect
+  depends_on  = [google_storage_bucket_iam_member.dataset_usage_sink_writer]
 }
 
 resource "google_storage_bucket_iam_member" "dataset_usage_storage_logger" {
@@ -129,7 +143,7 @@ resource "google_project_iam_custom_role" "dataset_usage_health" {
   role_id = "sharedDatasetsUsageHealth"
   title   = "Dataset usage collection health reader"
   permissions = [
-    "logging.sinks.get", "monitoring.timeSeries.list",
+    "logging.sinks.get", "logging.exclusions.get", "monitoring.timeSeries.list",
     "resourcemanager.projects.getIamPolicy",
   ]
 }
@@ -142,6 +156,12 @@ resource "google_project_iam_member" "dataset_usage_health" {
 
 resource "google_storage_bucket_iam_member" "dataset_usage_configuration_reader" {
   bucket = var.bucket_name
+  role   = google_project_iam_custom_role.dataset_usage_bucket_health.name
+  member = module.dataset_usage_service_account.member
+}
+
+resource "google_storage_bucket_iam_member" "dataset_usage_raw_configuration_reader" {
+  bucket = google_storage_bucket.dataset_usage_raw.name
   role   = google_project_iam_custom_role.dataset_usage_bucket_health.name
   member = module.dataset_usage_service_account.member
 }
@@ -169,6 +189,7 @@ module "dataset_usage_job" {
     google_storage_bucket_iam_member.dataset_usage_probe_reader,
     google_project_iam_member.dataset_usage_health,
     google_storage_bucket_iam_member.dataset_usage_configuration_reader,
+    google_storage_bucket_iam_member.dataset_usage_raw_configuration_reader,
   ]
 }
 
@@ -208,6 +229,7 @@ resource "google_project_iam_custom_role" "dataset_usage_deployer" {
   title   = "Dataset usage infrastructure deployer"
   permissions = [
     "logging.sinks.create", "logging.sinks.get", "logging.sinks.list", "logging.sinks.update",
+    "logging.exclusions.create", "logging.exclusions.get", "logging.exclusions.update",
     "storage.buckets.create", "storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy", "storage.buckets.update",
     "cloudscheduler.jobs.create", "cloudscheduler.jobs.get", "cloudscheduler.jobs.update", "cloudscheduler.jobs.pause", "cloudscheduler.jobs.enable",
     "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy",

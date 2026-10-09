@@ -246,6 +246,10 @@ def plan_checks(plan, *, project_number, target=None):
             elif kind == "google_logging_project_sink":
                 project(current)
                 add(PROJECT_URL, ("logging.sinks.get", "logging.sinks." + action))
+            elif kind == "google_logging_project_exclusion":
+                project(current)
+                text(current.get("name"), "logging exclusion name")
+                add(PROJECT_URL, ("logging.exclusions.get", "logging.exclusions." + action))
             elif kind == "google_project_iam_member":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))

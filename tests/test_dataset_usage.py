@@ -20,11 +20,18 @@ from services.catalog_viewer import usage
 NOW = dt.datetime(2026, 10, 7, 9, tzinfo=dt.UTC)
 BUCKET = "shared"
 ROWS = [{"asset_slug": "example", "title": "Example", "status": "active", "canonical_path": "gs://shared/category/example/latest/example.csv", "access_tier": "public"}]
-CONFIG = {"cdn_host": "tiles.example.org", "principals": {"reader@example.org": "Application group"}, "referrers": {"app.example.org": "Inferred app"}, "maintenance_principals": ["worker@example.org"], "catalog_principals": ["viewer@example.org"]}
+CONFIG = {"raw_retention_days": 7, "cdn_host": "tiles.example.org", "principals": {"reader@example.org": "Application group"}, "referrers": {"app.example.org": "Inferred app"}, "maintenance_principals": ["worker@example.org"], "catalog_principals": ["viewer@example.org"]}
 
 
 def classifier():
     return Classifier(ROWS, copy.deepcopy(CONFIG), BUCKET)
+
+
+@pytest.mark.parametrize('days', [None, True, 2, 6, 31, 7.0])
+def test_raw_retention_rejects_policies_without_delivery_and_recovery_room(days):
+    config = {**CONFIG, 'raw_retention_days': days}
+    with pytest.raises(ValueError, match='Raw retention'):
+        Classifier(ROWS, config, BUCKET)
 
 
 def activation(c):
@@ -175,6 +182,35 @@ def test_duplicate_generations_and_late_shards_count_once(tmp_path):
     assert sum(g["active_days"] for g in groups) == 2
 
 
+def test_expired_request_ids_leave_aggregates_receipts_and_last_access_intact(tmp_path):
+    store = Store(tmp_path)
+    store.items = [{'name': 'a', 'generation': '1', 'source': 'gcs_usage', 'records': [raw()]}]
+    execute(store, tmp_path)
+    store.items = []
+    execute(store, tmp_path, NOW + dt.timedelta(days=8))
+    asset = store.payload['assets'][0]
+    assert asset['last_read'] == iso(NOW)
+    assert sum(group['requests'] for group in asset['windows']['30']) == 1
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        assert db.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 0
+        assert db.execute('SELECT COUNT(*) FROM inputs').fetchone()[0] == 1
+        assert db.execute('SELECT SUM(requests) FROM daily').fetchone()[0] == 1
+    execute(store, tmp_path, NOW + dt.timedelta(days=461))
+    assert store.payload['assets'][0]['last_read'] == iso(NOW)
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        assert db.execute('SELECT COUNT(*) FROM daily').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('days,expired', [(6, False), (7, True)])
+def test_outage_boundary_uses_the_reviewed_raw_retention(tmp_path, days, expired):
+    store = Store(tmp_path)
+    execute(store, tmp_path)
+    execute(store, tmp_path, NOW + dt.timedelta(days=days))
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        gaps = db.execute("SELECT COUNT(*) FROM coverage WHERE reason='Worker outage exceeds raw evidence retention'").fetchone()[0]
+        assert bool(gaps) is expired
+
+
 def test_crash_before_publish_does_not_advance_checkpoint(tmp_path):
     store = Store(tmp_path)
     store.items = [{"name": "a", "generation": "1", "source": "gcs_usage", "records": [raw()]}]
@@ -275,9 +311,10 @@ def test_budget_failure_rolls_back_processing_state(tmp_path, monkeypatch):
         assert not db.execute("SELECT * FROM daily").fetchall()
 
 
-def test_expired_late_input_is_unknown_instead_of_estimated(tmp_path):
+@pytest.mark.parametrize('days', [8, 40])
+def test_expired_late_input_is_unknown_instead_of_estimated(tmp_path, days):
     store = Store(tmp_path)
-    store.items = [{"name": "old", "generation": "1", "source": "gcs_usage", "records": [raw(when=NOW-dt.timedelta(days=40))]}]
+    store.items = [{"name": "old", "generation": "1", "source": "gcs_usage", "records": [raw(when=NOW-dt.timedelta(days=days))]}]
     execute(store, tmp_path)
     with sqlite3.connect(tmp_path / "committed.sqlite") as db:
         assert not db.execute("SELECT * FROM daily").fetchall()

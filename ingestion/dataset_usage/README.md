@@ -62,7 +62,8 @@ Never reinterpret expired history as zero. There is no historical backfill.
 Terraform creates two uniform-access buckets with public-access prevention:
 
 - `gs://skytruth-shared-datasets-1-usage-raw/`: audit/CDN/catalog export and
-  native usage logs under `storage-usage`; 30-day lifecycle.
+  native usage logs under `storage-usage`; 7-day lifecycle, set by
+  `raw_retention_days` in the reviewed collection configuration.
 - `gs://skytruth-shared-datasets-1-usage-state/`: immutable SQLite ledgers,
   precomputed JSON reports, and `published/manifest.json`; 460-day lifecycle.
 
@@ -81,11 +82,32 @@ raw records or event IDs into memory. At 1 CPU / 1 GiB, it has a 30-minute timeo
 and no task or Scheduler retries. Schedule: **09:00 UTC**.
 
 Input receipts use object path plus generation. Per-source request identifiers
-and event time deduplicate overlap within 30 days. Late shards update affected
-daily aggregates transactionally; the report is recomputed from those partitions.
+and event time deduplicate overlap within the 7-day raw-evidence window. Late
+shards update affected daily aggregates transactionally; the report is recomputed
+from those partitions.
 Daily aggregates, source coverage, policy evidence, probe receipts and processing
 receipts stay for 460 days. Last read/interest/catalog timestamps are copied forward into each
 new ledger snapshot even after those daily partitions expire.
+
+Long-term reporting uses daily aggregates, attribution groups, coverage and
+last-observed timestamps. Full request payloads remain only in the short-lived
+raw bucket. The current ledger prunes per-request deduplication IDs after the
+same 7-day window; immutable ledger snapshots also contain their checkpoint
+evidence and expire under the state bucket's lifecycle. Seven days accommodates
+48-hour delivery delays and several missed runs. An outage of seven days or more,
+or an older late shard, creates an explicit gap rather than estimated zero use.
+
+The `dataset-usage-exported-copy` exclusion on the project's `_Default` sink
+uses exactly the complete usage export filter. It avoids storing that second
+copy in Cloud Logging, while the independent GCS sink keeps every matching
+record without sampling. Both export and exclusion remain disabled until
+collection is enabled. Other sinks, other buckets' read logs, write audits and
+Cloud Run/Scheduler failure logs retain their existing policies. Cloud Logging
+charges for log-bucket storage when logs arrive, so merely shortening its retention
+below 30 days would not remove that charge. The narrow exclusion is the cost
+reduction; the raw-bucket lifecycle limits the recovery evidence footprint.
+See [Logging pricing](https://cloud.google.com/products/observability/pricing)
+and [independent sink routing](https://docs.cloud.google.com/logging/docs/routing/overview).
 
 The worker uploads an immutable ledger, then an immutable report, then replaces
 one manifest with a generation precondition. The manifest is the only commit
@@ -136,10 +158,14 @@ the export must retain requests including cache hits. See Google's
 2. Record at least one measured day of project-wide volume and pricing evidence
    (a representative week is preferred). Project monthly incremental Logging,
    raw storage, state storage, operations, worker and viewer costs separately.
-   Include the steady 30-day raw / 460-day state footprint and current billed
+   Include the steady 7-day raw / 460-day state footprint and current billed
    Logging retention/exclusions. Account for the whole project and effective
    billing/free allowance, not just exported shared-bucket logs. Do not silently
    sample or exclude low-frequency traffic to meet the target.
+   Verify that the scoped `_Default` exclusion matches the unsampled export and
+   review any operational need for the duplicate before enabling collection.
+   Check additional project/folder/organization sinks separately: this change
+   does not remove their stored copies or unrelated project-wide read auditing.
 3. Put reviewed preliminary cost evidence in
    `catalog/dataset-usage-activation.json`, then set `collection_enabled: true`
    in `catalog/dataset-usage.json` through a PR. Leave `verified_at: null`.
@@ -200,8 +226,9 @@ reviewed evidence; this is not an activation record):
 ```
 
 The component total must match the estimate. Collection health checks the live
-bucket logging destination/prefix, exact sink filter, project audit configuration
-and sink-export errors (all metric pages), plus independently delivered daily
+bucket logging destination/prefix, exact unsampled sink filter, matching default
+storage exclusion, raw-bucket retention, project audit configuration and
+sink-export errors (all metric pages), plus independently delivered daily
 probes. Missing probes, configuration/cost gates and identifiable failures keep
 coverage unavailable. The report says **no known gaps**, never complete coverage.
 Inherited audit policy review is part of activation evidence; its correctness
