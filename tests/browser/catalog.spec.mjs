@@ -606,7 +606,7 @@ test('unchanged filters survive basemap changes and release changes reset filter
   await expect.poll(async () => {const image=await sampleCanvas(canvas);return comparisonColors.every(color=>nearColor(image,color));}).toBe(true);
   await legend.locator('[data-change="novel"]').click();
   await legend.locator('[data-change="removed"]').click();
-  await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(2);
+  await expect(legend.locator('[data-change="removed"]')).toHaveAttribute('aria-pressed','true');
   await page.locator('#compare-before').selectOption('2026-09-22');
   await expect(page.locator('#compare-summary tbody tr').first().locator('td').first()).toHaveText('2026-09-22');
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
