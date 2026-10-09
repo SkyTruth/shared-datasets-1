@@ -227,7 +227,8 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         errors = []
         valid = activation_valid(activation, classifier) and configuration_healthy
         cutoff = (now - dt.timedelta(hours=48)).date() - dt.timedelta(days=1)
-        oldest = (now.date() - dt.timedelta(days=30)).isoformat()
+        retention_days = classifier.config["raw_retention_days"]
+        oldest = (now.date() - dt.timedelta(days=retention_days)).isoformat()
         db.execute("PRAGMA temp_store=FILE")
         db.execute("CREATE TEMP TABLE inventory(name TEXT,generation TEXT,size INTEGER,source TEXT,PRIMARY KEY(name,generation))")
         for index, item in enumerate(store.inputs()):
@@ -302,7 +303,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
             db.execute("INSERT INTO reconciliations VALUES(?,?,?,?,?)", (iso(now), oldest, classifier.version, classifier.catalog_version, previous_manifest["ledger"]["sha256"]))
             db.commit()
         last_run = db.execute("SELECT value FROM settings WHERE key='last_run'").fetchone()
-        if last_run and (now - timestamp(last_run[0])).days >= 30:
+        if last_run and (now - timestamp(last_run[0])).days >= retention_days:
             for source in SOURCES:
                 mark_gap(db, source, cutoff, "Worker outage exceeds raw evidence retention")
         begin = dt.date.fromisoformat(db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0])

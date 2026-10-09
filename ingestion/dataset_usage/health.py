@@ -45,6 +45,17 @@ class Health:
         expected = digest(self.classifier.config["sink_filter"].strip())
         if digest(sink["filter"].strip()) != expected:
             return False
+        # The exclusion belongs only to _Default, never to the complete raw sink.
+        if any(not entry.get("disabled", False) for entry in sink.get("exclusions", [])):
+            return False
+        response = self.session.get(f"https://logging.googleapis.com/v2/projects/{self.project}/exclusions/dataset-usage-exported-copy", timeout=30)
+        response.raise_for_status()
+        exclusion = response.json()
+        if exclusion.get("disabled") or digest(exclusion["filter"].strip()) != expected:
+            return False
+        raw = self.client.get_bucket(self.raw_bucket, timeout=30)
+        if list(raw.lifecycle_rules) != [{"action": {"type": "Delete"}, "condition": {"age": self.classifier.config["raw_retention_days"]}}]:
+            return False
         response = self.session.post(f"https://cloudresourcemanager.googleapis.com/v1/projects/{self.project}:getIamPolicy", json={}, timeout=30)
         response.raise_for_status()
         configs = response.json().get("auditConfigs", [])
