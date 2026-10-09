@@ -394,6 +394,22 @@ Required fields:
 If property explanations are unknown, still list names/types and say definitions
 need source confirmation.
 
+### Dataset lifecycle
+
+Asset `status` is consumer guidance, not a deletion pathway:
+
+| Status | Meaning |
+|---|---|
+| `active` | Recommended for new use and maintained according to the documented cadence |
+| `deprecated` | Readable and citable, but discouraged for new work |
+| `superseded` | Readable and citable, with a required successor asset |
+| `retired` | Historical only, without expected updates or endorsement for new analysis |
+
+Non-active assets retain their catalog row, README, citation, and release paths.
+They require `lifecycle_reason`, `lifecycle_date`, and `consumer_guidance`;
+`superseded` additionally requires `successor_asset_slug`. Use this metadata to
+steer consumers without breaking existing paths.
+
 ### Data Profile Frontmatter
 
 For canonical vector and table assets, include compact profile metadata in the

@@ -574,26 +574,70 @@ payload until the cache expires).
 
 ## Maintainer Validation And Releases
 
-Run the SDK tests and packed-consumer smoke check from this directory:
+The initial `0.1.0` release was published manually because npm trusted-publisher
+configuration requires an existing package. An npm maintainer bootstraps a new
+package with `npm publish --access public`; ordinary releases use the
+`Publish TypeScript SDK` GitHub Actions workflow.
+Trusted Publishing is configured; do not create a long-lived `NPM_TOKEN`.
+
+Prepare each release in a reviewed PR. Changes to SDK source, this packed README,
+either package manifest, or `tsconfig.json` require a higher stable
+`major.minor.patch` version. Choose the appropriate semver level and, from this
+directory, run:
 
 ```bash
 npm ci
+npm version --no-git-tag-version patch  # or minor / major for the reviewed change
 npm test
 npm run test:pack
 ```
 
-The smoke check builds a real npm tarball, installs it into a separate consumer,
-and checks root/server runtime imports and TypeScript declarations. Its retained
-artifacts live in a named directory under `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
-the command prints the exact path. Node 24 CI runs these checks alongside the
-ordinary Node 22 compatibility tests.
+Commit `package.json` and `package-lock.json` with the package changes.
+Test/workflow-only changes outside the packed package do not require a release.
+Prerelease versions are not supported by the stable-release workflow.
 
-Package-content changes require an explicit stable version increase in a PR.
-Run `npm version --no-git-tag-version patch`, `minor`, or `major` as appropriate,
-and include both `package.json` and `package-lock.json` in review. Merging the
-reviewed version to `main` publishes the validated tarball. The workflow does
-not make version commits or bypass branch protection. See the repository README
-for registry comparison, retry, and trusted-publisher configuration.
+The packed-consumer smoke check builds a real tarball, installs it into a
+separate consumer, and checks root/server runtime imports and TypeScript
+declarations. Its retained artifacts live in a named directory under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
+the command prints the exact path. CI checks the PR's version increase and runs
+the SDK and package checks on Node 22 and 24; `ci-ready` requires both selected
+matrix results.
+
+Merging a versioned package change to `main` triggers release detection from the
+main-push CI completion. The listener verifies that exact `ci-ready` result,
+checks the reviewed version, and publishes the retained Node 24 tarball bytes
+through npm's GitHub Actions OIDC handshake. Validation failures, cancellations,
+and obsolete completion events are no-ops; an unrelated deployment failure after
+passing validation keeps the tested package eligible. The read-only release
+workflow never edits versions, commits, or pushes. Commit-message bump trailers
+have no effect.
+
+The publisher compares the reviewed version with all published stable versions.
+A new version must be higher; retrying an existing version succeeds without
+publishing only when the packed bytes match its registry integrity. Changed
+bytes require another reviewed version. Missing/malformed registry metadata and
+network/authentication failures stop release. Workflow-only pushes without a
+package/version change skip publication. Manual dispatch from `main` requires
+the exact tested executor SHA and successful source CI run and attempt; it
+retries that version with the same integrity rules and never invents a bump.
+An older retry cannot move npm's latest tag backwards.
+
+Release uses Node 24 and npm trusted publishing (npm 11.5.1 or later). Node 24
+validation should be required by branch protection; adding a workflow does not
+change repository protection settings.
+
+Keep npm trusted-publisher settings as follows:
+
+- Publisher: GitHub Actions
+- Organization or user: `SkyTruth`
+- Repository: `shared-datasets-1`
+- Workflow filename: `publish-typescript-sdk.yml`
+- Environment name: blank unless the workflow gains a GitHub environment
+- Allowed actions: `npm publish`
+
+After success, verify the registry version with the command in
+[Package Status And Installation](#package-status-and-installation).
 
 ## Show a dataset on a map
 

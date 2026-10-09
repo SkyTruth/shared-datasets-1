@@ -37,6 +37,9 @@ class Classifier:
     def __init__(self, catalog, config, bucket):
         self.bucket = bucket
         self.config = config
+        retention = config["raw_retention_days"]
+        if type(retention) is not int or not 7 <= retention <= 30:
+            raise ValueError("Raw retention must be 7–30 days to allow delayed delivery and recovery")
         for mapping in (config.get("principals", {}), config.get("referrers", {})):
             if len(mapping) > 100 or any(not isinstance(label, str) or not 1 <= len(label) <= 120 or "@" in label for label in mapping.values()):
                 raise ValueError("Application mappings require bounded display names, not personal identities")

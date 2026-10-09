@@ -418,12 +418,37 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"} | set(TERRAFORM_WORKFLOWS), "infrastructure recovery requires a reviewed targeted workflow")
+    require(payload.get("target") in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")
+    if payload["target"] == "typescript-sdk":
+        require(re.fullmatch(r"sdk@sha256:[0-9a-f]{64}", payload["artifact"]) and targets == [], "SDK recovery requires its package digest and no Terraform scope")
+        return record, payload
     require(isinstance(targets, list) and targets and all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "record has no saved-plan scope; use reviewed recovery")
     return record, payload
+
+
+def reconcile_sdk(record, payload, root):
+    """Consume exact passing CI evidence and compare actual public package bytes."""
+    from urllib import request
+    from scripts import sdk_release_authorization as release
+
+    outputs = release.download(release.GitHub(), os.environ["GITHUB_REPOSITORY"],
+                               payload["ci_run_id"], payload["ci_run_attempt"], record["sha"],
+                               Path(os.environ["RUNNER_TEMP"]) / "sdk-reconciliation", root)
+    require(outputs.get("artifact") == payload["artifact"] and outputs.get("release_needed") == "true", "SDK record differs from the original tested release")
+    policy = Path(__file__).resolve().parents[1] / "api/typescript/scripts/release-policy.mjs"
+    confirmed = subprocess.check_output(["node", str(policy), "registry", outputs["candidate"]],
+                                        cwd=root / "api/typescript", text=True,
+                                        env={**os.environ, "GITHUB_OUTPUT": ""}).strip()
+    require(confirmed == "should_publish=false", "registry has not confirmed the original SDK version and integrity")
+    candidate = json.loads(Path(outputs["candidate"]).read_text())
+    require(re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", candidate["version"]), "invalid published SDK version")
+    url = "https://registry.npmjs.org/@skytruth/shared-datasets/-/shared-datasets-" + candidate["version"] + ".tgz"
+    with request.urlopen(url, timeout=30) as response:
+        published = response.read(release.MAX_ARCHIVE + 1)
+    require(len(published) <= release.MAX_ARCHIVE and published == Path(outputs["tarball"]).read_bytes(), "registry tarball differs from the exact tested SDK package")
 
 
 def recover(args, api):
@@ -433,12 +458,25 @@ def recover(args, api):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             stream.write(f"executor_sha={record['sha']}\ntarget={payload['target']}\nimage={payload['artifact']}\n")
             stream.write("targets=" + json.dumps(payload["targets"]) + "\n")
-            stream.write("kind=" + ("terraform" if payload["target"] in TERRAFORM_WORKFLOWS else "ingestion") + "\n")
+            stream.write("kind=" + ("sdk" if payload["target"] == "typescript-sdk" else "terraform" if payload["target"] in TERRAFORM_WORKFLOWS else "ingestion") + "\n")
         return
-    require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == record["sha"], "recovery checkout differs from original tested executor")
+    sdk = payload["target"] == "typescript-sdk"
+    if sdk:
+        require(args.executor_dir is not None and args.plan_json is None, "SDK reconciliation requires only its original executor directory")
+        root = Path(args.executor_dir).resolve()
+        executor = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    else:
+        require(args.executor_dir is None and args.plan_json is not None, "infrastructure reconciliation requires only its original target plan")
+        executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    require(executor == record["sha"], "recovery checkout differs from original tested executor")
     for other in api.pages(f"repos/{repository}/deployments?environment={record['environment']}&per_page=100"):
         record_payload(other)
         require(other["id"] == record["id"] or (other["sha"] != record["sha"] and git_ancestor(other["sha"], record["sha"])), "a later attempt prevents reconciliation of this revision")
+    if sdk:
+        reconcile_sdk(record, payload, root)
+        post_status(api, repository, record, {"state": "success", "description": "verified", "auto_inactive": False, "environment_url": ""})
+        print("Registry tarball equals the original tested package; SDK record reconciled without publication.")
+        return
     plan = json.loads(Path(args.plan_json).read_text())
     require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
     if payload["target"] in TERRAFORM_WORKFLOWS:
@@ -494,7 +532,8 @@ def main():
         recovery = commands.add_parser(command)
         recovery.add_argument("--deployment-id", required=True, type=int)
         if command == "reconcile":
-            recovery.add_argument("--plan-json", required=True)
+            recovery.add_argument("--plan-json")
+            recovery.add_argument("--executor-dir")
     args = parser.parse_args()
     try:
         if args.command == "window":

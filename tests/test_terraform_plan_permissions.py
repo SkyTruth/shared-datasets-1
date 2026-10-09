@@ -105,6 +105,10 @@ class SavedPlanPermissionTests(unittest.TestCase):
         actual = permissions(plan(row("google_project_iam_custom_role", ["update"], {"project": PROJECT, "role_id": "sharedDatasetsPmtilesManagedFolderSync"})))
         self.assertEqual(actual, {"iam.roles.get", "iam.roles.update"})
 
+    def test_logging_exclusion_update_requires_only_its_actual_operations(self):
+        actual = permissions(plan(row('google_logging_project_exclusion', ['update'], {'project': PROJECT, 'name': 'dataset-usage-exported-copy'})))
+        self.assertEqual(actual, {'logging.exclusions.get', 'logging.exclusions.update'})
+
     def test_viewer_saved_plan_checks_all_actual_resource_classes(self):
         bucket = "shared-datasets-1-catalog-comparisons"
         rows = [

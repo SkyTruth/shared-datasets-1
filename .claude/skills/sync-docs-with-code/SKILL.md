@@ -24,15 +24,16 @@ evidence. Treat docs as user-facing contracts.
    - Dataset metadata, README requirements, templates, and generated catalogs.
 
 3. Update the authoritative source, not stale derivatives:
-   - Use `README.md` for repo purpose, quick start, and maintainer workflows.
+   - Use `README.md` for repo purpose, local setup, and links to authoritative
+     workflows; use the routing table and Source Map in `AGENTS.md` for ownership.
    - Use `docs/standards/*` for durable dataset rules.
    - Use `docs/assets/{asset-slug}.md` for asset metadata and bucket README
      content; do not hand-edit `catalog/shared-datasets-catalog.csv`.
    - Use `api/python/README.md` for Python SDK and CLI usage.
    - Use `api/typescript/README.md` for TypeScript SDK usage and package
      contents.
-   - Use `.github/workflows/publish-typescript-sdk.yml` plus `README.md` for
-     TypeScript SDK npm release behavior.
+   - Use `api/typescript/README.md` for the TypeScript SDK release procedure and
+     `.github/workflows/publish-typescript-sdk.yml` for its execution contract.
    - Use `ingestion/*/README.md` for job-specific behavior.
    - Use `AGENTS.md` and `.claude/skills/*/SKILL.md` for agent workflow rules.
    - Use `templates/*` when generated bucket README structure changes.

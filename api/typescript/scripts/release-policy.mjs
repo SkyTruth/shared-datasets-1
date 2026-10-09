@@ -86,10 +86,10 @@ export function checkChanges(base, head, run = commandText) {
 
 export function checkRegistry(candidate, run = commandText) {
   const registry = '--registry=https://registry.npmjs.org';
-  const versions = JSON.parse(run('npm', ['view', PACKAGE_NAME, 'versions', '--json', registry]));
+  const versions = JSON.parse(run('npm', ['view', PACKAGE_NAME, 'versions', '--json', registry, '--prefer-online']));
   parseVersion(candidate.version);
   const publishedIntegrity = Array.isArray(versions) && versions.includes(candidate.version)
-    ? JSON.parse(run('npm', ['view', `${PACKAGE_NAME}@${candidate.version}`, 'dist.integrity', '--json', registry]))
+    ? JSON.parse(run('npm', ['view', `${PACKAGE_NAME}@${candidate.version}`, 'dist.integrity', '--json', registry, '--prefer-online']))
     : undefined;
   return publicationDecision(candidate.version, versions, candidate.integrity, publishedIntegrity);
 }
