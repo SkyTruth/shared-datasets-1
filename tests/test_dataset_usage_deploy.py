@@ -38,7 +38,7 @@ def test_shared_bucket_logging_update_cannot_change_iam_retention_cors_or_securi
 
 def test_logging_activation_requires_already_provisioned_exact_raw_bucket():
     shared = {'name': 'skytruth-shared-datasets-1', 'logging': [{'log_bucket': 'skytruth-shared-datasets-1-usage-raw', 'log_object_prefix': 'storage-usage'}]}
-    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'public_access_prevention': 'enforced', 'uniform_bucket_level_access': True, 'force_destroy': False}
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'public_access_prevention': 'enforced', 'uniform_bucket_level_access': True, 'force_destroy': False, 'lifecycle_rule': [{'action': [{'type': 'Delete'}], 'condition': [{'age': 7}]}]}
     plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', shared, shared, ['no-op']), resource('google_storage_bucket.dataset_usage_raw', raw, actions=['create'])]}
     with pytest.raises(ValueError, match='collection disabled'):
         validate_plan(plan, IMAGE, verified=False)
@@ -131,9 +131,60 @@ def test_collection_cost_gate_requires_measured_project_wide_evidence(tmp_path):
 
 
 def test_saved_plan_permissions_cover_logging_and_audit_configuration():
-    plan = {'format_version': '1.2', 'resource_changes': [resource('google_logging_project_sink.dataset_usage', {'project': 'shared-datasets-1', 'name': 'dataset-usage'}, actions=['create']), resource('google_project_iam_audit_config.storage_data_write', {'project': 'shared-datasets-1', 'service': 'storage.googleapis.com'})]}
+    plan = {'format_version': '1.2', 'resource_changes': [resource('google_logging_project_sink.dataset_usage', {'project': 'shared-datasets-1', 'name': 'dataset-usage'}, actions=['create']), resource('google_logging_project_exclusion.dataset_usage_duplicate', {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy'}, actions=['create']), resource('google_project_iam_audit_config.storage_data_write', {'project': 'shared-datasets-1', 'service': 'storage.googleapis.com'})]}
     required = {p for _, permissions in plan_checks(plan, project_number='123', target='dataset-usage') for p in permissions}
-    assert {'logging.sinks.create', 'logging.sinks.get', 'resourcemanager.projects.getIamPolicy', 'resourcemanager.projects.setIamPolicy'} <= required
+    assert {'logging.sinks.create', 'logging.sinks.get', 'logging.exclusions.create', 'logging.exclusions.get', 'resourcemanager.projects.getIamPolicy', 'resourcemanager.projects.setIamPolicy'} <= required
+
+
+def test_duplicate_storage_exclusion_is_scoped_and_disabled_with_collection():
+    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
+    exclusion = {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy', 'filter': config['sink_filter'], 'disabled': True}
+    item = resource('google_logging_project_exclusion.dataset_usage_duplicate', exclusion, actions=['create'])
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    for field, value in [('filter', 'resource.type="gcs_bucket"'), ('disabled', False), ('project', 'other'), ('name', 'all-project-logs')]:
+        changed = copy.deepcopy(item)
+        changed['change']['after'][field] = value
+        with pytest.raises(ValueError, match='Logging|logging exclusion'):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+    changed = copy.deepcopy(item)
+    changed['change']['after_unknown']['filter'] = True
+    with pytest.raises(ValueError, match='Logging'):
+        validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+
+
+def test_raw_export_cannot_be_sampled_or_have_a_different_destination():
+    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
+    sink = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'filter': config['sink_filter'], 'disabled': True, 'destination': 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw'}
+    item = resource('google_logging_project_sink.dataset_usage', sink, actions=['create'])
+    # A new sink's computed writer is legitimately unknown before creation.
+    item['change']['after_unknown']['writer_identity'] = True
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    for field, value in [('exclusions', [{'filter': 'sample(insertId, 0.5)'}]), ('destination', 'storage.googleapis.com/other')]:
+        changed = copy.deepcopy(item)
+        changed['change']['after'][field] = value
+        with pytest.raises(ValueError, match='complete and unsampled'):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+
+
+@pytest.mark.parametrize('rules', [[], [{'action': [{'type': 'Delete'}], 'condition': [{'age': 1}]}], [{'action': [{'type': 'Delete'}], 'condition': [{'age': 7, 'matches_prefix': ['only-some/']}]}], [{'action': [{'type': 'Delete'}], 'condition': [{'age': 7, 'with_state': 'ARCHIVED'}]}], [{'action': [{'type': 'Delete'}], 'condition': [{'age': 7, 'send_num_newer_versions_if_zero': True}]}]])
+def test_raw_retention_cannot_drift_or_delete_inputs_too_early(rules):
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'public_access_prevention': 'enforced', 'uniform_bucket_level_access': True, 'lifecycle_rule': rules}
+    with pytest.raises(ValueError, match='retention'):
+        validate_plan({'resource_changes': [resource('google_storage_bucket.dataset_usage_raw', raw)]}, IMAGE, verified=False)
+
+
+def test_real_provider_plan_preserves_defaults_and_computed_creation_fields():
+    plan = json.loads((ROOT / 'tests/fixtures/dataset_usage/retention-plan.json').read_text())
+    validate_plan(plan, IMAGE, verified=False)
+    required = {p for _, permissions in plan_checks(plan, project_number='123', target='dataset-usage') for p in permissions}
+    assert {'logging.exclusions.create', 'logging.exclusions.get', 'logging.sinks.create', 'storage.buckets.create'} <= required
+    raw = next(row for row in plan['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw')
+    assert raw['change']['after']['lifecycle_rule'][0]['condition'][0]['with_state'] == 'ANY'
+    changed = copy.deepcopy(plan)
+    raw = next(row for row in changed['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw')
+    raw['change']['after_unknown']['lifecycle_rule'] = [{'condition': [{'with_state': True}]}]
+    with pytest.raises(ValueError, match='Unknown.*retention'):
+        validate_plan(changed, IMAGE, verified=False)
 
 
 def test_usage_deployment_is_protected_and_uses_tested_images_without_schedule_resumption():

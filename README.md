@@ -468,6 +468,10 @@ Passive dataset usage monitoring is implemented in [`ingestion/dataset_usage/`](
 It collects existing GCS/CDN access and repo-owned catalog activity without consumer
 changes, and serves a private IAP-protected `/usage` report with application groups,
 metadata interest, source health and qualified retirement-review candidates.
+Raw logs are retained for seven days; daily aggregates and coverage remain for
+460 days, and last-access timestamps are carried forward. A scoped exclusion
+avoids a duplicate of the exported tracker events in Cloud Logging's default
+bucket. The complete private export is never sampled.
 Collection starts disabled; measured project-wide cost at or below $25/month and
 reviewed traffic evidence gate activation. Candidates need 365 observed days with
 no known gaps; logs cannot prove non-use of downloaded copies. No automatic
