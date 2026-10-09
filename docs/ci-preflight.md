@@ -152,3 +152,30 @@ official verifier. Both direct and reusable invocation must pass.
 It has no GCP authentication or deployment-write permission. A successful
 protected rehearsal is required before enabling dependent production mutations;
 an unsigned fixture or a locally passing test cannot replace this live proof.
+
+## Focused local checks
+
+For quick feedback during editing, the default Python suite uses local fixtures
+and mocked GCS, Slack, and source downloads:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run pytest
+UV_CACHE_DIR=.uv-cache uv run ruff check .
+```
+
+The locked dev group includes GeoPandas and Rasterio for tiny generated FGB/COG
+consumer fixtures; exact-byte Python SDK fetching does not require them.
+Native tests need GDAL CLIs, PMTiles, and the Tippecanoe decoder. Enable the GDAL
+fixtures explicitly for a focused local run:
+
+```bash
+RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
+  tests/test_raster_standards.py tests/test_wdpa_monthly.py \
+  tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py
+```
+
+For standalone Terraform formatting/validation, use the pinned version in
+`scripts/ci_toolchain.py`, run `terraform fmt -check -recursive terraform/`, and
+initialize prod and preview with `init -backend=false -input=false` before
+`validate`. Older Terraform versions reject the optional-variable syntax.
+Focused checks supplement the required complete preflight above.

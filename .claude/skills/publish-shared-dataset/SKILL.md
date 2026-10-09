@@ -363,6 +363,13 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
 Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
 metadata changes.
 
+`catalog_docs.py check` detects catalog/index drift without rejecting equivalent
+hand-authored YAML wrapping. Managed blocks are `asset-summary` and `files-table`;
+`export-readmes` renders upload-ready category/subcategory/asset README paths
+without touching GCS. See [catalog commands](../../../scripts/README.md#dataset-operations)
+for export usage. Optional discovery frontmatter is described in the
+[catalog output contract](../../../docs/catalog-web-preview.md).
+
 ## Dataset Admission
 
 New canonical assets and new ingestion pipelines need admission evidence in the

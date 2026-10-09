@@ -36,8 +36,7 @@ class AgentTranslationSkillsTests(unittest.TestCase):
                 self.assertIn(marker, skill)
 
         self.assertIn(".claude/skills/update-feature-metadata-translations/SKILL.md", agents)
-        self.assertIn("Use `update-feature-metadata-translations`", agents)
-        self.assertIn("update-feature-metadata-translations", skills_readme)
+        self.assertIn("../../AGENTS.md#repo-local-skills", skills_readme)
         self.assertIn(".claude/skills/update-feature-metadata-translations/SKILL.md", publish_skill)
         self.assertIn("scripts/feature_metadata_machine_translate.py", publish_skill)
         self.assertIn("scripts/feature_metadata_localization.py --all-locales", publish_skill)

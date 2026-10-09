@@ -3,11 +3,10 @@
 Slack reports unattended failures. A supervised execution can be quiet only
 when its GitHub workflow waits for its result and reports failure itself.
 
-GitHub alerts can use a persistent incident lifecycle: one parent message per
-open target, retries in its thread, and one visible recovery reply after verified
-success. Configuration, delivery reconciliation and compatibility are described
-in [Slack incident lifecycle](slack-incidents.md). Until explicitly enabled,
-the existing failure-only webhook remains active.
+GitHub incident recovery follows the [Slack incident lifecycle](slack-incidents.md):
+verified recovery edits the original parent to **Resolved** and creates no reply
+or new channel message. That document owns configuration and reconciliation;
+the existing failure-only webhook remains active until incident mode is enabled.
 
 | Execution | Failure reporting |
 | --- | --- |
@@ -107,3 +106,48 @@ redeploying the catalog viewer service.
 Local tests exercise routing decisions, real workflow shell failure propagation,
 marker placement, policy boundaries and protected-sync coverage. They do not
 verify Google Cloud's audit payloads or Slack delivery; record those separately.
+
+## Monitoring configuration
+
+Prefer an existing Cloud Monitoring Slack notification channel. Include its
+resource name in the local review plan with `cron_alert_notification_channels`;
+the protected `cron-alert-policy-sync.yml` applies reviewed changes after merge.
+Alternatively, Terraform can create a channel from `cron_alert_slack_channel_name`
+and sensitive `cron_alert_slack_auth_token`, which can enter Terraform state.
+
+The alert-policy deployer needs both `logging.notificationRules.create` and
+`logging.notificationRules.delete`: updating a log-based policy replaces its
+internal notification rule. Repair missing permissions through the existing
+protected bootstrap and policy-sync workflows before declaring routing deployed.
+
+## Dataset and repository notifications
+
+The approved publisher sends a new-dataset upload summary only when the canonical
+`latest/` object did not exist before publication; it derives this from the plan's
+`destination_generation`. `dataset_alerts.py upload-summary` posts only with
+`--new-dataset`; existing-asset refreshes print a local skip message.
+Announcements remain operational notifications, not commit gates, as specified
+in [AGENTS.md](../AGENTS.md#non-negotiable-rules).
+
+Canonical vector/table publication validates schema compatibility before writes.
+Schema snapshots live under `_catalog/schema-snapshots/`; the approved publisher
+advances them after compatible or waived publication. A schema delta emits a
+structured Cloud Logging diagnostic. Schema-change Slack monitoring stays quiet;
+consumer-impacting changes use the reviewed `breaking_changes` plan contract in
+[dataset plans](../.github/dataset-plans/README.md#consumer-impact).
+
+Repository functionality notices use fenced commit messages under the
+[repo-alert workflow](../.claude/skills/repo-alert-commit-messages/SKILL.md).
+GitHub webhook notifications use the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions
+secret. Runtime FYI notifications use the Secret Manager secret
+`shared-datasets-slack-webhook-url` by default. To set or rotate it, supply the
+webhook bytes through a local file:
+
+```bash
+gcloud secrets versions add shared-datasets-slack-webhook-url \
+  --project=shared-datasets-1 \
+  --data-file=/path/to/webhook-url.txt
+```
+
+This webhook configuration is separate from the bot settings and delivery
+reconciliation owned by [Slack incidents](slack-incidents.md).

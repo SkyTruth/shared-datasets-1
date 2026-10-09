@@ -48,6 +48,29 @@ run/attempt, outcome and artifact before using the same payload. Ordinary merged
 code PRs produce an explicit `no_mutation` result. Missing or expired artifacts
 are errors, never a no-op or a reason to read current PR prose.
 
+Dispatch by merged PR number is restricted to `jonaraphael` and retains the same
+immutable document, acceptance, and generation checks; it is not a standalone
+object mutation path. Successful promotion removes its staged scratch objects
+with source-generation preconditions. Unpromoted staging uses the separate
+[age-based scratch cleanup contract](../../docs/gcp-asset-operations.md#delete-pattern).
+
+## Consumer impact
+
+For changes that may break consumers of `{asset-slug}@latest`, include a top-level
+`breaking_changes` array in the publish/delete payload. Each entry requires
+`category`, `summary`, `consumer_action`, and `affected_surfaces`. Categories are
+`path`, `format`, `artifact_set`, `schema`, `feature_identity`, `pmtiles_lookup`,
+`metadata_sidecar`, `access`, `catalog`, `lifecycle_delete`, and `other`.
+
+The planned-alert workflow posts a slug-scoped Slack heads-up for same-repo,
+non-draft PRs; the approved mutation workflow posts a live notice after successful
+promotion/deletion. Schema diffs, catalog contract removals/restrictions, and
+`latest/` deletion targets are detected where the workflow has enough context.
+Declare semantic changes such as feature identity policy or PMTiles lookup
+semantics explicitly. Intentional schema changes include rationale, reviewer,
+PR reference, and consumer impact in the plan. These declarations communicate
+impact; they do not change publication approval authority.
+
 ## Existing proposals and retries
 
 The three pre-launch generated-ID assets also support a constrained
