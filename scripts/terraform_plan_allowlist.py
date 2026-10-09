@@ -6,6 +6,10 @@ replace, or delete touches a resource address that is not allowlisted. This is
 the single owner of the resource-change allowlist rule used by the constrained
 prod Terraform apply workflows; keep it stdlib-only so workflow steps can run
 it before `uv sync`.
+
+The EAMLIS and sea-ice image targets additionally permit only an update of their
+single Cloud Run job to the expected image; other callers retain their declared
+address/action policy.
 """
 
 from __future__ import annotations
@@ -16,6 +20,10 @@ import re
 import sys
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
+JOB_IMAGE_TARGETS = {
+    "eamlis-monthly": "module.eamlis_monthly_job.google_cloud_run_v2_job.this",
+    "sea-ice-daily": "module.sea_ice_daily_job.google_cloud_run_v2_job.this",
+}
 
 
 def split_lines(value: str) -> list[str]:
@@ -28,6 +36,7 @@ def blocked_changes(
     allowed_exact: set[str],
     allowed_patterns: list[re.Pattern[str]],
     block_deletes: bool,
+    job_image: tuple[str, str] | None = None,
 ) -> list[str]:
     blocked = []
     for resource in plan.get("resource_changes", []):
@@ -38,11 +47,22 @@ def blocked_changes(
         if block_deletes and "delete" in actions:
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
-        if address in allowed_exact:
+        if address not in allowed_exact and not any(pattern.match(address) for pattern in allowed_patterns):
+            blocked.append(f"{'/'.join(actions)} {address}")
             continue
-        if any(pattern.match(address) for pattern in allowed_patterns):
-            continue
-        blocked.append(f"{'/'.join(actions)} {address}")
+        if job_image is not None and address == job_image[0]:
+            if actions != ["update"]:
+                blocked.append(f"{'/'.join(actions)} {address}")
+                continue
+            after = resource.get("change", {}).get("after", {})
+            containers = (
+                after.get("template", [{}])[0]
+                .get("template", [{}])[0]
+                .get("containers", [{}])
+            )
+            image = containers[0].get("image") if containers else None
+            if image != job_image[1]:
+                blocked.append(f"unexpected image for {address}: {image!r}")
     return blocked
 
 
@@ -65,22 +85,43 @@ def main(argv: list[str] | None = None) -> int:
         help="Refuse deletes, including replaces, even for allowlisted addresses.",
     )
     parser.add_argument(
+        "--job-image-target",
+        choices=sorted(JOB_IMAGE_TARGETS),
+        help="Require an update-only plan for this single Cloud Run job and its expected image.",
+    )
+    parser.add_argument(
+        "--expected-image",
+        help="Exact planned container image; required with --job-image-target.",
+    )
+    parser.add_argument(
         "--refusal-prefix",
         required=True,
         help="Message prefix printed before the blocked resource list.",
     )
     args = parser.parse_args(argv)
 
-    with open(args.plan_json) as file_obj:
-        plan = json.load(file_obj)
     allowed_exact = set(split_lines(args.allowed_exact))
     allowed_patterns = [re.compile(pattern) for pattern in split_lines(args.allowed_patterns)]
+    job_image = None
+    if args.job_image_target is not None:
+        if not args.expected_image:
+            parser.error("--job-image-target requires a nonempty --expected-image")
+        address = JOB_IMAGE_TARGETS[args.job_image_target]
+        if allowed_exact != {address} or allowed_patterns:
+            parser.error("--job-image-target requires only its exact job address and no allowed patterns")
+        job_image = (address, args.expected_image)
+    elif args.expected_image is not None:
+        parser.error("--expected-image requires --job-image-target")
+
+    with open(args.plan_json) as file_obj:
+        plan = json.load(file_obj)
 
     blocked = blocked_changes(
         plan,
         allowed_exact=allowed_exact,
         allowed_patterns=allowed_patterns,
         block_deletes=args.block_deletes,
+        job_image=job_image,
     )
     if blocked:
         print(f"{args.refusal_prefix} because the Terraform plan changes non-allowlisted resources:")
