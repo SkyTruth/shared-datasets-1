@@ -34,8 +34,6 @@ dev = [
 target-version = "py312"
 extend-exclude = [
   "_scratch",
-  "cache",
-  "test-results",
   "web",
 ]
 
