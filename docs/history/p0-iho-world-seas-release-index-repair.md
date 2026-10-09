@@ -1,3 +1,5 @@
+Historical record, completed 2026-06-07. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # P0 IHO World Seas Release Index Repair
 
 This note documents the reviewed mutation proposal for repairing the

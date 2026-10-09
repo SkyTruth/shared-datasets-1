@@ -1,3 +1,5 @@
+Historical record, completed 2026-06-05. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # P0 IMS Sea Ice Release Index Repair
 
 This note documents the reviewed mutation proposal for repairing the
@@ -40,4 +42,3 @@ PR is reviewed and merged.
 - Release-index missing-field checks return no rows for the added entries.
 - Publish-plan JSON validates with `scripts/reviewed_dataset_plan.py`.
 - Destination paths validate with `scripts/gcs_asset.py validate-path`.
-

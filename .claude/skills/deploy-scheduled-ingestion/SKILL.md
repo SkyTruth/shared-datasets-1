@@ -109,41 +109,10 @@ conversion order that deletes large intermediates as soon as they are no longer
 needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
 alive at the same time.
 
-Use the reviewed WDPA resource target, and never increase it to bypass acceptance:
-
-- Cloud Run Job task resources: `4` CPU and enforced `8Gi` memory. Preserve the
-  measured kernel lifetime peak; exceeding preferred 6.4 GiB headroom is an
-  advisory warning, not artifact rejection or a reason to rebuild retained bytes.
-- Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
-  Obtain the additional per-instance disk quota before rollout.
-- Require one complete retained October build and matching processing/image
-  fingerprints in version 3 `catalog/wdpa-processing-acceptance.json`. The initial
-  `wdpa_build_smoke=true` CI run uses the small native fixture and deterministic
-  sample; no full hosted marine build is required. Reviewed staged evidence
-  permits the isolated protected build. Its identity can create immutable objects
-  only under `_scratch/wdpa-builds/`; it has no canonical dataset permissions.
-  Require both validated realm bundles before committing the root descriptor.
-- Production must consume that exact bundle with `WDPA_PROMOTION_BUNDLE`, never
-  run a second full acceptance replay or rebuild artifacts in the canary. Require
-  the immutable `.github/dataset-plans/wdpa-build-{bundle-sha256}.json` document,
-  matching publish fence, and exact-head approval verified by
-  `scripts/wdpa_build_authorization.py`. Publication uses the existing owned
-  publisher, verifying every needed staged file and both live predecessors first.
-  Preserve an already-committed realm after verifying its frozen predecessor,
-  owned receipt, source/identity contract and allocation sequence; do not require
-  unused candidate hashes to equal its published artifacts. The plan pins the
-  original producer fingerprint and configuration independently of reviewed
-  publication fixes. A publication-only software layer can inherit that verified
-  producer image and copy the approved consumer/gate/entrypoint and its shared
-  publication/translation dependencies and maintained locale catalog; it must
-  never regenerate dataset files or fall back to source processing.
-  Follow `docs/wdpa-processing-validation.md` for the single-build sequence.
-- Observe terminal status through the independent execution observer. After an
-  alert-policy change, verify delivery separately through
-  `cron-alert-delivery-test.yml`; routine deploys do not inject failure probes.
-- Cloud Run Job task timeout: at least `86400s` (24 hours).
-- Retries: `0` while first validating idempotency and partial-release behavior;
-  add retries only after failures are known to be safe to replay.
+For WDPA, follow the [monthly operations runbook](../../../docs/wdpa-monthly-runbook.md)
+for the current accepted image and bundle, resource and quota prerequisites,
+protected deployment trigger, execution/observer checks and owned recovery.
+It is the operational source for the single-build publication sequence.
 
 When a manual post-deploy execution is expected to take hours, start it
 asynchronously instead of waiting in the agent session:
