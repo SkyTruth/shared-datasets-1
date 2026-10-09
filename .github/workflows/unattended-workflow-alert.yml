@@ -1,4 +1,4 @@
-name: Unattended workflow failure alert
+name: Workflow health and Slack reconciliation
 
 on:
   workflow_run:
@@ -10,6 +10,8 @@ on:
       - PMTiles CDN sync
       - CI
       - Publish TypeScript SDK
+      - Deployment completion check
+      # Retain coverage for reruns of historical workflow revisions.
       - Deployment terminal verification
       - Deployment read-only reconciliation
       - EAMLIS monthly deploy
@@ -60,7 +62,7 @@ jobs:
         github.event.workflow_run.event == 'schedule' ||
         github.event.workflow_run.event == 'workflow_run' ||
         (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI') ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
+        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
       )
     runs-on: ubuntu-latest
     steps:

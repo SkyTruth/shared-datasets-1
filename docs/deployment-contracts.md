@@ -146,7 +146,7 @@ supplied. Ingestion no-ops require verified runtime evidence; applied
 configuration alone is insufficient. A canary skipped because of a later race
 leaves unknown state and fails visibly. Detached WDPA executions retain the exact execution ID and
 image in their pending record. The independent execution observer and Cloud Run
-failure alerts remain active. `Deployment terminal verification` reads pending
+failure alerts remain active. `Deployment completion check` reads pending
 records hourly, allocating a protected verifier only when one exists; it checks
 the exact image and terminal execution, reports its outcome and fails on a
 terminal failure or unknown result. A launched execution is never reported as
