@@ -201,3 +201,85 @@ def test_verified_failed_ci_completes_candidate_detection_without_release(tmp_pa
     assert github_output.read_text() == 'source_eligible=false\nrelease_needed=false\n'
     assert not (tmp_path / 'package').exists()
     strict.assert_not_called()
+
+
+def sdk_record(candidate):
+    return {'id': 71, 'sha': SHA, 'ref': SHA, 'environment': 'production-typescript-sdk',
+            'creator': {'login': 'github-actions[bot]', 'type': 'Bot'},
+            'payload': {'schema': 'shared-datasets-deployment-v1', 'target': 'typescript-sdk',
+                        'artifact': 'sdk@sha256:' + candidate['sha256'], 'targets': [],
+                        'ci_run_id': 123, 'ci_run_attempt': 2,
+                        'execution_run_id': 124, 'execution_run_attempt': 1}}
+
+
+def test_sdk_recovery_inputs_accept_only_exact_sdk_artifact_without_terraform_scope(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts import deployment_revision as deployment
+    _, candidate, *_ = fixture(tmp_path, monkeypatch)
+    record = sdk_record(candidate)
+    api = Mock()
+    api.get.return_value = record
+    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('GITHUB_WORKFLOW_REF', REPO + '/.github/workflows/deployment-recovery.yml@refs/heads/main')
+    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'outputs'))
+    monkeypatch.setattr(deployment, 'verify_record', lambda *args: record['payload'])
+    monkeypatch.setattr(deployment, 'verify_ci', lambda *args: None)
+    deployment.recover(SimpleNamespace(command='recovery-inputs', deployment_id=71), api)
+    assert 'kind=sdk\n' in (tmp_path / 'outputs').read_text()
+    for artifact, targets in [('image@sha256:' + candidate['sha256'], []),
+                              (record['payload']['artifact'], ['module.job'])]:
+        record['payload'].update(artifact=artifact, targets=targets)
+        with pytest.raises(DeploymentError):
+            deployment.recovery_record(SimpleNamespace(deployment_id=71), api)
+    api.post.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', [None, 'wrong-bytes', 'wrong-artifact', 'wrong-checkout', 'later-attempt', 'missing-artifact'])
+def test_sdk_reconciliation_consumes_tested_archive_and_live_tarball_before_signed_outcome(tmp_path, monkeypatch, failure):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from scripts import deployment_revision as deployment
+    from urllib import request
+    api, candidate, package, artifacts, _ = fixture(tmp_path, monkeypatch)
+    record = sdk_record(candidate)
+    if failure == 'wrong-artifact':
+        record['payload']['artifact'] = 'sdk@sha256:' + '0' * 64
+    if failure == 'missing-artifact':
+        artifacts[2]['expired'] = True
+    ledger = Mock()
+    ledger.pages.return_value = [record] if failure != 'later-attempt' else [record, {**record, 'id': 72}]
+    ledger.post.return_value = {'id': 81}
+    monkeypatch.setattr(deployment, 'recovery_record', lambda *args: (record, record['payload']))
+    monkeypatch.setattr(release, 'GitHub', lambda: api)
+    original_command = release.subprocess.check_output
+    def command(args, **kwargs):
+        if args[:3] == ['git', 'rev-parse', 'HEAD']:
+            return 'b' * 40 if failure == 'wrong-checkout' else SHA
+        return original_command(args, **kwargs)
+    monkeypatch.setattr(deployment.subprocess, 'check_output', command)
+    responses = []
+    def registry(url, **kwargs):
+        responses.append(url)
+        return nullcontext(io.BytesIO(b'wrong bytes' if failure == 'wrong-bytes' else package))
+    monkeypatch.setattr(request, 'urlopen', registry)
+    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
+    monkeypatch.setenv('GITHUB_RUN_ID', '125')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'outputs'))
+    args = SimpleNamespace(command='reconcile', deployment_id=71, executor_dir=str(tmp_path), plan_json=None)
+    if failure:
+        with pytest.raises(DeploymentError):
+            deployment.recover(args, ledger)
+        ledger.post.assert_not_called()
+    else:
+        deployment.recover(args, ledger)
+        assert responses == ['https://registry.npmjs.org/@skytruth/shared-datasets/-/shared-datasets-0.12.0.tgz']
+        status = ledger.post.call_args.args[1]
+        assert status['description'] == 'verified'
+        receipt_path = (tmp_path / 'outputs').read_text().split('receipt_path=')[1].strip()
+        receipt = json.loads(Path(receipt_path).read_text())
+        assert receipt['deployment_id'] == record['id']
+        assert receipt['payload'] == record['payload']
+        assert receipt['status']['log_url'].endswith('/125/attempts/1')

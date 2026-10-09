@@ -101,3 +101,42 @@ test('registry boundary only reads metadata; outages are never missing releases'
   assert.throws(() => checkRegistry(candidate, () => 'not JSON'));
   assert.throws(() => checkRegistry(candidate, () => JSON.stringify({ error: 'denied' })));
 });
+
+test('registry CLI refreshes cached metadata after publication and preserves integrity rejection', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { mkdtempSync, writeFileSync, rmSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, resolve } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'sdk-registry-cache-'));
+  try {
+    const bytes = Buffer.from('exact tested package');
+    const candidate = { ...pkg('0.9.0'), tarball: join(root, 'sdk.tgz'),
+      integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` };
+    writeFileSync(candidate.tarball, bytes);
+    writeFileSync(join(root, 'candidate.json'), JSON.stringify(candidate));
+    writeFileSync(join(root, 'package.json'), JSON.stringify(pkg('0.9.0')));
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify(lock('0.9.0')));
+    // Replace only the external npm transport: a fresh cache retains the
+    // pre-publish version list until the caller requests an online check.
+    writeFileSync(join(root, 'npm'), `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (process.env.REGISTRY_ERROR) throw new Error(process.env.REGISTRY_ERROR);
+console.log(JSON.stringify(args[2] === 'versions'
+  ? (args.includes('--prefer-online') ? ['0.8.0', '0.9.0'] : ['0.8.0'])
+  : process.env.REGISTRY_INTEGRITY));
+`, { mode: 0o755 });
+    const output = join(root, 'outputs');
+    const env = { ...process.env, PATH: `${root}:${process.env.PATH}`, GITHUB_OUTPUT: output,
+      REGISTRY_INTEGRITY: candidate.integrity };
+    const command = [resolve('scripts/release-policy.mjs'), 'registry', join(root, 'candidate.json')];
+    assert.equal(execFileSync(process.execPath, command, { cwd: root, env, encoding: 'utf8' }).trim(), 'should_publish=false');
+    assert.equal(readFileSync(output, 'utf8'), 'should_publish=false\n');
+    assert.throws(() => execFileSync(process.execPath, command, { cwd: root,
+      env: { ...env, REGISTRY_INTEGRITY: otherIntegrity }, stdio: 'pipe' }), /different or missing integrity/);
+    assert.throws(() => execFileSync(process.execPath, command, { cwd: root,
+      env: { ...env, REGISTRY_ERROR: 'ECONNRESET' }, stdio: 'pipe' }), /ECONNRESET/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
