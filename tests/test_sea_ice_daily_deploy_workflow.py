@@ -7,7 +7,6 @@ from pathlib import Path
 
 from workflow_helpers import (
     load_workflow,
-    python_literal_string_set,
     terraform_targets,
     workflow_steps_by_name,
     workflow_triggers,
@@ -103,14 +102,22 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         )
 
         enforce_run = steps["Enforce sea-ice-daily resource-change allowlist"]["run"]
-        self.assertEqual(
-            python_literal_string_set(enforce_run, "allowed_exact"),
-            {"module.sea_ice_daily_job.google_cloud_run_v2_job.this"},
-        )
-        self.assertIn('actions != ["update"]', enforce_run)
-        self.assertIn("image != expected_image", enforce_run)
+        self.assertIn('python scripts/terraform_plan_allowlist.py "${RUNNER_TEMP}/sea-ice-daily.tfplan.json"', enforce_run)
+        self.assertIn('--allowed-exact="module.sea_ice_daily_job.google_cloud_run_v2_job.this"', enforce_run)
+        self.assertIn('--job-image-target=sea-ice-daily --expected-image="${SEA_ICE_DAILY_IMAGE}"', enforce_run)
+        self.assertNotIn("python - ", enforce_run)
+        self.assertNotIn("uv ", enforce_run)
+        self.assertEqual(steps["Enforce sea-ice-daily resource-change allowlist"]["if"], steps["Terraform plan"]["if"])
         self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
         self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
+        self.assertLess(
+            step_names.index("Export Terraform plan JSON"),
+            step_names.index("Enforce sea-ice-daily resource-change allowlist"),
+        )
+        self.assertLess(
+            step_names.index("Enforce sea-ice-daily resource-change allowlist"),
+            step_names.index("Claim tested deployment revision"),
+        )
         self.assertLess(
             step_names.index("Enforce sea-ice-daily resource-change allowlist"),
             step_names.index("Terraform apply"),
