@@ -64,6 +64,58 @@ CONTRACT_FILES = (
 )
 
 
+# Additional suites beyond ALWAYS, only after tracing imports (including other
+# scripts), subprocess/workflow callers, Docker COPY sources and generated data.
+# services/catalog_viewer/Dockerfile and the preview-service Dockerfile COPY the
+# whole scripts directory: every exception therefore retains production-images.
+# SDK fixtures read checked-in JSON/web contracts; browser fixtures import
+# release_feature_model and execute catalog_site. Those shared producers and all
+# unproved scripts remain broad. Keep this proof with each exception; a new
+# consumer must expand its suites or remove the exception.
+NARROW_SCRIPTS = {
+    # Only importer: test_catalog_refresh_authorization; CLI: catalog-web-deploy.
+    # Produces authorization success/failure, no generated fixture input. Its
+    # catalog test classification retains both SDKs/browser; whole-directory COPY
+    # retains images. No ingestion/native or browser-fixture importer/caller.
+    "scripts/catalog_refresh_authorization.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
+    # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
+    # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
+    # generator imports/calls it. Catalog tests retain SDKs/browser, COPY images;
+    # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
+    "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
+    # Only importer: test_wdpa_staged_validation; CLIs: processing-validation-deploy
+    # and runtime-inspection workflows. Validates WDPA plan JSON/commands consumed
+    # by those workflows, not SDK/browser fixtures. WDPA tests add native/images;
+    # whole-directory COPY adds images. No other importer/subprocess caller.
+    "scripts/check_wdpa_validation_plan.py": ("geospatial-integration", "production-images"),
+    # Only importer: test_wdpa_staged_validation and workflow import smoke. WDPA
+    # Dockerfile COPY; Cloud Run command in wdpa_processing_validation.tf. Calls
+    # download_public_wdpa_benchmark/local_wdpa_sample; reports feed the WDPA gate.
+    # WDPA tests/native and image consumers only; no API/browser generated input.
+    "scripts/cloud_wdpa_validation.py": ("geospatial-integration", "production-images"),
+    # Only importer: test_public_wdpa_benchmark. Subprocess: cloud_wdpa_validation;
+    # CLI: ci.yml's opt-in WDPA benchmark, checked by test_geospatial_ci. WDPA COPY;
+    # frozen files feed local_wdpa_sample/probe, not SDK/browser fixture builders.
+    # Its WDPA/geospatial tests and image consumers require native/images.
+    "scripts/download_public_wdpa_benchmark.py": ("geospatial-integration", "production-images"),
+    # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
+    # produces translation workbooks/CSV/manifest, never API/browser fixtures.
+    # No other import/subprocess/workflow caller; translation test classification
+    # adds native/images and whole-directory COPY adds images.
+    "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
+    # Importers: wdpa_input_memory_probe, test_wdpa_disk_processing (native corpus)
+    # and test_wdpa_translation_inputs. Subprocess: cloud_wdpa_validation; CLIs:
+    # ci.yml benchmark; WDPA COPY. Probe is exercised by production_image_contracts.
+    # Replay artifacts/reports feed WDPA validation, never API/browser fixtures.
+    "scripts/local_wdpa_sample.py": ("geospatial-integration", "production-images"),
+    # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
+    # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
+    # or other subprocess caller. WDPA test classification adds native/images;
+    # whole-directory COPY adds images. Shared authority modules remain broad.
+    "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
+}
+
+
 def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     if paths is None:
         return list(SUITES), "comparison history unavailable"
@@ -71,6 +123,12 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     for path in paths:
         if path in {"pyproject.toml", "uv.lock"} or path.startswith(".github/"):
             return list(SUITES), f"shared validation or workflow dependency: {path}"
+        if (
+            (path.startswith("scripts/") and path.count("/") == 1 and path.endswith(".md"))
+            or (path.startswith(("ingestion/", "services/")) and path.endswith(".md"))
+            or (path.startswith("api/") and path.endswith("/README.md"))
+        ):
+            continue
         if path.startswith("ingestion/") or path in NATIVE_TESTS:
             selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("api/"):
@@ -84,9 +142,9 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
                 selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("scripts/"):
-            # Scripts are imported by runtime, SDK fixtures, and browser rendering.
-            # An explicit narrower rule must prove those dependencies absent.
-            return list(SUITES), f"shared script dependency: {path}"
+            if path not in NARROW_SCRIPTS:
+                return list(SUITES), f"shared script dependency: {path}"
+            selected.update(NARROW_SCRIPTS[path])
         elif path.startswith("tests/"):
             if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "translation")):
                 selected.update({"geospatial-integration", "production-images"})
