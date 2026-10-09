@@ -307,7 +307,7 @@ class ReconciliationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             plan = Path(root) / "plan.json"
             plan.write_text(json.dumps({"resource_changes": []}))
-            args = SimpleNamespace(command="reconcile", deployment_id=1, plan_json=str(plan))
+            args = SimpleNamespace(command="reconcile", deployment_id=1, plan_json=str(plan), executor_dir=None)
             record = ReplayTests.record(CURRENT)
             target = "terraform-" + d.hashlib.sha256(b"Cron alert policy sync").hexdigest()[:16]
             record["environment"] = "production-" + target
@@ -331,7 +331,7 @@ class ReconciliationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             plan = Path(root) / "plan.json"
             plan.write_text(json.dumps({"resource_changes": [{"address": "module.job", "change": {"actions": ["update"]}}]}))
-            args = SimpleNamespace(command="reconcile", deployment_id=1, plan_json=str(plan))
+            args = SimpleNamespace(command="reconcile", deployment_id=1, plan_json=str(plan), executor_dir=None)
             record = ReplayTests.record(CURRENT)
             api = Mock()
             api.pages.return_value = [record]

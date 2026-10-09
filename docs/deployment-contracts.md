@@ -168,9 +168,20 @@ workflow refreshes the original explicit target scope and accepts only a
 complete no-change plan. It performs no apply, does not grant new permissions,
 and cannot reconcile partial or incompatible state. Dataset publication retains
 its existing reviewed recovery and durable transaction rules. Failed or
-incomplete CDN, viewer, catalog and SDK deployment records remain blocked until
+incomplete CDN, viewer and catalog deployment records remain blocked until
 a reviewed target-specific reconciliation is implemented; this workflow cannot
 clear them.
+
+An SDK publication that completed but failed its registry confirmation supports
+read-only reconciliation through the same workflow. The main reconciler retains
+its trusted checkout and reads the original executor in a separate directory.
+It verifies the original successful CI plan, SDK producing job, artifact archive
+and tested package digest, confirms live npm version/integrity metadata, then
+downloads that exact version's public tarball and requires byte-for-byte equality before signing a verified status on the
+original record. Missing or expired evidence, different bytes, a different
+executor or any later attempt fails closed. It never republishes a package.
+Normal publication metadata polling forces online cache checks so a pre-publish
+version list cannot remain fresh throughout the confirmation window.
 
 Manual deployment recovery uses explicit `executor_sha`, `source_run_id` and
 `source_run_attempt` identifying successful main-push CI. It cannot authorize a
