@@ -226,44 +226,11 @@ identity or bypass an interrupted publication. Recover durable claims/receipts
 through the original publication owner; never substitute local SQLite state or
 reset a sequence because a disk was lost.
 
-Freeze benchmark inputs without publishing:
-
-```bash
-uv run python scripts/freeze_wdpa_benchmark.py --out "$SHARED_DATASETS_WORKDIR/downloads/wdpa-october-2026/frozen-inputs"
-```
-
-The freezer verifies publication state, manifest generations and compressed
-sidecar hashes/counts, and downloads translation evidence at pinned generations.
-Keep the upstream ZIP alongside that directory, outside the repository. Replay
-uses the production builder and never instantiates a publisher:
-
-```bash
-docker run --rm --platform linux/amd64 --cpus=4 --memory=8g --memory-swap=8g \
-  --mount type=bind,src="$SHARED_DATASETS_WORKDIR",dst=/inputs,readonly \
-  --mount type=volume,dst=/work \
-  wdpa-monthly python scripts/local_wdpa_sample.py \
-  --source /inputs/downloads/wdpa-october-2026/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
-  --baselines /inputs/downloads/wdpa-october-2026/frozen-inputs \
-  --translation-sources /inputs/downloads/wdpa-october-2026/frozen-inputs/translation-sources.json \
-  --workdir /work/shared-datasets-1/october-build-1
-```
-
-Use a named disk volume for diagnostics. Only the protected Cloud Run build
-stages the immutable bundle needed for acceptance. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genesis`
-fixtures cannot satisfy acceptance. Add `--compare-legacy` on a sample to compare
-the retained old allocation/export path against IDs, hashes, properties, geometry,
-field types, metadata schemas, all six locales and the canonical translation CSV.
-Complete runs rebuild the reusable SQLite translation index from the frozen
-generation-pinned inputs and delete their scratch copies after indexing. The
-freezer's optional `--build-translation-cache` creates a sample-debugging cache;
-`--translation-memory` cannot satisfy complete acceptance. The gate explicitly
-requires index construction, not only geometry and locale output generation.
-An independent stream of source identity/country fields verifies realm/India
-counts against the outputs; identical duplicate source rows count once, matching
-the allocation contract. The report records semantic identity/property
-digests, realm/India counts, artifact hashes, elapsed time and structured phase
-measurements. Raw metadata bytes can differ because scratch source paths appear
-in provenance; compare semantic values and identities, not those paths.
+The October validation campaign has retired. Its immutable acceptance evidence,
+source recipe and promotion plan remain in the repository. Monthly deployment
+consumes the pinned registry image and retained bundle; it does not rerun the
+campaign or download its expiring hosted image archive. Local replay and input
+probe helpers remain for the monthly image and boundary tests.
 
 Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
 time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
@@ -294,17 +261,6 @@ retained bundle by URI, generation, size and SHA-256, its actual cloud image and
 execution, and the reviewed immutable promotion plan. Samples and genesis runs
 cannot authorize publication. Exceeding preferred headroom alone does not reject
 valid artifacts or require a rebuild. Resource configuration cannot be increased.
-
-The initial CI checks use `wdpa_build_smoke=true`: a small native fixture followed
-by the deterministic sample, with no full marine build. Reviewed staged evidence
-opens only the isolated protected build workflow. That job may create immutable
-objects under `_scratch/wdpa-builds/` only, has no canonical dataset permissions
-and no scheduler. All eleven input artifact roles per realm are retained before
-local cleanup. A root descriptor is committed only after the entire build passes.
-The production worker can read that staging prefix; it checks both predecessor
-states and all needed file bytes before starting new canonical writes. Manifests,
-run records and release indexes are finalized by the owned publisher with actual
-canonical object generations. Existing owned recovery semantics are unchanged.
 
 Already-committed realms retain their successful receipts and published bytes.
 For a realm published before the build, promotion checks its frozen current

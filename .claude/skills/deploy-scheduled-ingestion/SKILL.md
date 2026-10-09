@@ -116,28 +116,16 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
   advisory warning, not artifact rejection or a reason to rebuild retained bytes.
 - Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
   Obtain the additional per-instance disk quota before rollout.
-- Require one complete retained October build and matching processing/image
-  fingerprints in version 3 `catalog/wdpa-processing-acceptance.json`. The initial
-  `wdpa_build_smoke=true` CI run uses the small native fixture and deterministic
-  sample; no full hosted marine build is required. Reviewed staged evidence
-  permits the isolated protected build. Its identity can create immutable objects
-  only under `_scratch/wdpa-builds/`; it has no canonical dataset permissions.
-  Require both validated realm bundles before committing the root descriptor.
-- Production must consume that exact bundle with `WDPA_PROMOTION_BUNDLE`, never
-  run a second full acceptance replay or rebuild artifacts in the canary. Require
-  the immutable `.github/dataset-plans/wdpa-build-{bundle-sha256}.json` document,
-  matching publish fence, and exact-head approval verified by
-  `scripts/wdpa_build_authorization.py`. Publication uses the existing owned
-  publisher, verifying every needed staged file and both live predecessors first.
-  Preserve an already-committed realm after verifying its frozen predecessor,
-  owned receipt, source/identity contract and allocation sequence; do not require
-  unused candidate hashes to equal its published artifacts. The plan pins the
-  original producer fingerprint and configuration independently of reviewed
-  publication fixes. A publication-only software layer can inherit that verified
-  producer image and copy the approved consumer/gate/entrypoint and its shared
-  publication/translation dependencies and maintained locale catalog; it must
-  never regenerate dataset files or fall back to source processing.
-  Follow `docs/wdpa-processing-validation.md` for the single-build sequence.
+- The October validation campaign is retired. Monthly deployment requires the
+  pinned accepted registry image, version 3 `catalog/wdpa-processing-acceptance.json`,
+  retained evidence and the immutable `.github/dataset-plans/wdpa-build-{bundle-sha256}.json`
+  promotion plan. `scripts/wdpa_processing_gate.py` validates acceptance;
+  `scripts/wdpa_build_authorization.py` verifies the exact reviewed plan.
+- Production consumes that exact `WDPA_PROMOTION_BUNDLE` without regenerating
+  artifacts. The publication-only image inherits the verified producer image and
+  copies only approved publication dependencies. Verify needed staged files and
+  live predecessors; preserve committed realms through their owned receipts.
+  Keep the monthly worker's prefix-scoped retained-bundle read permission.
 - Observe terminal status through the independent execution observer. After an
   alert-policy change, verify delivery separately through
   `cron-alert-delivery-test.yml`; routine deploys do not inject failure probes.
@@ -238,24 +226,10 @@ For a narrow job change, it is acceptable to run the focused job tests instead
 of full discovery. For `ingestion/common/` changes, run tests for every
 production job that imports the shared helpers.
 
-3. For large source files, run a fractional sandbox test before deploying. Mount the downloaded source and repo into the same Linux image that Cloud Run will use, set sample-only environment variables, and build FGB/PMTiles locally without GCS publishing:
-
-```bash
-WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
-export WDPA_LOCAL_DATA_DIR="$WORK_ROOT/downloads/wdpa-monthly-local"
-
-docker run --platform linux/amd64 --rm -i \
-  -e TMPDIR=/data/tmp \
-  -e WDPA_SAMPLE_FRACTION=0.001 \
-  -e WDPA_SAMPLE_SEED=7919 \
-  -v "$PWD":/work \
-  -v "$WDPA_LOCAL_DATA_DIR":/data \
-  -w /work \
-  "$IMAGE" \
-  python scripts/local_wdpa_sample.py
-```
-
-Use `WDPA_SAMPLE_FRACTION=0.001` for fast smoke loops and increase only when the bug requires more coverage. Sampling should be deterministic so row-count validation compares the same sampled predicate used for FGB and PMTiles generation.
+3. For changes to a large-source producer, use the owning job's local native
+   fixtures and production-source fractional tests before deploying. The WDPA
+   monthly path promotes its accepted retained bundle; do not rerun the retired
+   October campaign as a deployment prerequisite.
 
 4. If infrastructure is needed before an image can be pushed, add that
    prerequisite to Terraform and open a focused PR. After review and merge, let

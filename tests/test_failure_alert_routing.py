@@ -221,7 +221,7 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Verify a real upload before processing"}
+    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -250,7 +250,6 @@ def test_cloud_policy_suppresses_only_trusted_marked_executions_and_exact_observ
 def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     for filename,step_name in [
         ("wdpa-monthly-deploy.yml", "Execute wdpa-monthly canary"),
-        ("wdpa-processing-validation-deploy.yml", "Start the unattended validation execution"),
     ]:
         workflow = load_workflow(WORKFLOWS / filename)
         assert "failure_alert_verified_execution" not in str(workflow)
@@ -264,5 +263,4 @@ def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     run = workflow_steps_by_name(probe, "probe")["Run a controlled failure without dataset writes"]["run"]
     assert MARKER not in run
     assert "WDPA_FAIL_BEFORE_WRITES=true" in run
-    assert "WDPA_FAIL_BEFORE_DATASET_WRITES=1" in run
     assert run.index("completionTime") < run.index("gcloud run jobs execute")

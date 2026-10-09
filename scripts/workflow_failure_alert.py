@@ -36,7 +36,6 @@ WORKFLOW_PATHS = {
     "EAMLIS monthly deploy": "eamlis-monthly-deploy.yml",
     "WDPA monthly deploy": "wdpa-monthly-deploy.yml",
     "Sea ice daily deploy": "sea-ice-daily-deploy.yml",
-    "WDPA isolated processing validation deploy": "wdpa-processing-validation-deploy.yml",
     "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",

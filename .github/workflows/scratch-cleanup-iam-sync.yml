@@ -60,3 +60,34 @@ jobs:
         wdpa_monthly_image=unused-by-scratch-cleanup-iam-sync
         sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync
         eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync
+
+  retire-wdpa-validation:
+    name: Retire isolated WDPA validation resources
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: bucket-iam
+      sync_name: WDPA validation retirement
+      refusal_prefix: Refusing changes outside retired WDPA validation resources
+      targets: |
+        google_storage_bucket_iam_member.wdpa_build_stager
+        google_storage_bucket_iam_member.wdpa_build_folder_stager
+        google_project_iam_custom_role.wdpa_build_stager
+        google_service_account_iam_member.wdpa_validation_deployer
+        module.wdpa_processing_validation_job.google_cloud_run_v2_job.this
+        module.wdpa_validation_service_account.google_service_account.this
+      allowed_exact: |
+        google_storage_bucket_iam_member.wdpa_build_stager
+        google_storage_bucket_iam_member.wdpa_build_folder_stager
+        google_project_iam_custom_role.wdpa_build_stager
+        google_service_account_iam_member.wdpa_validation_deployer
+        module.wdpa_processing_validation_job.google_cloud_run_v2_job.this
+        module.wdpa_validation_service_account.google_service_account.this
+      tf_vars: |
+        wdpa_monthly_image=unused-by-wdpa-validation-retirement
+        sea_ice_daily_image=unused-by-wdpa-validation-retirement
+        eamlis_monthly_image=unused-by-wdpa-validation-retirement

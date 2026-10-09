@@ -131,12 +131,10 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
         add("uv", "run", "--no-sync", "python", ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py", "--local-only", "--format", "markdown", "--fail-on-findings")
         add("uv", "run", "--no-sync", "python", "scripts/check_identity_resolutions.py", "--offline")
-        release_targets = {"eamlis": "eamlis", "wdpa": "wdpa", "sea_ice": "sea-ice", "wdpa_processing": "wdpa-processing", "ingestion_iam": "iam", "dataset_usage": "dataset-usage"}
+        release_targets = {"eamlis": "eamlis", "wdpa": "wdpa", "sea_ice": "sea-ice", "ingestion_iam": "iam", "dataset_usage": "dataset-usage"}
         selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
         if selected_targets:
             add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
-        if "wdpa_processing" in plan.get("deployments", []):
-            add("uv", "run", "--no-sync", "python", "scripts/wdpa_staged_image_readiness.py")
         add("uv", "run", "--no-sync", "pytest", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"

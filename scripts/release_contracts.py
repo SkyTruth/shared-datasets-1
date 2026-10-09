@@ -28,12 +28,12 @@ DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-i
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
+    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
     "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
-    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
+    "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
 
 
@@ -268,23 +268,16 @@ def check(root, targets):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:
         errors += retained_evidence(root)
-    if "wdpa-processing" in targets:
-        wdpa_workflow = workflow(root, "wdpa-processing-validation-deploy.yml")
-        runs = "\n".join(step.get("run", "") for step in wdpa_workflow["jobs"]["deploy"]["steps"])
-        if "actions/download-artifact@v4" not in json.dumps(wdpa_workflow) or "--pre-cloud" not in runs:
-            errors.append("isolated producer deployment must consume tested bytes and staged evidence")
-        if "wdpa-monthly-deploy.yml" in json.dumps(wdpa_workflow):
-            errors.append("isolated producer bootstrap must not launch unready production dependents")
     return errors
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"}
+        targets = {"wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

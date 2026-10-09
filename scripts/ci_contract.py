@@ -23,7 +23,7 @@ SUITES = (
     "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
 DEPLOYMENTS = (
-    "eamlis", "wdpa", "sea_ice", "wdpa_processing", "ingestion_iam",
+    "eamlis", "wdpa", "sea_ice", "ingestion_iam",
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
@@ -48,7 +48,7 @@ CONTRACT_FILES = (
     "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
-    "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
+    "scripts/wdpa_processing_gate.py",
     "scripts/production_image_contracts.py",
     "scripts/dataset_usage_cold_start.py",
     "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
@@ -171,10 +171,6 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
         }:
             selected.add("wdpa")
-        # New producer bytes require their own complete retained evidence. A
-        # producer/bootstrap change cannot launch an unready publication job.
-        if path == "catalog/wdpa-staged-validation.json":
-            selected.add("wdpa_processing")
         if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
@@ -223,7 +219,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "wdpa_processing", "dataset_usage"}):
+    if selected & (ingestion | {"catalog_viewer", "dataset_usage"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

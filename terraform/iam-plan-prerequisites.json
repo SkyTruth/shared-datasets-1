@@ -3,6 +3,14 @@
   "retired_targets": {
     "scheduled-ingestion-deploy-iam-sync.yml/sync": [
       "google_project_iam_member.github_actions_wdpa_observer_bootstrap"
+    ],
+    "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [
+      "google_storage_bucket_iam_member.wdpa_build_stager",
+      "google_storage_bucket_iam_member.wdpa_build_folder_stager",
+      "google_project_iam_custom_role.wdpa_build_stager",
+      "google_service_account_iam_member.wdpa_validation_deployer",
+      "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
+      "module.wdpa_validation_service_account.google_service_account.this"
     ]
   },
   "jobs": {
@@ -45,6 +53,7 @@
       "google_project_service.required",
       "google_storage_bucket.shared_bucket",
       "module.shared_datasets_publisher_service_account.google_service_account.this"
-    ]
+    ],
+    "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": []
   }
 }

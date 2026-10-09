@@ -1,6 +1,11 @@
 # WDPA processing validation and rollout evidence
 
 The October terrestrial release is published and independently verified.
+
+The isolated validation campaign is retired. Monthly deployment keeps its pinned
+registry image, acceptance/staged records, retained evidence and reviewed promotion
+plan; it does not require the former campaign workflows or image archive. The
+sequence below records the completed campaign.
 The single retained build passed validation, and the protected rollout promoted
 its exact terrestrial bytes while preserving the existing October marine release.
 `catalog/wdpa-processing-acceptance.json` pins that single build, its validated

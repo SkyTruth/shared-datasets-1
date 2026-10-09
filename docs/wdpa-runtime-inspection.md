@@ -1,5 +1,9 @@
 # Inspect the isolated WDPA runtime
 
+The one-time runtime inspection is retired. The workflow and probe recipe have
+been removed; the observations below are historical evidence, not instructions
+for monthly deployment.
+
 The first complete cloud validation, `wdpa-processing-validation-psg4m`, exited
 before downloading inputs on October 2, 2026. Its CPU/memory preflight could not
 read the expected Docker cgroup limits. The Cloud Run API independently verifies
