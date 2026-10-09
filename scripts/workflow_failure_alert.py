@@ -23,12 +23,14 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Apply Translation notice secret IAM bootstrap")
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-OBSERVER_WORKFLOWS = {"Deployment terminal verification", "Deployment read-only reconciliation"}
+OBSERVER_WORKFLOWS = {"Deployment completion check", "Deployment terminal verification", "Deployment read-only reconciliation"}
 WORKFLOW_PATHS = {
     "CI": "ci.yml", "Bucket hygiene audit": "bucket-hygiene-audit.yml",
     "Scratch cleanup audit": "scratch-cleanup-audit.yml", "Catalog web deploy": "catalog-web-deploy.yml",
     "Catalog viewer deploy": "catalog-viewer-deploy.yml", "PMTiles CDN sync": "pmtiles-cdn-sync.yml",
     "Publish TypeScript SDK": "publish-typescript-sdk.yml",
+    "Deployment completion check": "deployment-verification.yml",
+    # Historical runs retain their old display name during replay and reruns.
     "Deployment terminal verification": "deployment-verification.yml",
     "Deployment read-only reconciliation": "deployment-recovery.yml",
     "EAMLIS monthly deploy": "eamlis-monthly-deploy.yml",

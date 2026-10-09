@@ -1,4 +1,4 @@
-name: Deployment terminal verification
+name: Deployment completion check
 
 on:
   schedule:

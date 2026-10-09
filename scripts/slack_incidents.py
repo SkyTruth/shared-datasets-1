@@ -291,7 +291,9 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
         if any(instant(observation["time"]) <= instant(item["time"])
                and (state["kind"] != "deployment" or item["sha"] == observation["sha"]) for item in failures):
             return state
-        if state["kind"] not in {"deployment", "publication"}:
+        # Workflow scope already binds the trusted file path; its display name
+        # may change between the original failure and recovery.
+        if state["kind"] == "job":
             require(observation["job_name"] == failures[0]["job_name"], "successful job does not cover the incident")
         incident["resolution"] = observation
         state["healthy"] = observation
@@ -737,7 +739,7 @@ def main():
             activated = instant(since)
             observations = source_observations(api, event, targets)
             observations = [item for item in observations if instant(item["time"]) >= activated]
-            if event["workflow_run"]["name"] == "Deployment terminal verification":
+            if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, targets, since))
             partial = []
             def retain(record):

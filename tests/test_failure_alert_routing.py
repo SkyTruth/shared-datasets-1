@@ -144,8 +144,9 @@ def test_failed_terminal_observation_and_explicit_reconciliation_remain_visible(
 
 
 @pytest.mark.parametrize("updates", [{"head_sha": "b" * 40}, {"head_branch": "feature"}, {"conclusion": "success"}, {"head_repository": {"id": 10, "full_name": alerts.REPOSITORY}}])
-def test_observer_events_must_match_actual_current_main_source(updates):
-    run = event(name="Deployment terminal verification", event="schedule", head_sha="a" * 40, run_attempt=1)["workflow_run"]
+@pytest.mark.parametrize("name", ["Deployment terminal verification", "Deployment completion check"])
+def test_observer_events_must_match_actual_current_main_source(updates, name):
+    run = event(name=name, event="schedule", head_sha="a" * 40, run_attempt=1)["workflow_run"]
     with pytest.raises(ValueError):
         alerts.verify_source_event(source_api(run, **updates), run)
 

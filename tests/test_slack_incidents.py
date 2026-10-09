@@ -654,9 +654,13 @@ def test_saved_recovery_requires_exact_signed_historical_status_not_latest_statu
             incidents.verify_saved_success(api, evidence)
 
 
-def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity():
+@pytest.mark.parametrize("name,recovered_name,filename", [
+    ("Catalog viewer deploy", "Catalog viewer deploy", "catalog-viewer-deploy.yml"),
+    ("Deployment terminal verification", "Deployment completion check", "deployment-verification.yml"),
+])
+def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity(name, recovered_name, filename):
     api = mock.Mock()
-    run = {"id": 100, "run_attempt": 1, "name": "Catalog viewer deploy", "event": "workflow_run", "head_sha": SHA,
+    run = {"id": 100, "run_attempt": 1, "name": name, "event": "workflow_run", "head_sha": SHA,
            "conclusion": "startup_failure", "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
            "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}
     event = {"workflow_run": run, "repository": {"full_name": incidents.REPOSITORY}}
@@ -664,11 +668,13 @@ def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity():
     with mock.patch.object(incidents.alerts, "verify_source_event", return_value=True):
         failed = incidents.source_observations(api, event, {})
         assert len(failed) == 1 and failed[0]["kind"] == "workflow"
-        assert failed[0]["scope"] == "workflow:catalog-viewer-deploy.yml"
-        run.update(conclusion="success", updated_at="2026-10-06T11:00:00Z")
+        assert failed[0]["scope"] == "workflow:" + filename
+        run.update(name=recovered_name, conclusion="success", updated_at="2026-10-06T11:00:00Z")
         recovered = incidents.source_observations(api, event, {})[0]
         opened = incidents.fold(None, failed[0], IDENTITY)
         assert incidents.fold(opened, recovered, IDENTITY, ancestor=lambda *_: True)["incident"]["resolution"] == recovered
+        with pytest.raises(incidents.IncidentError, match="observation scope changed"):
+            incidents.fold(opened, {**recovered, "scope": "workflow:other.yml"}, IDENTITY, ancestor=lambda *_: True)
     with mock.patch.object(incidents.alerts, "verify_source_event", return_value=False):
         assert incidents.source_observations(api, event, {}) == []
 
@@ -793,9 +799,10 @@ def test_exact_completed_ci_jobs_and_publication_negative_controls():
         assert incidents.source_observations(api, event, incidents.job_targets()) == []
 
 
-def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited():
+@pytest.mark.parametrize("name", ["CI", "Deployment terminal verification", "Deployment completion check"])
+def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name):
     api = mock.Mock()
-    api.pages.return_value = [{"status": "completed", "name": "CI", "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
+    api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
     with mock.patch.object(incidents, "source_observations", return_value=[observation()]):
         assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [observation()]
     path = api.pages.call_args.args[0]
