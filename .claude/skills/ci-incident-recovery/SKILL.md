@@ -101,6 +101,8 @@ An unavailable attestation or record service does not authorize skipping verific
 
 Inspect existing protected recovery paths before proposing another workflow.
 
+Before dispatch, establish the target outcome, ledger and replay eligibility, workflow trigger, tested-source requirements, terminal proof, and observer action. Check the target-specific contracts and actual deployment selector. Validation-suite selection does not establish deployment selection. Determine whether a failed or incomplete record requires reconciliation before retrying.
+
 Use the smallest existing path that can perform the authorized recovery while retaining:
 
 - The exact tested executor revision.
@@ -125,6 +127,10 @@ Reproduce the original failure before accepting a fix.
 Exercise the real entrypoint through its output, persistence, package, or runtime boundary. Do not mock away the boundary that failed.
 
 Include relevant empty and nonempty inputs, legitimate provider behavior, and persisted-state transitions. Keep negative controls for unauthorized or incompatible states.
+
+Before full preflight, state the required terminal facts and finish focused positive and negative checks for them. Verify artifact bytes, live registration or metadata, and persisted status separately when the target contract requires each.
+
+Check tool resolution through the child-process environments used by preflight and release CLIs. Carry verified executable paths through PATH when subprocesses invoke bare commands; tool-specific overrides may not survive isolated environments. Resolve setup failures with cheap probes before starting the full suite.
 
 Follow the current preflight requirements before every push. Use the repository's pinned toolchain and evidence contract.
 
