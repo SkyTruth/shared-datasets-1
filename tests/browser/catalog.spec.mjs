@@ -6,6 +6,16 @@ import { resolve } from 'node:path';
 import { baseURL, packageDir, siteDir, workDir } from './paths.mjs';
 
 const readJSON = async (path) => JSON.parse(await readFile(path, 'utf8'));
+const comparisonColors = [[195,59,59], [22,129,83], [227,189,32]];
+const nearColor = (image, color) => {
+  for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
+  return false;
+};
+const sampleCanvas = async canvas => PNG.sync.read(await canvas.screenshot());
+const viewport = page => page.evaluate(async () => {
+  const url = performance.getEntriesByType('resource').find(item => new URL(item.name).pathname === '/map-preview.js').name;
+  return (await import(url)).captureViewport();
+});
 // Neutral raster tile preserves the real basemap layer without external traffic.
 const basemapPNG = await readFile(resolve(packageDir, 'fixtures/basemap.png'));
 const libraries = new Map([
@@ -509,37 +519,27 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
 });
 
-test('category filters preserve the camera, extents zoom explicitly and changes draw above gray', async ({page, transport}, testInfo) => {
+test('category filters preserve the camera, extents zoom explicitly and changes draw above gray', async ({page}, testInfo) => {
   await select(page, 'overlap'); await expect(page.locator('#map-status')).toBeHidden();
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
   await expect(legend.locator('[data-change="metadata_changed"]')).toHaveText('Metadata changed');
   await expect(legend.locator('[data-change="novel"]')).toHaveText('Added / moved here');
-  const colors = [[195,59,59], [22,129,83], [227,189,32]];
-  const nearColor = (image, color) => {
-    for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
-    return false;
-  };
-  const sample = async () => PNG.sync.read(await canvas.screenshot());
   // Gray points occupy the same pixels as changes. Assert actual paint output
   // across both release sources, rather than testing style expression strings.
-  await expect.poll(async () => { const image = await sample(); return colors.every(color => nearColor(image,color)); }).toBe(true);
+  await expect.poll(async () => { const image = await sampleCanvas(canvas); return comparisonColors.every(color => nearColor(image,color)); }).toBe(true);
   await testInfo.attach('comparison-overlapping-points.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
-  const viewport = () => page.evaluate(async () => {
-    const url = performance.getEntriesByType('resource').find(item => new URL(item.name).pathname === '/map-preview.js').name;
-    return (await import(url)).captureViewport();
-  });
-  const union = await viewport(), hits = page.locator('#feature-inspector .feature-hit');
+  const union = await viewport(page), hits = page.locator('#feature-inspector .feature-hit');
   for (const [category, count, side, longitude] of [['novel',1,'After',1], ['removed',1,'Before',-1], ['metadata_changed',2,'',.1]]) {
-    const beforeFilter = await viewport();
+    const beforeFilter = await viewport(page);
     await legend.locator(`[data-change="${category}"]`).click();
     await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(1);
     await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
-    expect(await viewport()).toEqual(beforeFilter);
+    expect(await viewport(page)).toEqual(beforeFilter);
     await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
     await expect.poll(async () => {
-      const view = await viewport();
+      const view = await viewport(page);
       return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
     }).toBe(true);
     await canvas.screenshot();
@@ -552,9 +552,9 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       await expect(hits.filter({hasText:'After ·'})).toContainText('Shared after');
       await expect(hits.locator('th.metadata-changed')).toHaveCount(3);
     }
-    const image = await sample(), selected = category === 'novel' ? 1 : category === 'removed' ? 0 : 2;
-    expect(nearColor(image, colors[selected])).toBe(true);
-    expect(colors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
+    const image = await sampleCanvas(canvas), selected = category === 'novel' ? 1 : category === 'removed' ? 0 : 2;
+    expect(nearColor(image, comparisonColors[selected])).toBe(true);
+    expect(comparisonColors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
     if (category === 'metadata_changed') {
       // Reveal the distinct unchanged object at precisely the same coordinates.
       // Each release keeps both hits; only the matched edited object highlights.
@@ -569,37 +569,45 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       await testInfo.attach('comparison-colocated-identities.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
     }
   }
-  const beforeUnchanged = await viewport();
+});
+
+test('unchanged filters survive basemap changes and release changes reset filters', async ({page, transport}) => {
+  await select(page, 'overlap'); await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  const union = await viewport(page);
   await legend.locator('[data-change="unchanged"]').click();
   await expect(page.locator('#compare-page')).toHaveText('1–3 of 3');
-  expect(await viewport()).toEqual(beforeUnchanged);
+  expect(await viewport(page)).toEqual(union);
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
-  await expect.poll(async () => (await viewport()).zoom).toBeLessThan(union.zoom + 1);
+  await expect.poll(async () => (await viewport(page)).zoom).toBeLessThan(union.zoom + 1);
   await canvas.screenshot();
-  {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
+  {const image=await sampleCanvas(canvas);expect(comparisonColors.some(color=>nearColor(image,color))).toBe(false);}
   await page.locator('#basemap-select').selectOption('satellite');
   await expect(page.locator('#map-status')).toBeHidden();
   await expect(legend.locator('[data-change="unchanged"]')).toHaveAttribute('aria-pressed','true');
   await expect(legend.locator('[data-change="unchanged"]')).toBeEnabled();
   expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
-  {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
+  {const image=await sampleCanvas(canvas);expect(comparisonColors.some(color=>nearColor(image,color))).toBe(false);}
   // Clicking the selected category restores all geometry and table rows.
-  const beforeUnfilter = await viewport();
+  const beforeUnfilter = await viewport(page);
   await legend.locator('[data-change="unchanged"]').click();
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
   await expect(page.locator('#compare-page')).toHaveText('1–6 of 6');
-  expect(await viewport()).toEqual(beforeUnfilter);
+  expect(await viewport(page)).toEqual(beforeUnfilter);
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
-  await expect.poll(async () => {const image=await sample();return colors.every(color=>nearColor(image,color));}).toBe(true);
+  await expect.poll(async () => {const image=await sampleCanvas(canvas);return comparisonColors.every(color=>nearColor(image,color));}).toBe(true);
   await legend.locator('[data-change="novel"]').click();
   await legend.locator('[data-change="removed"]').click();
+  await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(2);
   await page.locator('#compare-before').selectOption('2026-09-22');
   await expect(page.locator('#compare-summary tbody tr').first().locator('td').first()).toHaveText('2026-09-22');
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
-  const emptyViewport = await viewport();
+  const emptyViewport = await viewport(page);
   await legend.locator('[data-change="novel"]').click();
   await expect(page.locator('#compare-page')).toHaveText('No matching features');
-  expect(await viewport()).toEqual(emptyViewport);
+  expect(await viewport(page)).toEqual(emptyViewport);
 });
 
 test('comparison selection changes discard late polygon metadata', async ({page, transport}) => {
