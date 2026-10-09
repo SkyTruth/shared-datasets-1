@@ -1,6 +1,6 @@
 # Audit failure families and their guardrails
 
-`ci-failure-baseline.json` retains 1,683 distinct workflow runs and 1,688 run
+The baseline retains 1,683 distinct workflow runs and 1,688 run
 attempts from the original window. It contains 77 failed attempts and three
 cancelled attempts, with 81 unsuccessful job observations across those 80
 inspected attempts. A rerun is another attempt of the same run; several
@@ -8,6 +8,14 @@ unsuccessful jobs in one attempt are not several failed attempts. Preserve the
 baseline and its diagnosis limits, including runtime causes inferred from later
 repair PRs. All 15 recorded families have a validation or operational contract
 below.
+
+The full inventories are retained in git history at commit
+[`3f28e4a69b4adb456fd9f036df96c0b291790bd5`](https://github.com/SkyTruth/shared-datasets-1/commit/3f28e4a69b4adb456fd9f036df96c0b291790bd5),
+with SHA-256 digests
+`e2a55aeec8107cfed2b920bea9a60bd5771e698ddd60775c3f4beb4ce0141f9e` for
+[`docs/ci-failure-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-failure-baseline.json)
+and `36e698e6fd5cd0bf2add760e26dd1c207fa7f84bf33fcd2efe05e3375c571576` for
+[`docs/ci-job-allocation-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-job-allocation-baseline.json).
 
 | Recorded failure family | Guardrail and delivery step |
 | --- | --- |
@@ -138,7 +146,7 @@ comparable workflow counts. An attempt-start window requires a separate inventor
 - **Recurring signatures:** repeated diagnosed signatures by family and target,
   alongside affected workflow attempts and unsuccessful-job observations.
   Several bad jobs in one attempt must not inflate its workflow failure count.
-- **Jobs:** [the main-push allocation companion](ci-job-allocation-baseline.json)
+- **Jobs:** The main-push allocation companion
   covers all 357 original main-push runs, 358 attempts and 67 distinct main head
   SHAs: 755 API-created jobs and 553 jobs that acquired a runner and started within
   the window. That is 11.27 created jobs and 8.25 runner-allocated jobs per observed
