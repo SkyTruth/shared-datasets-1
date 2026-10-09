@@ -58,62 +58,21 @@ Before substantial work, inspect `.claude/skills/*/SKILL.md` frontmatter and
 load any matching skill body. Repo-local skills override generic habits when
 they apply, after explicit user instructions and this file.
 
-Current repo-local skills:
-
-- `.claude/skills/align-virtual-environment/SKILL.md`
-- `.claude/skills/ci-incident-recovery/SKILL.md`
-- `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
-- `.claude/skills/feature-preview/SKILL.md`
-- `.claude/skills/gcp-shared-datasets/SKILL.md`
-- `.claude/skills/invariant-first-engineering/SKILL.md`
-- `.claude/skills/publish-shared-dataset/SKILL.md`
-- `.claude/skills/protected-terraform-apply/SKILL.md`
-- `.claude/skills/repo-alert-commit-messages/SKILL.md`
-- `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
-- `.claude/skills/static-catalog-web-preview/SKILL.md`
-- `.claude/skills/sync-docs-with-code/SKILL.md`
-- `.claude/skills/update-feature-metadata-translations/SKILL.md`
-
-High-priority triggers:
-
-- Use `ci-incident-recovery` when investigating a failed GitHub Actions run,
-  recovering a deployment or publication, reconciling an unresolved workflow
-  incident, or diagnosing repeated recovery failures or incident-related delays.
-- Use `gcp-shared-datasets` before inspecting, downloading, uploading, editing,
-  replacing, publishing, or validating shared GCS objects.
-- Use `publish-shared-dataset` before manually adding, updating, publishing, or
-  documenting a shared dataset asset.
-  Plain-language requests such as "add this" or "upload this file" count as
-  manual dataset intake unless the human explicitly limits the request to
-  scratch-only or diagnostic staging.
-- Use `deploy-scheduled-ingestion` before deploying or updating Cloud Run and
-  Cloud Scheduler ingestion jobs.
-- Use `feature-preview` before deploying, destroying, uploading test
-  data to, or loading data into the feature branch preview environment,
-  including feature preview, preview test dataset, and feature preview
-  requests.
-- Use `protected-terraform-apply` before suggesting, planning, documenting, or
-  running any production Terraform apply, `terraform_prod_apply.py`, PMTiles CDN
-  sync, GCP IAM/storage/Cloud Run/Scheduler/CDN Terraform mutation, or
-  shared-datasets prod infrastructure deployment.
-- Use `align-virtual-environment` before creating, repairing, changing, or
-  documenting Python environments.
-- Use `invariant-first-engineering` before implementing, reviewing,
-  refactoring, simplifying, or iterating on code where correctness depends on
-  strong invariants, persisted formats, schemas, state machines,
-  infrastructure behavior, shared abstractions, or core domain logic.
-- Use `repo-alert-commit-messages` before committing staged changes or preparing
-  repo-alert commit-message blocks.
-- Use `shared-datasets-compliance-audit` for read-only bucket/repo compliance
-  walkthroughs.
-- Use `static-catalog-web-preview` before building, updating, QAing, or
-  deploying the static catalog web preview under `_catalog/web/`.
-- Use `sync-docs-with-code` before keeping repository docs aligned with code,
-  generated outputs, workflows, Terraform, ingestion jobs, APIs, or repo-local
-  skills.
-- Use `update-feature-metadata-translations` before adding, editing, reviewing,
-  regenerating, or publishing release-oriented feature metadata translation
-  sources or generated locale-specific metadata sidecars.
+| Skill | Trigger from SKILL.md frontmatter |
+|---|---|
+| [align-virtual-environment](.claude/skills/align-virtual-environment/SKILL.md) | Align, repair, update, or document a repository's Python environment using project-declared tooling. |
+| [ci-incident-recovery](.claude/skills/ci-incident-recovery/SKILL.md) | Investigate failed GitHub Actions runs, recover deployments/publications, or reconcile workflow incidents and repeated recovery failures. |
+| [deploy-scheduled-ingestion](.claude/skills/deploy-scheduled-ingestion/SKILL.md) | Deploy or update Cloud Run and Cloud Scheduler ingestion jobs, images, alert coverage, and post-deploy verification. |
+| [feature-preview](.claude/skills/feature-preview/SKILL.md) | Deploy, destroy, upload test data to, or load data into the feature preview environment and refresh its catalog. |
+| [gcp-shared-datasets](.claude/skills/gcp-shared-datasets/SKILL.md) | Inspect, download, upload, edit, replace, delete, publish, or validate objects in the shared SkyTruth GCS bucket. |
+| [invariant-first-engineering](.claude/skills/invariant-first-engineering/SKILL.md) | Implement, review, refactor, or simplify code depending on invariants, persisted formats, schemas, state machines, infrastructure, or shared domain logic. |
+| [protected-terraform-apply](.claude/skills/protected-terraform-apply/SKILL.md) | Suggest, plan, run, approve, or document production Terraform, terraform_prod_apply.py, GCP infrastructure mutations, or PMTiles CDN sync. |
+| [publish-shared-dataset](.claude/skills/publish-shared-dataset/SKILL.md) | Manually add, update, publish, or document a shared dataset, including under-specified uploads, artifact builds, catalog generation, and schema alerts. |
+| [repo-alert-commit-messages](.claude/skills/repo-alert-commit-messages/SKILL.md) | Commit staged changes or prepare repo-alert copy while keeping staged scope isolated from unrelated work. |
+| [shared-datasets-compliance-audit](.claude/skills/shared-datasets-compliance-audit/SKILL.md) | Perform a read-only repo/bucket compliance walkthrough of layout, READMEs, formats, releases, and catalog freshness. |
+| [static-catalog-web-preview](.claude/skills/static-catalog-web-preview/SKILL.md) | Build, update, QA, or deploy the static catalog web preview under _catalog/web, including PMTiles, caching, and docs rendering. |
+| [sync-docs-with-code](.claude/skills/sync-docs-with-code/SKILL.md) | Align repository documentation with implementation, tests, CLIs, workflows, Terraform, schemas, and generated outputs. |
+| [update-feature-metadata-translations](.claude/skills/update-feature-metadata-translations/SKILL.md) | Add, edit, review, regenerate, or publish release feature metadata translation sources and locale sidecars. |
 
 Keep skill examples repo-relative and maintainer-neutral. Avoid usernames,
 home-directory paths, shell-profile assumptions, and machine-local environment
@@ -173,30 +132,32 @@ why they are safe to remove. Never broad-delete the shared temp root.
 
 | Concern | Source |
 |---|---|
-| Agent routing and non-negotiable safety rules | `AGENTS.md` |
-| Repo purpose and human quick start | `README.md` |
-| Dataset category data | `catalog/categories.yaml` |
-| Dataset taxonomy guidance | `docs/standards/dataset-taxonomy.md` |
-| Asset layout, formats, naming, README requirements | `docs/standards/asset-layout-and-formats.md` |
-| Temporary local file/workspace hygiene | `docs/standards/local-temp-workspaces.md` |
-| CI incident diagnosis, recovery, and alert reconciliation | `.claude/skills/ci-incident-recovery/SKILL.md` |
-| Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
-| Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
-| Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
-| Feature preview deploys and test data loads | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md` |
-| Invariant-first code/design simplification | `.claude/skills/invariant-first-engineering/SKILL.md` |
-| Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
-| Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
-| Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |
-| Release feature metadata translations | `.claude/skills/update-feature-metadata-translations/SKILL.md` |
-| Python SDK usage | `api/python/README.md` |
-| TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
-| TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
-| Bucket/repo compliance audits | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
-| Repo-alert commit messages | `.claude/skills/repo-alert-commit-messages/SKILL.md` |
-| Python environment alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
-| Dataset README templates | `templates/` |
-| Infrastructure | `terraform/` |
+| Agent routing and non-negotiable safety rules | [this operating guide](AGENTS.md) |
+| Repo purpose and human quick start | [README.md](README.md) |
+| Claude Code shim | [CLAUDE.md](CLAUDE.md) |
+| Operational workflow and skill catalog | [Repo-Local Skills](#repo-local-skills) |
+| Skill portability and discovery | [.claude/skills/README.md](.claude/skills/README.md) |
+| Dataset category data | [catalog/categories.yaml](catalog/categories.yaml) |
+| Dataset taxonomy guidance | [dataset taxonomy](docs/standards/dataset-taxonomy.md) |
+| Asset layout, formats, naming, README requirements | [asset standard](docs/standards/asset-layout-and-formats.md) |
+| Temporary local file/workspace hygiene | [local workspace standard](docs/standards/local-temp-workspaces.md) |
+| Reviewed canonical publish/delete plan contract | [dataset plans](.github/dataset-plans/README.md) |
+| Operational alert routing and notification configuration | [alert routing](docs/alert-routing.md) |
+| Slack incident recovery, setup, and reconciliation | [Slack incidents](docs/slack-incidents.md) |
+| Complete validation before pushing | [CI preflight](docs/ci-preflight.md) |
+| Dataset README templates | [templates/](templates/) |
+| Artifact builds and catalog generation commands | [scripts/README.md](scripts/README.md) |
+| Consumer integration guide | [consumer guide](docs/consumer-guide.md) |
+| Feature metadata lookup contract | [feature metadata API](docs/feature-metadata-api.md) |
+| Feature preview architecture | [feature preview](docs/feature-preview.md) |
+| Static catalog architecture | [catalog web preview](docs/catalog-web-preview.md) |
+| Python SDK usage | [Python SDK](api/python/README.md) |
+| TypeScript SDK usage, package contents, and release procedure | [TypeScript SDK](api/typescript/README.md) |
+| TypeScript SDK npm release workflow | [publish-typescript-sdk.yml](.github/workflows/publish-typescript-sdk.yml) |
+| Tiered PMTiles browser access | [PMTiles CDN](docs/pmtiles-cdn.md) |
+| Infrastructure | [terraform/](terraform/) |
+| Ingestion job structure and shared runtime behavior | [ingestion/README.md](ingestion/README.md) |
+| Passive dataset usage and retirement review | [usage collector](ingestion/dataset_usage/README.md), [usage registry](catalog/dataset-usage.json) |
 
 ## Non-Negotiable Rules
 
@@ -209,8 +170,11 @@ Remote GCS objects:
   mutate canonical `latest/`, `releases/`, `_catalog/`, or dataset README
   objects directly from a local terminal.
 - For manual dataset add/update/upload/publish requests, scratch staging is an
-  intermediate review step, not the deliverable. Unless the human explicitly
-  asks for scratch-only staging, the workflow must continue through approved
+  intermediate review step, not the deliverable. Plain-language requests such
+  as "add this" or "upload this file" count as manual dataset intake unless the
+  human explicitly limits them to scratch-only or diagnostic staging. Unless
+  the human explicitly asks for scratch-only staging, the workflow must continue
+  through approved
   canonical artifact preparation, asset documentation, catalog regeneration,
   staging of all promotion candidates, and a PR with a reviewed publish plan.
 - If the supplied source file is not an approved canonical format, do not stop

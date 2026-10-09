@@ -51,11 +51,21 @@ Run it through `uv`:
 uv run python scripts/gcs_asset.py --help
 ```
 
-Future improvements may include:
+Shipped capabilities:
 
-- `validate-path` command.
-- `publish-release` command.
-- README frontmatter parsing.
-- Catalog generation.
-- FGB/PMTiles/GeoJSON/CSV validation hooks.
-- Dry-run plans for remote mutations.
+| Capability | Implementation |
+|---|---|
+| Path validation against taxonomy/layout | [`gcs_asset.py validate-path`](../scripts/gcs_asset.py) |
+| Release planning and generation-preconditioned publication | [`gcs_asset.py publish-release`](../scripts/gcs_asset.py), backed by [`publish_release.py`](../scripts/publish_release.py) |
+| YAML frontmatter parsing, managed asset-doc blocks, catalog/index generation and README export | [`catalog_docs.py`](../scripts/catalog_docs.py) |
+| Local FGB/PMTiles build and validation, including archive verification and representative tile decoding | [`vector_asset.py`](../scripts/vector_asset.py) |
+| Format/layout, README/catalog, release-index and sidecar/schema/manifest compliance checks | [compliance audit](../.claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py) |
+| Read-only JSON release plans | `gcs_asset.py publish-release --dry-run` |
+
+Validation is format-specific: vector archive/content checks, raster validation
+in [`raster_asset.py`](../scripts/raster_asset.py), and CSV/OGR schema inspection
+in [`dataset_alerts.py`](../scripts/dataset_alerts.py) complement the compliance
+audit. The audit does not validate every dataset's complete bytes. See the
+[GCS workflow](../.claude/skills/gcp-shared-datasets/SKILL.md) for object operations
+and the [reviewed plan contract](../.github/dataset-plans/README.md) for manual
+canonical mutation authority; a dry-run plan grants no approval.

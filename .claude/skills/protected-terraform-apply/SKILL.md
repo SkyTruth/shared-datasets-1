@@ -65,6 +65,36 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.
 
+## Publisher and read-only identity configuration
+
+The Terraform Workload Identity provider restricts OIDC to this repository and
+its `shared-datasets-production` environment. After the protected workflow
+provisions it, set the environment variable `GCP_WORKLOAD_IDENTITY_PROVIDER` to
+Terraform output `github_workload_identity_provider`. Read-only catalog drift
+and hygiene workflows use repository variables
+`GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and `GCP_READONLY_SERVICE_ACCOUNT`, from
+outputs `github_readonly_workload_identity_provider` and
+`github_readonly_service_account`.
+
+GitHub environment deployment reviewers, when configured, are a separate gate
+from PR approval. The canonical mutation approval and executor contract lives
+in [.github/dataset-plans/README.md](../../../.github/dataset-plans/README.md).
+
+The publisher can read `_scratch/pending-publishes/` to promote reviewed bytes.
+`scratch_writer_members` retains the current scratch-only writer; override it
+with the approved scratch-only group/account when ready before removing broad
+human write grants. Conditional IAM and alerting are the standing project-scope
+controls: canonical writers are the publisher and scheduled-job identities;
+scratch access stays separate and unexpected canonical writes/deletes alert.
+
+The optional project-level deny backstop defaults off.
+`canonical_mutation_deny_policy_enabled=true` requires an approved
+organization-level IAM administrator or controlled IaC identity with
+`roles/iam.denyAdmin` at organization scope; project ownership alone cannot grant
+or use that role. Changes to any of these resources follow the protected workflow
+above. The shared hierarchical-namespace bucket retains deleted/overwritten
+objects through Cloud Storage soft delete for 30 days.
+
 ## Break-Glass Exception
 
 Only use local production apply when the user explicitly says this is
