@@ -1,664 +1,93 @@
 # scripts/
 
-This directory contains small operational scripts for maintainers and AI agents.
+Use `uv run` for repo Python tools. Procedures live in the [skill catalog](../AGENTS.md#repo-local-skills); each CLI's top-level and subcommand `--help` own flags. JSON reports and exit codes supply validation evidence. Internal libraries have no standalone CLI; use their owning command below.
 
 ## Branch cleanup
 
-`tidy_branches.sh` is a standalone Bash command for local and GitHub branch
-cleanup. Requires Bash 3.2+, Git 2.31+, authenticated GitHub CLI (`gh`), and `jq`.
-Run it inside the checkout, without concurrent local Git writers:
-
-```bash
-bash scripts/tidy_branches.sh                       # preview
-bash scripts/tidy_branches.sh --apply               # delete verified branches
-bash scripts/tidy_branches.sh --apply --https       # use gh HTTPS credentials
-bash scripts/tidy_branches.sh --keep release/stable # repeat --keep as needed
-```
-
-`--remote NAME` selects a remote other than `origin`. The selected remote must
-have one identical fetch/push URL and resolve to a github.com repository.
-`GIT_BIN` selects an alternative Git executable if the default Git is unavailable.
-`--https` changes only this invocation's transport, leaving saved Git configuration
-unchanged. Authentication and server failures stop the run; rerun after resolving
-them. There are no automatic credential fallbacks or retries.
-
-Even preview mode fetches and prunes remote-tracking refs and writes a report.
-It never deletes branches or detaches worktrees. Apply mode creates a new plan,
-rechecks GitHub protection/open PR state and branch tips, and verifies a recovery
-bundle before deleting anything. It uses one atomic remote push with an exact
-commit lease for every deletion. Local deletion compares the expected commit
-atomically. A failure can leave remote cleanup completed before local cleanup;
-the recorded plan, logs, and bundle identify what happened. Rerunning builds a
-fresh plan rather than replaying stale authority.
-
-A candidate needs a merged PR from this repository, with its merge commit in the
-current default branch. Its PR head must be an ancestor of that branch or have
-exactly the same tree as its merge commit (a verified squash merge). A remote tip
-must match the merged PR head; a local tip may match or be an ancestor of it.
-This intentionally keeps new branches at `main`, unpublished extra commits, and
-ambiguous rebased/cherry-picked work. Open PR heads and bases, protected branches,
-`main`, the default branch, the caller's current branch, and explicit `--keep`
-names are retained. Dirty, locked, missing, or multiply attached worktrees and
-worktrees with an in-progress Git operation also retain their branch.
-
-Clean worktrees attached to deleted branches are detached at the same commit.
-Files, the main checkout, the index, per-branch Git configuration, and worktree
-directories are preserved. Stale worktree registrations are left for separate
-review; this command does not remove them or existing temporary directories.
-Do not use this command concurrently with local commits, checkouts, or worktree
-creation. Remote races are rejected by the commit leases; local Git operations
-across worktrees cannot be made transactional with remote deletion.
-
-Each run prints its retained directory under
-`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`.
-`plan.tsv` records branch names, local/remote commits and PR evidence; `keep.tsv`
-records why other branches were kept. Apply also saves a verified
-`deleted-branches.bundle`, action logs and final ref/worktree lists. Recover a
-deleted local branch using its recorded commit, or from the full bundle:
-
-```bash
-git fetch /path/to/deleted-branches.bundle refs/heads/example:refs/heads/example
-```
-
-For a remote-only branch, the bundle ref is `refs/remotes/origin/example` (or
-the selected remote name). Review recovered work before republishing it. This
-cleanup sends only ref deletions, so the code-push CI preflight is not applicable;
-normal preflight requirements still apply when publishing code changes.
+`tidy_branches.sh` previews verified merged-branch cleanup and retains a recovery report/bundle before authorized deletion. Use it without concurrent Git writers; preview fetches/prunes refs. Interface: `bash scripts/tidy_branches.sh --help`.
 
 ## Dataset operations
 
-WDPA processing validation uses `local_ingestion_smoke.py` for the small sea-ice
-fixture, then `local_wdpa_sample.py --asset wdpa-marine` for a complete marine
-build with measured disk spill. `cloud_wdpa_validation.py` runs the complete
-frozen October source in an isolated Cloud Run job without publishing.
-`wdpa_processing_gate.py --pre-cloud` gates that deployment on reviewed staged
-evidence and disk quota; its default gate still requires complete resource
-acceptance before production-worker deployment. `check_wdpa_validation_plan.py`
-enforces the isolated job's resource, entrypoint and permission contracts.
+`publishing_concierge.py` guides first uploads and preview bundles through evidence gates, then renders reports or immutable plan documents; it performs no remote or Git operations. Use the [publish routes](../.claude/skills/publish-shared-dataset/SKILL.md). Interface: `uv run python scripts/publishing_concierge.py --help`.
 
-The most important script is:
+`gcs_asset.py` inspects objects, validates paths and performs generation-safe transfers. Agents stage production bytes; only the protected publisher mutates canonical destinations. Existing release planning uses its dry-run path. Interface: `uv run python scripts/gcs_asset.py --help`.
 
-```text
-scripts/gcs_asset.py
-```
+`reviewed_dataset_plan.py` validates manually prepared publish/delete payloads and writes immutable documents with matching PR fences. Use when concierge rendering is unsuitable; [approval contract](../.github/dataset-plans/README.md). Interface: `uv run python scripts/reviewed_dataset_plan.py --help`.
 
-It is the default interface for safe Cloud Storage object operations.
+`vector_asset.py` builds and validates local FGB/PMTiles and recommends maxzoom; use for vector preparation before staging. Reports retain native validation and tool evidence; no GCS writes. Interface: `uv run python scripts/vector_asset.py --help`.
 
-Use `publish-release` when local artifacts are ready for an existing catalog
-asset. It builds a JSON plan, rejects existing release objects, uploads
-`releases/YYYY-MM-DD/` with no-clobber preconditions, blocks incompatible
-canonical schema changes before any remote write, replaces `latest/` with
-observed generations, writes a run record, and emits schema/upload alerts:
+`raster_asset.py` validates COG/Zarr candidates before staging; use for approved raster/array contracts. Interface: `uv run python scripts/raster_asset.py --help`.
 
-```bash
-uv run python scripts/gcs_asset.py publish-release \
-  --asset-slug example-asset \
-  --release-date 2026-05-01 \
-  --publish-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
-  --source-version "source version or URL" \
-  --dry-run
-```
+`validate_feature_metadata.py` checks a local sidecar/schema/manifest bundle, hashes and feature counts without Firestore or remote writes. Interface: `uv run python scripts/validate_feature_metadata.py --help`.
 
-Before execution writes anything, it copies every planned artifact and metadata
-upload into a private temporary directory and verifies each planned size and
-SHA-256. Schema and native validation, manifest-template reads, and uploads use
-those copies. Changes to the originals after capture do not change the uploaded
-bytes. Allow temporary disk space for the entire input set under
-`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
-execution removes its own copies on exit. These copies are not durable recovery
-checkpoints. A partial remote publication still needs explicit repair.
+`catalog_docs.py` generates/checks catalog and managed asset-doc blocks, and exports bucket READMEs. Update asset docs first; use it before proposal staging. Interface: `uv run python scripts/catalog_docs.py --help`.
 
-If intentionally publishing only a subset of catalog-listed formats, name each
-unchanged companion explicitly with `--allow-stale-format`.
+`catalog_site.py` builds the static catalog bundle from asset/catalog metadata and optional release indexes. Use for local runtime verification; the [catalog skill](../.claude/skills/static-catalog-web-preview/SKILL.md) owns deployment. Interface: `uv run python scripts/catalog_site.py --help`.
 
-`finalize_promoted_release_metadata.py` pins each manifest/run-record read to
-its observed generation and replaces only that generation. A concurrent change
-refuses finalization; it is not adopted as a new replacement precondition. This
-protects each JSON replacement, but does not make multiple object writes atomic
-or bind the current artifact-stat-based finalizer to a publication receipt.
+`collect_release_indexes.py` collects generation-observed release indexes for catalog hydration; use before a release-backed catalog build. Interface: `uv run python scripts/collect_release_indexes.py --help`.
 
-Catalog and asset README generation lives in:
+`catalog_web_publish.py` publishes a validated web bundle under the protected publisher; local agents use the reviewed staging procedure. Interface: `uv run python scripts/catalog_web_publish.py --help`.
 
-```text
-scripts/catalog_docs.py
-```
+`catalog_drift_guard.py` compares generated and live catalog contracts read-only; use after protected catalog publication. Interface: `uv run python scripts/catalog_drift_guard.py --help`.
 
-Edit `docs/assets/{asset_slug}.md`, including the required `citation` for the
-original source publication or authoritative dataset release, then regenerate
-local derived files:
+`publish_workflow.py` supplies the protected mutation workflow's acceptance, validation, promotion, deletion and notification steps. It grants no local mutation authority. Interface: `uv run python scripts/publish_workflow.py --help`.
 
-```bash
-uv run python scripts/catalog_docs.py generate
-uv run python scripts/catalog_docs.py check
-```
+`finalize_promoted_release_metadata.py` binds prepared metadata to observed promoted artifacts and replaces only the captured generation; use inside protected publication, never as a local recovery shortcut. Interface: `uv run python scripts/finalize_promoted_release_metadata.py --help`.
 
-The generator refreshes managed asset-doc blocks,
-`catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`. To prepare
-bucket README files without uploading them:
+`scratch_cleanup.py` audits abandoned pending-publish prefixes using the [standing age/generation policy](../.claude/skills/gcp-shared-datasets/references/scratch-cleanup.md). Its scheduled workflow owns authorized cleanup. Interface: `uv run python scripts/scratch_cleanup.py --help`.
 
-```bash
-uv run python scripts/catalog_docs.py export-readmes \
-  --output-dir "$TMPDIR/shared-datasets-1/readmes"
-```
+`dataset_alerts.py` checks schema compatibility and prepares dataset notifications; use read-only checks before publication. The [alert policy](../docs/alert-routing.md#dataset-and-repository-notifications) owns send behavior. Interface: `uv run python scripts/dataset_alerts.py --help`.
 
-Raster validation helpers live in:
+`repo_alerts.py` previews/posts exceptional functionality announcements from approved commit fences; maintenance defaults to no repo alert. Interface: `uv run python scripts/repo_alerts.py --help`.
 
-```text
-scripts/raster_asset.py
-```
+`slack_notify.py` delivers structured workflow summaries; use only with notification authorization and the owning workflow policy. This argument-only helper has no `--help`; use `uv run python scripts/publish_workflow.py --help` for its workflow entry point.
 
-Use `validate-cog` before publishing a local Cloud Optimized GeoTIFF:
-
-```bash
-uv run python scripts/raster_asset.py validate-cog ./asset.tif
-```
-
-Vector artifact build helpers live in:
-
-```text
-scripts/vector_asset.py
-```
-
-Use `build` before publishing a manual vector asset that needs canonical FGB and
-PMTiles. The helper writes generated files outside the repository by default,
-under the repo temp root described in
-`docs/standards/local-temp-workspaces.md`:
-
-```text
-${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/{asset-slug}/
-```
-
-Override the temp root with `SHARED_DATASETS_WORKDIR` or pass `--work-dir`.
-Do not write generated datasets into the repo unless they are tiny intentional
-fixtures. Put ad hoc scratch files under
-`$TMPDIR/shared-datasets-1/_scratch/{task}-{timestamp}/`, not directly under
-`/tmp` or the repository root.
-
-Example:
-
-```bash
-uv run python scripts/vector_asset.py build ./source.shp \
-  --asset-slug example-asset \
-  --layer-name example_asset \
-  --title "Example Asset" \
-  --description "Example vector tiles" \
-  --tile-simplify 0.001
-```
-
-The build sequence is standardized as:
-
-1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
-2. Profile the generated FGB to choose PMTiles maxzoom from source hints and
-   measured geometry detail.
-3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
-4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe using explicit
-   min/max zoom metadata and any compact property filters such as `feature_id`.
-5. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
-6. Local validation with `ogrinfo`, PMTiles v3 magic-byte checks,
-   `pmtiles verify`, `pmtiles show`, and a decoded representative PMTiles tile.
-   Missing tools or an unavailable decode leave the artifact unvalidated and
-   block upload or success reporting.
-
-The static catalog generator emits `colorizer_metadata` for each asset. For
-release-oriented feature metadata assets, the colorizer source is the published
-schema sidecar; for ordinary PMTiles assets, it is PMTiles `vector_layers`
-metadata. Do not add viewer code that discovers color fields by sampling tiles
-or hydrating the full metadata sidecar.
-
-`--maxzoom auto` is the default. Auto maxzoom generates the canonical FGB first,
-profiles the FGB, and writes `pmtiles-profile.json` next to the generated
-artifacts with the resolved maxzoom and evidence. The policy biases toward
-detailed presentation and caps at zoom 12 by default. Lower than zoom 8 requires
-source/profile evidence or a documented override; manual `--maxzoom N` requires
-`--maxzoom-reason`, and values above zoom 12 require `--allow-high-maxzoom`.
-
-Use source hints when they are stable properties of the upstream data:
-
-```bash
-uv run python scripts/vector_asset.py build ./source.shp \
-  --asset-slug natural-earth-10m-land \
-  --source-scale-denominator 10000000
-```
-
-For a read-only acceptance check against an existing local FGB, use the same
-profiler without rebuilding artifacts:
-
-```bash
-uv run python scripts/vector_asset.py recommend-maxzoom --fgb ./asset.fgb
-```
-
-Use `--tile-simplify` for dense coastline, boundary, or global polygon display
-tiles. This simplification applies only to PMTiles generation; the canonical FGB
-remains unsimplified.
-
-Run the helper through `uv run python` so repo Python dependencies come from the
-project environment. GDAL and PMTiles are external command-line tools resolved
-from `PATH`; the helper records their versions in the build plan.
-
-Generated IDs are opt-in. First run the publishing concierge or another
-attribute profile and show the curator the standard decision table: likely
-source-field `feature_id` candidates, generated numeric sequence fallback, and
-likely search/filter fields, with row/column counts, datatype, distinction,
-emptiness, domination, skew ratio, top examples, and concerns. A source field
-may be used as `feature_id` only when every value is unique, nonblank, and
-matches `^[A-Za-z0-9]{1,64}$`.
-
-If no source field is suitable, release metadata helpers assign monotonic
-decimal `feature_id` values from an approved assignment key or the pair of
-stored `geometry_hash` and `properties_hash` values. The manifest `identity`
-block records the strategy, source fields or assignment key, hash algorithm,
-canonicalization version, previous release, and next generated ID.
-
-Generated-ID refreshes compare proposed metadata sidecars with the previous
-latest sidecar. Partial matches, such as the same geometry hash with changed
-properties, are feature identity ambiguities. Scheduled jobs post a Slack
-warning and fail before publishing until a reviewed release-scoped decision is
-added under `catalog/feature-identity-resolutions/{asset-slug}.json`. Manual
-publishes can write a nonblocking evidence report with:
-
-```bash
-uv run python scripts/gcs_asset.py publish-release \
-  --asset-slug example-asset \
-  --release-date 2026-05-01 \
-  --publish-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
-  --identity-ambiguity-report "$TMPDIR/shared-datasets-1/vector-assets/example-asset/identity-ambiguities.json" \
-  --dry-run
-```
-
-PMTiles generation exports a WGS84 GeoJSONSeq tile source with GDAL, writes the
-temporary MBTiles with Tippecanoe, and converts that archive with
-`pmtiles convert`. Do not use the old GDAL-based projection path; for
-metadata-lookup tiles it can omit geometry and produce empty or bad MBTiles
-output before PMTiles conversion.
-
-Release feature metadata helpers live in:
-
-```text
-scripts/release_feature_model.py
-scripts/feature_metadata_localization.py
-scripts/validate_feature_metadata.py
-```
-
-Use `release_feature_model.py` from publishing or ingestion code to construct
-stable `feature_id` values, compute separate `geometry_hash` and `properties_hash` values, serialize
-`{asset-slug}.metadata.ndjson.gz`, validate sidecar rows, and build release
-manifests. Use `validate_feature_metadata.py` with local `--sidecar`, `--schema`,
-`--manifest`, `--asset-slug`, and `--release` inputs to validate a bundle. It has
-no Firestore dependency or remote write path. See
-[the metadata contract](../docs/feature-metadata-api.md#operations).
-
-Use `feature_metadata_localization.py` to materialize generated locale-specific
-metadata views from the canonical sidecar plus an editable translation source:
-
-```bash
-uv run python scripts/feature_metadata_localization.py \
-  --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
-  --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
-  --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
-  --translatable-field name \
-  --locale es \
-  --output-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.es.ndjson.gz" \
-  --asset-slug example-asset \
-  --release 2026-05-01 \
-  --report "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.es.report.json"
-```
-
-Generate every locale present in a translation source with deterministic
-localized filenames and one report per locale:
-
-```bash
-uv run python scripts/feature_metadata_localization.py \
-  --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
-  --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
-  --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
-  --locale es --locale fr \
-  --translatable-field name \
-  --manifest "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.manifest.json" \
-  --output-dir "$WORK_ROOT/vector-assets/example-asset/publish" \
-  --report-dir "$WORK_ROOT/vector-assets/example-asset/reports" \
-  --asset-slug example-asset \
-  --release 2026-05-01 \
-  --report "$WORK_ROOT/vector-assets/example-asset/reports/localization-summary.json"
-```
-
-Translation rows are keyed by `feature_id`, `field`, `locale`, and
-`source_value_hash`. The generator applies only rows whose source hash still
-matches the canonical property value, reports stale rows, leaves untranslated
-values canonical, rejects duplicate keys, and writes deterministic gzip NDJSON.
-The catalog viewer resolver serves one localized sidecar for the active locale
-when available and falls back to the canonical sidecar when it is not.
-
-For a maintained asset, pass explicit `--locale` and `--translatable-field`
-arguments from its catalog row, plus `--manifest` pointing to its prepared
-release manifest. The local materializer adds coverage and exact CSV/sidecar
-hashes to that manifest. Stage the CSV, every declared locale, and the manifest
-in one reviewed publish plan, including release and `latest/` copies. CSV-only
-promotion is rejected. The approved mutation workflow finalizes the bundle and
-release index; catalog deployment follows it directly.
-
-`scripts/publish_workflow.py translation-notice --plan-json ...` is the existing
-publish workflow's best-effort completion hook. It reads committed release
-manifests, exports unresolved current values, and uses the same notice helper as
-the scheduled jobs. It never generates translations or republishes data.
+`slack_incidents.py` owns signed incident state and quiet reconciliation after verified recovery. Use the [incident contract](../docs/slack-incidents.md). Interface: `uv run python scripts/slack_incidents.py --help`.
 
 ## Localized metadata sidecars
 
-Localized metadata uses `metadata-translations.csv` plus generated locale
-sidecars, not localized columns in the canonical FGB or PMTiles. Translation
-rows are keyed by `feature_id`, `field`, `locale`, and `source_value_hash`.
+`feature_metadata_machine_translate.py` fills exactly the curator-approved asset/locales/fields in a translation CSV using the maintained machine provider. Use the [translation skill](../.claude/skills/update-feature-metadata-translations/SKILL.md). Interface: `uv run python scripts/feature_metadata_machine_translate.py --help`.
 
-Build release-oriented PMTiles from the unchanged FGB geometry plus metadata
-lookup IDs:
+`feature_metadata_localization.py` materializes deterministic locale sidecars and coverage reports from canonical metadata and translation CSVs, rejecting duplicate/stale keys. Stage the complete CSV/locale/manifest bundle together. Interface: `uv run python scripts/feature_metadata_localization.py --help`.
 
-```bash
-uv run python scripts/vector_asset.py build \
-  ./example-asset.fgb \
-  --asset-slug example-asset \
-  --pmtiles-feature-id-property feature_id
-```
+`feature_metadata_document_translate.py` imports reviewed document translations into the same source contract; use when the document provider is selected. Interface: `uv run python scripts/feature_metadata_document_translate.py --help`.
 
-The vector helper projects PMTiles properties to `feature_id`.
-Display labels for release-oriented catalog preview maps are resolved through
-the metadata API or one materialized locale-specific metadata sidecar, not by
-fetching a translation overlay in the browser. Review-state fields stay in the
-CSV and catalog metadata. For PR descriptions,
-`draft-publish-plan` can draft the data-object promotion list,
-including the translation-only shape that leaves `latest/{asset-slug}.fgb`
-unchanged.
-
-The helper does not upload anything. Stage manual publish candidates under
-`_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with
-`scripts/gcs_asset.py upload`, then reference those staged objects from an
-explicit PR with a fenced publish plan. After the PR merges, the approved GitHub
-publisher workflow promotes the reviewed canonical objects so no-clobber and
-generation preconditions stay enforced, then deletes the promoted scratch source
-objects with their source-generation preconditions. Remaining pending-publish
-prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
-`Scratch cleanup audit` workflow's age-based abandonment policy: warn when the
-newest object is 60 days old, and select for deletion at 90 days only when its
-name, generation, and update time still match the warning. A first warning after
-day 90 can become eligible on the next audit. The auditor does not infer
-publication from historical content matches or inspect PR status. Exact-object
-generation preconditions protect replacements; deletion is not atomic across
-the prefix. Dry-run summaries list candidates and the actual zero deleted
-objects.
-
-Publishing concierge planning and first-upload workflow guidance live in:
-
-```text
-scripts/publishing_concierge.py
-```
-
-Use it at the start of a manual dataset publish when you want the agent to stop
-playing checklist memory games. The stateful workflow prints exactly one next
-required step, waits while the agent performs the requested research/build/check
-outside the script, and advances only after structured evidence validates.
-
-Start a workflow:
-
-```bash
-uv run python scripts/publishing_concierge.py start ./source.shp \
-  --asset-slug example-asset \
-  --title "Example Asset" \
-  --category 100-geographic-reference \
-  --subcategory 110-boundaries \
-  --source-name "Example source v1" \
-  --license "Example terms" \
-  --request-classification canonical-publish \
-  --proposal-id pr-123 \
-  --release-date 2026-05-01
-```
-
-The start command writes state under
-`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/publishing-concierge/{asset-slug}/{proposal-id}.state.json`
-unless `--state-file` is provided.
-
-Then loop:
-
-```bash
-uv run python scripts/publishing_concierge.py next --state-file "$STATE_FILE"
-uv run python scripts/publishing_concierge.py confirm \
-  --state-file "$STATE_FILE" \
-  --step resolve-metadata \
-  --evidence-json evidence.json
-```
-
-Useful inspection commands:
-
-```bash
-uv run python scripts/publishing_concierge.py status --state-file "$STATE_FILE"
-uv run python scripts/publishing_concierge.py validate --state-file "$STATE_FILE"
-uv run python scripts/publishing_concierge.py render-pr --state-file "$STATE_FILE"
-uv run python scripts/publishing_concierge.py render-report --state-file "$STATE_FILE"
-```
-
-Read the workflow state JSON at `$STATE_FILE` for the saved contract, plan,
-curator field options, and step evidence. `status --json` reports progress and
-the `state_file` path; it does not include the plan or curator field options.
-
-The concierge is guide-and-verify only. It never stages Git changes, commits,
-pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
-objects, or promotes data. Do not use it to run Terraform apply; production
-Terraform still routes through protected PR workflows. When `next` asks for scratch
-staging, run `scripts/gcs_asset.py upload` separately and provide the staged URI
-and generation as evidence. `render-pr` writes an immutable checked-in document
-and renders its matching `shared-datasets-publish-plan` fence using
-`scripts/reviewed_dataset_plan.py`. Include the generated document in the PR.
-For manual/delete/combined plans, use `reviewed_dataset_plan.py prepare`; see
-[plan preparation and migration](../.github/dataset-plans/README.md).
-
-`start` requires an explicit request classification and accepts
-`canonical-publish` or `preview-only`. Canonical publishing blocks duplicate
-first-upload asset slugs unless `--allow-existing-asset` is passed after review.
-Its evidence gates require metadata/admission fields, generated-ID decisions,
-artifact paths, validation commands, resolved tool paths/versions or
-not-applicable notes, scratch source generations, and canonical destination
-generation expectations before the workflow can render a PR.
-
-`preview-only` uses the disposable preview bucket and requires
-`--release-date`; provide `--preview-ref` when the branch cannot be detected.
-It completes through preview upload, catalog refresh, and viewer verification.
-Firestore index loading is retired. Preview catalog refresh and viewer
-verification remain required.
-`scratch-only` and `diagnostic-only` use separate workflows rather than
-`start`. See [feature preview guidance](../docs/feature-preview.md).
-
-Slack notification helpers live in:
-
-```text
-scripts/dataset_alerts.py
-scripts/repo_alerts.py
-scripts/slack_notify.py
-```
-
-The committing agent uses a high bar for repo alerts. Only exceptional,
-broad-use new repository functionality should get one or more fenced
-`repo-alert` blocks in the commit message. Routine fixes, maintenance, alert
-tuning, docs, and ordinary dataset refreshes should not. The
-`repo-functionality-alert` GitHub Actions workflow runs after pushes to `main`
-and posts any fenced alert blocks it finds.
-
-Alert blocks use this format:
-
-````text
-```repo-alert
-emoji: 🗺️
-headline: Vector publishing helper added
-summary: A new command builds FlatGeobuf and PMTiles artifacts from source vectors.
-why_excited: Manual publishes are faster, more repeatable, and easier to review.
-```
-````
-
-Preview alerts from a saved GitHub push event JSON:
-
-```bash
-uv run python scripts/repo_alerts.py send-from-github-event \
-  --event-path /path/to/push-event.json \
-  --dry-run
-```
-
-After a successful new manual dataset upload, post a lightweight summary:
-
-```bash
-uv run python scripts/dataset_alerts.py upload-summary \
-  --asset-slug example-asset \
-  --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
-  --dataset-path ./example-asset.fgb \
-  --new-dataset
-```
-
-This command only posts to Slack when `--new-dataset` is set. Existing asset
-refreshes print a local skip message instead of posting `Dataset updated`. Use
-`--new-dataset` only when the canonical `latest/` object did not exist before
-the publish; the approved promotion workflow determines that from the publish
-plan `destination_generation`.
-
-For reviewed publish or delete plans that intentionally break the `latest`
-consumer contract, add a top-level `breaking_changes` array to the fenced plan.
-Each entry must include `category`, `summary`, `consumer_action`, and
-`affected_surfaces`. Use one of these categories:
-
-```text
-path, format, artifact_set, schema, feature_identity, pmtiles_lookup,
-metadata_sidecar, access, catalog, lifecycle_delete, other
-```
-
-Preview or send the concise Slack warning with:
-
-```bash
-uv run python scripts/dataset_alerts.py breaking-alert \
-  --phase planned \
-  --plan-type publish \
-  --plan-json publish-plan.json \
-  --pr-number 123 \
-  --pr-url https://github.com/SkyTruth/shared-datasets-1/pull/123 \
-  --dry-run
-```
-
-The GitHub workflows send planned and live breaking-change alerts
-automatically when the reviewed plan or schema compatibility results contain
-breaking changes. Messages are slug-scoped and do not use broad Slack mentions.
-The alert command also compares current/proposed catalog rows when workflows
-provide them, catching canonical path/format changes, format removals, stricter
-access, PMTiles removal, metadata sidecar/schema/manifest removal, and
-`latest/` deletion targets. Declare semantic changes explicitly in
-`breaking_changes` when they cannot be inferred safely.
-
-For canonical vector/table assets, run schema validation before publish:
-
-```bash
-uv run python scripts/dataset_alerts.py check-schema-compatibility \
-  --asset-slug example-asset \
-  --dataset-path ./example-asset.fgb
-```
-
-Schema validation reports added, removed, renamed, reordered, and type-changed
-fields so reviewers can confirm the new release schema is intentional. After a
-successful reviewed publish, the approved publisher workflow runs
-`check-schema --upload-snapshot` to update the snapshot and emit structured
-Cloud Logging diagnostics when a schema delta exists. Schema-change Slack
-monitoring is intentionally quiet; consumer-impacting schema changes should use
-the reviewed breaking-change alert path instead. Local `check-schema` runs are
-read-only by default and skip snapshot upload unless the explicit flag is used
-from a runtime with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
-
-The approved dataset mutation workflow steps live in:
-
-```text
-scripts/publish_workflow.py
-```
-
-Each subcommand implements one step of the `Approved dataset mutation` or
-`Dataset breaking change alert` GitHub workflow: reviewer acceptance checks,
-catalog row collection, plan path validation, schema compatibility checks,
-staged object promotion, release-index rebuilds, breaking-change alerts,
-upload summaries, and generation-verified deletions. The workflows call these
-subcommands instead of embedding inline Python, so the promotion logic is unit
-tested in `tests/test_publish_workflow.py`. The module is stdlib-only at import
-time; only the `promote` subcommand needs `uv run`.
-
-Shared internal modules:
-
-```text
-scripts/catalog_csv.py
-scripts/concierge_profiling.py
-scripts/terraform_plan_allowlist.py
-```
-
-`terraform_plan_allowlist.py` refuses a Terraform plan that changes resources
-outside an explicit allowlist; the reusable
-`.github/workflows/prod-terraform-target-apply.yml` workflow runs it between
-plan and apply for every constrained prod IAM sync.
-
-`terraform_target_contracts.py` complements that saved-plan check during the
-shared lint suite. It builds a credential-free Terraform dependency graph and
-rejects new managed prerequisites outside each narrow caller's reviewed scope.
-`terraform/iam-plan-prerequisites.json` records the permitted existing
-prerequisites; it never expands the apply allowlist.
-
-`dataset_usage_cold_start.py` is an offline fixture for the actual usage-worker
-image entrypoint. Production-image validation runs it without network access to
-prove that disabled logging is a valid startup state and that persisted run
-records remain internally consistent.
-
-`slack_incidents.py` posts one parent for a real incident, keeps subsequent
-failures inside its thread, and edits that parent green after verified recovery.
-Recovery and healthy runs create no messages. See [Slack incidents](../docs/slack-incidents.md)
-for signed state, delivery reconciliation and offline request validation.
-
-`catalog_csv.py` is the single owner of `catalog/shared-datasets-catalog.csv`
-parsing; script code should load catalog rows through it rather than reading
-the CSV directly. `concierge_profiling.py` owns the field profiling and curator
-recommendation engine used by the publishing concierge's identity decision
-table.
-
-Production Terraform mutations must land through reviewed PRs and protected
-GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is
-reserved for explicitly approved break-glass emergencies.
-
-Static catalog web builds use:
-
-```bash
-uv run python scripts/catalog_site.py \
-  --out "$TMPDIR/shared-datasets-1/catalog-web"
-```
-
-The generated site reads `catalog.json` at runtime and provides search, metadata
-copy buttons, and PMTiles previews for assets with map tiles.
-
-Install dependencies:
-
-```bash
-uv sync
-```
-
-Show help:
-
-```bash
-uv run python scripts/gcs_asset.py --help
-```
-
-Validate a target object path before upload:
-
-```bash
-uv run python scripts/gcs_asset.py validate-path \
-  gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
-```
-
-Delete only with an explicit object generation. Canonical deletions should flow
-through a reviewed PR with a fenced `shared-datasets-delete-plan`; direct CLI
-deletes are for the approved workflow, approved publisher identity, or
-documented break-glass path:
-
-```bash
-uv run python scripts/gcs_asset.py delete gs://skytruth-shared-datasets-1/path/to/object \
-  --generation 123456789 \
-  --confirm DELETE
-```
+`feature_metadata_translation_gap_documents.py` exports unresolved current source values for review; it does not grant translation or publication approval. Interface: `uv run python scripts/feature_metadata_translation_gap_documents.py --help`.
 
 ## Release comparison
 
-`compare_releases.py` compares complete, pinned canonical sidecar/schema/manifest
-bundles with a task-scoped SQLite index. The CLI and authenticated catalog viewer
-share the engine. See [comparison semantics, snapshot JSON and explicit local
-budgets](../docs/compare-releases.md). It performs no remote writes or downloads.
+`compare_releases.py` compares complete pinned canonical bundles with a task-scoped SQLite index. CLI and authenticated viewer share the [comparison semantics and budgets](../docs/compare-releases.md); it does no remote writes/downloads. Interface: `uv run python scripts/compare_releases.py --help`.
+
+## Validation and deployment tools
+
+`ci_preflight.py` validates a frozen clean committed head against current main in an isolated prospective merge; [preflight contract](../docs/ci-preflight.md). Interface: `uv run python scripts/ci_preflight.py --help`.
+
+`terraform_plan_allowlist.py` rejects saved plans outside a protected workflow's mutation scope; use in the owning constrained job. Interface: `uv run python scripts/terraform_plan_allowlist.py --help`.
+
+`terraform_target_contracts.py` checks credential-free dependency closures and negative controls against reviewed prerequisites; it never expands apply allowlists. Interface: `uv run python scripts/terraform_target_contracts.py --help`.
+
+`terraform_prod_apply.py` is reserved for explicitly named break-glass emergencies; normal production changes use the [protected skill](../.claude/skills/protected-terraform-apply/SKILL.md). Interface: `uv run python scripts/terraform_prod_apply.py --help`.
+
+`dataset_usage_cold_start.py` validates the actual usage-worker image offline, including disabled logging and persisted run consistency; use in production-image validation. This offline fixture has no help parser; use `uv run python scripts/ci_preflight.py --help` for its validation entry point.
+
+`local_ingestion_smoke.py` builds tiny native ingestion fixtures locally without publication; use for conversion feedback. Interface: `uv run python scripts/local_ingestion_smoke.py --help`.
+
+`local_wdpa_sample.py` replays the production conversion chain locally without a publisher; use the owning deploy skill and runtime limits. Interface: `uv run python scripts/local_wdpa_sample.py --help`.
+
+`freeze_wdpa_benchmark.py` freezes generation/hash-verified WDPA baseline evidence; use for deterministic local replay. Interface: `uv run python scripts/freeze_wdpa_benchmark.py --help`.
+
+`cloud_wdpa_validation.py` runs the isolated historical WDPA acceptance build without canonical publication; use only under the deployment procedure. This container entry point has no help parser; use `uv run python scripts/wdpa_processing_gate.py --help` for the admission gate.
+
+`wdpa_processing_gate.py` checks reviewed resource/retained-build acceptance before protected deployment. Interface: `uv run python scripts/wdpa_processing_gate.py --help`.
+
+`check_wdpa_validation_plan.py` checks the isolated validation job's resources and permissions; use in its constrained workflow. Interface: `uv run python scripts/check_wdpa_validation_plan.py --help`.
+
+## Shared libraries
+
+`release_feature_model.py` constructs stable IDs/hashes, serializes sidecars and creates manifests for publishing/ingestion callers; it has no CLI. Use `uv run python scripts/validate_feature_metadata.py --help` for the public bundle-validation entry point.
+
+`catalog_csv.py` owns catalog row parsing for script callers; it has no CLI. Use `uv run python scripts/catalog_docs.py --help` for catalog generation/checking.
+
+`concierge_profiling.py` owns source readers, attribute profiles and curator field recommendations; it has no CLI. Use `uv run python scripts/publishing_concierge.py start --help` and read the saved plan's field options.
+
+`feature_metadata_translation_reuse.py` handles canonical translation-source reuse for ingestion/localization callers; it has no CLI. Use `uv run python scripts/feature_metadata_localization.py --help` for materialization.

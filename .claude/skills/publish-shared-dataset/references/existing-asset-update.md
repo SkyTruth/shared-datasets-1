@@ -42,3 +42,22 @@ Do not delete old releases during refresh. For an explicit destructive request,
 load [reviewed deletion](reviewed-deletion.md) instead of treating deletion as
 an update side effect. Owned claims/receipts cannot be repaired by ad hoc manual
 promotion; route interrupted owned publications to their original owner.
+
+## Capture and finalization boundaries
+
+`publish-release` execution copies all planned artifact/metadata inputs to a
+private temporary workspace, verifies sizes/hashes, then validates and uploads
+those copies. Allow space for the complete input set. Changes to original files
+cannot change captured bytes; temporary copies are removed on exit and are not
+durable recovery checkpoints. Agents use this CLI in dry-run mode only.
+
+The protected metadata finalizer pins each manifest/run-record read to its
+observed generation and replaces only that generation. Concurrent replacement
+refuses finalization rather than adopting a new precondition. These checks are
+per-object, not an atomic multi-object publication or a receipt-backed repair.
+
+Generated-ID ambiguity reports compare proposed and previous metadata. Partial
+matches (same geometry, changed properties) need reviewed release-scoped
+resolutions under `catalog/feature-identity-resolutions/{asset-slug}.json`.
+`gcs_asset.py publish-release --help` documents the offline ambiguity-report
+option. A report alone does not grant identity or publication approval.
