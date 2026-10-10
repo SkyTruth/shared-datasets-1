@@ -42,6 +42,7 @@ TERRAFORM_SYNCS = {
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
+    "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
 }
