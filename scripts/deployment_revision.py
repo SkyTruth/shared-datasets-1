@@ -25,7 +25,6 @@ SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
-    "wdpa-processing-validation": "wdpa-processing-validation-deploy.yml",
     "eamlis-monthly": "eamlis-monthly-deploy.yml",
     "sea-ice-daily": "sea-ice-daily-deploy.yml",
     "typescript-sdk": "publish-typescript-sdk.yml",
@@ -42,6 +41,7 @@ TERRAFORM_SYNCS = {
     "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
+    "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
 }
@@ -341,7 +341,7 @@ def finish(args, api):
 
 def pending(api, repository):
     identifiers = []
-    for target in ("wdpa-monthly", "wdpa-processing-validation"):
+    for target in ("wdpa-monthly",):
         for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100"):
             record_payload(record)
             statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
@@ -391,7 +391,7 @@ def observe(args, api):
             f"{repository}/.github/workflows/deployment-verification.yml@refs/heads/main", "untrusted terminal verifier")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"wdpa-monthly", "wdpa-processing-validation"}, "only detached WDPA executions need terminal observation")
+    require(payload.get("target") == "wdpa-monthly", "only detached WDPA executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     statuses = verified_statuses(api, repository, record)

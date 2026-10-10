@@ -207,24 +207,10 @@ For a narrow job change, it is acceptable to run the focused job tests instead
 of full discovery. For `ingestion/common/` changes, run tests for every
 production job that imports the shared helpers.
 
-3. For large source files, run a fractional sandbox test before deploying. Mount the downloaded source and repo into the same Linux image that Cloud Run will use, set sample-only environment variables, and build FGB/PMTiles locally without GCS publishing:
-
-```bash
-WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
-export WDPA_LOCAL_DATA_DIR="$WORK_ROOT/downloads/wdpa-monthly-local"
-
-docker run --platform linux/amd64 --rm -i \
-  -e TMPDIR=/data/tmp \
-  -e WDPA_SAMPLE_FRACTION=0.001 \
-  -e WDPA_SAMPLE_SEED=7919 \
-  -v "$PWD":/work \
-  -v "$WDPA_LOCAL_DATA_DIR":/data \
-  -w /work \
-  "$IMAGE" \
-  python scripts/local_wdpa_sample.py
-```
-
-Use `WDPA_SAMPLE_FRACTION=0.001` for fast smoke loops and increase only when the bug requires more coverage. Sampling should be deterministic so row-count validation compares the same sampled predicate used for FGB and PMTiles generation.
+3. For changes to a large-source producer, use the owning job's local native
+   fixtures and production-source fractional tests before deploying. The WDPA
+   monthly path promotes its accepted retained bundle; do not rerun the retired
+   October campaign as a deployment prerequisite.
 
 4. If infrastructure is needed before an image can be pushed, add that
    prerequisite to Terraform and open a focused PR. After review and merge, let

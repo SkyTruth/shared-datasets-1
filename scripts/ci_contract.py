@@ -23,7 +23,7 @@ SUITES = (
     "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
 DEPLOYMENTS = (
-    "eamlis", "wdpa", "sea_ice", "wdpa_processing", "ingestion_iam",
+    "eamlis", "wdpa", "sea_ice", "ingestion_iam",
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
@@ -48,7 +48,7 @@ CONTRACT_FILES = (
     "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
-    "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
+    "scripts/wdpa_processing_gate.py",
     "scripts/production_image_contracts.py",
     "scripts/dataset_usage_cold_start.py",
     "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
@@ -83,29 +83,14 @@ NARROW_SCRIPTS = {
     # generator imports/calls it. Catalog tests retain SDKs/browser, COPY images;
     # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
     "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
-    # Only importer: test_wdpa_staged_validation; CLIs: processing-validation-deploy
-    # and runtime-inspection workflows. Validates WDPA plan JSON/commands consumed
-    # by those workflows, not SDK/browser fixtures. WDPA tests add native/images;
-    # whole-directory COPY adds images. No other importer/subprocess caller.
-    "scripts/check_wdpa_validation_plan.py": ("geospatial-integration", "production-images"),
-    # Only importer: test_wdpa_staged_validation and workflow import smoke. WDPA
-    # Dockerfile COPY; Cloud Run command in wdpa_processing_validation.tf. Calls
-    # download_public_wdpa_benchmark/local_wdpa_sample; reports feed the WDPA gate.
-    # WDPA tests/native and image consumers only; no API/browser generated input.
-    "scripts/cloud_wdpa_validation.py": ("geospatial-integration", "production-images"),
-    # Only importer: test_public_wdpa_benchmark. Subprocess: cloud_wdpa_validation;
-    # CLI: ci.yml's opt-in WDPA benchmark, checked by test_geospatial_ci. WDPA COPY;
-    # frozen files feed local_wdpa_sample/probe, not SDK/browser fixture builders.
-    # Its WDPA/geospatial tests and image consumers require native/images.
-    "scripts/download_public_wdpa_benchmark.py": ("geospatial-integration", "production-images"),
     # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
     # produces translation workbooks/CSV/manifest, never API/browser fixtures.
     # No other import/subprocess/workflow caller; translation test classification
     # adds native/images and whole-directory COPY adds images.
     "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
     # Importers: wdpa_input_memory_probe, test_wdpa_disk_processing (native corpus)
-    # and test_wdpa_translation_inputs. Subprocess: cloud_wdpa_validation; CLIs:
-    # ci.yml benchmark; WDPA COPY. Probe is exercised by production_image_contracts.
+    # and test_wdpa_translation_inputs. WDPA Dockerfile COPY; the input-memory
+    # probe is exercised by production_image_contracts.
     # Replay artifacts/reports feed WDPA validation, never API/browser fixtures.
     "scripts/local_wdpa_sample.py": ("geospatial-integration", "production-images"),
     # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
@@ -229,10 +214,6 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
         }:
             selected.add("wdpa")
-        # New producer bytes require their own complete retained evidence. A
-        # producer/bootstrap change cannot launch an unready publication job.
-        if path == "catalog/wdpa-staged-validation.json":
-            selected.add("wdpa_processing")
         if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
@@ -281,7 +262,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "wdpa_processing", "dataset_usage"}):
+    if selected & (ingestion | {"catalog_viewer", "dataset_usage"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

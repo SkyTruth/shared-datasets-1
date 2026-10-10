@@ -160,11 +160,11 @@ class ReleaseContractTests(unittest.TestCase):
                 self.assertTrue(any("saved-plan permission probe" in error for error in contracts.check(self.root, {"iam"})))
                 path.write_text(original)
 
-    def test_probe_of_another_plan_cannot_satisfy_restore_apply(self):
-        path = self.root / ".github/workflows/wdpa-processing-validation-deploy.yml"
+    def test_probe_of_another_plan_cannot_satisfy_monthly_apply(self):
+        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
         original = path.read_text()
-        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/restore-processing-plan.json"', '--plan-json "$RUNNER_TEMP/staging-probe-plan.json"'))
-        self.assertTrue(any("Restore the processing command" in error for error in contracts.saved_plan_permission_contract(self.root)))
+        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/wdpa-monthly.tfplan.json"', '--plan-json "$RUNNER_TEMP/other-plan.json"'))
+        self.assertTrue(any("Terraform apply" in error for error in contracts.saved_plan_permission_contract(self.root)))
 
     def test_disabled_probe_and_removed_cdn_post_apply_authority_fail(self):
         path = self.root / ".github/workflows/pmtiles-cdn-sync.yml"

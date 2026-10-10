@@ -68,10 +68,12 @@ promotion authority, publication state, permissions and the runtime window
 before preparing the publication layer and applying its allowlisted saved plan.
 
 A new month's build and promotion authority must be reviewed and deployed before
-that month's schedule can succeed. The isolated build workflow is
-`wdpa-processing-validation-deploy.yml`, gated by reviewed staged validation;
-its identity creates immutable objects only under `_scratch/wdpa-builds/`.
-Keep staged and complete-build evidence for their actual producer image.
+that month's schedule can succeed. The one-time October build workflow and
+isolated producer are retired; a future build needs a separately reviewed path.
+Monthly deployment verifies the hash-bound terminal execution snapshot in the
+retained `cloud-facts.json`, then promotes the accepted bundle without rebuilding
+artifacts. It does not query the retired producer execution. Keep staged and
+complete-build evidence for their actual producer image.
 
 ## Execute and inspect
 
@@ -133,6 +135,7 @@ counters, change the date to bypass ownership or overwrite partial releases.
 
 Keep machine evidence at `docs/wdpa-processing-evidence/`,
 `catalog/wdpa-processing-acceptance.json`, `catalog/wdpa-staged-validation.json`,
-`docs/wdpa-processing-*.json` and `.github/dataset-plans/`. The public-inputs JSON
-is a container input; evidence and plans remain at their validator-consumed paths.
+`docs/wdpa-processing-public-inputs.json` and `.github/dataset-plans/`.
+The public-inputs JSON is a container input; evidence
+and plans remain at their validator-consumed paths.
 Completed rollout narratives are archived under `docs/history/`.
