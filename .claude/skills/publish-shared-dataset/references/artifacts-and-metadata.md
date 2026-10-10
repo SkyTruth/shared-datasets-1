@@ -1,0 +1,219 @@
+# Artifacts and asset metadata
+
+Read only when preparing artifacts or asset documentation. CLI flags are owned
+by each command's `--help`; these are data contracts and curator decisions.
+
+## Local artifact preparation
+
+- Keep generated publishable data outside the repo tree unless it is a tiny
+  intentional fixture.
+- Convert source files into approved canonical formats before staging promotion
+  candidates. Source spreadsheets with coordinates, WKT, WKB, GeoJSON geometry,
+  or other mappable geometry should become canonical vector artifacts, normally
+  FGB plus PMTiles. Source spreadsheets without geometry should become canonical
+  CSV after checking that geometry-like columns are not intended for spatial
+  analysis. Raw rasters should become COGs unless Zarr is the documented better
+  access pattern. Do not add a new canonical format just because the user
+  supplied that format.
+- For vector assets, prefer:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb \
+  --asset-slug example-asset \
+  --layer-name example_asset \
+  --title "Example Asset" \
+  --description "Example vector tiles"
+```
+
+- Feature identity is a recorded decision, not a default. Before building
+  release artifacts, present the curator with the standard feature identity
+  decision table from `publishing_concierge.py` or an equivalent profile. The
+  table must include file row/column counts and, for displayed candidates,
+  datatype, distinction (`distinct values / profiled rows`), emptiness,
+  domination, skew ratio, top-value examples, and concerns. Show likely
+  URL-safe source-field `feature_id` candidates, the generated monotonic
+  decimal sequence fallback, and likely search/filter fields by default; keep
+  the full per-field profile in JSON or notes for inspection. Run exact stats
+  on all local rows when the source is small enough. When exact full-column
+  counters would be too expensive, use a deterministic random sample of about
+  10,000 rows, never the first N rows, and label the output as sampled. Prefer
+  a verified unique, nonblank source field whose values already satisfy the
+  `feature_id` rules (`^[A-Za-z0-9]{1,64}$`) and copy it directly as
+  `feature_id`. If no source field is suitable, assign generated monotonic
+  decimal `feature_id` values from an approved assignment key: one or two
+  source fields, or the pair of stored geometry and properties hashes.
+  Preserve prior-release identity-key to `feature_id` mappings when
+  regenerating IDs. Do not infer and publish any generated ID from guessed
+  fields or without the recorded decision point.
+- Local downloads, generated artifacts, and scratch files must follow
+  `docs/standards/local-temp-workspaces.md`.
+- The default vector work directory is
+  `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/{asset-slug}/`,
+  with upload candidates under `publish/` and intermediates under `build/`.
+- PMTiles display artifacts must preserve compact feature properties for the
+  catalog inspector. Use the repo vector helper's validated path: export a
+  WGS84 GeoJSONSeq tile source from the canonical FGB with GDAL, build MBTiles
+  with Tippecanoe, then convert with `pmtiles convert`. Do not use the old
+  GDAL-based projection path; metadata-lookup SQL that selected `feature_id`
+  and `ext_id` failed to carry geometry through and produced empty or bad
+  MBTiles output.
+- A PMTiles artifact is valid only after archive-level and content-level
+  checks pass. Do not trust the file extension or a successful tile-builder exit
+  code. For every PMTiles build, verify that the file is not MBTiles/SQLite,
+  confirm the PMTiles magic bytes, run `pmtiles verify`, inspect `pmtiles show`
+  for min/max zoom, tile type, compression, layer metadata, and bounds, and
+  decode representative tiles to confirm the expected layer and the compact
+  `feature_id` lookup property. If the build tool produced MBTiles, convert
+  it with `pmtiles convert` and validate the converted archive before upload.
+  Record these validation commands in the PR or final response.
+- Release-oriented vector assets use a strict artifact set: canonical FGB with
+  `feature_id`, `geometry_hash`, and `properties_hash`, PMTiles filtered to
+  geometry plus `feature_id` only, a canonical `{asset-slug}.metadata.ndjson.gz`
+  sidecar, `{asset-slug}.schema.json`, and `{asset-slug}.manifest.json`. Use
+  `scripts/release_feature_model.py` helpers for IDs, hashes, sidecar
+  serialization, validation, and manifest creation.
+  Use `--metadata-lookup` (or `--pmtiles-feature-id-property feature_id`) with
+  `scripts/vector_asset.py` to build lightweight metadata-lookup tiles
+  containing only `feature_id` and to require the three identity columns in the
+  canonical FGB.
+- For the first upload of a release-oriented vector asset, ask the maintainer
+  before finalizing artifacts:
+
+```text
+Which locales should be autogenerated by the agent during first upload?
+Which metadata fields should be autogenerated by the agent during first upload?
+```
+
+  Do not infer these translation choices silently. If the maintainer chooses no
+  autogenerated translations, record that decision in the PR or final response.
+  If the maintainer chooses locales and fields, create and complete
+  `{asset-slug}.metadata-translations.csv` rows for those locales and fields
+  using `feature_id`, `field`, `locale`, `source_value_hash`, `value`,
+  `review_state`, and `notes`. Prefer
+  `scripts/feature_metadata_machine_translate.py` with `deep-translator` for
+  the exact asset, locales, and fields recorded by the concierge instead of
+  spending agent tokens on bulk translation; then run
+  `scripts/feature_metadata_localization.py --all-locales` so generated
+  `{asset-slug}.metadata.{locale}.ndjson.gz` sidecars are present and validated.
+  The upload is incomplete until the requested translation CSV rows and
+  generated sidecars are complete.
+- Shared vector PMTiles display artifacts should use `scripts/vector_asset.py
+  build` auto maxzoom. The helper generates the FGB, profiles it, then chooses
+  maxzoom from source scale/resolution hints and measured geometry detail. It
+  biases toward detailed presentation and caps at zoom 12 by default. Lower
+  than zoom 8 requires source/profile evidence or a documented override.
+- Add stable source hints such as `--source-resolution-meters`,
+  `--source-scale-denominator`, `--pmtiles-detail-hint`, or
+  `--pmtiles-maxzoom` when they reflect the upstream dataset. Manual
+  `--maxzoom N` requires `--maxzoom-reason`.
+- Use `scripts/vector_asset.py recommend-maxzoom --fgb ./asset.fgb` for a
+  read-only recommendation against an existing local FGB before rebuilding or
+  replacing PMTiles.
+- Set `SHARED_DATASETS_WORKDIR` or pass `--work-dir` only when a different temp
+  root is needed. Put one-off scratch work under `_scratch/{task}-{timestamp}/`
+  inside the repo temp root, not directly under `/tmp`.
+- Run repo-owned helpers through `uv run python`.
+- When generated bytes depend on native geospatial CLIs, record tool versions
+  and paths from the repo environment:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run ogrinfo --version
+UV_CACHE_DIR=.uv-cache uv run ogr2ogr --version
+UV_CACHE_DIR=.uv-cache uv run pmtiles version
+UV_CACHE_DIR=.uv-cache uv run which ogr2ogr
+UV_CACHE_DIR=.uv-cache uv run which pmtiles
+```
+
+Use a pinned repo-owned toolchain for reproducibility-sensitive publishes.
+
+## Asset Docs And Catalog
+
+For normal asset metadata changes:
+
+1. Create or update `docs/assets/{asset-slug}.md`; this asset doc owns
+   machine-readable catalog metadata and human-readable bucket README content.
+2. Use the template structure from `templates/dataset_README.template.md` or
+   `templates/dataset_README.minimal.template.md`.
+3. Include owner, source, license/terms, citation, update cadence, canonical
+   path, file table, update notes, and schema/property notes.
+4. For fields/properties, list names, types, and short explanations when they
+   can be derived. If meanings are unknown, list names/types and say definitions
+   need source confirmation.
+5. For vector and table assets, calculate and populate discovery/profile
+   frontmatter from the canonical artifact after conversion:
+   - `row_count`: feature or table row count in the canonical artifact.
+   - `data_profile.field_count`: required whenever `data_profile` is present;
+     number of published non-geometry columns.
+   - `data_profile.identity_candidates`: stable source identifier fields checked
+     for uniqueness. For each candidate, record `field`, `distinct_values`,
+     `duplicate_value_count`, `duplicate_row_count`, `status`, and concise
+     `notes`.
+   - If no credible identifier field exists, set
+     `identity_candidates: []` and add a short `data_profile.notes` explanation
+     such as `No documented unique source ID candidate`.
+   Compute duplicate counts over non-empty candidate values: duplicate values
+   are distinct values appearing more than once, and duplicate rows are all rows
+   carrying those repeated values.
+   - `search_fields`: curator-selected high-value search/filter fields such as
+     names, labels, site names, region names, or source grouping labels. Keep
+     these separate from provider identity candidates.
+   - `feature_identity`: required for release-oriented vector assets. Record
+     `strategy` as one of `source_field`, `generated_sequence_source_fields`,
+     or `generated_sequence_content_hash`. `source_field` requires
+     `source_fields` naming the copied field. The generated-sequence strategies
+     require `generated_id_type: monotonic_integer_string` and an
+     `assignment_key`: one or two `source_fields` for
+     `generated_sequence_source_fields`, or exactly
+     `[geometry_hash, properties_hash]` for
+     `generated_sequence_content_hash`.
+   - `feature_metadata`: required when the asset publishes the release feature
+     metadata contract. Record `storage: metadata_sidecar_v1`; the
+     `feature_id`, `geometry_hash`, and `properties_hash` column names; and the
+     `latest/` sidecar, schema, and manifest paths, each of which must also
+     appear exactly once in `files`.
+   During dataset creation, present the curator with the standard feature
+   identity decision table from `publishing_concierge.py`: likely source-field
+   `feature_id` candidates and likely search/filter fields with distinction,
+   emptiness, domination, skew ratio, examples, and concerns. Do not assign
+   generated `feature_id` values until the curator-approved assignment key is
+   known.
+6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
+   band semantics, dtype, nodata, units, scale/offset, and sampling where
+   applicable.
+7. Regenerate and check derived catalog outputs:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
+```
+
+Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
+metadata changes.
+
+`catalog_docs.py check` detects catalog/index drift without rejecting equivalent
+hand-authored YAML wrapping. Managed blocks are `asset-summary` and `files-table`;
+`export-readmes` renders upload-ready category/subcategory/asset README paths
+without touching GCS. See `uv run python scripts/catalog_docs.py export-readmes --help`
+for export usage. Optional discovery frontmatter is described in the
+[catalog output contract](../../static-catalog-web-preview/references/catalog-contract.md).
+
+## Dataset Admission
+
+New canonical assets and new ingestion pipelines need admission evidence in the
+PR before reviewed publish promotion. A single-consumer asset is allowed, but
+multi-project reuse is preferred. Every admitted asset must have a citable
+source, confirmed license or terms, preferred citation, named steward, and clear
+update expectations.
+
+For new assets, include the Dataset Admission PR-template answers: intended
+consumer(s), shared-datasets rationale, source/license/citation status, named
+steward, update expectations, estimated published footprint, alternatives
+considered, and deprecation or exit policy. If the proposed published footprint
+is **>= 10 GB**, including canonical files, companion artifacts, and expected
+release copies, include an explicit large-data exception explaining why project
+storage, scratch storage, or direct upstream access is not the better answer.
+
+Use the optional `admission` frontmatter block in
+`docs/assets/{asset-slug}.md` when preserving the admission decision beside the
+catalog metadata is useful. Existing assets are grandfathered unless a PR
+changes their dataset contract.
