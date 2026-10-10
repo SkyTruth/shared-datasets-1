@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -13,7 +15,7 @@ from scripts import ci_preflight as preflight
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.check_workflow_syntax import parser_source
 from scripts.ci_contract import (
-    ALWAYS, CONTRACT_FILES, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
+    ALWAYS, CONTRACT_FILES, NARROW_SCRIPTS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
     verify_results,
 )
 from workflow_helpers import load_workflow, workflow_triggers
@@ -55,6 +57,132 @@ def jobs_for(validation):
 def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     assert select_suites([path])[0] == list(SUITES)
     assert select_suites(None)[0] == list(SUITES)
+
+
+@pytest.mark.parametrize("path", [
+    "scripts/README.md", "scripts/operator-notes.md",
+    "ingestion/README.md", "ingestion/wdpa_monthly/README.md",
+    "ingestion/common/nested/operations.md", "services/README.md",
+    "services/catalog_viewer/README.md", "services/nested/docs/operations.md",
+    "api/python/README.md", "api/typescript/README.md", "api/nested/package/README.md",
+])
+def test_component_documentation_only_selects_always(path):
+    assert set(select_suites([path])[0]) == ALWAYS
+
+
+@pytest.mark.parametrize("path", [
+    "scripts/nested/README.md", "scripts/README.md.py", "pyproject.toml",
+    ".github/README.md", ".github/workflows/ci.yml",
+])
+def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
+    assert select_suites([path])[0] == list(SUITES)
+
+
+def test_documentation_does_not_reduce_other_changed_path_requirements():
+    paths = ["scripts/README.md", "ingestion/wdpa_monthly/run.py"]
+    assert set(select_suites(paths)[0]) == ALWAYS | {"geospatial-integration", "production-images"}
+    assert select_suites(["scripts/README.md", "scripts/unproved.py"])[0] == list(SUITES)
+
+
+@pytest.mark.parametrize("path,suites", list(NARROW_SCRIPTS.items()))
+def test_proven_script_selects_only_its_consumer_suites(path, suites):
+    assert set(select_suites([path])[0]) == ALWAYS | set(suites)
+    assert select_suites(["scripts/README.md", path])[0] == select_suites([path])[0]
+
+
+@pytest.mark.parametrize("path", [
+    "scripts/catalog_csv.py", "scripts/release_feature_model.py", "scripts/catalog_site.py",
+    "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
+    "scripts/ci_contract.py", "scripts/new-runtime.py",
+])
+def test_unlisted_shared_and_fixture_scripts_remain_broad(path):
+    assert path not in NARROW_SCRIPTS
+    assert select_suites([path])[0] == list(SUITES)
+
+
+def test_mixed_narrow_scripts_union_their_consumers_in_suite_order():
+    paths = ["scripts/local_wdpa_sample.py", "scripts/catalog_web_publish.py"]
+    assert select_suites(paths)[0] == list(SUITES)
+    assert select_suites(list(reversed(paths)))[0] == list(SUITES)
+
+
+def python_imports(path):
+    imports = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names = [node.module, *(f"{node.module}.{alias.name}" for alias in node.names)]
+        for name in names:
+            module = ROOT / (name.replace(".", "/") + ".py")
+            if module.is_file():
+                imports.add(module)
+    return imports
+
+
+def test_narrow_scripts_cover_transitive_python_import_consumers():
+    # Reinspect real import boundaries so a new runtime or test importer fails
+    # when the adjacent proof/mapping no longer covers its consumer suites.
+    files = [path for directory in ("scripts", "ingestion", "services", "api", "tests")
+             for path in (ROOT / directory).rglob("*.py")]
+    importers = {}
+    for path in files:
+        for module in python_imports(path):
+            importers.setdefault(module, set()).add(path)
+    for script in NARROW_SCRIPTS:
+        seen, pending = set(), [ROOT / script]
+        while pending:
+            module = pending.pop()
+            if module in seen:
+                continue
+            seen.add(module)
+            pending.extend(importers.get(module, ()))
+        for consumer in seen:
+            path = consumer.relative_to(ROOT).as_posix()
+            if path.startswith(("ingestion/", "services/", "api/", "tests/test", "tests/browser/")):
+                assert set(select_suites([path])[0]) <= set(select_suites([script])[0]), (script, path)
+
+
+def test_dockerfile_copied_scripts_keep_production_image_coverage():
+    copied = set()
+    for directory in ("ingestion", "services", ".github/docker"):
+        for recipe in (ROOT / directory).rglob("*Dockerfile*"):
+            for line in recipe.read_text().replace("\\\n", " ").splitlines():
+                if not line.lstrip().startswith("COPY "):
+                    continue
+                words = shlex.split(line)
+                if any(word.startswith("--from=") for word in words):
+                    continue
+                for source in words[1:-1]:
+                    if source == "scripts":
+                        copied.update(path.relative_to(ROOT).as_posix() for path in (ROOT / source).glob("*.py"))
+                    elif source.startswith("scripts/"):
+                        copied.add(source)
+    assert "scripts/catalog_csv.py" in copied
+    assert "scripts/local_wdpa_sample.py" in copied
+    for script in copied:
+        assert "production-images" in select_suites([script])[0], script
+
+
+def test_browser_fixture_imports_and_script_calls_keep_browser_coverage():
+    seen = set()
+    pending = list((ROOT / "tests/browser").glob("*.py"))
+    while pending:
+        module = pending.pop()
+        if module in seen:
+            continue
+        seen.add(module)
+        pending.extend(python_imports(module))
+        # The fixture builder calls catalog_site as a subprocess.
+        for node in ast.walk(ast.parse(module.read_text())):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if node.value.startswith("scripts/") and node.value.endswith(".py"):
+                    pending.append(ROOT / node.value)
+    scripts = {path.relative_to(ROOT).as_posix() for path in seen if path.parent == ROOT / "scripts"}
+    assert {"scripts/release_feature_model.py", "scripts/catalog_site.py", "scripts/compare_releases.py"} <= scripts
+    for script in scripts:
+        assert "browser" in select_suites([script])[0], script
 
 
 def test_cross_component_dependencies_and_explicit_unselected_suites():
