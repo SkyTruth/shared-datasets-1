@@ -19,12 +19,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
-from scripts.ci_host_runtime import isolated_host_environment
-from scripts.ci_runtime import local_runtime, run_container
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
@@ -33,6 +32,176 @@ from scripts.ci_contract import (
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
+
+# Host Python and Docker retain normal filesystem/API capabilities; this
+# isolates default configuration and inherited credentials, not malicious code.
+NETWORK_ENV = {
+    "PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "DOCKER_API_VERSION",
+}
+TLS_FILES = frozenset({"ca.pem", "cert.pem", "key.pem"})
+
+
+def endpoint_kind(host: str) -> str:
+    address = urlsplit(host)
+    if address.username or address.password or address.query or address.fragment:
+        raise ValueError("Docker endpoint must not embed authentication or query data")
+    if address.scheme == "unix" and not address.netloc and address.path.startswith("/"):
+        return "unix"
+    if address.scheme == "tcp" and address.hostname and address.path in {"", "/"}:
+        _ = address.port  # Reject malformed port declarations before running Docker.
+        return "tcp"
+    raise ValueError("Host image validation supports explicit Unix or TCP Docker transport; SSH/agent transport is unsupported")
+
+
+def transport(caller: dict[str, str]) -> tuple[str, bool, bool, Path | None, set[str]]:
+    # DOCKER_CONTEXT overrides DOCKER_HOST in the official CLI. Resolve it first
+    # rather than redirecting an existing connection after removing user config.
+    if caller.get("DOCKER_HOST") and not caller.get("DOCKER_CONTEXT"):
+        host = caller["DOCKER_HOST"]
+        tls = bool(caller.get("DOCKER_TLS") or caller.get("DOCKER_TLS_VERIFY"))
+        verify = bool(caller.get("DOCKER_TLS_VERIFY"))
+        source = None
+        files = set()
+        if tls:
+            certificate_path = caller.get("DOCKER_CERT_PATH") or caller.get("DOCKER_CONFIG")
+            if not certificate_path:
+                if not caller.get("HOME"):
+                    raise ValueError("Docker TLS requires an explicit certificate configuration")
+                certificate_path = str(Path(caller["HOME"]) / ".docker")
+            source = Path(certificate_path)
+            files = {name for name in TLS_FILES if (source / name).is_file()}
+        return host, tls, verify, source, files
+    command = ["docker", "context", "inspect"]
+    if caller.get("DOCKER_CONTEXT"):
+        if caller["DOCKER_CONTEXT"].startswith("-"):
+            raise ValueError("invalid Docker context name")
+        command.append(caller["DOCKER_CONTEXT"])
+    try:
+        contexts = json.loads(subprocess.check_output(command, env=caller, text=True, stderr=subprocess.PIPE))
+        if not isinstance(contexts, list) or len(contexts) != 1:
+            raise ValueError("Docker context inspection must resolve exactly one context")
+        context = contexts[0]
+        endpoint = context["Endpoints"]["docker"]
+        host = endpoint["Host"]
+        if not isinstance(host, str) or type(endpoint["SkipTLSVerify"]) is not bool:
+            raise ValueError("Docker context endpoint has invalid transport metadata")
+        verify = not endpoint["SkipTLSVerify"]
+        files = context.get("TLSMaterial", {}).get("docker", [])
+        if not isinstance(files, list) or len(set(files)) != len(files) or not set(files) <= TLS_FILES:
+            raise ValueError("Docker context contains unsupported TLS material")
+        tls = bool(files or endpoint["SkipTLSVerify"])
+        source = None
+        if files:
+            directory = Path(context["Storage"]["TLSPath"])
+            if not directory.is_absolute():
+                raise ValueError("Docker context TLS storage must be an explicit directory")
+            # Official Docker CLI stores TLS files by context, then endpoint.
+            source = directory / "docker"
+        return host, tls, verify, source, set(files)
+    except (KeyError, TypeError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        raise ValueError("Cannot resolve the Docker context; configure a supported explicit endpoint") from exc
+
+
+@contextmanager
+def isolated_host_environment(work: Path, caller: dict[str, str]):
+    host, tls, verify, source, files = transport(caller)
+    kind = endpoint_kind(host)
+    if tls and kind != "tcp":
+        raise ValueError("Docker TLS requires a TCP endpoint")
+    if ("cert.pem" in files) != ("key.pem" in files):
+        raise ValueError("Docker TLS client certificate and key must be supplied together")
+    if not caller.get("PATH"):
+        raise ValueError("Host image validation requires an explicit tool PATH")
+    with tempfile.TemporaryDirectory(prefix="host-context-", dir=work) as temporary:
+        root = Path(temporary)
+        environment = {key: value for key, value in caller.items() if key in NETWORK_ENV}
+        for key, directory in {
+            "HOME": "home", "DOCKER_CONFIG": "docker", "XDG_CONFIG_HOME": "xdg", "CLOUDSDK_CONFIG": "gcloud",
+        }.items():
+            target = root / directory
+            target.mkdir(mode=0o700)
+            environment[key] = str(target)
+        (root / "docker/config.json").write_text("{}\n")
+        environment["DOCKER_HOST"] = host
+        if tls:
+            certificates = root / "docker-tls"
+            certificates.mkdir(mode=0o700)
+            for name in sorted(files):
+                path = source / name
+                if not path.is_file() or not 0 < path.stat().st_size <= 1024 * 1024:
+                    raise ValueError(f"Missing or invalid Docker transport TLS file: {name}")
+                target = certificates / name
+                target.write_bytes(path.read_bytes())
+                target.chmod(0o600)
+            environment["DOCKER_CERT_PATH"] = str(certificates)
+            environment["DOCKER_TLS_VERIFY" if verify else "DOCKER_TLS"] = "1"
+        yield environment
+
+
+def local_runtime() -> dict:
+    server = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .Server}}"], text=True))
+    architecture = server["Arch"]
+    if server["Os"] != "linux" or architecture not in {"amd64", "arm64"}:
+        raise ValueError("preflight requires a Linux Docker server on amd64 or arm64")
+    return {"platform": f"linux/{architecture}", "server_architecture": architecture, "docker_version": server["Version"]}
+
+
+def run_container(root: Path, work: Path, suite: str, image: str, platform: str) -> dict:
+    """Copy a clean checkout into an owned container and retain its evidence.
+
+    No host directories, Docker socket, environment credentials or user config
+    are mounted. Each architecture gets its own dependency environment.
+    """
+    image_platform = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image], text=True).strip()
+    if image_platform != platform:
+        raise ValueError(f"{suite}: image platform {image_platform} differs from native runtime {platform}")
+    command = ["docker", "create", "--platform", platform, "-w", "/workspace",
+               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache",
+               "-e", "UV_LINK_MODE=copy"]
+    environment = {"CI": "true"}
+    if platform == "linux/arm64":
+        # Older Apple Linux VMs report CPU extensions that bundled OpenSSL
+        # cannot execute. Select its portable implementation, preserving the
+        # locked cryptography wheel and the complete test corpus.
+        environment["OPENSSL_armcap"] = "0"
+    if suite == "browser":
+        # Exercise GitHub's CI-only reporter behavior with owned public
+        # metadata. Never forward tokens, run IDs or the caller's real event.
+        plan = json.loads((work / "plan.json").read_text())
+        (work / "browser-event.json").write_text(json.dumps({"pull_request": {
+            "title": "Local preflight prospective merge", "number": 0,
+            "base": {"sha": plan["base"]}, "head": {"sha": plan["head"]},
+        }}) + "\n")
+        environment.update({"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": "/browser-event.json",
+                            "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "local/preflight",
+                            "GITHUB_SHA": plan["tested_sha"]})
+    for key, value in environment.items():
+        command.extend(["-e", f"{key}={value}"])
+    command.extend([image, "/usr/local/bin/python", "scripts/ci_preflight.py", "run-suite",
+                    "--plan", "/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"])
+    identifier = subprocess.check_output(command, text=True).strip()
+    record = {"platform": platform, "image": image, "container": identifier, "environment": environment}
+    try:
+        subprocess.run(["docker", "cp", f"{root}/.", f"{identifier}:/workspace"], check=True)
+        subprocess.run(["docker", "cp", str(work / "plan.json"), f"{identifier}:/plan.json"], check=True)
+        if suite == "browser":
+            subprocess.run(["docker", "cp", str(work / "browser-event.json"), f"{identifier}:/browser-event.json"], check=True)
+        subprocess.run(["docker", "start", "-a", identifier], check=False)
+        state = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .State}}", identifier], text=True))
+        if state["Running"] or state["Status"] != "exited":
+            raise ValueError(f"{suite}: container did not reach a terminal state")
+        record["exit_code"] = state["ExitCode"]
+        record["image_id"] = subprocess.check_output(["docker", "inspect", "--format", "{{.Image}}", identifier], text=True).strip()
+        subprocess.run(["docker", "cp", f"{identifier}:/evidence/{suite}/.", str(work / suite)], check=True)
+    finally:
+        subprocess.run(["docker", "rm", "-f", identifier], check=True)
+    if record["exit_code"] != 0:
+        raise ValueError(f"{suite}: container failed ({record['exit_code']}); evidence: {work / suite}")
+    return record
 
 
 def git(root: Path, *arguments: str, raw: bool = False) -> str:

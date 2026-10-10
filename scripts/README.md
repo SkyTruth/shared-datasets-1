@@ -2,6 +2,13 @@
 
 This directory contains small operational scripts for maintainers and AI agents.
 
+## CI validation
+
+`ci_preflight.py` owns local container execution and host Docker credential
+isolation alongside the shared plan/run-suite/verify entrypoints. See
+[complete CI preflight](../docs/ci-preflight.md) for the required commands and
+evidence contract.
+
 ## Branch cleanup
 
 `tidy_branches.sh` is a standalone Bash command for local and GitHub branch
