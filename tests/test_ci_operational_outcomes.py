@@ -13,25 +13,26 @@ VALIDATION = {
 }
 
 
-def group(block, *, pr=None, run=101, node='22'):
+def group(block, *, pr=None, run=101, event='pull_request'):
     result = block['group'].replace('${{ github.event.pull_request.number || github.run_id }}', str(pr or run))
-    return result.replace('${{ matrix.node }}', node)
+    return result.replace('${{ github.event_name }}', event)
 
 
-def test_supersession_cancels_only_the_same_pr_and_same_validation_suite():
+def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sources():
     workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
-    assert 'concurrency' not in workflow
-    groups = set()
+    block = workflow['concurrency']
+    assert block['cancel-in-progress'] == "${{ github.event_name == 'pull_request' }}"
+    assert group(block, pr=91, run=101) == group(block, pr=91, run=102)
+    assert group(block, pr=91) != group(block, pr=92)
+    assert group(block, pr=91) != group(block, event='push', run=91)
+    assert group(block, event='push', run=91) != group(block, event='workflow_dispatch', run=91)
+    for event in ('push', 'workflow_dispatch'):
+        assert group(block, event=event, run=101) != group(block, event=event, run=102)
+    # Graph ownership prevents old downstream jobs cancelling newer selection.
     for name in VALIDATION:
-        block = workflow['jobs'][name]['concurrency']
-        assert block['cancel-in-progress'] == "${{ github.event_name == 'pull_request' }}"
-        assert group(block, pr=91, run=101) == group(block, pr=91, run=102)
-        assert group(block, pr=91) != group(block, pr=92)
-        assert group(block, run=101) != group(block, run=102)
-        assert group(block, pr=91) not in groups
-        groups.add(group(block, pr=91))
-    sdk = workflow['jobs']['sdk-validation']['concurrency']
-    assert group(sdk, pr=91, node='22') != group(sdk, pr=91, node='24')
+        assert 'concurrency' not in workflow['jobs'][name]
+    assert workflow['jobs']['ci-ready']['if'] == 'always()'
+    assert workflow['jobs']['sdk-validation']['strategy']['matrix']['node'] == ['22', '24']
     for name, job in workflow['jobs'].items():
         if name not in VALIDATION:
             assert not job.get('concurrency', {}).get('cancel-in-progress', False)
