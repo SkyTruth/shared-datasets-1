@@ -61,7 +61,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal fifteen-scenario count gate cannot supply a misleading failure.
+so the full-suite count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -103,7 +103,7 @@ browsing/inspection still work.
 Historical comparison-map denial stays visible while the table is searched and
 inspected; changing Before/After selections automatically retries using their pinned inputs.
 
-The suite has fifteen required scenarios, including generated TypeScript
+The original catalog scenarios include generated TypeScript
 execution, inline copying/layout, removal of workspace import controls and WDPA execution status. The WDPA scenario
 preserves each realm's published release alongside overall execution failures,
 newer running executions, cancellation and stale observations. The SDK build in the setup above is
@@ -117,4 +117,25 @@ independently from mutable index pointers to exercise replacement/retention.
 The three `usage.spec.mjs` scenarios also exercise the private usage endpoint's
 authentication/missing-summary behavior, report sorting/filters and safe DOM
 rendering, and independent stale-worker detection. The complete browser contract
-requires all nineteen scenarios, with no skips or retries.
+requires all twenty-seven scenarios, with no skips or retries.
+
+Eight additional scenarios replace Python source-text pins with fixture-site
+behavior: docs and localized metadata controls, private/internal signed FGB
+downloads and PMTiles sessions, identifier versus measurement coloring and
+focused zoom, oversized sidecar refusal, tile-only/no-field coloring, direct
+GCS hosting, and bounded API lookup before public streaming. The color fixture uses five display points plus four off-tile
+records; numeric legends follow visible geometry and identifiers keep discrete
+colors across basemap changes. Existing release/signing/cache/cancellation unit
+tests and all original browser scenarios remain in place.
+
+The legacy declaration check for restricted `FetchSource` credentials remains
+in Python: PMTiles4.3.0 ignores its third argument. These scenarios prove
+signer/session cookies and pinned Range requests, but do not claim tile-cookie delivery.
+
+The identifier negative control deliberately changes only the disposable map
+module to color identifiers as measurements. This must fail the basemap color
+assertion, rather than setup or the full-suite count gate:
+
+```sh
+CATALOG_BROWSER_NEGATIVE_CONTROL=identifier-gradient npx --no-install playwright test --grep 'sidecar colorization'
+```

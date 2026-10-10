@@ -58,6 +58,7 @@ def build(work: Path) -> None:
             "comparison",
             "polygons",
             "overlap",
+            "colors",
         )
     ] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
         root = f"gs://example-bucket/category/subcategory/{slug}"
@@ -68,7 +69,7 @@ def build(work: Path) -> None:
             subcategory="subcategory",
             status="active",
             access_tier="public"
-            if tier in {"comparison", "polygons", "overlap"}
+            if tier in {"comparison", "polygons", "overlap", "colors"}
             else tier,
             owner="SkyTruth",
             update_cadence="manual",
@@ -87,7 +88,8 @@ def build(work: Path) -> None:
             available_formats=["fgb", "pmtiles"],
             metadata_paths=["README.md"],
             geometry_type="Polygon" if tier == "polygons" else "Point",
-            row_count=5 if tier == "overlap" else 4 if tier == "polygons" else 2,
+            row_count=(9 if tier == "colors" else 5 if tier == "overlap"
+                       else 4 if tier == "polygons" else 2),
             feature_identity=(
                 {
                     "strategy": "generated_sequence_content_hash",
@@ -142,10 +144,11 @@ def build(work: Path) -> None:
                 }
                 for i in (1, 2)
             ]
-            if tier in {"comparison", "polygons", "overlap"}:
+            if tier in {"comparison", "polygons", "overlap", "colors"}:
                 fixture_prefix = {
                     "polygons": "union-polygons",
                     "overlap": "union-overlap",
+                    "colors": "union-overlap",
                     "comparison": "union",
                 }[tier]
                 geometry = json.loads(
@@ -204,6 +207,18 @@ def build(work: Path) -> None:
                         "provenance": {"source": "Synthetic"},
                     }
                 )
+            color_fields = []
+            if tier == "colors":
+                # Off-tile values must not distort the visible legend's gradient.
+                for i in range(6, 10):
+                    records.append({
+                        **records[0], "feature_id": f"{letter}{i}",
+                        "properties": {"feature_id": f"{letter}{i}", "name": f"Off-tile {i}"},
+                    })
+                for i, record in enumerate(records, 1):
+                    record["properties"].update(code=100 + i % 2, fatalities=i * 10)
+                    record["properties_hash"] = model.properties_hash(record["properties"])
+                color_fields = [{"name": name, "type": "integer"} for name in ("code", "fatalities")]
             schema = model.build_release_schema(
                 asset_slug=slug,
                 release=release["date"],
@@ -211,6 +226,7 @@ def build(work: Path) -> None:
                     {"name": "feature_id", "type": "string", "nullable": False},
                     {"name": "name", "type": "string"},
                     {"name": "optional", "type": "string"},
+                    *color_fields,
                 ],
             )
             historical = tier == "polygons" and old
@@ -254,7 +270,7 @@ def build(work: Path) -> None:
                 if file["format"] == "pmtiles":
                     archive_name = (
                         f"{fixture_prefix}-{'before' if old else 'after'}"
-                        if tier in {"comparison", "polygons", "overlap"}
+                        if tier in {"comparison", "polygons", "overlap", "colors"}
                         else ("old" if old else "new")
                     )
                     data = (FIXTURES / f"{archive_name}.pmtiles").read_bytes()
@@ -280,6 +296,25 @@ def build(work: Path) -> None:
                 target = objects / file["path"].split("example-bucket/", 1)[1]
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
+            if tier == "public":
+                localized = next(
+                    file for file in release["files"] if file["format"] == "metadata"
+                ).copy()
+                localized.update(
+                    role="metadata-es", locale="es", generation=112 if old else 212,
+                    path=localized["path"].replace(".metadata.", ".metadata.es."),
+                )
+                translated_records = [
+                    {**record, "properties": {
+                        **record["properties"], "name": f"Español {record['feature_id']}",
+                    }} for record in records
+                ]
+                data = gzip.compress(
+                    ("\n".join(map(json.dumps, translated_records)) + "\n").encode(), mtime=0,
+                )
+                localized.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+                release["files"].append(localized)
+                (objects / localized["path"].split("example-bucket/", 1)[1]).write_bytes(data)
             manifest_path = f"{root}/releases/{release['date']}/{slug}.manifest.json"
             artifacts = [
                 {**file, "generation": int(file["generation"])}
@@ -373,6 +408,14 @@ def build(work: Path) -> None:
                 "Stale-inspector negative control no longer matches the product"
             )
         app_path.write_text(app.replace(guard, "", 1))
+
+    if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "identifier-gradient":
+        map_path = work / "site/map-preview.js"
+        source = map_path.read_text()
+        decision = "return looksLikeIdentifierField(field);"
+        if source.count(decision) != 1:
+            raise ValueError("Identifier-gradient negative control no longer matches the product")
+        map_path.write_text(source.replace(decision, "return false;", 1))
 
 
 if __name__ == "__main__":
