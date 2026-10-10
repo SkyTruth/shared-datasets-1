@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from scripts import ci_preflight
-from workflow_helpers import load_workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,19 +86,3 @@ def test_exception_and_stale_diagnostic_text_do_not_block_next_owner(tmp_path, m
             raise RuntimeError("failed validation")
     with ci_preflight.local_preflight_slot(ROOT, "base", "new-head"):
         assert json.loads(path.read_text())["head"] == "new-head"
-
-
-def test_whole_pr_graph_cancels_together_and_never_cancels_main_deployment_sources():
-    workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
-    concurrency = workflow["concurrency"]
-    assert concurrency == {
-        "group": "ci-validation-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}",
-        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
-    }
-    # An old downstream job must never cancel a newer selection job or gate.
-    # Cancellation is owned by the graph; PR, push, and dispatch cannot collide.
-    for name in ("geospatial-changes", "lint", "tests", "geospatial-integration",
-                 "production-images", "sdk-validation", "browser", "ci-ready"):
-        assert "concurrency" not in workflow["jobs"][name]
-    assert workflow["jobs"]["ci-ready"]["if"] == "always()"
-    assert workflow["jobs"]["sdk-validation"]["strategy"]["matrix"]["node"] == ["22", "24"]

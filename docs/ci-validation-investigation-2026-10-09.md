@@ -186,8 +186,9 @@ and Actions-provenance boundaries still establish gate success.
   recovery. These procedural rules do not grant cross-chat or merge authority.
 - `tests/test_ci_coordination.py` exercises actual subprocess/kernel
   contention, different temp overrides, TERM/KILL, exceptions and stale owner
-  text. It checks graph-wide ownership while retaining the always-evaluated
-  gate and both SDK entries. Existing preflight/source-proof/deployment tests
+  text. The existing operational-outcome test now checks graph-wide ownership and
+  distinct PR/main/dispatch identities while retaining the always-evaluated
+  gate, both SDK entries and protected production queues. Existing preflight/source-proof/deployment tests
   cover stale revision/base/tree/contract/tool versions, missing/failed/cancelled
   results and matrix entries; cancelled work cannot create a passing gate.
 
@@ -206,6 +207,12 @@ passed 115 tests; focused Ruff passed. The PR records final committed-head full
 preflight evidence and hosted status separately.
 The expanded check including gate artifact transport and repository guardrails
 passed 170 tests and 97 subtests; full repository Ruff also passed.
+Full preflight on initial head `9d23b18` then caught the old operational-outcome
+test requiring per-job locks. Migrating that test to whole-graph ownership and
+removing the duplicate new workflow test produced 182 passing focused tests
+and 97 subtests, including all operational-outcome controls. The initial full
+run correctly failed (2,518 passed, five permitted native skips) and is retained;
+its evidence cannot qualify the corrected head.
 
 Deletion pass: eight now-redundant job ownership blocks removed; no internal
 evidence handling removed, no fallback or retry loop added. Rejected evidence
