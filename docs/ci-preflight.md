@@ -1,5 +1,9 @@
 # Complete validation before pushing
 
+For concurrent work, follow [agent integration](agent-integration.md). Finish
+known overlapping prerequisites and any required main synchronization before
+committing the final head and starting this command.
+
 From a clean checkout with full Git history, run:
 
 ```bash
@@ -12,6 +16,20 @@ It does not change the source checkout or index. A merge conflict, shallow
 history, missing comparison, missing required tool, failed test, empty test
 collection, or unexpected skip fails validation. Resolve a missing base before
 retrying; selecting all suites does not make history-dependent checks optional.
+
+Full local preflight takes a nonblocking kernel lock at
+`/tmp/shared-datasets-1/coordination/preflight-<uid>.lock` before creating a clone
+or building images. This host/user scope intentionally spans worktrees, Docker
+contexts and different `TMPDIR`/`SHARED_DATASETS_WORKDIR` settings; it is a
+coordination-path exception to the normal temporary-root override. A busy slot
+exits unsuccessfully and names the owner. It never waits, retries, reuses results,
+or produces passing evidence. Process exit, cancellation or a crash releases the
+lock. Retained PID/revision text is diagnostic only; never delete the lock file
+or infer live ownership from its contents. After a crash, the recovery owner
+checks for surviving Docker builds/containers before starting another full run.
+The lock coordinates cooperating local entrypoints on Unix hosts; it does not
+control other users, remote hosts, direct Docker commands, or old checkouts that
+predate this change.
 
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
@@ -117,6 +135,12 @@ suite and both SDK matrix entries for its tested revision. Cancelled, missing,
 failed and unexpectedly skipped jobs cannot satisfy it. Local evidence is not
 an approval artifact. Reviews, protected environments and trusted event
 provenance remain GitHub-only authorization boundaries.
+
+CI cancellation belongs to the whole PR workflow, so a newer PR run cancels the
+obsolete selection, suites and gate together. Push-to-main and manual runs use
+separate groups per run and are never cancelled by this PR policy; deployment
+consumers retain their tested-image and SDK evidence. Selective reruns still
+require the existing exact-attempt provenance and compatibility checks.
 
 Existing `lint`, `tests` and `geospatial-changes` requirements remain available
 during migration. Add `ci-ready` while retaining them, verify positive and

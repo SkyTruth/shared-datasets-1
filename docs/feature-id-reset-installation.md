@@ -38,7 +38,7 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
 2. Capture the current object inventory, prepare and stage the reset inputs,
    and submit the immutable reset plan described below. WDPA requires one plan
    per asset. The corrected translation supplement is already staged; use the
-   exact generation and SHA in the [translation evidence](wdpa-translation-reset-evidence.md).
+   exact generation and SHA in the [translation evidence](history/wdpa-translation-reset-evidence.md).
 3. After review and merge, `Approved dataset mutation` installs the reset. It
    verifies the immutable authority before authentication and rechecks review
    acceptance, the paused schedule, and every page of execution status before

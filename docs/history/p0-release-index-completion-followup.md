@@ -1,3 +1,5 @@
+Historical record, completed 2026-06-05. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # P0 Release Index Completion Follow-Up
 
 This note documents the reviewed mutation proposal for completing the remaining
@@ -45,4 +47,3 @@ PR is reviewed and merged.
   the restored FGB files.
 - Publish-plan JSON validates with `scripts/reviewed_dataset_plan.py`.
 - Destination paths validate with `scripts/gcs_asset.py validate-path`.
-

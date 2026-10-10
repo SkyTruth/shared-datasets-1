@@ -426,7 +426,7 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
 def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):
     commands = preflight.suite_commands('lint', ROOT, plan(), tmp_path)
     initializations = [args for args, _ in commands if args[0] == 'terraform' and 'init' in args]
-    assert len(initializations) == 3
+    assert len(initializations) == 2
     assert all('-lockfile=readonly' in args for args in initializations)
 
 

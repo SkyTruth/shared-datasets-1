@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import sys
+from unittest import mock
 
 import pytest
 
@@ -104,8 +105,14 @@ def test_conflicting_duplicates_and_ambiguity_emit_no_outputs(tmp_path):
     )
     (tmp_path / "old.ndjson.gz").unlink()
     (tmp_path / "old.geojsonseq").unlink()
-    with pytest.raises(metadata.IdentityDecisionRequired):
-        disk_allocation(tmp_path, [feature("changed-key")], baseline)
+    # This synthetic ambiguity must not use a maintainer's real Slack webhook.
+    with mock.patch("scripts.slack_notify.notify", return_value=True) as notify:
+        with pytest.raises(metadata.IdentityDecisionRequired):
+            disk_allocation(tmp_path, [feature("changed-key")], baseline)
+    notify.assert_called_once()
+    assert notify.call_args.kwargs["title"] == (
+        "Decision needed: wdpa-marine release 2026-10-01"
+    )
     assert not list(tmp_path.glob("*.ndjson.gz"))
     assert not list(tmp_path.glob("*.fgb"))
 
