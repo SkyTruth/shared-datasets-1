@@ -1,0 +1,95 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_project_iam_custom_role.wdpa_build_stager",
+      "type": "google_project_iam_custom_role",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "project": "shared-datasets-1",
+          "role_id": "wdpaBuildStager",
+          "name": "projects/shared-datasets-1/roles/wdpaBuildStager"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.wdpa_validation_deployer",
+      "type": "google_service_account_iam_member",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "service_account_id": "projects/shared-datasets-1/serviceAccounts/wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "google_storage_bucket_iam_member.wdpa_build_folder_stager",
+      "type": "google_storage_bucket_iam_member",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "b/skytruth-shared-datasets-1"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "google_storage_bucket_iam_member.wdpa_build_stager",
+      "type": "google_storage_bucket_iam_member",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "b/skytruth-shared-datasets-1"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
+      "type": "google_cloud_run_v2_job",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "project": "shared-datasets-1",
+          "name": "wdpa-processing-validation",
+          "location": "us-central1"
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "module.wdpa_validation_service_account.google_service_account.this",
+      "type": "google_service_account",
+      "mode": "managed",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "project": "shared-datasets-1",
+          "account_id": "wdpa-processing-validation",
+          "name": "projects/shared-datasets-1/serviceAccounts/wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com"
+        },
+        "after": null
+      }
+    }
+  ]
+}

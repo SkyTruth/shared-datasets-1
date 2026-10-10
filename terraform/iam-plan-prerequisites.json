@@ -54,6 +54,7 @@
       "google_storage_bucket.shared_bucket",
       "module.shared_datasets_publisher_service_account.google_service_account.this"
     ],
+    "scratch-cleanup-iam-sync.yml/retirement-bootstrap": [],
     "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": []
   }
 }
