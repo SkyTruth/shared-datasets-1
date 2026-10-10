@@ -109,31 +109,10 @@ conversion order that deletes large intermediates as soon as they are no longer
 needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
 alive at the same time.
 
-Use the reviewed WDPA resource target, and never increase it to bypass acceptance:
-
-- Cloud Run Job task resources: `4` CPU and enforced `8Gi` memory. Preserve the
-  measured kernel lifetime peak; exceeding preferred 6.4 GiB headroom is an
-  advisory warning, not artifact rejection or a reason to rebuild retained bytes.
-- Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
-  Obtain the additional per-instance disk quota before rollout.
-- The October validation campaign is retired. Monthly deployment requires the
-  pinned accepted registry image, version 3 `catalog/wdpa-processing-acceptance.json`,
-  retained evidence and the immutable `.github/dataset-plans/wdpa-build-{bundle-sha256}.json`
-  promotion plan. `scripts/wdpa_processing_gate.py` validates acceptance;
-  `scripts/wdpa_build_authorization.py` verifies the exact reviewed plan.
-  `scripts/release_contracts.py --target wdpa` verifies the hash-bound terminal
-  execution snapshot before promotion; it does not query the retired producer.
-- Production consumes that exact `WDPA_PROMOTION_BUNDLE` without regenerating
-  artifacts. The publication-only image inherits the verified producer image and
-  copies only approved publication dependencies. Verify needed staged files and
-  live predecessors; preserve committed realms through their owned receipts.
-  Keep the monthly worker's prefix-scoped retained-bundle read permission.
-- Observe terminal status through the independent execution observer. After an
-  alert-policy change, verify delivery separately through
-  `cron-alert-delivery-test.yml`; routine deploys do not inject failure probes.
-- Cloud Run Job task timeout: at least `86400s` (24 hours).
-- Retries: `0` while first validating idempotency and partial-release behavior;
-  add retries only after failures are known to be safe to replay.
+For WDPA, follow the [monthly operations runbook](../../../docs/wdpa-monthly-runbook.md)
+for the current accepted image and bundle, resource and quota prerequisites,
+protected deployment trigger, execution/observer checks and owned recovery.
+It is the operational source for the single-build publication sequence.
 
 When a manual post-deploy execution is expected to take hours, start it
 asynchronously instead of waiting in the agent session:

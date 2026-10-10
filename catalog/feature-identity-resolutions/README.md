@@ -71,7 +71,7 @@ not in question, and no decision is required. That policy exists because
 sources such as WDPA file sibling designations of one place on byte-identical
 footprints, which otherwise produced thousands of hash-match escalations per
 release for records that had not changed at all. See
-`docs/proposals/feature-identity-key-corroboration.md`.
+`docs/history/feature-identity-key-corroboration.md`.
 
 A file here is therefore only needed for genuinely uncertain identity: a
 recycled or reassigned source key, a key whose footprint moved onto another

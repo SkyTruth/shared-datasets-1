@@ -1,89 +1,16 @@
 # Monthly WDPA Job
 
-> **First deployment:** install the reviewed feature-ID reset while the job is
-> paused and drained. Deployment verifies installed publication state before
-> building the image. See the [installation runbook](../../docs/feature-id-reset-installation.md).
-
-This job publishes two bare-bones WDPA/WDOECM assets:
-
-- `wdpa-marine`
-- `wdpa-terrestrial`
-
-It downloads the monthly Protected Planet shapefile zip, selects the source
-point and polygon layers, and splits rows by the source split field. `MARINE`
-is used when present; current WDPA/WDOECM shapefiles use `REALM`, with
-`Marine` and `Coastal` routed to `wdpa-marine` and `Terrestrial` routed to
-`wdpa-terrestrial`.
-
-The output schema is the union of source fields. The current source has
-polygon-only fields such as `GIS_M_AREA` and `GIS_AREA`; those fields are
-preserved and are null for point rows rather than being dropped or renamed.
-
-The job intentionally does not rename fields, buffer points, calculate areas,
-build statistics tables, update Strapi, or write database payloads.
-
-Name fields keep the upstream WDPA schema. `NAME` is the protected or conserved
-area name as supplied by WDPA, generally in the original or local language/script
-of the protected area. `NAME_ENG` is the upstream English-name source field in
-canonical FGB and canonical metadata. Localized metadata sidecars preserve the
-source field names, so translated display names are written back to `NAME_ENG`.
-In localized sidecars, `NAME_ENG` is a misleading legacy name; consumers should
-treat it as the active-locale display name, effectively `name_localized`, not as
-an English-only value.
-
-## Translation reuse
-
-The job rebuilds `es`, `fr`, `id`, `pt`, `pt_br`, and `sw` metadata sidecars
-together with each release. The two asset documents declare the same
-`translation_locales` and 17 `translation_fields`; the job reads these through
-the generated catalog. The translation-source CSV and all six sidecars are
-part of the same owned publication as the geometry and canonical metadata,
-and the final manifest records their exact generations and translation coverage.
-
-Translations are matched first by the exact `SITE_PID` and original source-value
-hash. Numeric `feature_id` values never join translations across releases or
-identity contracts. An unambiguous existing translation of the same source text,
-field, and locale can fill another record. Conflicting text translations remain
-site-specific. Both direct matches and phrase reuse retain the original review
-states and notes. Usable machine translations and `needs_review` rows are current;
-editorial review is reported separately from availability.
-
-The job downloads the exact canonical metadata and translation CSV generations
-recorded in its committed release manifest, including reviewed translation edits.
-Persisted v1 receipts remain the source only for extras omitted by their old manifests. While either asset is in the
-explicit first-reset state, both assets use the verified June 9 legacy source
-bundles pinned in `translations.py`. Keeping that pair fixed across retries
-preserves translations for protected areas that move between marine and terrestrial.
-That state also binds a reviewed gap supplement by staged object path, generation,
-and SHA-256. Both assets must approve the same supplement; the first build verifies
-and consumes it without replacing established translations. Translation gaps are
-nonblocking for the first release and later releases; identity reservation,
-generation checks, and bundle validation still apply.
-Once both first publications finish, later builds use their committed CSV and
-do not reload the reset supplement.
-Missing state or an incomplete committed bundle fails; it does not select arbitrary
-`latest/` files. One disposable SQLite index serves both WDPA assets. Large CSVs
-are streamed and the downloaded copies are locally compressed.
-
-New or changed text without a usable current translation retains the canonical
-value. A successful older row keeps its old source hash, so the next build still
-recognizes stale text. With no successful history, its CSV row is empty with
-`review_state=translation_failed`. A failed current row counts as missing even
-when older successful rows exist. The report and final manifest partition each
-locale's nonblank approved string values into `current`, `stale`, and `missing`.
-Local `*.translation-debt.{locale}.csv` files contain only unresolved current
-feature/field keys and source text. They are build outputs, not canonical artifacts.
-The job does not contact a translation provider or claim
-that fallback text is translated. Follow the [translation evidence and tooling](../../docs/wdpa-translation-reset-evidence.md)
-to fill these tasks without retranslating the full dataset. New machine results
-remain labeled as machine output rather than human review.
+The production worker publishes approved retained bundles for `wdpa-marine` and
+`wdpa-terrestrial`. Use the [monthly operations runbook](../../docs/wdpa-monthly-runbook.md)
+for the pinned images, deployment prerequisites, execution commands, observer,
+recovery and evidence paths.
 
 ## Runtime
 
-Entrypoint:
+Production entrypoint (`Dockerfile.promotion`):
 
 ```bash
-python -m ingestion.wdpa_monthly.run
+python -m ingestion.wdpa_monthly.publication_only
 ```
 
 Required environment:
@@ -91,273 +18,135 @@ Required environment:
 ```bash
 GOOGLE_CLOUD_PROJECT=shared-datasets-1
 SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
+WDPA_PROMOTION_BUNDLE=<accepted bundle reference JSON>
 ```
 
-Optional environment:
+`WDPA_PROMOTION_BUNDLE` is the accepted descriptor's URI, generation, size and
+SHA-256. The worker verifies required staged bytes and live predecessors before
+new publication. It copies exact artifacts through `OwnedGeneratedPublisher`;
+it does not download or process the upstream source or rebuild translations.
+An already committed realm retains its verified receipts and artifacts.
 
-```bash
-RUN_DATE=YYYY-MM-DD
-WDPA_SOURCE_URL_TEMPLATE=https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip
-```
+Optional `RUN_DATE=YYYY-MM-DD` controls the release date. Without an override,
+the worker uses the first day of the current UTC month. The accepted bundle must
+match that month; a missing or wrong-month bundle fails before publication.
+Scheduler `wdpa-monthly` invokes it at 09:00 UTC on days 1–10. Repeated completed
+publications verify both receipts and return skipped without artifact downloads.
 
-`RUN_DATE` controls the release date and source month token. When `RUN_DATE` is
-unset, the job uses the first day of the current UTC month so repeated scheduled
-attempts in the source availability window target one stable release path. The
-default source template supports `{run_date}`, `{year}`, `{month}`, and
-`{month_token}`.
+Both assets require installed `generated-2026-v1` publication state. The publisher
+reserves IDs and claims ownership before exposing artifacts. Runtime identity
+binds `CLOUD_RUN_EXECUTION` and embedded `SHARED_DATASETS_EXECUTOR_SHA`.
+Interrupted transactions retain claims, reservations, intent and checkpoints;
+retry through the original owner and captured executor/inputs. Follow the
+[feature-ID installation/recovery runbook](../../docs/feature-id-reset-installation.md).
 
-## Publishing behavior
+### Retained-build runtime
 
-For each asset, the job writes:
+The source-processing image uses `python -m ingestion.wdpa_monthly.run`; its
+isolated build workflow retains artifacts for later reviewed promotion.
+`WDPA_SOURCE_URL_TEMPLATE` defaults to
+`https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip`
+and supports `{run_date}`, `{year}`, `{month}` and `{month_token}`.
+
+The builder selects point/polygon layers from the Protected Planet shapefile ZIP.
+It uses `MARINE` when present; current `REALM` values `Marine` and `Coastal` go to
+`wdpa-marine`, and `Terrestrial` goes to `wdpa-terrestrial`. The output schema is
+the union of source fields; polygon-only `GIS_M_AREA`/`GIS_AREA` remain null for
+points. Source fields are preserved. The builder does not buffer points,
+calculate areas, build statistics tables, update Strapi or write database payloads.
+
+Normalization and a verified baseline determine a complete allocation before
+publication. FGB and canonical metadata retain `feature_id`, `geometry_hash` and
+`properties_hash`; PMTiles carry geometry and `feature_id`. Scratch SQLite stores
+are disposable and never replace durable publication state.
+
+### Translation runtime
+
+Each bundle includes a translation-source CSV and `es`, `fr`, `id`, `pt`, `pt_br`
+and `sw` metadata sidecars. The builder reads the 17 translation fields and locales
+from the generated catalog. It matches exact `SITE_PID` and source-value hashes;
+numeric feature IDs do not join translations across releases or contracts.
+Unambiguous field/locale/source-text reuse preserves review states and notes;
+conflicting text stays site-specific.
+
+Inputs come from exact committed manifest generations; legacy v1 receipts supply
+extras their old manifests omit. The explicit first-reset state uses the verified
+legacy source pair and approved supplement. Once both first publications finish,
+later builds use their committed CSVs. Missing state or incomplete committed
+bundles fail rather than selecting arbitrary `latest/` objects.
+
+`NAME` preserves the upstream original/local name. Canonical `NAME_ENG` is the
+English source field; localized `NAME_ENG` is the active-locale display name.
+New/changed text without a usable translation retains canonical text. Reports
+partition values into `current`, `stale` and `missing`; editorial review remains
+separate from availability. Local translation-debt CSVs are build outputs.
+The job never contacts a translation provider. Use the
+[translation maintenance skill](../../.claude/skills/update-feature-metadata-translations/SKILL.md)
+for reviewed updates.
+
+### Published objects
+
+For each asset, publication writes:
 
 ```text
 100-geographic-reference/130-protected-areas/{asset}/releases/YYYY-MM-DD/{asset}.{artifact}
 100-geographic-reference/130-protected-areas/{asset}/latest/{asset}.{artifact}
 100-geographic-reference/130-protected-areas/{asset}/runs/YYYY-MM-DD.json
+_catalog/releases/{asset}.json
 ```
 
 The twelve artifacts are FGB, PMTiles, canonical metadata, schema, manifest,
-the translation-source CSV, and six locale metadata sidecars.
-
-Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
-replace only the current observed generation. If a successful run record exists,
-that asset is skipped. If release objects exist without a successful run record,
-the job fails before touching `latest/`.
-
-The upstream Protected Planet ZIP for a new month is not guaranteed to exist on
-the first day of the month. Source availability and processing belong to the
-retained-build stage. The production scheduler runs the publication-only worker
-daily on days 1-10; it consumes an approved build for the current month and
-skips a verified completed publication. It does not discover or process a new
-upstream ZIP. An unavailable approved build remains an actionable failure.
+translation-source CSV and six locale metadata sidecars. Manifests record actual
+canonical generations and translation coverage. Release writes are no-clobber;
+`latest/` replacements require the observed generation. Partial releases resume
+only through their owned transaction. A new execution cannot abandon a claim.
 
 ## Container
 
-Build from the repo root:
+Build a local source-processing/diagnostic image from the repo root:
 
 ```bash
-docker build -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
+docker build --platform linux/amd64 -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 ```
+
+Production uses `Dockerfile.promotion`, inheriting the accepted producer's native
+tools/dependencies and adding reviewed consumer/publication code and the current
+locale catalog. `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the producer fingerprint.
+The publication-only entrypoint rejects a missing bundle before source processing;
+`WDPA_FAIL_BEFORE_WRITES=true` supports the controlled alert-delivery probe.
 
 ## Deploy
 
-Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
-after reviewed changes merge to `main`. The workflow promotes the accepted
-immutable image; it does not rebuild it. For the October rollout it requires one
-retained complete build and its exact-head reviewed promotion plan, then executes
-the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
-copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
-owned publisher, preserving claims, counters, generation preconditions and
-recovery. It does not run source processing again. A different canary date is
-rejected. The independent observer and unattended failure alerts remain enabled.
+Use the [monthly operations runbook](../../docs/wdpa-monthly-runbook.md#deploy-an-accepted-month)
+and [scheduled-ingestion skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md).
+Production uses protected `wdpa-monthly-deploy.yml` from reviewed `main`.
+Deployments prepare a publication layer and pin its registry digest; the canary
+uses the captured bundle and build date. New months require newly reviewed build
+authority. Do not use a local production Terraform apply or hand-built image.
 
-The deploy job waits for the protected ingestion IAM sync to bootstrap access
-management on the one Slack secret and install runtime translation-notice
-permissions. This prerequisite does not replace the retained-build acceptance
-and promotion gates.
-
-The job template pins `WDPA_PROMOTION_BUNDLE` to the accepted build reference
-from `catalog/wdpa-processing-acceptance.json`; `RUN_DATE` remains an
-execution-only override. Scheduled invocations therefore use the current UTC
-month and can consume only a reviewed build for that month. A missing bundle or
-a bundle for another month fails before publication with an actionable error;
-the worker never falls back to processing source data. Each new month's retained
-build and promotion authority must be reviewed and deployed before that month's
-scheduled publication can succeed. Repeat invocations of a completed month
-verify the owned receipts and return `skipped` without downloading or
-republishing artifacts.
-
-Do not deploy this job with a local Terraform apply or hand-built production image. See the
-[single-build runbook](../../docs/wdpa-processing-validation.md#single-build-and-promotion).
-
-## Cost Controls and Teardown
-
-Immediate stop:
+Pause future automatic executions when stopping the job:
 
 ```bash
 gcloud scheduler jobs pause wdpa-monthly \
-  --location=us-central1 \
-  --project=shared-datasets-1
+  --location=us-central1 --project=shared-datasets-1
 ```
 
-Pausing the scheduler stops future automatic monthly runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
+Pausing does not drain running executions or release claims. Permanent teardown
+requires a reviewed PR and a constrained protected workflow covering worker,
+observer, scheduler and IAM. Published datasets and historical releases remain.
 
-Permanent infrastructure teardown requires a reviewed PR and a constrained
-protected production workflow with explicit worker, observer, scheduler and IAM
-allowlists. Do not run a local Terraform destroy/apply or delete dataset releases,
-latest files, run records, README files or catalog rows as part of cost teardown.
+## Limits
 
-## Processing limits and local replay
+Terraform configures 4 CPU / 8 GiB, `86400s`, zero retries and a 100 GiB ephemeral
+DISK at `/work`. `TMPDIR=/work/tmp` and
+`SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` keep native/SQLite scratch there.
+Cloud executions reject a missing or memory-backed mount before downloads.
+Tippecanoe uses at most four threads; SQLite caches are capped at 64 MiB and
+sorting uses disk. The observer has no ephemeral disk and uses 1 CPU / 512 MiB,
+120 seconds and zero retries.
 
-See [validation and rollout evidence](../../docs/wdpa-processing-validation.md)
-for compatibility results and the outstanding resource acceptance prerequisites.
-
-The worker targets 4 vCPU / 8 GiB, a 24-hour timeout and a 100 GiB ephemeral
-DISK volume at `/work`. `TMPDIR=/work/tmp` and
-`SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` put GDAL, Tippecanoe and SQLite
-scratch on that disk. A Cloud Run execution fails before downloads when the
-mount is missing or memory-backed. Tippecanoe uses at most four threads; SQLite
-caches are capped at 64 MiB and sorting uses disk.
-
-The [Cloud Run disk feature](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
-is Preview. Before rollout, verify `run.googleapis.com/max_per_instance_ephemeral_disk`
-permits 100 GiB and `run.googleapis.com/ephemeral_disk_allocation` has enough
-capacity in `us-central1` for every concurrent worker instance (at least 100 GiB
-for one instance). Record the effective limits in the reviewed acceptance
-document. The observer has no ephemeral disk volume. Google's default
-per-instance limit is 10 GiB. Disk contents are disposable and are
-never publication authority.
-
-Processing filters the source into a GeoPackage, pipes the existing GDAL 3.6.2
-GeoJSONSeq normalization into a binary normalized GeoPackage and an indexed
-identity plan, completes allocation, attaches IDs/hashes, and writes metadata.
-FGB exports directly from the normalized store. Tippecanoe receives a pipe with
-only geometry and `feature_id`; MBTiles conversion and existing tiling options
-are preserved. The geometry store is removed after both geometry outputs finish.
-Translations follow geometry processing. Verified translation input downloads
-are removed once their reusable SQLite index is built; an approved supplement
-remains available while rebuilding the locales. A published marine bundle is
-removed locally before the terrestrial build.
-
-The invariant is unchanged: normalized content and a verified baseline determine
-one complete allocation before publication. Scratch changes cannot change
-identity or bypass an interrupted publication. Recover durable claims/receipts
-through the original publication owner; never substitute local SQLite state or
-reset a sequence because a disk was lost.
-
-The October validation campaign has retired. Its immutable acceptance evidence,
-source recipe and promotion plan remain in the repository. Monthly deployment
-consumes the pinned registry image and retained bundle; it does not rerun the
-campaign or download its expiring hosted image archive. Local replay and input
-probe helpers remain for the monthly image and boundary tests.
-`scripts/release_contracts.py --target wdpa` verifies the retained
-`cloud-facts.json` hash and its terminal execution identity, image and success
-before image promotion. This check uses the immutable snapshot; the monthly
-canary and execution observer continue to verify live monthly executions.
-
-Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
-time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
-and native tool versions, plus the memory breakdown at the sampled peak.
-At 4 GiB cgroup usage, the sampler
-uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
-cache, including open temporary files that native tools have unlinked. The
-sampler follows the current process's descendants through `/proc`, pins each
-eligible descriptor, and rechecks its deletion state, file type and tracked
-directory before advising it. Thread/process/file disappearance is an expected
-sampling race; permission and cache-advice errors fail measurement.
-It skips symlinks and special files, never changes file bytes and never
-resets or excludes cache from the measured cgroup peak. Frozen local replays also
-release cache from their read-only input directory. Cache advice failures fail
-measurement. The preferred 6.4 GiB headroom target produces an advisory warning;
-the enforced 8 GiB memory limit remains unchanged. Reports retain the actual
-kernel lifetime peak, including file cache.
-Missing peak telemetry is not passing evidence.
-Scratch measurements cover the entire `/work` filesystem, including native
-temporary files outside the build directory and open files that were unlinked.
-
-`scripts/wdpa_processing_gate.py` requires one complete terminal-success October
-build at 4 CPU / 8 GiB with a measured kernel peak within the enforced 8 GiB
-limit, scratch <80 GiB and duration
-≤24 hours, plus independently verified realm/India counts, native contracts and
-a matching sampled old/new comparison. Schema version 3 acceptance binds its
-retained bundle by URI, generation, size and SHA-256, its actual cloud image and
-execution, and the reviewed immutable promotion plan. Samples and genesis runs
-cannot authorize publication. Exceeding preferred headroom alone does not reject
-valid artifacts or require a rebuild. Resource configuration cannot be increased.
-
-Already-committed realms retain their successful receipts and published bytes.
-For a realm published before the build, promotion checks its frozen current
-manifest, release, allocation counter, source period/URL, identity contract and
-row count. Unused candidate hashes need not match that pre-existing release.
-For a realm published from the retained build, the current owned receipt must
-prove the build's predecessor and allocation, and the run record must match all
-retained artifact hashes plus the finalized manifest hash. A successful
-publication advances the live baseline; a verified retry does not require that
-baseline to remain at its pre-publication generation. Another owner or an
-unrelated state change still stops publication. Only an unpublished realm's
-retained files are downloaded and published at exact generations and hashes.
-
-The reviewed promotion plan also pins the producer configuration and original
-source fingerprint. Publication code can change without invalidating those
-build facts. `Dockerfile.promotion` inherits the verified producer image's native
-tools and dependencies and adds the reviewed consumer/gate/entrypoint and the
-current shared translation publisher, helpers and locale catalog.
-`WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the expected producer at the bundle
-boundary. The publication-only entrypoint refuses a missing bundle before
-source processing; the controlled pre-write failure probe remains available.
-No source download, normalization, tile build or translation rebuild is part
-of this image layer or publication.
-
-Translation-only updates retain the prior committed receipt and manifest
-snapshots. Subsequent retained-build retries verify that history back to the
-original accepted publication and require unchanged base artifact hashes and
-feature-ID allocation. Language updates therefore remain valid inputs for
-future builds without causing the current month's scheduled retry to fail.
-
-## Execution observations and failure recovery
-
-`wdpa-execution-observer` uses 1 CPU / 512 MiB, a 120-second timeout and a
-five-minute scheduler. It reads WDPA executions independently of the worker and
-writes only `gs://skytruth-shared-datasets-1/_catalog/wdpa-monthly-execution.json`
-with generation preconditions and revalidation headers. It has no dataset,
-release-index, claim, receipt or allocation permissions. An exact-object storage
-binding and deny-policy exception permit replacing only that status document.
-Before provisioning, review the protected Terraform identity's create permissions
-for the observer job, scheduler and custom execution-reader role. Its existing
-scheduled-ingestion role supports job updates, not those creations. Bootstrap
-must use a reviewed protected workflow; do not add broad project permissions or
-use a local production apply to bypass that requirement.
-
-The version1 document contains `schema_version`, `job_name`, `observed_at`,
-`latest_execution` and `latest_completed_execution`. Entries include ID,
-created/started/completed timestamps, state (`pending`, `running`, `succeeded`,
-`failed`, `cancelled`, `unknown`) and an allowlisted API reason code. Raw messages
-and execution configuration are never published. A newer running attempt retains
-the last completed failure. API or IAM failures leave the old observation stale
-and fail the observer job, so the general execution alert covers them too.
-
-Both WDPA catalog details show execution observations separately from the asset
-check-in and published release. A successful marine publication does not imply
-a successful overall job. Visible details revalidate every minute; observations
-older than 15 minutes are marked stale. A status-document failure does not alter
-any release or allocation state.
-The protected viewer serves `execution-status.js` and maps
-`/wdpa-monthly-execution.json` to the same observer object under `_catalog/`;
-it reads that observation afresh on each request. After merge, deploy the viewer
-image through `catalog-viewer-deploy.yml` before the web bundle through
-`catalog-web-deploy.yml`, both protected workflows. Verify status on the static
-and protected catalog pages after deployment.
-
-Routine rollout does not inject a deliberate failure or require a previous
-Slack notification as an input. Monitoring delivery is tested separately with
-`cron-alert-delivery-test.yml` from reviewed `main`, using the pre-write failure
-overrides. Verify the terminal failed execution, observer JSON (for the worker),
-and actual Slack delivery before declaring an alert-policy change verified.
-
-The multi-hour validation run and the worker canary remain unmarked and alertable:
-they run asynchronously, and the worker workflow watches only the first ten
-minutes. Synchronous staging preflight failures are reported by their failed
-GitHub workflow. Follow every detached execution to its terminal state and inspect
-release indexes and generation/hash metadata when it publishes. Do not grant the
-observer write access to worker data to repair missing execution status.
-
-## Generated-ID publication
-
-Both assets use `OwnedGeneratedPublisher` under `generated-2026-v1`. The
-[reset runbook](../../docs/feature-id-reset-installation.md) defines the one-time
-transition and first-publication checks. Historical releases remain readable;
-their IDs do not seed the new contract. Both assets require installed reset state
-before this shared job deploys. Missing state is an error.
-
-The publisher reserves IDs and claims the asset before exposing artifacts.
-Later builds read the exact committed manifest/metadata generations and retain
-the counter when features disappear. Runtime identity binds `CLOUD_RUN_EXECUTION`
-and the image's embedded `SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the
-captured intent; an interrupted checkpoint holds its claim and reservation.
-Starting another execution does not abandon them.
-
-The first new release replaces every captured latest object, including all six
-locale sidecars. It consumes the [verified translation supplement](../../docs/wdpa-translation-reset-evidence.md)
-and requires complete joins before reserving IDs. Resume scheduling only after
-both asset publications finish and their native artifacts and joins validate.
+Processing reports emit `wdpa_phase_started`/`wdpa_phase_resources` with elapsed
+time, kernel lifetime memory peak including file cache, process RSS, scratch peak,
+artifact sizes and native tool versions. Scratch covers all `/work`, including
+open unlinked files. Missing peak telemetry fails measurement. Acceptance limits
+and recovery belong to the [operations runbook](../../docs/wdpa-monthly-runbook.md).

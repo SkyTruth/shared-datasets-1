@@ -1,8 +1,6 @@
-# Inspect the isolated WDPA runtime
+Historical record, completed 2026-10-02. Not a runbook; see docs/wdpa-monthly-runbook.md.
 
-The one-time runtime inspection is retired. The workflow and probe recipe have
-been removed; the observations below are historical evidence, not instructions
-for monthly deployment.
+# Inspect the isolated WDPA runtime
 
 The first complete cloud validation, `wdpa-processing-validation-psg4m`, exited
 before downloading inputs on October 2, 2026. Its CPU/memory preflight could not

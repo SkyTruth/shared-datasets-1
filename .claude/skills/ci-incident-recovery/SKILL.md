@@ -69,6 +69,11 @@ Read the exact failed attempt and surrounding successful steps. Do not infer the
 
 Check whether another task is already changing the affected area. Keep one accountable recovery owner. Delegation does not transfer ownership unless an explicit handoff is accepted.
 
+Follow `docs/agent-integration.md` for overlapping PRs and expensive validation.
+Record dependencies before final preflight, complete required main synchronization
+first, and keep the validating checkout frozen. A background follow-up is the
+same owner, not a second independent retry or integration task.
+
 Follow the applicable authorization rules before messaging another task.
 
 ## Classify The Failure
@@ -101,6 +106,8 @@ An unavailable attestation or record service does not authorize skipping verific
 
 Inspect existing protected recovery paths before proposing another workflow.
 
+Before dispatch, establish the target outcome, ledger and replay eligibility, workflow trigger, tested-source requirements, terminal proof, and observer action. Check the target-specific contracts and actual deployment selector. Validation-suite selection does not establish deployment selection. Determine whether a failed or incomplete record requires reconciliation before retrying.
+
 Use the smallest existing path that can perform the authorized recovery while retaining:
 
 - The exact tested executor revision.
@@ -116,6 +123,14 @@ Do not blanket-retry production mutations. Do not replay a stale deployment over
 
 Retry a read-only transient operation only when its behavior is understood. For a mutation, establish its outcome and replay contract first.
 
+For hosted validation, refresh the live PR head and exact run/attempt before a
+selective retry. Use one recovery owner and at most two additional attempts with
+15-minute then 60-minute cooldowns; respect a longer provider retry interval.
+Stop after a repeated identical outage until there is evidence of recovery.
+Code, prerequisite, authorization and evidence-contract failures need repair,
+not retries. Do not rebuild locally to compensate for a hosted outage. A
+follow-up must stop acting on merged, closed or superseded work and must not retry
+an old head; this does not authorize changing another chat's automation.
 If no existing path safely supports the authorized recovery, describe the specific gap and implement a reviewed constrained path rather than bypassing the contract.
 
 ## Repair And Validate The Failed Boundary
@@ -125,6 +140,10 @@ Reproduce the original failure before accepting a fix.
 Exercise the real entrypoint through its output, persistence, package, or runtime boundary. Do not mock away the boundary that failed.
 
 Include relevant empty and nonempty inputs, legitimate provider behavior, and persisted-state transitions. Keep negative controls for unauthorized or incompatible states.
+
+Before full preflight, state the required terminal facts and finish focused positive and negative checks for them. Verify artifact bytes, live registration or metadata, and persisted status separately when the target contract requires each.
+
+Check tool resolution through the child-process environments used by preflight and release CLIs. Carry verified executable paths through PATH when subprocesses invoke bare commands; tool-specific overrides may not survive isolated environments. Resolve setup failures with cheap probes before starting the full suite.
 
 Follow the current preflight requirements before every push. Use the repository's pinned toolchain and evidence contract.
 
