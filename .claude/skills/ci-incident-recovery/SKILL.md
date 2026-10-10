@@ -69,6 +69,11 @@ Read the exact failed attempt and surrounding successful steps. Do not infer the
 
 Check whether another task is already changing the affected area. Keep one accountable recovery owner. Delegation does not transfer ownership unless an explicit handoff is accepted.
 
+Follow `docs/agent-integration.md` for overlapping PRs and expensive validation.
+Record dependencies before final preflight, complete required main synchronization
+first, and keep the validating checkout frozen. A background follow-up is the
+same owner, not a second independent retry or integration task.
+
 Follow the applicable authorization rules before messaging another task.
 
 ## Classify The Failure
@@ -118,6 +123,14 @@ Do not blanket-retry production mutations. Do not replay a stale deployment over
 
 Retry a read-only transient operation only when its behavior is understood. For a mutation, establish its outcome and replay contract first.
 
+For hosted validation, refresh the live PR head and exact run/attempt before a
+selective retry. Use one recovery owner and at most two additional attempts with
+15-minute then 60-minute cooldowns; respect a longer provider retry interval.
+Stop after a repeated identical outage until there is evidence of recovery.
+Code, prerequisite, authorization and evidence-contract failures need repair,
+not retries. Do not rebuild locally to compensate for a hosted outage. A
+follow-up must stop acting on merged, closed or superseded work and must not retry
+an old head; this does not authorize changing another chat's automation.
 If no existing path safely supports the authorized recovery, describe the specific gap and implement a reviewed constrained path rather than bypassing the contract.
 
 ## Repair And Validate The Failed Boundary
