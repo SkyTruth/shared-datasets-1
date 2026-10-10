@@ -235,16 +235,7 @@ def test_malformed_input_rolls_back_events_and_receipt_with_explicit_gap(tmp_pat
         assert db.execute("SELECT COUNT(*) FROM coverage WHERE state='gap'").fetchone()[0] == 458
 
 
-def test_unverified_probes_cannot_retroactively_verify_history(tmp_path):
-    db = sqlite3.connect(tmp_path / "ledger.sqlite")
-    c = classifier()
-    run.initialize(db, c, NOW, {})
-    assert db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0] == "9999-12-31"
-    run.initialize(db, c, NOW + dt.timedelta(days=10), activation(c))
-    assert db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0] == "2026-10-18"
-
-
-def seeded(tmp_path, days=365):
+def seeded(tmp_path, days=460):
     db = sqlite3.connect(tmp_path / "ledger.sqlite")
     c = classifier()
     completed = (NOW-dt.timedelta(hours=48)).date()-dt.timedelta(days=1)
@@ -256,27 +247,46 @@ def seeded(tmp_path, days=365):
     return db
 
 
-@pytest.mark.parametrize("days,state", [(364, "collecting_history"), (365, "qualified_candidate")])
-def test_365_fully_elapsed_days_boundary(tmp_path, days, state):
+@pytest.mark.parametrize("days", [0, 1, 90])
+def test_activity_visible_immediately_without_required_history(tmp_path, days):
     db = seeded(tmp_path, days)
-    assert report(db, NOW)["assets"][0]["state"] == state
-    assert report(db, NOW)["observed_through"] == "2026-10-04"
+    run.add_event(db, classifier().event("gcs_usage", raw(), {}))
+    payload = report(db, NOW)
+    asset = payload["assets"][0]
+    assert asset["last_read"] == iso(NOW)
+    assert asset["windows"]["30"][0]["requests"] == 1
+    assert set(asset) == {"slug", "title", "lifecycle_status", "registered_on", "last_read", "last_interest", "last_catalog", "windows"}
+    assert set(asset["windows"]) == {"30", "90"}
+    assert payload["observed_through"] == "2026-10-04"
+    assert all(row["healthy_days"] == days and row["unknown_days"] == 460 - days for row in payload["source_health"])
+    assert "logs cannot prove non-use of downloaded copies" in payload["disclaimer"]
 
 
-def test_unknown_interest_gaps_policy_changes_new_assets_and_stale_block_candidate(tmp_path):
+def test_interest_gaps_policy_changes_and_lifecycle_remain_visible(tmp_path):
     db = seeded(tmp_path)
     run.add_event(db, classifier().event("gcs_usage", raw("_catalog/releases/example.json"), {}))
-    assert report(db, NOW)["assets"][0]["state"] == "activity_observed"
-    db.execute("UPDATE assets SET last_interest=NULL")
+    assert report(db, NOW)["assets"][0]["last_interest"] == iso(NOW)
     db.execute("UPDATE coverage SET state='gap' WHERE source='cdn'")
-    assert report(db, NOW)["assets"][0]["state"] == "coverage_incomplete"
-    assert report(db, NOW, iso(NOW-dt.timedelta(days=3)))["assets"][0]["state"] == "stale"
+    payload = report(db, NOW)
+    assert next(row for row in payload["source_health"] if row["source"] == "cdn")["gap_days"] == 460
+    assert payload["assets"][0]["windows"]["30"][0]["application"] == "Unknown"
+    assert report(db, NOW, iso(NOW-dt.timedelta(days=3)))["stale"] is True
     c = classifier()
     c.version = "new-policy"
     run.initialize(db, c, NOW, activation(c))
-    assert report(db, NOW)["assets"][0]["state"] == "collecting_history"
+    assert report(db, NOW)["assets"][0]["last_interest"] == iso(NOW)
     run.initialize(db, Classifier([], CONFIG, BUCKET), NOW, {})
-    assert report(db, NOW)["assets"][0]["state"] == "not_active"
+    assert report(db, NOW)["assets"][0]["lifecycle_status"] == "absent"
+
+
+@pytest.mark.parametrize("age,counts", [(29, (1, 1)), (30, (0, 1)), (89, (0, 1)), (90, (0, 0))])
+def test_activity_window_boundaries_preserve_last_read(tmp_path, age, counts):
+    db = seeded(tmp_path)
+    at = NOW - dt.timedelta(days=age)
+    run.add_event(db, classifier().event("gcs_usage", raw(when=at), {}))
+    asset = report(db, NOW)["assets"][0]
+    assert tuple(sum(group["requests"] for group in asset["windows"][window]) for window in ("30", "90")) == counts
+    assert asset["last_read"] == iso(at)
 
 
 @pytest.mark.parametrize("headers,status", [({}, 401), ({"X-Goog-Authenticated-User-Email": "accounts.google.com:person@other.org"}, 403)])
@@ -291,9 +301,9 @@ def test_private_endpoint_missing_summary_and_independent_staleness():
     assert usage.handle("GET", "/api/usage", headers, reader=None, domains=("example.org",), now=NOW).status == 503
     class Reader:
         def read(self):
-            return {"generated_at": iso(NOW-dt.timedelta(days=3)), "stale": False, "assets": [{"state": "qualified_candidate"}]}
+            return {"generated_at": iso(NOW-dt.timedelta(days=3)), "stale": False, "assets": []}
     response = usage.handle("GET", "/api/usage", headers, reader=Reader(), domains=("example.org",), now=NOW)
-    assert json.loads(response.body)["assets"][0]["state"] == "stale"
+    assert json.loads(response.body)["stale"] is True
     assert usage.handle("GET", "/usage/../secrets", headers, reader=None, domains=("example.org",), now=NOW).status == 404
 
 
@@ -438,7 +448,7 @@ def test_mapping_policy_replay_keeps_missing_generations_as_historical_evidence(
     assert store.payload['collection_errors'] == ['IncompleteReconciliation']
     with sqlite3.connect(tmp_path/'committed.sqlite') as db:
         assert db.execute('SELECT COUNT(*) FROM reconciliations').fetchone()[0] == 1
-        assert db.execute("SELECT COUNT(*) FROM coverage WHERE source='gcs_usage' AND state='gap'").fetchone()[0] > 365
+        assert db.execute("SELECT COUNT(*) FROM coverage WHERE source='gcs_usage' AND state='gap'").fetchone()[0] == 458
 
 
 def test_retained_generation_replays_with_new_mapping_without_double_counts(tmp_path):
@@ -487,7 +497,7 @@ def test_failed_reconciliation_preserves_all_totals_and_retries_same_policy(tmp_
     assert [(g['application'], g['requests']) for g in groups] == [('New app', 2)]
     with sqlite3.connect(tmp_path/'committed.sqlite') as db:
         assert db.execute("SELECT value FROM settings WHERE key='reconciliation_pending'").fetchone()[0] == '0'
-        assert db.execute("SELECT COUNT(*) FROM coverage WHERE state='gap'").fetchone()[0] > 365
+        assert db.execute("SELECT COUNT(*) FROM coverage WHERE state='gap'").fetchone()[0] == 457
 
 
 def test_report_exposes_old_gaps_outside_recent_daily_health(tmp_path):
@@ -495,20 +505,46 @@ def test_report_exposes_old_gaps_outside_recent_daily_health(tmp_path):
     day = (NOW-dt.timedelta(days=200)).date().isoformat()
     db.execute("UPDATE coverage SET state='gap' WHERE source='cdn' AND day=?", (day,))
     payload = report(db, NOW)
-    assert payload['assets'][0]['state'] == 'coverage_incomplete'
     assert not any(row['state'] == 'gap' for row in payload['coverage'])
     assert next(row for row in payload['source_health'] if row['source'] == 'cdn')['gap_days'] == 1
 
 
-def test_root_changes_restart_only_affected_dataset_observation(tmp_path):
+def test_root_changes_preserve_registration_and_historical_activity(tmp_path):
     db = seeded(tmp_path)
+    run.add_event(db, classifier().event("gcs_usage", raw(), {}))
+    before = report(db, NOW)['assets'][0]
     row = {**ROWS[0], 'canonical_path': 'gs://shared/new-root/example/latest/example.csv'}
     c = Classifier([row], CONFIG, BUCKET)
     run.initialize(db, c, NOW, activation(c))
     result = report(db, NOW)['assets'][0]
-    assert result['state'] == 'collecting_history'
-    assert result['registered_on'] < result['observed_from']
-    assert result['observed_from'] == (NOW.date()+dt.timedelta(days=1)).isoformat()
+    assert result == before
+    assert c.asset('category/example/latest/example.csv') == ('example', False)
+    assert c.asset('new-root/example/latest/example.csv') == ('example', False)
+
+
+def test_existing_ledger_extra_columns_preserve_totals(tmp_path):
+    store = Store(tmp_path)
+    store.items = [{'name': 'a', 'generation': '1', 'source': 'gcs_usage', 'records': [raw()]}]
+    execute(store, tmp_path)
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        db.execute('ALTER TABLE assets ADD COLUMN unused_clock TEXT')
+        db.execute("INSERT INTO settings VALUES('unused_clock','9999-12-31')")
+    execute(store, tmp_path, NOW + dt.timedelta(days=1))
+    asset = store.payload['assets'][0]
+    assert asset['last_read'] == iso(NOW)
+    assert asset['windows']['30'][0]['requests'] == 1
+
+
+def test_delivered_probe_marks_health_and_missing_days_remain_pending(tmp_path):
+    store = Store(tmp_path)
+    execute(store, tmp_path, probe=lambda source, token: 'example')
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        db.execute('UPDATE probes SET seen=1')
+    execute(store, tmp_path, NOW + dt.timedelta(days=4))
+    rows = store.payload['coverage']
+    assert {row['state'] for row in rows if row['day'] == NOW.date().isoformat()} == {'healthy'}
+    assert {row['state'] for row in rows if row['day'] == (NOW.date()+dt.timedelta(days=1)).isoformat()} == {'pending'}
+    assert all(row['healthy_days'] == 1 and row['pending_days'] == 1 and row['unknown_days'] == 458 for row in store.payload['source_health'])
 
 
 def test_native_csv_multiline_record_budget_is_total_not_per_line():

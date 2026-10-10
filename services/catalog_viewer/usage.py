@@ -60,9 +60,6 @@ def handle(method, path, headers, *, reader, domains, now):
             # object path, credential, or cached success after a failed read.
             return json_response(503, {"error": "Usage report unavailable; activity is unknown"})
         payload["stale"] = (now - generated).total_seconds() > 48 * 3600
-        if payload["stale"]:
-            for asset in payload["assets"]:
-                asset["state"], asset["reason"] = "stale", "Report is more than 48 hours old"
         return json_response(200, payload, include_body=method != "HEAD")
     name = {"/usage": "index.html", "/usage/": "index.html", "/usage/app.js": "app.js", "/usage/style.css": "style.css"}.get(path)
     if name is None:

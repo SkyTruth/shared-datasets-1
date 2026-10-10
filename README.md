@@ -112,7 +112,7 @@ For dataset consumers, use the [consumer guide](docs/consumer-guide.md),
 [Python SDK](api/python/README.md), or [TypeScript SDK](api/typescript/README.md).
 The catalog's **Use this dataset** examples follow the
 [portable workspace contract](docs/standards/workspace-snapshot-v1.md).
-Passive usage monitoring and qualified retirement reviews are described in the
+Passive dataset usage visibility and collection health are described in the
 [usage collector guide](ingestion/dataset_usage/README.md).
 
 ## PR expectations

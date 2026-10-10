@@ -1,4 +1,4 @@
-"""Normalize passive observations and make inactivity evidence explicit.
+"""Normalize passive observations for dataset usage visibility.
 
 Input logs -> classified event -> deduplicated ledger -> committed report.
 Unknown attribution is activity. Unknown collection is never zero.
@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlsplit
 VERSION = 1
 SOURCES = ("gcs_audit", "cdn", "gcs_usage", "catalog")
 KINDS = ("read", "interest", "catalog", "maintenance", "failed")
-DISCLAIMER = "Observed activity only. Public usage logs are best-effort; downloaded copies may still be used. Retirement requires steward review."
+DISCLAIMER = "Observed activity only. Public usage logs are best-effort; logs cannot prove non-use of downloaded copies. Missing information never means zero use."
 
 
 def timestamp(value):
@@ -185,34 +185,19 @@ def report(db, now, manifest_time=None):
     completed = (now - dt.timedelta(hours=48)).date() - dt.timedelta(days=1)
     sources = [dict(zip(("day", "source", "state", "reason"), row)) for row in db.execute(
         "SELECT day,source,state,reason FROM coverage ORDER BY day,source")]
-    window_start = completed - dt.timedelta(days=364)
+    health_days = 460
+    window_start = completed - dt.timedelta(days=health_days - 1)
     source_health = []
     for source in SOURCES:
         counts = dict(db.execute("SELECT state,COUNT(*) FROM coverage WHERE source=? AND day BETWEEN ? AND ? GROUP BY state", (source, window_start.isoformat(), completed.isoformat())))
-        source_health.append({"source": source, "window_days": 365, "healthy_days": counts.get('healthy', 0),
+        source_health.append({"source": source, "window_days": health_days, "healthy_days": counts.get('healthy', 0),
                               "gap_days": counts.get('gap', 0), "pending_days": counts.get('pending', 0),
-                              "unknown_days": 365 - sum(counts.values())})
+                              "unknown_days": health_days - sum(counts.values())})
     assets = []
     group_count = 0
-    for slug, title, status, registered, last_read, last_interest, last_catalog, mapping_started in db.execute("SELECT slug,title,status,registered,last_read,last_interest,last_catalog,mapping_started FROM assets ORDER BY slug"):
-        start = max(dt.date.fromisoformat(registered), dt.date.fromisoformat(mapping_started), dt.date.fromisoformat(db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0]))
-        observed_days = max(0, (completed - start).days + 1)
-        latest = max((item for item in (last_read, last_interest) if item), default=None)
-        window_healthy = all(source['healthy_days'] == 365 for source in source_health)
-        if status != "active":
-            state, reason = "not_active", "Lifecycle status is not active or asset is absent from the current catalog"
-        elif stale:
-            state, reason = "stale", "Report is more than 48 hours old"
-        elif observed_days < 365:
-            state, reason = "collecting_history", f"{observed_days} fully elapsed observation days"
-        elif not window_healthy:
-            state, reason = "coverage_incomplete", "Missing or unresolved collection evidence in the 365-day window"
-        elif latest and timestamp(latest).date() >= window_start:
-            state, reason = "activity_observed", "Dataset reads or dataset-specific interest observed"
-        else:
-            state, reason = "qualified_candidate", "365 observed days without downstream access or interest; no known collection gaps"
+    for slug, title, status, registered, last_read, last_interest, last_catalog in db.execute("SELECT slug,title,status,registered,last_read,last_interest,last_catalog FROM assets ORDER BY slug"):
         windows = {}
-        for days in (30, 90, 365):
+        for days in (30, 90):
             begin = (now.date() - dt.timedelta(days=days - 1)).isoformat()
             groups = []
             for source, kind, app, confidence, requests, byte_count, active_days in db.execute(
@@ -227,7 +212,7 @@ def report(db, now, manifest_time=None):
             windows[str(days)] = groups
         assets.append({"slug": slug, "title": title, "lifecycle_status": status, "registered_on": registered,
                        "last_read": last_read, "last_interest": last_interest, "last_catalog": last_catalog,
-                       "state": state, "reason": reason, "observation_days": observed_days, "observed_from": start.isoformat() if start.year < 9999 else None, "windows": windows})
+                       "windows": windows})
     return {"schema_version": VERSION, "generated_at": generated, "stale": stale, "observed_through": completed.isoformat(),
             "disclaimer": DISCLAIMER, "assets": assets, "coverage": sources[-120:], "source_health": source_health,
             "evidence_versions": [dict(zip(("day", "source", "policy", "catalog"), row)) for row in db.execute("SELECT day,source,policy,catalog FROM evidence ORDER BY day,source")],

@@ -1,268 +1,120 @@
-# Passive dataset usage
+# Passive dataset usage visibility
 
-The repo observes current consumption without changing consumers, SDKs, dataset
-URLs, or download authentication. `/usage` and `GET /api/usage` belong to the
-existing IAP-protected catalog viewer. No report is published in `_catalog/web`.
-There are no automatic retirements, deletions, refresh shutdowns, or retirement
-notifications.
+Purpose: **visibility** into observed dataset access, metadata interest,
+application groups and collection health. Consumers and download access need no
+changes. `/usage` and `GET /api/usage` use the catalog viewer's IAP/domain policy.
+Public catalog artifacts contain no usage data; dataset files/lifecycle are unchanged.
 
-A qualified retirement-review candidate is an **active** dataset with 365 fully
-elapsed observation days, no downstream reads or dataset-specific interest in
-that window, current reporting, and no known unresolved collection gaps. Its
-observation begins with the next complete UTC day after both registration and
-verified monitoring. Delivery is allowed 48 hours after each day ends. A new registration or mapping/parser
-policy starts its own observation period. Candidates remain unavailable during
-this first year.
+Logs cannot prove non-use of downloaded copies. Public usage logging is best-effort;
+probes establish pipeline operation, not complete coverage.
+Missing information never means zero use. Activity is visible immediately,
+with separate 30/90-day request groups and persistent last-observed timestamps.
 
-Logs are observational. Public GCS usage logging is best-effort; successful
-probes establish pipeline operation, not completeness. Downloaded copies may
-remain in use. Stewards must inspect catalog activity and failures, consult the
-application groups identified in the report, and review consumer guidance before
-proposing lifecycle changes through the normal reviewed metadata workflow.
+## Evidence and application groups
 
-## Evidence and classification
+| Source | Observations and count semantics |
+| --- | --- |
+| `gcs_audit` | Authenticated `storage.objects.get`; interest because audit operations do not prove completed downloads |
+| `cdn` | HTTP GET/HEAD requests including cache hits; response bytes when supplied |
+| `gcs_usage` | Native bucket usage CSV including public access; HTTP requests and supplied response bytes |
+| `catalog` | Successful cached lookups and URL issuance; catalog intent, never completed downloads |
 
-| Source | Observations | Count semantics |
-| --- | --- | --- |
-| `gcs_audit` | Authenticated `storage.objects.get` | Audit operations; conservative interest because a get does not prove a completed bytes download |
-| `cdn` | GET/HEAD requests, including cache hits | HTTP requests; response bytes when supplied |
-| `gcs_usage` | Native bucket usage CSV records, including public access | HTTP requests; response bytes when supplied |
-| `catalog` | Successful repo-owned cached lookups and URL issuance | Catalog activity / access intent, never completed downloads |
+Sources overlap and must not be summed as downloads or users. HEAD, 304,
+object metadata and asset-specific `_catalog/releases/{slug}.json` reads are
+interest, including a Python SDK release-index check before returning cached
+data. General listings, READMEs, run records, source archives and telemetry
+storage requests are excluded. Failures remain separate from successful reads.
 
-Sources overlap and are never added together as downloads or users. HEAD,
-revalidation/304, object metadata, and asset-specific `_catalog/releases/{slug}.json`
-reads count as interest. In particular, the Python SDK fetches that release index
-before returning a locally cached dataset. General catalog listings, README
-browsing, run records, source archives and telemetry-storage requests do not
-count as dataset interest.
-
-`catalog/dataset-usage.json` maps existing reader service accounts to display
-names for application groups. A shared account cannot identify an individual
-application within its group. Exact known referrer hosts give inferred
-attribution; the initial hosts come from the existing CDN browser-origin list.
-Unrecognized traffic is Unknown and blocks candidacy. Full
-referrers, IPs, user agents, account emails, signed URLs and query strings never
-enter the report. Display names cannot contain account emails.
+`catalog/dataset-usage.json` maps reader principals to application-group display
+names. Shared accounts identify groups, not individual applications. Exact known
+referrer hosts provide inferred attribution; unmatched activity is **Unknown**.
+Reports omit full referrers, IPs, user agents, account emails, signed URLs and
+query strings. Display names cannot contain account emails.
 
 Maintenance/catalog exclusion requires a known authenticated principal, trusted
-Cloud Run platform provenance, or a random nonce recorded by this worker for its
-own source/asset probe. User-agent or referrer text alone never excludes activity.
-An origin request caused by a known CDN probe can be excluded from native usage
-counts, but it cannot satisfy that source's independent anonymous probe. Unknown
-origin fills remain conservative evidence of interest.
+Cloud Run provenance or a worker-recorded source/asset probe nonce. Referrer or
+user-agent text alone cannot exclude activity. CDN probe origin fills cannot
+satisfy the independent anonymous usage probe. Other origin fills remain visible.
 
-Each day preserves classification-policy and catalog-mapping hashes. Version 1
-retains catalog snapshots and last-observed timestamps in the ledger. The policy hash binds the four processor source files and configuration, so
-code or attribution changes cannot silently reuse old coverage. Policy changes
-restart observation and replay retained inputs when their generations still exist.
-Never reinterpret expired history as zero. There is no historical backfill.
+## Collection, storage and health
 
-## Storage and processing
+The worker reads the generation-pinned catalog daily and retains lifecycle status.
+Policy hashes bind config/code; catalog hashes/snapshots preserve historical interpretation.
 
-Terraform creates two uniform-access buckets with public-access prevention:
+Private uniform-access buckets enforce public-access prevention:
 
 - `gs://skytruth-shared-datasets-1-usage-raw/`: audit/CDN/catalog export and
-  native usage logs under `storage-usage`; 7-day lifecycle, set by
-  `raw_retention_days` in the reviewed collection configuration.
-- `gs://skytruth-shared-datasets-1-usage-state/`: immutable SQLite ledgers,
-  precomputed JSON reports, and `published/manifest.json`; 460-day lifecycle.
+  native `storage-usage` logs; reviewed `raw_retention_days` defaults to 7.
+- `gs://skytruth-shared-datasets-1-usage-state/`: immutable ledgers, reports and
+  `published/manifest.json`; 460-day lifecycle retains bounded historical evidence.
 
-Only the processor and authorized infrastructure administrators read raw logs.
-The viewer can read objects below `published/` only, not ledgers or raw evidence.
-The worker has no shared-dataset write permission; authenticated probe reads are
-limited to two catalog-selected sentinel objects and the published catalog CSV.
-The worker reads that generation-pinned current CSV each day; missing/oversized
-catalogs fail collection, and removed or non-active assets cannot become candidates. Logs from telemetry buckets
-cannot match the usage sink's source-bucket filter, avoiding a feedback loop.
+Only the processor and authorized administrators read raw logs. The viewer reads
+`published/` only. The worker cannot write shared datasets; its authenticated
+reads are limited to catalog-selected sentinels and the published CSV. Telemetry
+bucket requests cannot match the source-bucket sink filter.
 
-A daily worker streams JSON arrays/NDJSON and header-based CSV in bounded chunks.
-Each record is limited to 512 KiB, the disk ledger to 128 MiB, SQLite's cache to
-8 MiB, and published JSON to 8 MiB. SQL groups daily evidence without loading all
-raw records or event IDs into memory. At 1 CPU / 1 GiB, it has a 30-minute timeout
-and no task or Scheduler retries. Schedule: **09:00 UTC**.
+At 09:00 UTC the 1 CPU / 1 GiB worker streams JSON/NDJSON and header-based CSV,
+with a 30-minute timeout and no task/Scheduler retries. Budgets: 512 KiB per
+record, 128 MiB ledger, 8 MiB SQLite cache and 8 MiB report. Input path/generation
+receipts and per-source request IDs deduplicate within the raw-retention window.
+Daily groups, coverage, policy evidence and receipts remain for 460 days;
+last-read/interest/catalog timestamps survive partition expiry.
 
-Input receipts use object path plus generation. Per-source request identifiers
-and event time deduplicate overlap within the 7-day raw-evidence window. Late
-shards update affected daily aggregates transactionally; the report is recomputed
-from those partitions.
-Daily aggregates, source coverage, policy evidence, probe receipts and processing
-receipts stay for 460 days. Last read/interest/catalog timestamps are copied forward into each
-new ledger snapshot even after those daily partitions expire.
-
-Long-term reporting uses daily aggregates, attribution groups, coverage and
-last-observed timestamps. Full request payloads remain only in the short-lived
-raw bucket. The current ledger prunes per-request deduplication IDs after the
-same 7-day window; immutable ledger snapshots also contain their checkpoint
-evidence and expire under the state bucket's lifecycle. Seven days accommodates
-48-hour delivery delays and several missed runs. An outage of seven days or more,
-or an older late shard, creates an explicit gap rather than estimated zero use.
-
-The `dataset-usage-exported-copy` exclusion on the project's `_Default` sink
-uses exactly the complete usage export filter. It avoids storing that second
-copy in Cloud Logging, while the independent GCS sink keeps every matching
-record without sampling. Both export and exclusion remain disabled until
-collection is enabled. Other sinks, other buckets' read logs, write audits and
-Cloud Run/Scheduler failure logs retain their existing policies. Cloud Logging
-charges for log-bucket storage when logs arrive, so merely shortening its retention
-below 30 days would not remove that charge. The narrow exclusion is the cost
-reduction; the raw-bucket lifecycle limits the recovery evidence footprint.
-See [Logging pricing](https://cloud.google.com/products/observability/pricing)
-and [independent sink routing](https://docs.cloud.google.com/logging/docs/routing/overview).
-
-The worker uploads an immutable ledger, then an immutable report, then replaces
-one manifest with a generation precondition. The manifest is the only commit
-point. A crash before publication changes neither visible progress nor results;
-a lost response after publication is recovered by loading the manifest. A
-concurrent publisher fails its compare-and-swap and cannot overwrite newer
-results. Orphan uploads are invisible and expire by lifecycle.
-
-Parsing, record-budget and disappeared-generation failures roll back that input
-and publish an explicit source gap with its receipt still uncommitted. A shard
-with unknowable timestamps suspends retained coverage for that source. Expired
-late inputs and outages longer than raw retention also make coverage unknown.
-Policy/mapping corrections replace retained totals and receipts only after the
-whole replay succeeds. Failed or unavailable-generation reconciliations preserve
-the original totals and evidence versions, remain pending for retry, and record
-the previous ledger's checksum alongside the explicit gap.
-The viewer independently marks reports older than 48 hours stale, including when
-a dead worker cannot write a failure marker. Missing summaries return 503 rather
-than an empty report.
+Delivery has 48 hours after each UTC day ends. Independently delivered trusted
+probes establish source health; missing probe days are pending, pre-collection
+days unknown. The health summary includes all 460 retained days and recent daily
+reasons. Missing probes, invalid configuration/cost evidence, parsing or budget
+failures, expired late inputs and outages at least as long as raw retention are
+disclosed. Healthy means **no known gaps**. Existing gaps survive later probes.
+The viewer and page independently mark reports older than 48 hours stale;
+missing or corrupt summaries return 503, never an empty successful report.
 
 ## Reviewed rollout and cost gate
 
-Initial settings deliberately leave collection disabled and the schedule paused.
-Absent bucket access logging is an expected disabled configuration: the worker
-publishes unverified coverage gaps and untrusted probe receipts without enabling
-collection. Malformed configuration, denied reads and incompatible saved state
-still fail. The production-image check runs a small cold-start fixture through
-the installed entrypoint code, Health checks, SQLite collector and Storage
-publication boundary with in-memory transport, no credentials and no network.
-All infrastructure changes use `Dataset usage deploy`, through reviewed `main`,
-exact passing CI and retained tested-image evidence, the production environment,
-durable deployment receipts, and the existing production-state queue. Its plan
-checker refuses unrelated resources, deletes/replacements, public telemetry,
-write-audit removal, and shared-bucket changes outside logging. Existing IAP and
-production failure alerts apply. Never apply production Terraform locally.
+Collection starts disabled, activation unverified and the schedule paused.
+The disabled cold-start fixture exercises the installed CLI, Health, SQLite and
+Storage publication with in-memory transport, no credentials or network.
+`Dataset usage deploy` consumes reviewed main, exact passing CI/tested images,
+protected production environment, deployment receipts and the production-state
+queue. Its allowlist rejects unrelated/destructive changes, public telemetry,
+write-audit removal and shared-bucket changes outside logging. Existing IAP and
+production failure alerts remain in force; never apply production Terraform locally.
 
-The existing CDN uses backend buckets, whose request logging is enabled by
-Google. Inspect the effective Logging sinks and exclusions during rollout;
-the export must retain requests including cache hits. See Google's
-[CDN logging documentation](https://docs.cloud.google.com/cdn/docs/cdn-logging-monitoring).
+1. Review inherited/project audit settings, exemptions, sinks, Logging retention
+   and exclusions. Read auditing affects every GCS bucket in the project.
+   Preserve existing audit policy; reconcile adoption drift through reviewed code.
+2. Record at least one measured day (prefer a representative week) and project
+   incremental monthly Logging, raw/state storage, operations, worker and viewer
+   costs. Review all sinks and allowances. The scoped `_Default` exclusion avoids
+   a duplicate stored copy; the independent GCS export remains unsampled.
+3. Put preliminary evidence in `catalog/dataset-usage-activation.json`, enable
+   `collection_enabled` by PR and leave `verified_at` null. Collection requires
+   component totals matching an estimate at or below **$25/month**.
+4. Deploy with the schedule paused. After the delivery allowance verify exported
+   records and classified results for authenticated reads, anonymous downloads,
+   CDN cache hits, cached SDK interest and cached catalog lookups. Synthetic probes
+   alone cannot establish these checks. Reconcile failed deployments before retry.
+5. Update measured cost, all source/traffic checks, verification time and the hash
+   from `uv run python -m ingestion.dataset_usage.run --print-policy-hash`.
+   Only complete matching activation evidence enables the daily schedule.
 
-1. Before enabling read auditing, inspect project/folder/organization audit
-   settings, exemptions, existing sinks and Logging bucket retention/exclusions.
-   Read auditing affects **all GCS buckets in the project**. A narrow export
-   filter does not remove that upstream volume or cost. Preserve pre-existing
-   audit configuration; if the adoption guard reports drift, reconcile it by
-   reviewed code rather than bypassing the guard.
-2. Record at least one measured day of project-wide volume and pricing evidence
-   (a representative week is preferred). Project monthly incremental Logging,
-   raw storage, state storage, operations, worker and viewer costs separately.
-   Include the steady 7-day raw / 460-day state footprint and current billed
-   Logging retention/exclusions. Account for the whole project and effective
-   billing/free allowance, not just exported shared-bucket logs. Do not silently
-   sample or exclude low-frequency traffic to meet the target.
-   Verify that the scoped `_Default` exclusion matches the unsampled export and
-   review any operational need for the duplicate before enabling collection.
-   Check additional project/folder/organization sinks separately: this change
-   does not remove their stored copies or unrelated project-wide read auditing.
-3. Put reviewed preliminary cost evidence in
-   `catalog/dataset-usage-activation.json`, then set `collection_enabled: true`
-   in `catalog/dataset-usage.json` through a PR. Leave `verified_at: null`.
-   The deploy checker blocks collection if measured evidence is absent or the
-   incremental estimate exceeds **$25/month**. A higher estimate requires a
-   revised explicit decision, not activation under this policy.
-4. Deploy collection with the schedule paused. The workflow runs one bounded
-   worker canary. After the 48-hour delivery allowance, dispatch the same protected
-   workflow from a newly tested reviewed revision when another canary is needed;
-   reconcile a previous failed/unknown deployment before retrying its revision.
-   Verify representative authenticated reads, anonymous downloads, CDN cache
-   hits, cached SDK release-index interest, and cached catalog lookups in exported
-   records **and** their classified report results. Confirm native CSV/log
-   fields and origin-fill behavior; synthetic probes cannot replace these checks.
-5. Compare measured rollout volume to the preliminary cost projection. Record
-   all source and traffic checks, updated project-wide cost, verification time,
-   and the policy hash printed by
-   `uv run python -m ingestion.dataset_usage.run --print-policy-hash`.
-   Merge that activation evidence. Only a matching verified policy at or below
-   the target lets Terraform enable the daily schedule.
+Live Health checks verify bucket logging destination/prefix, unsampled sink and
+matching duplicate exclusion, raw retention, project audit settings and every
+page of sink-export errors. The activation file and `activation_valid` /
+`cost_evidence_valid` in `run.py` own the evidence contract.
 
-The activation evidence has this shape (replace numbers and checks with measured
-reviewed evidence; this is not an activation record):
+## Publication and recovery
 
-```json
-{
-  "schema_version": 1,
-  "verified_at": "2026-10-07T09:00:00Z",
-  "configuration_sha256": "<printed policy hash>",
-  "verified_sources": ["gcs_audit", "cdn", "gcs_usage", "catalog"],
-  "estimated_monthly_cost_usd": 12,
-  "evidence": {
-    "inherited_audit_settings_reviewed": true,
-    "existing_sinks_and_exemptions_reviewed": true,
-    "traffic_checks": {
-      "authenticated_read": true,
-      "anonymous_download": true,
-      "cdn_cache_hit": true,
-      "cached_sdk_interest": true,
-      "catalog_cache_lookup": true
-    },
-    "cost": {
-      "measurement_days": 7,
-      "project_wide_audit_volume_reviewed": true,
-      "logging_retention_and_exclusions_reviewed": true,
-      "monthly_usd": {
-        "project_logging": 4,
-        "raw_storage": 2,
-        "state_storage": 2,
-        "operations": 1,
-        "worker": 2,
-        "viewer": 1
-      }
-    },
-    "references": ["reviewed PR with private measurement evidence"]
-  }
-}
-```
+Immutable ledger and report uploads precede a generation-preconditioned manifest
+swap, the sole commit point. Crashes/orphan uploads cannot advance visible
+checkpoints; competing writers fail compare-and-swap. Preserve the manifest,
+generation, ledger checksum, receipts and gap reasons when investigating failures.
+Never edit checkpoints/reports independently or reset history to invent zero use.
 
-The component total must match the estimate. Collection health checks the live
-bucket logging destination/prefix, exact unsampled sink filter, matching default
-storage exclusion, raw-bucket retention, project audit configuration and
-sink-export errors (all metric pages), plus independently delivered daily
-probes. Missing probes, configuration/cost gates and identifiable failures keep
-coverage unavailable. The report says **no known gaps**, never complete coverage.
-Inherited audit policy review is part of activation evidence; its correctness
-cannot be inferred from successful probes.
-
-## Recovery and steward review
-
-Preserve the current manifest and its generation first. Inspect the referenced
-immutable ledger, input receipts, source gaps, policy hashes and failed execution.
-Never independently edit a checkpoint or report, reset the ledger to invent zero
-history, or retry an old manifest write without its original generation condition.
-A later worker loads the committed ledger and retries uncommitted inputs. Partial
-uploads need no promotion or deletion; they cannot become visible by themselves.
-
-If the raw generation still exists, correct the parser/mapping in reviewed code
-and replay retained inputs with the new policy. Existing daily totals remain
-explicit historical evidence; policy changes restart the observation clock and
-cannot certify unavailable older periods. If evidence has expired, preserve the
-unknown coverage and begin a fresh verified observation period. A source gap
-remains unresolved in the current policy; it is never erased by a new successful
-probe. The gap will leave the rolling window only after trustworthy future days
-have replaced it. If the manifest/ledger expired during an exceptionally long
-outage, recover a retained integrity-checked snapshot if one exists; otherwise
-start fresh and disclose loss of observation history.
-
-Review a candidate's observation dates, unknown traffic, application groups,
-per-source requests/bytes, catalog intents and failed access attempts. Confirm
-with stewards that ongoing cached copies and infrequent use are understood.
-Any eventual retirement is a separate reviewed lifecycle metadata decision;
-published releases remain readable and citable under the existing repository
-rules.
-
-Authoritative limitations and formats:
-[usage logs](https://docs.cloud.google.com/storage/docs/access-logs),
-[audit/custom fields](https://docs.cloud.google.com/storage/docs/audit-logging),
-[GCS export limits](https://docs.cloud.google.com/logging/docs/export/storage),
-[sink errors](https://docs.cloud.google.com/logging/docs/export/troubleshoot).
+Corrected parser/mapping policies replay retained original generations as one
+transaction. Failed/unavailable replays preserve totals and evidence versions,
+publish gaps and remain pending. Expired history cannot be reclassified as zero.
+If an exceptionally long outage loses the ledger, recover an integrity-checked
+snapshot or disclose lost history when starting fresh. Orphans expire by lifecycle.
+Source formats: [usage logs](https://docs.cloud.google.com/storage/docs/access-logs), [audit fields](https://docs.cloud.google.com/storage/docs/audit-logging),
+[export limits](https://docs.cloud.google.com/logging/docs/export/storage), [sink errors](https://docs.cloud.google.com/logging/docs/export/troubleshoot).

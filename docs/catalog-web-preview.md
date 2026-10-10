@@ -503,9 +503,9 @@ image. Authenticated `GET /api/usage` follows the private usage manifest with
 generation and integrity checks and returns `Cache-Control: no-store`. Both the
 page and direct endpoint reuse the viewer's IAP/domain policy. Public catalog
 artifacts contain no usage data. Missing reports return 503; the viewer and page
-independently detect reports older than 48 hours. Search, application/candidate
-filters, last-activity sorting and 30/90/365-day windows preserve separate source
+independently detect reports older than 48 hours. Search and application
+filters, last-activity sorting and 30/90-day windows preserve separate source
 counts, metadata interest, bytes, failures and unknown attribution.
 
 See [usage operations and rollout](../ingestion/dataset_usage/README.md) for
-collection/activation gates, conservative candidate rules and steward review.
+collection/activation gates, source health and the limits of observed activity.
