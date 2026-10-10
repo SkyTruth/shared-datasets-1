@@ -217,3 +217,21 @@ Use the optional `admission` frontmatter block in
 `docs/assets/{asset-slug}.md` when preserving the admission decision beside the
 catalog metadata is useful. Existing assets are grandfathered unless a PR
 changes their dataset contract.
+
+## Additional vector/runtime facts
+
+Vector validation requires `ogrinfo`, `pmtiles verify/show`, and a successful
+representative tile decode with `tippecanoe-decode`. Missing tools or an
+unavailable decode produce `valid: false`; file existence and PMTiles magic
+alone do not establish publish readiness. The metadata lookup validator retains
+its documented geometry-validity exception while requiring these other checks.
+
+The generated ID assignment must be recorded in the manifest `identity` block,
+including hash algorithm, canonicalization version, assignment key, previous
+release, and next generated ID when applicable. Historical index-load records
+remain readable; Firestore serving/loaders are retired.
+
+`--tile-simplify` changes display tiles only, leaving the canonical FGB intact.
+Shared point PMTiles keep all point features at all generated zoom levels;
+expect larger low-zoom tiles and validate browser performance before publishing.
+The vector helper records external CLI versions and never mutates Cloud Storage.

@@ -2,7 +2,8 @@
 
 Read for canonical first uploads, updates, and replacement recovery proposals.
 Set `WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"`;
-keep artifacts, reports, and the PR body in a named task child `WORK_DIR` there.
+set `WORK_DIR="$WORK_ROOT/_scratch/$PROPOSAL_ID"` and `mkdir -p "$WORK_DIR"`
+for artifacts, reports and the PR body. Set `PROPOSAL_ID` before this setup.
 `SLUG`, `PROPOSAL_ID`, `RELEASE_DATE`, `PUBLISH_DIR`, and destination URIs come
 from the concierge state or the verified existing asset contract, never guesses.
 

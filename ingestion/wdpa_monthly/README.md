@@ -78,6 +78,10 @@ that fallback text is translated. Follow the [translation evidence and tooling](
 to fill these tasks without retranslating the full dataset. New machine results
 remain labeled as machine output rather than human review.
 
+Deployment, schedule control and teardown procedures live in the
+[deploy skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md) and its
+[job operations](../../.claude/skills/deploy-scheduled-ingestion/references/job-operations.md#wdpa-monthly-deployment).
+
 ## Runtime
 
 Entrypoint:
@@ -138,55 +142,6 @@ Build from the repo root:
 ```bash
 docker build -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 ```
-
-## Deploy
-
-Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
-after reviewed changes merge to `main`. The workflow promotes the accepted
-immutable image; it does not rebuild it. For the October rollout it requires one
-retained complete build and its exact-head reviewed promotion plan, then executes
-the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
-copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
-owned publisher, preserving claims, counters, generation preconditions and
-recovery. It does not run source processing again. A different canary date is
-rejected. The independent observer and unattended failure alerts remain enabled.
-
-The deploy job waits for the protected ingestion IAM sync to bootstrap access
-management on the one Slack secret and install runtime translation-notice
-permissions. This prerequisite does not replace the retained-build acceptance
-and promotion gates.
-
-The job template pins `WDPA_PROMOTION_BUNDLE` to the accepted build reference
-from `catalog/wdpa-processing-acceptance.json`; `RUN_DATE` remains an
-execution-only override. Scheduled invocations therefore use the current UTC
-month and can consume only a reviewed build for that month. A missing bundle or
-a bundle for another month fails before publication with an actionable error;
-the worker never falls back to processing source data. Each new month's retained
-build and promotion authority must be reviewed and deployed before that month's
-scheduled publication can succeed. Repeat invocations of a completed month
-verify the owned receipts and return `skipped` without downloading or
-republishing artifacts.
-
-Do not deploy this job with a local Terraform apply or hand-built production image. See the
-[single-build runbook](../../docs/wdpa-processing-validation.md#single-build-and-promotion).
-
-## Cost Controls and Teardown
-
-Immediate stop:
-
-```bash
-gcloud scheduler jobs pause wdpa-monthly \
-  --location=us-central1 \
-  --project=shared-datasets-1
-```
-
-Pausing the scheduler stops future automatic monthly runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
-
-Permanent infrastructure teardown requires a reviewed PR and a constrained
-protected production workflow with explicit worker, observer, scheduler and IAM
-allowlists. Do not run a local Terraform destroy/apply or delete dataset releases,
-latest files, run records, README files or catalog rows as part of cost teardown.
 
 ## Processing limits and local replay
 

@@ -52,7 +52,7 @@ Dispatch by merged PR number is restricted to `jonaraphael` and retains the same
 immutable document, acceptance, and generation checks; it is not a standalone
 object mutation path. Successful promotion removes its staged scratch objects
 with source-generation preconditions. Unpromoted staging uses the separate
-[age-based scratch cleanup contract](../../docs/gcp-asset-operations.md#delete-pattern).
+[age-based scratch cleanup contract](../../.claude/skills/gcp-shared-datasets/references/scratch-cleanup.md).
 
 ## Consumer impact
 

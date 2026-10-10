@@ -222,6 +222,12 @@ If the user expects Slack delivery, verify the relevant path:
 
 A safe controlled alert test is to execute a newly deployed job with an env override that fails before any GCS write, then confirm the matching log and Slack notification. Do not use a failure mode that can write partial releases, overwrite `latest/`, delete objects, or create confusing run records.
 
+## Job-specific procedures
+
+Read [job operations](references/job-operations.md) for the selected job's
+protected deployment, schedule-control and teardown sequence. Runtime/container
+contracts and processing limits remain in the owning ingestion README.
+
 ## Standard sequence
 
 1. Load `.claude/skills/gcp-shared-datasets/SKILL.md` if the job writes GCS objects.
