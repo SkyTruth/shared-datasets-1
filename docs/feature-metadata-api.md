@@ -357,7 +357,7 @@ metadata-update path and preserve the original release receipt through explicit
 predecessor snapshots. Future retained builds must generate their locale files
 and coverage with the current producer code and matching acceptance evidence;
 deploying publisher code alone does not regenerate an existing release.
-Follow [WDPA processing validation](wdpa-processing-validation.md) for that gate.
+Follow the [WDPA monthly runbook](wdpa-monthly-runbook.md) for that gate.
 No local production apply is part of this rollout.
 
 For an initial translation backfill, inspect the current committed release and

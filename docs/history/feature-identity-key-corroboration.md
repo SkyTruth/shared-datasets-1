@@ -1,3 +1,5 @@
+Historical record, completed 2026-08-03. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # Proposal: Identity-Key Corroboration in Feature Identity Ambiguity Detection
 
 Status: implemented (2026-08-03). The rule ships as policy
