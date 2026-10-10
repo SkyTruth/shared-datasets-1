@@ -1,0 +1,603 @@
+{
+  "snapshot": "2026-10-09; hosted cohort runs created through 21:26:51Z",
+  "local": [
+    {
+      "base": "aa77eb89a93c54029c4ef003fe4096a196bda63b",
+      "head": "c78c9beb7bfa5f141cec6ca5f9f5772f58d424cf",
+      "tree": "ebc6a45994da01460fec8e6d23ce362e7f2d1b26",
+      "success": false,
+      "evidence_directory": "ci-preflight-ek0ve__b",
+      "suite_results": []
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "c835999ff7a0ad7318570a7c9a069a412a8cf0e3",
+      "tree": "88da243d2d437f3d34cbe9c63f76c6c5a0c84bee",
+      "success": true,
+      "evidence_directory": "ci-preflight-epb_u7bm",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "aa77eb89a93c54029c4ef003fe4096a196bda63b",
+      "head": "1175fc207ce7610829230b11598a7a01b1c103d9",
+      "tree": "acfa11a8dd8c2c791da8ac57b0164823623fe75c",
+      "success": false,
+      "evidence_directory": "ci-preflight-rfbpv1kv",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "failure",
+          "tests: command 10 failed (1)"
+        ]
+      ]
+    },
+    {
+      "base": "aa77eb89a93c54029c4ef003fe4096a196bda63b",
+      "head": "2962e6515396f3a1b3b7a5512255a6c8b13e5d0e",
+      "tree": "7b374e9564b0a0afdc0e8085b9097c2328fe3f12",
+      "success": false,
+      "evidence_directory": "ci-preflight-sjpg0dj6",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "282d3a37e563324ef9b66146c611ea4e4191b163",
+      "tree": "6d32e36b2f3df7952921c359cfe532e2189da5d1",
+      "success": false,
+      "evidence_directory": "ci-preflight-34x9a_xw",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "c78c9beb7bfa5f141cec6ca5f9f5772f58d424cf",
+      "tree": "38a5e4570cd279f45bd295b738397a566fbdfa8a",
+      "success": true,
+      "evidence_directory": "ci-preflight-xqw0t5bd",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "1e3454d9cb2411e0afbab0519df6a84a4a057bf8",
+      "tree": "c8a13149c0ab7e02989fa56a5ee4a37d10f47811",
+      "success": true,
+      "evidence_directory": "ci-preflight-de32x8ge",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "aa77eb89a93c54029c4ef003fe4096a196bda63b",
+      "head": "1e3454d9cb2411e0afbab0519df6a84a4a057bf8",
+      "tree": "501104f3e5f7b672ffe3ca7692d6a91bb274e9ba",
+      "success": false,
+      "evidence_directory": "ci-preflight-kqnnu_9e",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "failure",
+          "browser: command 8 failed (1)"
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "55d1b3571fcebf3a6c61c9b8708937ba4e5084a6",
+      "tree": "362fd39b90ff620891cbae3c5c86c9e921b46e8b",
+      "success": true,
+      "evidence_directory": "ci-preflight-v3fl7zft",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "a302940ed870f0a2134a29cb5e0d835cdb3c474e",
+      "head": "65716526291ab04a7d09fd0e0b2f3abbbbf2caa2",
+      "tree": "362fd39b90ff620891cbae3c5c86c9e921b46e8b",
+      "success": true,
+      "evidence_directory": "ci-preflight-k392turr",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    },
+    {
+      "base": "aa77eb89a93c54029c4ef003fe4096a196bda63b",
+      "head": "55d1b3571fcebf3a6c61c9b8708937ba4e5084a6",
+      "tree": "5bf7bfe24980653fe764296c534c692df3461e41",
+      "success": true,
+      "evidence_directory": "ci-preflight-iirx_v1u",
+      "suite_results": [
+        [
+          "lint",
+          "success",
+          null
+        ],
+        [
+          "production-images",
+          "success",
+          null
+        ],
+        [
+          "geospatial-integration",
+          "success",
+          null
+        ],
+        [
+          "tests",
+          "success",
+          null
+        ],
+        [
+          "sdk-node24",
+          "success",
+          null
+        ],
+        [
+          "browser",
+          "success",
+          null
+        ],
+        [
+          "sdk-node22",
+          "success",
+          null
+        ]
+      ]
+    }
+  ],
+  "hosted": [
+    {
+      "pr": 247,
+      "ci_runs": 2,
+      "retries": 1,
+      "runner_minutes": 19.417,
+      "retry_minutes": 1.117,
+      "state": "OPEN",
+      "created_at": "2026-10-09T20:58:14Z",
+      "merged_at": null,
+      "attempts": [
+        {
+          "run": 37990503028,
+          "attempt": 1,
+          "fresh_jobs": [
+            "geospatial-changes",
+            "tests",
+            "geospatial-integration",
+            "lint",
+            "production-images",
+            "browser",
+            "sdk-validation (Node 22)",
+            "sdk-validation (Node 24)",
+            "ci-ready"
+          ],
+          "minutes": 9.217
+        },
+        {
+          "run": 37990503028,
+          "attempt": 2,
+          "fresh_jobs": [
+            "geospatial-integration",
+            "production-images",
+            "ci-ready"
+          ],
+          "minutes": 1.117
+        },
+        {
+          "run": 37993173600,
+          "attempt": 1,
+          "fresh_jobs": [
+            "geospatial-changes",
+            "lint",
+            "tests",
+            "geospatial-integration",
+            "sdk-validation (Node 22)",
+            "production-images",
+            "browser",
+            "sdk-validation (Node 24)",
+            "ci-ready"
+          ],
+          "minutes": 9.083
+        }
+      ]
+    },
+    {
+      "pr": 248,
+      "ci_runs": 1,
+      "retries": 1,
+      "runner_minutes": 11.867,
+      "retry_minutes": 1.0,
+      "state": "OPEN",
+      "created_at": "2026-10-09T21:02:38Z",
+      "merged_at": null,
+      "attempts": [
+        {
+          "run": 37990986397,
+          "attempt": 1,
+          "fresh_jobs": [
+            "geospatial-changes",
+            "geospatial-integration",
+            "tests",
+            "browser",
+            "production-images",
+            "lint",
+            "sdk-validation (Node 24)",
+            "sdk-validation (Node 22)",
+            "ci-ready"
+          ],
+          "minutes": 10.867
+        },
+        {
+          "run": 37990986397,
+          "attempt": 2,
+          "fresh_jobs": [
+            "geospatial-integration",
+            "production-images",
+            "ci-ready"
+          ],
+          "minutes": 1.0
+        }
+      ]
+    },
+    {
+      "pr": 249,
+      "ci_runs": 1,
+      "retries": 1,
+      "runner_minutes": 11.3,
+      "retry_minutes": 1.067,
+      "state": "OPEN",
+      "created_at": "2026-10-09T21:04:15Z",
+      "merged_at": null,
+      "attempts": [
+        {
+          "run": 37991153574,
+          "attempt": 1,
+          "fresh_jobs": [
+            "geospatial-changes",
+            "production-images",
+            "tests",
+            "lint",
+            "sdk-validation (Node 24)",
+            "geospatial-integration",
+            "browser",
+            "sdk-validation (Node 22)",
+            "ci-ready"
+          ],
+          "minutes": 10.233
+        },
+        {
+          "run": 37991153574,
+          "attempt": 2,
+          "fresh_jobs": [
+            "production-images",
+            "geospatial-integration",
+            "ci-ready"
+          ],
+          "minutes": 1.067
+        }
+      ]
+    },
+    {
+      "pr": 250,
+      "ci_runs": 1,
+      "retries": 1,
+      "runner_minutes": 11.817,
+      "retry_minutes": 1.733,
+      "state": "OPEN",
+      "created_at": "2026-10-09T21:17:06Z",
+      "merged_at": null,
+      "attempts": [
+        {
+          "run": 37992502111,
+          "attempt": 1,
+          "fresh_jobs": [
+            "geospatial-changes",
+            "lint",
+            "production-images",
+            "geospatial-integration",
+            "sdk-validation (Node 22)",
+            "sdk-validation (Node 24)",
+            "browser",
+            "tests",
+            "ci-ready"
+          ],
+          "minutes": 10.083
+        },
+        {
+          "run": 37992502111,
+          "attempt": 2,
+          "fresh_jobs": [
+            "production-images",
+            "geospatial-integration",
+            "ci-ready"
+          ],
+          "minutes": 1.733
+        }
+      ]
+    }
+  ],
+  "runner_minutes_method": "Sum unique (run ID, job name, started_at, completed_at) intervals, excluding skipped jobs; selective rerun APIs repeat successful intervals with new job IDs. Not billed minutes.",
+  "controlled_reproduction": {
+    "before": {
+      "requested_drivers": 5,
+      "already_running_owner": 1,
+      "admitted_heavy_payloads": 5,
+      "contender_exits": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "after": {
+      "requested_drivers": 5,
+      "already_running_owner": 1,
+      "admitted_heavy_payloads": 1,
+      "contender_exits": [
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  }
+}
