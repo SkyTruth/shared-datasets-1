@@ -355,7 +355,13 @@ created/started/completed timestamps, state (`pending`, `running`, `succeeded`,
 `failed`, `cancelled`, `unknown`) and an allowlisted API reason code. Raw messages
 and execution configuration are never published. A newer running attempt retains
 the last completed failure. API or IAM failures leave the old observation stale
-and fail the observer job, so the general execution alert covers them too.
+and fail the observer job. The observer's separate health alert allows a rolling
+15-minute window without a successful completion and then requires two minutes
+of confirmation before notifying. Metric ingestion and evaluation add latency.
+Individual execution or dispatch failures remain in logs; a recovered next run
+sends no Slack notification. Missing completion metrics also count as unhealthy,
+covering repeated startup failures and a stopped scheduler. Worker executions
+retain the general failure alert.
 
 Both WDPA catalog details show execution observations separately from the asset
 check-in and published release. A successful marine publication does not imply
