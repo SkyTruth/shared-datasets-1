@@ -145,6 +145,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Operational alert routing and notification configuration | [alert routing](docs/alert-routing.md) |
 | Slack incident recovery, setup, and reconciliation | [Slack incidents](docs/slack-incidents.md) |
 | Complete validation before pushing | [CI preflight](docs/ci-preflight.md) |
+| Concurrent agent ownership, prerequisites, and final integration | [agent integration](docs/agent-integration.md) |
 | Dataset README templates | [templates/](templates/) |
 | Artifact builds and catalog generation commands | [scripts/README.md](scripts/README.md) |
 | Consumer integration guide | [consumer guide](docs/consumer-guide.md) |
@@ -316,6 +317,14 @@ Git and history:
   applying Terraform, or mutating canonical GCS objects from a local terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
+- For concurrent PR work, follow [agent integration](docs/agent-integration.md):
+  declare one final integration/recovery owner, related PR dependencies, and
+  overlapping files. Finish prerequisites, merge current main when required,
+  and freeze the committed head before full preflight. Use focused checks while
+  editing. The local preflight slot is exclusive; a busy slot is a coordination
+  failure, never a passing check. Do not edit or commit in a validating checkout.
+  Follow-ups must refresh live PR/run identity and stop acting on completed or
+  superseded work. Do not take over another chat without human authorization.
 - Before the first push, commit the focused changes and run
   `uv run python scripts/ci_preflight.py --base <current-main-sha> --head <head-sha>`
   from a clean checkout with full history. Read `docs/ci-preflight.md` for the

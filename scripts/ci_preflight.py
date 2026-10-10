@@ -8,6 +8,8 @@ authorization or uses production credentials.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -29,6 +31,8 @@ from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
     select_deployments, select_suites, verify_results, write_json,
 )
+
+LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
 
 
 def git(root: Path, *arguments: str, raw: bool = False) -> str:
@@ -285,6 +289,35 @@ def isolated_merge(source: Path, base: str, head: str, destination: Path) -> tup
     return destination, base_sha, head_sha
 
 
+@contextmanager
+def local_preflight_slot(source: Path, base: str, head: str):
+    """One heavy preflight per local user/host, across worktrees and temp roots.
+
+    The kernel owns the lock; retained owner text is diagnostic, never a lease.
+    Do not unlink the file: replacing its inode would permit concurrent holders.
+    """
+    directory = LOCAL_COORDINATION_DIRECTORY
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"preflight-{os.getuid()}.lock"
+    with path.open("a+") as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            stream.seek(0)
+            raise ValueError(
+                f"another local preflight owns {path}: {stream.read().strip()}; "
+                "coordinate with its integration owner before retrying"
+            ) from None
+        try:
+            stream.seek(0)
+            stream.truncate()
+            stream.write(json.dumps({"pid": os.getpid(), "repo": str(source.resolve()), "base": base, "head": head}) + "\n")
+            stream.flush()
+            yield
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+
 def preflight(args: argparse.Namespace) -> int:
     source = Path(args.repo).resolve()
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", Path(tempfile.gettempdir()) / "shared-datasets-1")) / "_scratch"
@@ -426,7 +459,8 @@ def main() -> int:
             return 0
         if not args.base or not args.head:
             parser.error("--base and --head are required for isolated preflight")
-        return preflight(args)
+        with local_preflight_slot(Path(args.repo), args.base, args.head):
+            return preflight(args)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"Preflight failed: {exc}", file=sys.stderr)
         return 1
