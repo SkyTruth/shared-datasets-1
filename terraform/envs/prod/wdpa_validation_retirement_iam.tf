@@ -21,7 +21,7 @@ resource "google_project_iam_member" "github_actions_wdpa_validation_retirement"
 
   condition {
     title       = "wdpa_validation_retirement_expires"
-    description = "Expire one-time retirement authority at 2026-10-11 12:00 UTC."
-    expression  = "request.time < timestamp('2026-10-11T12:00:00Z')"
+    description = "Expire one-time retirement authority at 2026-10-13 12:00 UTC."
+    expression  = "request.time < timestamp('2026-10-13T12:00:00Z')"
   }
 }

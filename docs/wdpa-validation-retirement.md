@@ -14,12 +14,16 @@ the complete saved plan before claiming or applying it. Monthly resources,
 reader IAM, immutable build evidence and promotion contracts stay outside it.
 
 The grant contains only the three missing delete permissions. It applies to
-the protected Terraform identity at project scope until **2026-10-11 12:00 UTC**,
+the protected Terraform identity at project scope until **2026-10-13 12:00 UTC**,
 then expires through a fixed `request.time` condition. This is a temporary broad
 delete grant within the project, not a resource-scoped IAM restriction. It needs
 explicit human approval under AGENTS.md before merge activates it. The workflow
 allowlist constrains actual Terraform changes; it does not narrow the IAM grant.
 The persistent ingestion deployer gains no deletion permission.
+
+The prior proposed window expired on October 11 without approval or deployment.
+This replacement is a proposal requiring specific human approval before merge;
+no live grant has been extended. The expiry remains fixed, not a rolling window.
 
 Google's [resource-based condition documentation](https://docs.cloud.google.com/iam/docs/configuring-resource-based-access)
 states that IAM resources do not provide `resource.name`; the

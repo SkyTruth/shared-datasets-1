@@ -73,7 +73,7 @@ def test_temporary_authority_is_separate_expires_and_selects_its_actual_owner():
     binding = terraform_resource_block(text, "google_project_iam_member", "github_actions_wdpa_validation_retirement")
     assert 'role    = google_project_iam_custom_role.wdpa_validation_retirement.name' in binding
     assert 'member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"' in binding
-    assert "request.time < timestamp('2026-10-11T12:00:00Z')" in binding
+    assert "request.time < timestamp('2026-10-13T12:00:00Z')" in binding
     assert "resource.name" not in binding  # Unsupported for these IAM resources.
     persistent = (ROOT / "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf").read_text()
     assert not MISSING & set(re.findall(r'"([^"]+)"', persistent))
