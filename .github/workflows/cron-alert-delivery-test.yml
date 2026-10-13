@@ -11,7 +11,7 @@ on:
       job:
         description: Deliberately fail before writes, then verify Monitoring Slack delivery
         type: choice
-        options: [wdpa-monthly, wdpa-processing-validation]
+        options: [wdpa-monthly]
         default: wdpa-monthly
       execution_name:
         description: Exact controlled execution to verify; required for verify-delivery
@@ -77,7 +77,6 @@ jobs:
           if [[ "$PROBE_ACTION" == start ]]; then
             case "$JOB_NAME" in
               wdpa-monthly) override=WDPA_FAIL_BEFORE_WRITES=true ;;
-              wdpa-processing-validation) override=WDPA_FAIL_BEFORE_DATASET_WRITES=1 ;;
               *) exit 1 ;;
             esac
             gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \

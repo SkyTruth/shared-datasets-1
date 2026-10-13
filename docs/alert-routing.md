@@ -14,7 +14,7 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Synchronous EAMLIS/sea-ice deployment canary or WDPA upload preflight | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
 | Five-minute WDPA execution observer or its Scheduler dispatch | Monitoring Slack only after persistent loss of successful completions |
-| Detached WDPA canary, validation, or runtime inspection | Monitoring Slack |
+| Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
 
@@ -71,8 +71,8 @@ the production observer to test an outage notification.
 
 ## Execution and delivery verification
 
-WDPA's ten-minute watch and detached validation retain Cloud Monitoring coverage.
-Do not suppress them based solely on their creator, branch, or workflow trigger.
+WDPA's ten-minute worker watch retains Cloud Monitoring coverage.
+Do not suppress it based solely on its creator, branch, or workflow trigger.
 Routine deployments no longer require deliberate failure probes. The explicit
 `cron-alert-delivery-test.yml` retains both existing fail-before-write modes and
 refuses to start while the selected job has an active execution. Its `start`

@@ -67,14 +67,11 @@ normal preflight requirements still apply when publishing code changes.
 
 ## Dataset operations
 
-WDPA processing validation uses `local_ingestion_smoke.py` for the small sea-ice
-fixture, then `local_wdpa_sample.py --asset wdpa-marine` for a complete marine
-build with measured disk spill. `cloud_wdpa_validation.py` runs the complete
-frozen October source in an isolated Cloud Run job without publishing.
-`wdpa_processing_gate.py --pre-cloud` gates that deployment on reviewed staged
-evidence and disk quota; its default gate still requires complete resource
-acceptance before production-worker deployment. `check_wdpa_validation_plan.py`
-enforces the isolated job's resource, entrypoint and permission contracts.
+The one-time October WDPA validation campaign is retired. Monthly deployment
+uses the pinned accepted registry image and retained evidence, checked by
+`wdpa_processing_gate.py` and `wdpa_build_authorization.py`. The retained
+`local_ingestion_smoke.py`, `local_wdpa_sample.py` and
+`wdpa_input_memory_probe.py` still support monthly image and boundary tests.
 
 The most important script is:
 

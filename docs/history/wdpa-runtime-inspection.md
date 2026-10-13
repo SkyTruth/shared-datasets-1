@@ -1,3 +1,5 @@
+Historical record, completed 2026-10-02. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # Inspect the isolated WDPA runtime
 
 The first complete cloud validation, `wdpa-processing-validation-psg4m`, exited

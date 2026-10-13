@@ -14,7 +14,7 @@ from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_results
 from scripts.ci_contract import NATIVE_TESTS, select_suites
 from scripts.ci_preflight import suite_commands
 
-from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
+from workflow_helpers import load_workflow, workflow_steps_by_name
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,53 +38,6 @@ NATIVE_TOOL_TESTS = {
 class GeospatialCiTests(unittest.TestCase):
     def setUp(self):
         self.workflow = load_workflow(CI_WORKFLOW)
-
-    def test_complete_benchmark_is_manual_read_only_and_resource_constrained(self):
-        inputs = workflow_triggers(self.workflow)["workflow_dispatch"]["inputs"]
-        self.assertIs(inputs["wdpa_full_benchmark"]["default"], False)
-        self.assertEqual(inputs["wdpa_benchmark_fraction"]["default"], "1")
-        self.assertEqual(inputs["wdpa_benchmark_fraction"]["options"], ["1", "0.001"])
-        self.assertIs(inputs["wdpa_inputs_probe"]["default"], False)
-        job = self.workflow["jobs"]["wdpa-full-benchmark"]
-        self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
-        self.assertIn("inputs.wdpa_full_benchmark", job["if"])
-        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
-        self.assertEqual(job["needs"], ["wdpa-benchmark-image", "wdpa-small-smoke"])
-        self.assertEqual(job["env"]["WDPA_BENCHMARK_REPLAY"], "1")
-        steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
-        run = steps["Run marine WDPA with 4 CPU and 8 GiB"]["run"]
-        self.assertIn("--asset wdpa-marine", run)
-        self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", run)
-        self.assertIn("CLOUD_RUN_EXECUTION=wdpa-benchmark", run)
-        self.assertIn("--translation-sources", run)
-        self.assertIn('--fraction "$WDPA_BENCHMARK_FRACTION"', run)
-        self.assertIn("wdpa-inputs:/inputs:ro", run)
-        self.assertNotIn("SNAPSHOT_READ_TOKEN", run)
-        self.assertNotIn("--genesis", run)
-        upload = steps["Upload measurements only"]["with"]
-        self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/")
-        self.assertIn("compatibility.log", steps["Retain report if a replay failed"]["run"])
-        self.assertIn("wdpa-marine-benchmark-reports", upload["name"])
-        image_steps = workflow_steps_by_name(self.workflow, "wdpa-benchmark-image")
-        self.assertIn("docker save", image_steps["Build the deployment image once"]["run"])
-        image_artifact = image_steps["Share the deployment image with staged checks"]["with"]["name"]
-        self.assertEqual(steps["Download the shared deployment image"]["with"]["name"], image_artifact)
-        self.assertIn("containerimage.config.digest", steps["Load and verify the identical deployment image"]["run"])
-        image_proof = steps["Load and verify the identical deployment image"]["run"]
-        self.assertIn("verify_local_config", image_proof)
-        self.assertIn("' \"$expected\"", image_proof)
-        self.assertNotIn("{{.Id}}", image_proof)
-        self.assertIn("fallocate -l 100G", steps["Provision a 100 GiB disk scratch filesystem"]["run"])
-
-    def test_benchmark_uses_public_frozen_inputs_without_credentials(self):
-        steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
-        run = steps["Download reviewed public frozen inputs without credentials"]["run"]
-        self.assertIn("scripts/download_public_wdpa_benchmark.py", run)
-        self.assertIn("docs/wdpa-processing-public-inputs.json", run)
-        self.assertNotIn("secrets.", str(self.workflow["jobs"]["wdpa-full-benchmark"]))
-        self.assertIn("!inputs.wdpa_inputs_probe", steps["Run marine WDPA with 4 CPU and 8 GiB"]["if"])
-        self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", steps["Measure input preparation only"]["run"])
-        self.assertIn("wdpa_input_memory_probe.py:/app/scripts/wdpa_input_memory_probe.py:ro", steps["Measure input preparation only"]["run"])
 
     def test_geospatial_job_runs_shared_native_contract(self):
         job = self.workflow['jobs']['geospatial-integration']

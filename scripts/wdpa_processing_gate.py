@@ -24,8 +24,7 @@ def source_paths(inventory):
         "ingestion/wdpa_monthly/Dockerfile", "pyproject.toml", "uv.lock",
         "scripts/release_feature_model.py", "scripts/feature_metadata_translation_reuse.py",
         "scripts/feature_metadata_localization.py", "scripts/local_wdpa_sample.py",
-        "scripts/local_ingestion_smoke.py", "scripts/cloud_wdpa_validation.py",
-        "scripts/download_public_wdpa_benchmark.py", "docs/wdpa-processing-public-inputs.json",
+        "scripts/local_ingestion_smoke.py", "docs/wdpa-processing-public-inputs.json",
         "ingestion/sea_ice_daily/run.py", "scripts/translation_local_io.py",
         "scripts/pmtiles_zoom.py", "scripts/vector_asset.py", "scripts/slack_notify.py",
         "scripts/wdpa_processing_gate.py",
@@ -244,60 +243,17 @@ def check(evidence):
     )
 
 
-def check_precloud(evidence, *, producer_source_sha256=None):
-    """Small/sampled checks permit one artifact build, never publication."""
-    errors = []
-    if (
-        evidence.get("schema_version") != 3
-        or evidence.get("source_tree_sha256") != (
-            source_digest() if producer_source_sha256 is None else producer_source_sha256
-        )
-    ):
-        errors.append("staged validation does not match the processing source tree")
-    if evidence.get("disk_quota_approved") is not True:
-        errors.append("100 GiB ephemeral disk quota has not been approved")
-    small = evidence.get("small_fixture") or {}
-    sample = evidence.get("compatibility_sample") or {}
-    if (
-        small.get("scope") != "small-sea-ice-fixture"
-        or small.get("state") != "succeeded"
-        or small.get("contracts_verified") is not True
-    ):
-        errors.append("the small sea-ice production-path smoke test must pass first")
-    for run in (small, sample):
-        if run.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
-            errors.append("a staged test uses different processing code")
-        if not validation_limits(run.get("cpu_limit"), run.get("memory_limit_bytes")):
-            errors.append("a staged test did not use 4 CPU / 8 GiB")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(run.get("image_digest", ""))):
-            errors.append("a staged test is missing its immutable image digest")
-    if not small.get("image_digest") or small.get("image_digest") != sample.get(
-        "image_digest"
-    ):
-        errors.append("small and sampled checks must use the same build image")
-    return errors + check_compatibility(evidence, [sample])
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--print-source-digest", action="store_true")
-    parser.add_argument(
-        "--pre-cloud",
-        action="store_true",
-        help="Gate isolated cloud validation, without permitting publication",
-    )
     args = parser.parse_args()
     if args.print_source_digest:
         print(source_digest())
         return
-    evidence = (
-        ROOT / "catalog/wdpa-staged-validation.json" if args.pre_cloud else EVIDENCE
-    )
-    payload = json.loads(evidence.read_text())
-    errors = (check_precloud if args.pre_cloud else check)(payload)
-    if not args.pre_cloud:
-        for warning in memory_warnings(payload.get("build") or {}):
-            print("WARNING: " + warning, file=sys.stderr)
+    payload = json.loads(EVIDENCE.read_text())
+    errors = check(payload)
+    for warning in memory_warnings(payload.get("build") or {}):
+        print("WARNING: " + warning, file=sys.stderr)
     if errors:
         raise SystemExit("WDPA rollout blocked:\n" + "\n".join(errors))
 
