@@ -1,3 +1,5 @@
+Historical record, completed 2026-06-05. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # P0.4 Release Index Metadata Repair
 
 This note documents the reviewed repair plan for historical release-index

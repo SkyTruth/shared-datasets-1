@@ -1,3 +1,5 @@
+Historical record, completed 2026-10-07. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # WDPA processing validation and rollout evidence
 
 The October terrestrial release is published and independently verified.
@@ -17,7 +19,7 @@ processing fingerprint
 and image configuration digest
 `sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760`.
 The image ZIP, actual configuration blob and report ZIPs were hash-verified;
-[original reports and image metadata](wdpa-processing-evidence/37095105175/compatibility.json)
+[original reports and image metadata](../wdpa-processing-evidence/37095105175/compatibility.json)
 are retained unchanged. The configuration digest is not a deployed registry
 manifest digest or evidence of a completed cloud build.
 When staged evidence selects an isolated processing deployment, local preflight
@@ -53,8 +55,8 @@ active execution, this permits one isolated complete retaining build.
 
 The single retaining build `wdpa-processing-validation-cg4bc` reached terminal
 success at 2026-10-03 13:12:01 UTC. Its unchanged
-[raw report](wdpa-processing-evidence/wdpa-processing-validation-cg4bc/report.json)
-and exact [bundle bytes](wdpa-processing-evidence/wdpa-processing-validation-cg4bc/build-bundle.json)
+[raw report](../wdpa-processing-evidence/wdpa-processing-validation-cg4bc/report.json)
+and exact [bundle bytes](../wdpa-processing-evidence/wdpa-processing-validation-cg4bc/build-bundle.json)
 are retained with actual Cloud Run, registry and object facts. The committed
 root descriptor has generation `1791033114607974`, size 81,647 bytes and SHA-256
 `a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170`.
@@ -88,7 +90,7 @@ The protected deployment, controlled worker failure-alert delivery and live
 ownership checks completed before publication. Only the needed terrestrial bytes
 were promoted, with the build's original `2026-10-01` run date. The staging bundle
 remains noncanonical; the separate
-[publication verification](wdpa-processing-evidence/wdpa-monthly-f2xnm/publication-verification.json)
+[publication verification](../wdpa-processing-evidence/wdpa-monthly-f2xnm/publication-verification.json)
 records terminal success and actual canonical generations.
 
 ## Single build and promotion
@@ -122,7 +124,7 @@ records terminal success and actual canonical generations.
    in acceptance. The protected worker workflow checks exact-head approval (or
    the existing self-authored merged exception), identical head/merge/current
    document bytes, and the accepted build's real terminal success. See the
-   [owned plan contract](../.github/dataset-plans/README.md#owned-wdpa-build-promotion).
+   [owned plan contract](../../.github/dataset-plans/README.md#owned-wdpa-build-promotion).
 6. With observer and alert prerequisites ready, prepare the publication image and
    execute the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`.
    It downloads the approved object generations, verifies all required files
@@ -176,7 +178,7 @@ The old diagnostic `wdpa-processing-validation-5q7zp` built terrestrial metadata
 Metadata took 5,260.409 seconds; FGB took 75.354 seconds and completed at
 `2026-10-03T02:52:01Z`. Its observed real kernel lifetime peak is 7,732,400,128
 bytes (7.20 GiB): advisory under this policy. Raw API/phase facts are retained
-[unchanged](wdpa-processing-evidence/wdpa-processing-validation-5q7zp/terrestrial-export-logs.json).
+[unchanged](../wdpa-processing-evidence/wdpa-processing-validation-5q7zp/terrestrial-export-logs.json).
 
 This execution cannot supply a complete retained bundle. Its deployed sampler
 deletes each realm's validated output files before moving on and has no artifact
@@ -185,7 +187,7 @@ removed. Terrestrial FGB/metadata/schema remain temporary working files;
 PMTiles, translation CSV, six locale sidecars and final contracts were still
 outstanding at the latest captured phase. It has no generation/hash-pinned
 staged objects or root descriptor.
-The [read-only retention assessment](wdpa-processing-evidence/wdpa-processing-validation-5q7zp/retention-assessment.json)
+The [read-only retention assessment](../wdpa-processing-evidence/wdpa-processing-validation-5q7zp/retention-assessment.json)
 at `2026-10-03T03:52:06Z` found **zero objects** under its exact
 `_scratch/wdpa-builds/wdpa-processing-validation-5q7zp/` prefix and confirmed
 the old immutable image and running execution.
@@ -255,7 +257,7 @@ The local container used four CPU and a 6 GiB limit. Its kernel did not expose
 lifetime peak. These results validate the mechanism on real marine geometry,
 not full-pipeline memory savings or producer acceptance. The input generation,
 toolchain, code hashes, per-trial measurements and limitations are retained in
-[the local marine comparison report](wdpa-processing-evidence/local-marine-cache-ab-20261007/report.json).
+[the local marine comparison report](../wdpa-processing-evidence/local-marine-cache-ab-20261007/report.json).
 No remote objects were changed.
 
 ## Completed checks
@@ -304,7 +306,7 @@ No remote objects were changed.
 
 ## Deterministic October comparison
 
-[Machine-readable sample evidence](wdpa-processing-sample-evidence.json) records
+[Machine-readable sample evidence](../wdpa-processing-sample-evidence.json) records
 the frozen inputs and output digests. The selector used fraction `0.001`, seed
 `7919`, and the existing `SITE_ID` expression. This is a deterministic subset,
 not an assertion that each country is sampled proportionately.
@@ -340,7 +342,7 @@ the gate refuses cached-index runs.
 
 An independent GDAL attribute-only scan of the **complete** frozen October
 source also passed. Geometry reads are disabled for this check, and identities
-and site counts use SQLite. [Source-count evidence](wdpa-processing-source-counts.json)
+and site counts use SQLite. [Source-count evidence](../wdpa-processing-source-counts.json)
 pins the upstream hash and published baseline generations.
 
 | Realm | Complete October records | October India records/sites | Published baseline records | Baseline India records/sites |
@@ -443,7 +445,7 @@ also match the historical complete marine replay. Its raw
 `compatibility_verified` remains false: the separate sample supplies old/new
 comparison proof, and artifact validation does not impersonate that comparison.
 
-[Its archived version 2 staged evidence](wdpa-processing-evidence/37047953130/staged-validation.json)
+[Its archived version 2 staged evidence](../wdpa-processing-evidence/37047953130/staged-validation.json)
 opened only the isolated cloud validation gate. It recorded processing fingerprint
 `ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040`,
 configuration digest
@@ -479,7 +481,7 @@ reports. The same frozen source, baseline and translation inputs and native
 versions were used. The complete report still has `compatibility_verified=false`;
 the separate sampled comparison supplies that proof.
 
-The archived [version 2 staged evidence](wdpa-processing-evidence/37062181850/staged-validation.json)
+The archived [version 2 staged evidence](../wdpa-processing-evidence/37062181850/staged-validation.json)
 records processing fingerprint
 `b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337`
 and configuration digest
@@ -492,7 +494,7 @@ terminal. That superseded gate required two complete passing cloud builds; the c
 single-build path requires retained artifacts from its new image instead; the earlier execution's 7.00 GiB
 lifetime peak cannot be reset, subtracted or counted toward acceptance.
 
-[Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
+[Reviewed public input recipe](../wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
 sizes and hashes. `download_public_wdpa_benchmark.py` reconstructs the same frozen
 inputs anonymously, checking raw and compressed hashes. It neither exports
@@ -532,7 +534,7 @@ Scratch peaked at 9,462,734,848 bytes (8.81 GiB), and preparation took 66.077
 seconds. The sampler requested two cache releases; parent RSS was 172,552,192
 bytes and child RSS 96,714,752 bytes. Both probes used the identical frozen
 source and verified baselines at 4 CPU / 8 GiB with no swap and a 100 GiB disk.
-[Diagnostic reports](wdpa-processing-input-probes.json) include the native tool
+[Diagnostic reports](../wdpa-processing-input-probes.json) include the native tool
 versions and image/processing digests. This improvement is not complete-build
 acceptance; its image predates the retained-artifact build path.
 
@@ -573,7 +575,7 @@ Complete execution `wdpa-processing-validation-6mvsp` passed preflight and
 downloaded the frozen inputs, but its early lifetime kernel peak reached
 **7,520,972,800 bytes (7.00 GiB)**, exceeding the 6.4 GiB target. The input
 download phase itself peaked at 4,446,232,576 bytes. These
-[early Cloud Logging resource events](wdpa-processing-evidence/wdpa-processing-validation-6mvsp/early-phase-logs.json)
+[early Cloud Logging resource events](../wdpa-processing-evidence/wdpa-processing-validation-6mvsp/early-phase-logs.json)
 remain diagnostic evidence; they cannot establish complete counts, contracts or
 acceptance. That execution subsequently failed during platform hardware
 maintenance at `2026-10-02T22:17:51Z`, without a final processing report. Its
@@ -627,8 +629,8 @@ denied. The actual kernel peak was 5,732,749,312 bytes and scratch peaked at
 15,196,237,824 bytes. This was a storage permission failure, separate from memory
 headroom. Terrestrial processing had not started. A completed read-only listing
 found zero retained objects for that execution, so all 22 artifact files and
-the root descriptor are missing. The [unchanged failed report](wdpa-processing-evidence/wdpa-processing-validation-kncf9/failed-report.json)
-and [derived audit/recovery assessment](wdpa-processing-evidence/wdpa-processing-validation-kncf9/retention-assessment.json)
+the root descriptor are missing. The [unchanged failed report](../wdpa-processing-evidence/wdpa-processing-validation-kncf9/failed-report.json)
+and [derived audit/recovery assessment](../wdpa-processing-evidence/wdpa-processing-validation-kncf9/retention-assessment.json)
 record the failure. One complete retaining build is necessary after the upload
 preflight succeeds because there is no complete retained bundle to promote.
 
@@ -702,7 +704,7 @@ acceptance, then its temporary project binding was retired after provisioning.
 Google approved case `9d926638-b024-4866-8b94-898801ecdf6c` on October 2.
 An authenticated Service Usage API read verifies **107,374,182,400 bytes
 (100 GiB)** effective per-instance quota in `us-central1`.
-[Quota observation](wdpa-processing-disk-quota.json) retains the returned values;
+[Quota observation](../wdpa-processing-disk-quota.json) retains the returned values;
 `catalog/wdpa-staged-validation.json` records approval. No API was enabled.
 The first disk-backed validation deployment also received 100 GiB of regional
 allocation, verified through Service Usage. Recheck available capacity before
@@ -801,3 +803,187 @@ generation `1790924057375117`, 5,189,560,320 bytes, SHA-256
 `70b9f8b0356de097c7392972c65b0b073485c80ea814d0284a97762a9478151b`.
 This disposable scratch bundle is not a shared dataset contract. Its temporary
 reader was restricted to that exact object; a read of another object was denied.
+
+## Archived ingestion README context
+
+The following sections were retained from `ingestion/wdpa_monthly/README.md`
+at revision `aa77eb89a93c54029c4ef003fe4096a196bda63b` when operations and rollout history were separated.
+They record the prior guidance; use the monthly runbook for current operations.
+
+### Deploy
+
+Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
+after reviewed changes merge to `main`. The workflow promotes the accepted
+immutable image; it does not rebuild it. For the October rollout it requires one
+retained complete build and its exact-head reviewed promotion plan, then executes
+the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
+copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
+owned publisher, preserving claims, counters, generation preconditions and
+recovery. It does not run source processing again. A different canary date is
+rejected. The independent observer and unattended failure alerts remain enabled.
+
+The deploy job waits for the protected ingestion IAM sync to bootstrap access
+management on the one Slack secret and install runtime translation-notice
+permissions. This prerequisite does not replace the retained-build acceptance
+and promotion gates.
+
+The job template pins `WDPA_PROMOTION_BUNDLE` to the accepted build reference
+from `catalog/wdpa-processing-acceptance.json`; `RUN_DATE` remains an
+execution-only override. Scheduled invocations therefore use the current UTC
+month and can consume only a reviewed build for that month. A missing bundle or
+a bundle for another month fails before publication with an actionable error;
+the worker never falls back to processing source data. Each new month's retained
+build and promotion authority must be reviewed and deployed before that month's
+scheduled publication can succeed. Repeat invocations of a completed month
+verify the owned receipts and return `skipped` without downloading or
+republishing artifacts.
+
+Do not deploy this job with a local Terraform apply or hand-built production image. See the
+[single-build runbook](wdpa-processing-validation.md#single-build-and-promotion).
+
+### Processing limits and local replay
+
+See [validation and rollout evidence](wdpa-processing-validation.md)
+for compatibility results and the outstanding resource acceptance prerequisites.
+
+The worker targets 4 vCPU / 8 GiB, a 24-hour timeout and a 100 GiB ephemeral
+DISK volume at `/work`. `TMPDIR=/work/tmp` and
+`SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` put GDAL, Tippecanoe and SQLite
+scratch on that disk. A Cloud Run execution fails before downloads when the
+mount is missing or memory-backed. Tippecanoe uses at most four threads; SQLite
+caches are capped at 64 MiB and sorting uses disk.
+
+The [Cloud Run disk feature](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
+is Preview. Before rollout, verify `run.googleapis.com/max_per_instance_ephemeral_disk`
+permits 100 GiB and `run.googleapis.com/ephemeral_disk_allocation` has enough
+capacity in `us-central1` for every concurrent worker instance (at least 100 GiB
+for one instance). Record the effective limits in the reviewed acceptance
+document. The observer has no ephemeral disk volume. Google's default
+per-instance limit is 10 GiB. Disk contents are disposable and are
+never publication authority.
+
+Processing filters the source into a GeoPackage, pipes the existing GDAL 3.6.2
+GeoJSONSeq normalization into a binary normalized GeoPackage and an indexed
+identity plan, completes allocation, attaches IDs/hashes, and writes metadata.
+FGB exports directly from the normalized store. Tippecanoe receives a pipe with
+only geometry and `feature_id`; MBTiles conversion and existing tiling options
+are preserved. The geometry store is removed after both geometry outputs finish.
+Translations follow geometry processing. Verified translation input downloads
+are removed once their reusable SQLite index is built; an approved supplement
+remains available while rebuilding the locales. A published marine bundle is
+removed locally before the terrestrial build.
+
+The invariant is unchanged: normalized content and a verified baseline determine
+one complete allocation before publication. Scratch changes cannot change
+identity or bypass an interrupted publication. Recover durable claims/receipts
+through the original publication owner; never substitute local SQLite state or
+reset a sequence because a disk was lost.
+
+Freeze benchmark inputs without publishing:
+
+```bash
+uv run python scripts/freeze_wdpa_benchmark.py --out "$SHARED_DATASETS_WORKDIR/downloads/wdpa-october-2026/frozen-inputs"
+```
+
+The freezer verifies publication state, manifest generations and compressed
+sidecar hashes/counts, and downloads translation evidence at pinned generations.
+Keep the upstream ZIP alongside that directory, outside the repository. Replay
+uses the production builder and never instantiates a publisher:
+
+```bash
+docker run --rm --platform linux/amd64 --cpus=4 --memory=8g --memory-swap=8g \
+  --mount type=bind,src="$SHARED_DATASETS_WORKDIR",dst=/inputs,readonly \
+  --mount type=volume,dst=/work \
+  wdpa-monthly python scripts/local_wdpa_sample.py \
+  --source /inputs/downloads/wdpa-october-2026/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
+  --baselines /inputs/downloads/wdpa-october-2026/frozen-inputs \
+  --translation-sources /inputs/downloads/wdpa-october-2026/frozen-inputs/translation-sources.json \
+  --workdir /work/shared-datasets-1/october-build-1
+```
+
+Use a named disk volume for diagnostics. Only the protected Cloud Run build
+stages the immutable bundle needed for acceptance. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genesis`
+fixtures cannot satisfy acceptance. Add `--compare-legacy` on a sample to compare
+the retained old allocation/export path against IDs, hashes, properties, geometry,
+field types, metadata schemas, all six locales and the canonical translation CSV.
+Complete runs rebuild the reusable SQLite translation index from the frozen
+generation-pinned inputs and delete their scratch copies after indexing. The
+freezer's optional `--build-translation-cache` creates a sample-debugging cache;
+`--translation-memory` cannot satisfy complete acceptance. The gate explicitly
+requires index construction, not only geometry and locale output generation.
+An independent stream of source identity/country fields verifies realm/India
+counts against the outputs; identical duplicate source rows count once, matching
+the allocation contract. The report records semantic identity/property
+digests, realm/India counts, artifact hashes, elapsed time and structured phase
+measurements. Raw metadata bytes can differ because scratch source paths appear
+in provenance; compare semantic values and identities, not those paths.
+
+Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
+time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
+and native tool versions, plus the memory breakdown at the sampled peak.
+At 4 GiB cgroup usage, the sampler
+uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
+cache, including open temporary files that native tools have unlinked. The
+sampler follows the current process's descendants through `/proc`, pins each
+eligible descriptor, and rechecks its deletion state, file type and tracked
+directory before advising it. Thread/process/file disappearance is an expected
+sampling race; permission and cache-advice errors fail measurement.
+It skips symlinks and special files, never changes file bytes and never
+resets or excludes cache from the measured cgroup peak. Frozen local replays also
+release cache from their read-only input directory. Cache advice failures fail
+measurement. The preferred 6.4 GiB headroom target produces an advisory warning;
+the enforced 8 GiB memory limit remains unchanged. Reports retain the actual
+kernel lifetime peak, including file cache.
+Missing peak telemetry is not passing evidence.
+Scratch measurements cover the entire `/work` filesystem, including native
+temporary files outside the build directory and open files that were unlinked.
+
+`scripts/wdpa_processing_gate.py` requires one complete terminal-success October
+build at 4 CPU / 8 GiB with a measured kernel peak within the enforced 8 GiB
+limit, scratch <80 GiB and duration
+≤24 hours, plus independently verified realm/India counts, native contracts and
+a matching sampled old/new comparison. Schema version 3 acceptance binds its
+retained bundle by URI, generation, size and SHA-256, its actual cloud image and
+execution, and the reviewed immutable promotion plan. Samples and genesis runs
+cannot authorize publication. Exceeding preferred headroom alone does not reject
+valid artifacts or require a rebuild. Resource configuration cannot be increased.
+
+The initial CI checks use `wdpa_build_smoke=true`: a small native fixture followed
+by the deterministic sample, with no full marine build. Reviewed staged evidence
+opens only the isolated protected build workflow. That job may create immutable
+objects under `_scratch/wdpa-builds/` only, has no canonical dataset permissions
+and no scheduler. All eleven input artifact roles per realm are retained before
+local cleanup. A root descriptor is committed only after the entire build passes.
+The production worker can read that staging prefix; it checks both predecessor
+states and all needed file bytes before starting new canonical writes. Manifests,
+run records and release indexes are finalized by the owned publisher with actual
+canonical object generations. Existing owned recovery semantics are unchanged.
+
+Already-committed realms retain their successful receipts and published bytes.
+For a realm published before the build, promotion checks its frozen current
+manifest, release, allocation counter, source period/URL, identity contract and
+row count. Unused candidate hashes need not match that pre-existing release.
+For a realm published from the retained build, the current owned receipt must
+prove the build's predecessor and allocation, and the run record must match all
+retained artifact hashes plus the finalized manifest hash. A successful
+publication advances the live baseline; a verified retry does not require that
+baseline to remain at its pre-publication generation. Another owner or an
+unrelated state change still stops publication. Only an unpublished realm's
+retained files are downloaded and published at exact generations and hashes.
+
+The reviewed promotion plan also pins the producer configuration and original
+source fingerprint. Publication code can change without invalidating those
+build facts. `Dockerfile.promotion` inherits the verified producer image's native
+tools and dependencies and adds the reviewed consumer/gate/entrypoint and the
+current shared translation publisher, helpers and locale catalog.
+`WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the expected producer at the bundle
+boundary. The publication-only entrypoint refuses a missing bundle before
+source processing; the controlled pre-write failure probe remains available.
+No source download, normalization, tile build or translation rebuild is part
+of this image layer or publication.
+
+Translation-only updates retain the prior committed receipt and manifest
+snapshots. Subsequent retained-build retries verify that history back to the
+original accepted publication and require unchanged base artifact hashes and
+feature-ID allocation. Language updates therefore remain valid inputs for
+future builds without causing the current month's scheduled retry to fail.

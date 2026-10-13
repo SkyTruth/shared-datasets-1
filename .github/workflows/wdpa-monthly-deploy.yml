@@ -213,20 +213,7 @@ jobs:
 
       - name: Verify accepted build terminal success
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
-        run: |
-          set -euo pipefail
-          execution="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["cloud_execution"])')"
-          gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format=json > "$RUNNER_TEMP/accepted-wdpa-execution.json"
-          python - "$RUNNER_TEMP/accepted-wdpa-execution.json" <<'PY'
-          import json, sys
-          accepted = json.load(open('catalog/wdpa-processing-acceptance.json'))['build']
-          execution = json.load(open(sys.argv[1]))
-          status = execution['status']
-          image = execution['spec']['template']['spec']['containers'][0]['image']
-          if (not status.get('completionTime') or int(status.get('succeededCount', 0)) != 1
-              or int(status.get('failedCount', 0)) != 0 or image != accepted['cloud_image']):
-              raise SystemExit('Only a terminal successful execution of the accepted image may be promoted')
-          PY
+        run: uv run --no-sync python scripts/release_contracts.py --target wdpa
 
       - name: Verify run-bound signing capability without mutation
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}

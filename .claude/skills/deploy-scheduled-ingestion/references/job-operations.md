@@ -59,33 +59,35 @@ deletion requires its own immutable reviewed dataset plan.
 ## wdpa-monthly deployment
 
 Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
-after reviewed changes merge to `main`. The workflow promotes the accepted
-immutable image; it does not rebuild it. For the October rollout it requires one
-retained complete build and its exact-head reviewed promotion plan, then executes
-the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
-copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
-owned publisher, preserving claims, counters, generation preconditions and
-recovery. It does not run source processing again. A different canary date is
-rejected. The independent observer and unattended failure alerts remain enabled.
+after reviewed changes merge to `main`. The workflow verifies the accepted
+producer image, retained bundle and exact-head owned promotion authority, then
+uses `Dockerfile.promotion` to add reviewed publication code and pins the
+resulting registry digest. It never regenerates dataset artifacts. The canary
+uses `WDPA_PROMOTION_BUNDLE` and the accepted build's `RUN_DATE`; a different
+canary date is rejected. Publication preserves claims, counters, generation
+preconditions and already committed realm receipts.
 
-The deploy job waits for the protected ingestion IAM sync to bootstrap access
-management on the one Slack secret and install runtime translation-notice
-permissions. This prerequisite does not replace the retained-build acceptance
-and promotion gates.
+Require successful `ci-ready` and the ingestion/registry IAM prerequisites.
+Manual dispatch from `main` requires `executor_sha`, `source_run_id` (the
+main-push CI run) and `source_run_attempt` (its successful `ci-ready` attempt).
+Use workflow help and the exact reviewed workflow for current inputs. Check
+pending/running worker executions and ownership before the canary; follow any
+asynchronous execution to terminal status through the skill's verification steps.
 
-The job template pins `WDPA_PROMOTION_BUNDLE` to the accepted build reference
-from `catalog/wdpa-processing-acceptance.json`; `RUN_DATE` remains an
-execution-only override. Scheduled invocations therefore use the current UTC
-month and can consume only a reviewed build for that month. A missing bundle or
-a bundle for another month fails before publication with an actionable error;
-the worker never falls back to processing source data. Each new month's retained
-build and promotion authority must be reviewed and deployed before that month's
-scheduled publication can succeed. Repeat invocations of a completed month
-verify the owned receipts and return `skipped` without downloading or
-republishing artifacts.
+The template pins the accepted bundle from `catalog/wdpa-processing-acceptance.json`;
+`RUN_DATE` remains execution-only. The default current UTC month must match the
+accepted bundle. A missing or wrong-month bundle fails before publication.
+A completed month verifies both receipts and returns `skipped` without artifact
+downloads. Each new month requires newly reviewed build and promotion authority.
+The one-time October producer/workflow is retired: a future build needs a
+separately reviewed path. Monthly deployment verifies the retained hash-bound
+terminal execution snapshot rather than querying the retired producer execution.
 
-Do not deploy this job with a local Terraform apply or hand-built production image. See the
-[single-build runbook](../../../../docs/wdpa-processing-validation.md#single-build-and-promotion).
+Use the [monthly runtime/evidence contract](../../../../docs/wdpa-monthly-runbook.md)
+for acceptance pins and owned recovery facts. Do not deploy with a local
+production Terraform apply or hand-built image. The independent observer remains
+enabled; its rolling recovery-window health policy is separate from immediate
+worker failure alerts.
 
 ## wdpa-monthly schedule control and teardown
 
@@ -97,8 +99,9 @@ gcloud scheduler jobs pause wdpa-monthly \
   --project=shared-datasets-1
 ```
 
-Pausing the scheduler stops future automatic monthly runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
+Pausing stops future automatic monthly runs; it does not drain running
+executions or release publication claims. It preserves the job, identities,
+Terraform state and published data.
 
 Permanent infrastructure teardown requires a reviewed PR and a constrained
 protected production workflow with explicit worker, observer, scheduler and IAM

@@ -1,3 +1,5 @@
+Historical record, completed 2026-06-12. Not a runbook; see docs/wdpa-monthly-runbook.md.
+
 # Proposal: `internal` PMTiles Access Tier
 
 Status: implemented (2026-06-11/12) — shared-datasets-1 side merged in PR

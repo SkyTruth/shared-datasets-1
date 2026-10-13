@@ -115,6 +115,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_cloud_run_failure
 resource.type="cloud_run_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
+NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
 severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
@@ -142,6 +143,8 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 This policy covers unattended Cloud Run Job execution failures throughout the project and region, including future jobs and detached deployment canaries.
 
+The five-minute WDPA execution observer has a separate health policy: it alerts only after no successful completion for a 15-minute window and a two-minute confirmation period. A successful observer run clears that condition.
+
 A trusted deployment execution is quiet only when it has the execution-only SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL environment marker. That workflow must wait for the result and fail when the execution fails. Missing creator/marker fields remain alertable. Never put this marker in a persistent job template or on an asynchronous execution that outlives its workflow.
 
 A release that stops to ask for a maintainer identity decision does **not** reach this policy. That case exits successfully and is reported by "Shared datasets release waiting on a maintainer decision" instead.
@@ -160,6 +163,83 @@ EOT
   user_labels = {
     component = "scheduled-ingestion"
     service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "wdpa_execution_observer_unhealthy" {
+  project      = var.project_id
+  display_name = "WDPA execution observer has stopped succeeding"
+  combiner     = "OR"
+  enabled      = var.cron_alerts_enabled
+  severity     = "ERROR"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "No successful WDPA observer completion for 15 minutes"
+
+    condition_threshold {
+      filter                  = <<-EOT
+resource.type="cloud_run_job"
+resource.labels.project_id="${var.project_id}"
+resource.labels.location="${var.region}"
+resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
+metric.type="run.googleapis.com/job/completed_execution_count"
+metric.labels.result="succeeded"
+EOT
+      comparison              = "COMPARISON_LT"
+      threshold_value         = 1
+      duration                = "120s"
+      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
+
+      # This DELTA metric includes zero-valued samples. Count successful
+      # completions, rather than treating any metric sample as a heartbeat.
+      aggregations {
+        alignment_period   = "900s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "WDPA execution observations are stale"
+    content   = <<-EOT
+The WDPA execution observer normally completes successfully every five minutes. No successful completion was reported in the last 15 minutes, and that condition persisted for two minutes. Metric ingestion and alert evaluation can add further delay.
+
+Individual failed executions stay in Cloud Run and Logging without an immediate Slack notification. A later successful completion clears this health condition. Missing metric data also counts as unhealthy, so a stopped scheduler or repeated container startup failures remain visible.
+
+Check the observer, scheduler and current observation:
+
+```bash
+gcloud run jobs executions list --job=wdpa-execution-observer --region=${var.region} --project=${var.project_id}
+gcloud scheduler jobs describe wdpa-execution-observer --location=${var.region} --project=${var.project_id}
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="wdpa-execution-observer"' --project=${var.project_id} --limit=30
+gcloud storage cat gs://${var.bucket_name}/_catalog/wdpa-monthly-execution.json
+```
+
+This observer has no dataset publication permissions. Its health does not establish the outcome of a WDPA worker execution. Keep the observation document fresh before trusting execution status in the catalog.
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+  }
+
+  user_labels = {
+    component = "scheduled-ingestion"
+    service   = "shared-datasets"
+    kind      = "observer-health"
   }
 
   depends_on = [
@@ -244,6 +324,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_scheduler_failure
 resource.type="cloud_scheduler_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
+NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"
 severity>=ERROR
 EOT
     }
@@ -254,6 +335,8 @@ EOT
     subject   = "Shared datasets scheduler dispatch failed"
     content   = <<-EOT
 Cloud Scheduler failed while attempting to start a shared-datasets ingestion job.
+
+The five-minute WDPA execution observer uses its separate health policy, which allows a 15-minute success window and a two-minute confirmation period before notifying.
 
 Check the scheduler and Cloud Run job:
 

@@ -18,7 +18,7 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
 
 def test_producer_changes_require_staged_evidence_before_launching_production_validation():
     assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == []
-    assert select_deployments(["catalog/wdpa-staged-validation.json"]) == ["wdpa_processing", "artifact_registry_iam"]
+    assert select_deployments(["catalog/wdpa-staged-validation.json"]) == []
     assert "production-images" in select_suites(["ingestion/wdpa_monthly/Dockerfile"])[0]
 
 
@@ -97,7 +97,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         assert {"executor_sha", "source_run_id", "source_run_attempt"} <= set(workflow_triggers(callee)["workflow_call"]["inputs"])
     for target in ("eamlis", "wdpa", "sea-ice"):
         assert "ingestion-iam" in jobs[target]["needs"]
-    for target in ("eamlis", "wdpa", "sea-ice", "wdpa-processing", "catalog-viewer"):
+    for target in ("eamlis", "wdpa", "sea-ice", "catalog-viewer"):
         assert "artifact-registry-iam" in jobs[target]["needs"]
     publisher = jobs["publish-reviewed-dataset"]
     assert "pmtiles-cdn" in publisher["needs"]

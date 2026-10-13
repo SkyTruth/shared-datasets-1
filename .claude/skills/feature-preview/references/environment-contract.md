@@ -22,7 +22,6 @@ are scoped to this bucket; it contains no canonical dataset releases.
 
 ## Deployment and state boundaries
 
-and the preview source ref.
 The protected workflow checks out `main` at the workspace root and checks out
 the selected workflow branch separately under `preview-source/`. It builds the
 preview service and preview catalog viewer images from the selected branch
@@ -81,9 +80,12 @@ reset plan may also delete old preview-stack resources that remain in
 
 Before deployment, reset, or destruction, a saved plan detaches the retired
 `feature-preview` Firestore database from Terraform state with `destroy = false`.
-The retirement validator refuses database deletion. Existing Firestore data
+The active `metadata_retirement_plan.py --database-only preview` validator
+accepts only forgetting that database and no-op/read actions elsewhere; it
+refuses database deletion and unrelated mutations. Existing Firestore data
 remains untouched and no longer belongs to the disposable preview slot. Selected
-branches must include this retirement configuration. See
+branches must include this preservation configuration. The completed production
+retirement modes and temporary IAM root are removed; do not recreate them. See
 [metadata stack retirement](../../../../docs/metadata-stack-retirement.md).
 
 ## Destroy boundary

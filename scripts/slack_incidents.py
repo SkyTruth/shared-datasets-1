@@ -33,7 +33,7 @@ ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_TARGETS = {"wdpa-monthly", "wdpa-processing-validation", "eamlis-monthly", "sea-ice-daily"}
+RUNTIME_TARGETS = {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
 
 
 class IncidentError(RuntimeError):

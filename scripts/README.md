@@ -74,13 +74,9 @@ Use `uv run` for repo Python tools. Procedures live in the [skill catalog](../AG
 
 `local_wdpa_sample.py` replays the production conversion chain locally without a publisher; use the owning deploy skill and runtime limits. Interface: `uv run python scripts/local_wdpa_sample.py --help`.
 
-`freeze_wdpa_benchmark.py` freezes generation/hash-verified WDPA baseline evidence; use for deterministic local replay. Interface: `uv run python scripts/freeze_wdpa_benchmark.py --help`.
+`wdpa_processing_gate.py` checks retained-build acceptance and the hash-bound terminal execution snapshot before protected monthly deployment; the one-time October build campaign is retired. Interface: `uv run python scripts/wdpa_processing_gate.py --help`.
 
-`cloud_wdpa_validation.py` runs the isolated historical WDPA acceptance build without canonical publication; use only under the deployment procedure. This container entry point has no help parser; use `uv run python scripts/wdpa_processing_gate.py --help` for the admission gate.
-
-`wdpa_processing_gate.py` checks reviewed resource/retained-build acceptance before protected deployment. Interface: `uv run python scripts/wdpa_processing_gate.py --help`.
-
-`check_wdpa_validation_plan.py` checks the isolated validation job's resources and permissions; use in its constrained workflow. Interface: `uv run python scripts/check_wdpa_validation_plan.py --help`.
+`wdpa_build_authorization.py` verifies the immutable owned WDPA build plan and exact-head promotion authority inside the protected workflow; it grants no approval itself. This GitHub-dependent workflow entry point has no help parser; use `uv run python scripts/wdpa_processing_gate.py --help` for the local acceptance interface.
 
 ## Shared libraries
 

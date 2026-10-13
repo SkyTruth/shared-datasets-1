@@ -221,13 +221,13 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Verify a real upload before processing"}
+    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
 
 
-def test_cloud_policy_suppresses_only_trusted_marked_executions_and_exact_observer_write():
+def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer():
     text = (ROOT / "terraform/envs/prod/monitoring.tf").read_text()
     failure = text.split('"scheduled_ingestion_cloud_run_failure"', 1)[1].split("\nresource ", 1)[0]
     filter_text = failure.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
@@ -236,7 +236,24 @@ def test_cloud_policy_suppresses_only_trusted_marked_executions_and_exact_observ
   protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
-    assert "resource.labels.job_name" not in filter_text  # Future jobs keep coverage.
+    # The frequent observer has persistent-health coverage. Every other job,
+    # including future jobs, retains the immediate failure policy.
+    assert filter_text.count("resource.labels.job_name") == 1
+    assert 'NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in filter_text
+    scheduler = text.split('"scheduled_ingestion_scheduler_failure"', 1)[1].split("\nresource ", 1)[0]
+    scheduler_filter = scheduler.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
+    assert scheduler_filter.count("resource.labels.job_id") == 1
+    assert 'NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"' in scheduler_filter
+    health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
+    assert 'enabled      = var.cron_alerts_enabled' in health
+    assert 'notification_channels = local.cron_alert_notification_channels' in health
+    assert 'resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in health
+    # An alert-only target plan must not pull in the Cloud Run job and its
+    # placeholder image. The same constant names both the job and its policies.
+    assert 'module.wdpa_execution_observer_job' not in text
+    observer = (ROOT / "terraform/envs/prod/wdpa_execution_observer.tf").read_text()
+    assert 'wdpa_execution_observer_job_name = "wdpa-execution-observer"' in observer
+    assert observer.count('name                  = local.wdpa_execution_observer_job_name') == 2
     write = text.split('"dataset_object_written_by_unapproved_principal"', 1)[1]
     assert '''NOT (
   protoPayload.authenticationInfo.principalEmail="${module.wdpa_observer_service_account.email}"
@@ -247,10 +264,29 @@ def test_cloud_policy_suppresses_only_trusted_marked_executions_and_exact_observ
     assert "wdpa_observer" not in approved
 
 
+def test_observer_health_counts_successes_and_keeps_missing_data_unhealthy():
+    text = (ROOT / "terraform/envs/prod/monitoring.tf").read_text()
+    health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
+    assert 'condition_threshold {' in health
+    assert 'metric.type="run.googleapis.com/job/completed_execution_count"' in health
+    assert 'metric.labels.result="succeeded"' in health
+    assert 'alignment_period   = "900s"' in health
+    assert 'per_series_aligner = "ALIGN_SUM"' in health
+    assert 'comparison              = "COMPARISON_LT"' in health
+    assert 'threshold_value         = 1' in health
+    assert 'duration                = "120s"' in health
+    assert 'evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"' in health
+    assert 'notification_prompts = ["OPENED"]' in health
+    # Zero-valued completion samples are not successful runs. Both repeated
+    # failures and an absent metric must remain unhealthy.
+    assert 'condition_absent' not in health
+    assert 'condition_matched_log' not in health
+    assert 'notification_rate_limit' not in health
+
+
 def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     for filename,step_name in [
         ("wdpa-monthly-deploy.yml", "Execute wdpa-monthly canary"),
-        ("wdpa-processing-validation-deploy.yml", "Start the unattended validation execution"),
     ]:
         workflow = load_workflow(WORKFLOWS / filename)
         assert "failure_alert_verified_execution" not in str(workflow)
@@ -264,5 +300,4 @@ def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     run = workflow_steps_by_name(probe, "probe")["Run a controlled failure without dataset writes"]["run"]
     assert MARKER not in run
     assert "WDPA_FAIL_BEFORE_WRITES=true" in run
-    assert "WDPA_FAIL_BEFORE_DATASET_WRITES=1" in run
     assert run.index("completionTime") < run.index("gcloud run jobs execute")
