@@ -229,11 +229,17 @@ test('color labels filter large metadata groups and show complete counts without
   await expect(rare).toBeVisible();
   const color = async label => label.locator('.color-legend-swatch').evaluate(n => getComputedStyle(n).backgroundColor.match(/\d+/g).map(Number));
   const rareColor = await color(rare);
+  // An expanded control may explicitly restore visibility under a hidden parent.
+  // Give its pixels the category color so every renderer exercises that boundary.
+  await page.locator('.maplibregl-ctrl-attrib').evaluate((control, color) => {
+    control.classList.add('maplibregl-compact-show');
+    control.style.backgroundColor = color;
+  }, `rgb(${rareColor.join(',')})`);
   // Circle opacity blends dark category colors with the neutral basemap.
   // Attribution text can share category colors through font antialiasing.
   // Capture real map pixels without the overlaid map controls.
   const showsRare = async () => nearColor(PNG.sync.read(await canvas.screenshot({
-    style: '.maplibregl-control-container { visibility: hidden; }',
+    style: '.maplibregl-control-container { opacity: 0 !important; }',
   })), rareColor, 35);
   await expect.poll(showsRare).toBe(true);
   const camera = await viewport(page);
@@ -259,6 +265,7 @@ test('color labels filter large metadata groups and show complete counts without
   await expect.poll(showsRare).toBe(true);
   await rare.click();
   await expect.poll(showsRare).toBe(true);
+  await page.locator('.maplibregl-ctrl-attrib').evaluate(control => control.style.removeProperty('background-color'));
   await canvas.click({ position: await upperRightPointPosition(canvas) });
   await expect(page.locator('#feature-inspector')).toContainText('Rare label');
   expect(await viewport(page)).toEqual(camera);
