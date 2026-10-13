@@ -230,7 +230,11 @@ test('color labels filter large metadata groups and show complete counts without
   const color = async label => label.locator('.color-legend-swatch').evaluate(n => getComputedStyle(n).backgroundColor.match(/\d+/g).map(Number));
   const rareColor = await color(rare);
   // Circle opacity blends dark category colors with the neutral basemap.
-  const showsRare = async () => nearColor(await sampleCanvas(canvas), rareColor, 35);
+  // Attribution text can share category colors through font antialiasing.
+  // Capture real map pixels without the overlaid map controls.
+  const showsRare = async () => nearColor(PNG.sync.read(await canvas.screenshot({
+    style: '.maplibregl-control-container { visibility: hidden; }',
+  })), rareColor, 35);
   await expect.poll(showsRare).toBe(true);
   const camera = await viewport(page);
   await common.click();

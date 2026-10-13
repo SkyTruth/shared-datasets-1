@@ -372,6 +372,14 @@ def build(work: Path) -> None:
 
     shutil.copytree(REPO / "api/typescript/dist", work / "site/sdk", dirs_exist_ok=True)
 
+    if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "large-color-filter":
+        map_path = work / "site/map-preview.js"
+        source = map_path.read_text()
+        marker = "    const featureIds = [...mode.featureIdsByValue.get(focusedValue)];\n"
+        if source.count(marker) != 1:
+            raise ValueError("Color-filter negative control no longer matches the product")
+        map_path.write_text(source.replace(marker, marker + "    if (featureIds.length > 8000) return geometryFilter;\n"))
+
     if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "stale-inspector":
         app_path = work / "site/app.js"
         app = app_path.read_text()

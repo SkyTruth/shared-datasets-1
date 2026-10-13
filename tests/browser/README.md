@@ -48,6 +48,7 @@ acceptance-only negative control (expected nonzero exit):
 ```sh
 CATALOG_BROWSER_NEGATIVE_CONTROL=wrong-old-tiles npx --no-install playwright test --grep 'public latest'
 CATALOG_BROWSER_NEGATIVE_CONTROL=stale-inspector npx --no-install playwright test --grep 'late historical'
+CATALOG_BROWSER_NEGATIVE_CONTROL=large-color-filter npx --no-install playwright test --grep 'color labels filter'
 ```
 
 The second control removes the stale-result guard only in the disposable
@@ -55,6 +56,11 @@ generated app, proving the delayed-response test catches that regression. Normal
 builds remain byte-identical to production static source. SwiftShader may emit
 an explicitly classified `GPU stall due to ReadPixels` performance warning
 during screenshots; warnings are retained in evidence, not silently discarded.
+
+The color-filter control restores the old 8,000-ID cutoff only in the disposable
+generated map module. The test must fail because the other category remains
+visible. Pixel checks omit map controls so antialiased attribution text cannot
+be mistaken for data features.
 
 The production-matching MapLibre5.9.0 dependency has a known sanitizer advisory;
 see the [dependency review](DEPENDENCIES.md). This test package does not claim a clean
