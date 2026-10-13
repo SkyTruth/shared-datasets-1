@@ -61,8 +61,34 @@ jobs:
         sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync
         eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync
 
+  retirement-bootstrap:
+    name: Bootstrap temporary WDPA retirement authority
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: WDPA validation retirement IAM bootstrap
+      refusal_prefix: Refusing changes outside temporary WDPA retirement authority
+      block_deletes: true
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_custom_role.wdpa_validation_retirement
+        google_project_iam_member.github_actions_wdpa_validation_retirement
+      allowed_exact: |
+        google_project_iam_custom_role.wdpa_validation_retirement
+        google_project_iam_member.github_actions_wdpa_validation_retirement
+      tf_vars: |
+        wdpa_monthly_image=unused-by-wdpa-validation-retirement
+        sea_ice_daily_image=unused-by-wdpa-validation-retirement
+        eamlis_monthly_image=unused-by-wdpa-validation-retirement
+
   retire-wdpa-validation:
     name: Retire isolated WDPA validation resources
+    needs: retirement-bootstrap
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:

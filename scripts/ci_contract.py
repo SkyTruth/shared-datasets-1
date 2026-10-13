@@ -232,6 +232,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("pmtiles_cdn")
         if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
             selected.add("ingestion_iam")
+        if path == "terraform/envs/prod/wdpa_validation_retirement_iam.tf":
+            selected.add("scratch_cleanup_iam")
         for target, filename in {
             "artifact_registry_iam": "artifact_registry_iam.tf",
             "preview_terraform_iam": "preview_terraform_iam.tf",
