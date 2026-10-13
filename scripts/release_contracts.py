@@ -28,12 +28,12 @@ DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-i
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
+    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
     "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
-    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
+    "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
 
 
@@ -219,6 +219,14 @@ def deployment_contract(root, target):
     for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before rebuilding", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
         if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):
             errors.append(f"{name}: {prerequisite} must precede {consumer}")
+    if target == "wdpa":
+        terminal = steps.get("Verify accepted build terminal success", {})
+        if (terminal.get("run") != "uv run --no-sync python scripts/release_contracts.py --target wdpa"
+                or terminal.get("if") != "${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}"
+                or "Verify accepted build terminal success" not in order
+                or "Prepare reviewed WDPA publication image" not in order
+                or order.index("Verify accepted build terminal success") >= order.index("Prepare reviewed WDPA publication image")):
+            errors.append(f"{name}: retained terminal execution verification must precede image promotion")
     for slug in RESET_ASSETS.get(target, ()):
         valid = False
         for path in (root / ".github/dataset-plans" / slug).glob("**/*.json"):
@@ -231,6 +239,24 @@ def deployment_contract(root, target):
     return errors
 
 
+def retained_execution_errors(evidence, facts):
+    """Bind the immutable terminal execution snapshot to the accepted image."""
+    build = evidence["build"]
+    execution = facts.get("execution", {})
+    name = ("projects/shared-datasets-1/locations/us-central1/jobs/"
+            f"wdpa-processing-validation/executions/{build['cloud_execution']}")
+    containers = execution.get("template", {}).get("containers", [])
+    completed = [condition.get("state") for condition in execution.get("conditions", [])
+                 if condition.get("type") == "Completed"]
+    if (execution.get("name") != name or not execution.get("completionTime")
+            or execution.get("taskCount") != 1 or execution.get("succeededCount") != 1
+            or execution.get("failedCount", 0) != 0
+            or completed != ["CONDITION_SUCCEEDED"]
+            or [container.get("image") for container in containers] != [build["cloud_image"]]):
+        return ["retained cloud facts must prove terminal success of the exact accepted execution and image"]
+    return []
+
+
 def retained_evidence(root):
     original_root = wdpa.ROOT
     try:
@@ -240,10 +266,14 @@ def retained_evidence(root):
         files = evidence.get("evidence_files", {})
         if not files:
             errors.append("checked-in retained build evidence is missing")
+        if "cloud-facts.json" not in files:
+            errors.append("checked-in retained terminal execution evidence is missing")
         for name, item in files.items():
             path = (root / item["path"]).resolve()
             if not path.is_relative_to(root.resolve()) or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
                 errors.append(f"retained evidence bytes changed or missing: {name}")
+            elif name == "cloud-facts.json":
+                errors += retained_execution_errors(evidence, json.loads(path.read_text()))
         # Producer identity is deliberately independent of current consumer code.
         # The live gate checks the accepted registry image's producer fingerprint.
         tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
@@ -268,23 +298,16 @@ def check(root, targets):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:
         errors += retained_evidence(root)
-    if "wdpa-processing" in targets:
-        wdpa_workflow = workflow(root, "wdpa-processing-validation-deploy.yml")
-        runs = "\n".join(step.get("run", "") for step in wdpa_workflow["jobs"]["deploy"]["steps"])
-        if "actions/download-artifact@v4" not in json.dumps(wdpa_workflow) or "--pre-cloud" not in runs:
-            errors.append("isolated producer deployment must consume tested bytes and staged evidence")
-        if "wdpa-monthly-deploy.yml" in json.dumps(wdpa_workflow):
-            errors.append("isolated producer bootstrap must not launch unready production dependents")
     return errors
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"}
+        targets = {"wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

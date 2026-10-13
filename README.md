@@ -89,12 +89,12 @@ acting and use its linked references for detailed contracts.
 
 | Task | Authoritative procedure |
 |---|---|
-| Dataset admission and lifecycle | [Publishing workflow](.claude/skills/publish-shared-dataset/SKILL.md#dataset-admission) and [lifecycle standard](docs/standards/asset-layout-and-formats.md#dataset-lifecycle) |
-| Add or update a dataset | [Publishing workflow](.claude/skills/publish-shared-dataset/SKILL.md#fresh-agent-minimal-upload-runbook) |
-| Upload a new version | [Existing-version runbook](.claude/skills/publish-shared-dataset/SKILL.md#fresh-agent-existing-dataset-version-runbook) |
-| Delete canonical objects | [Reviewed deletion runbook](.claude/skills/publish-shared-dataset/SKILL.md#fresh-agent-reviewed-deletion-runbook) |
+| Dataset admission and lifecycle | [Publishing workflow](.claude/skills/publish-shared-dataset/references/artifacts-and-metadata.md#dataset-admission) and [lifecycle standard](docs/standards/asset-layout-and-formats.md#dataset-lifecycle) |
+| Add or update a dataset | [Publishing workflow](.claude/skills/publish-shared-dataset/SKILL.md#route-1-first-upload) |
+| Upload a new version | [Existing-version runbook](.claude/skills/publish-shared-dataset/SKILL.md#route-2-existing-asset-update) |
+| Delete canonical objects | [Reviewed deletion runbook](.claude/skills/publish-shared-dataset/references/reviewed-deletion.md) |
 | Controlled canonical publishing | [Immutable plan and approval contract](.github/dataset-plans/README.md) |
-| Generate catalog and asset docs | [Catalog commands](scripts/README.md#dataset-operations) and [asset metadata workflow](.claude/skills/publish-shared-dataset/SKILL.md#asset-docs-and-catalog) |
+| Generate catalog and asset docs | [Catalog commands](scripts/README.md#dataset-operations) and [asset metadata workflow](.claude/skills/publish-shared-dataset/references/artifacts-and-metadata.md#asset-docs-and-catalog) |
 | Add a cron or ingestion job | [Job structure](ingestion/README.md) and [deployment workflow](.claude/skills/deploy-scheduled-ingestion/SKILL.md) |
 | Change infrastructure / production Terraform | [Protected Terraform workflow](.claude/skills/protected-terraform-apply/SKILL.md) |
 | Configure cron failure Slack alerts | [Alert routing](docs/alert-routing.md) |

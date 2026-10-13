@@ -10,6 +10,10 @@ Northern Hemisphere Snow and Ice Analysis 4 km GeoTIFFs.
 The job selects raw raster class `3`, which NSIDC describes as sea/lake ice. It
 does not remove inland or lake ice and does not apply a land mask.
 
+Deployment, schedule control and teardown procedures live in the
+[deploy skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md) and its
+[job operations](../../.claude/skills/deploy-scheduled-ingestion/references/job-operations.md#sea-ice-daily-schedule-control-and-teardown).
+
 ## Runtime
 
 Entrypoint:
@@ -79,33 +83,6 @@ Build from the repo root:
 ```bash
 docker build -f ingestion/sea_ice_daily/Dockerfile -t sea-ice-daily .
 ```
-
-## Cost Controls and Teardown
-
-Pause future scheduled runs through the protected workflow:
-
-```bash
-gh workflow run ingestion-schedule-control.yml --ref main \
-  -f job=sea-ice-daily \
-  -f action=pause
-```
-
-Wait for the workflow to complete and verify the scheduler is paused. Pausing
-stops future automatic runs but does not cancel an execution already running.
-It preserves the job, identities, Terraform state, and published data.
-
-For permanent teardown, remove the sea-ice resources from Terraform in a
-reviewed PR and summarize a local review plan's resource deletions. The protected
-production workflow must support those exact deletions; if its allowlist does
-not, extend the constrained workflow in the same PR. Apply only after
-`jonaraphael` review and merge to `main`, through the
-`shared-datasets-production` environment. Follow
-[protected Terraform guidance](../../.claude/skills/protected-terraform-apply/SKILL.md);
-do not run a local production destroy or apply.
-
-Infrastructure teardown preserves existing GCS releases, latest files, run
-records, README files, and catalog rows. A separately requested canonical
-deletion requires its own immutable reviewed dataset plan.
 
 ## Generated-ID publication
 

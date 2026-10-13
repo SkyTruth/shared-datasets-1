@@ -23,7 +23,7 @@ SUITES = (
     "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
 DEPLOYMENTS = (
-    "eamlis", "wdpa", "sea_ice", "wdpa_processing", "ingestion_iam",
+    "eamlis", "wdpa", "sea_ice", "ingestion_iam",
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
@@ -48,7 +48,7 @@ CONTRACT_FILES = (
     "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
-    "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
+    "scripts/wdpa_processing_gate.py",
     "scripts/production_image_contracts.py",
     "scripts/dataset_usage_cold_start.py",
     "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
@@ -64,6 +64,43 @@ CONTRACT_FILES = (
 )
 
 
+# Additional suites beyond ALWAYS, only after tracing imports (including other
+# scripts), subprocess/workflow callers, Docker COPY sources and generated data.
+# services/catalog_viewer/Dockerfile and the preview-service Dockerfile COPY the
+# whole scripts directory: every exception therefore retains production-images.
+# SDK fixtures read checked-in JSON/web contracts; browser fixtures import
+# release_feature_model and execute catalog_site. Those shared producers and all
+# unproved scripts remain broad. Keep this proof with each exception; a new
+# consumer must expand its suites or remove the exception.
+NARROW_SCRIPTS = {
+    # Only importer: test_catalog_refresh_authorization; CLI: catalog-web-deploy.
+    # Produces authorization success/failure, no generated fixture input. Its
+    # catalog test classification retains both SDKs/browser; whole-directory COPY
+    # retains images. No ingestion/native or browser-fixture importer/caller.
+    "scripts/catalog_refresh_authorization.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
+    # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
+    # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
+    # generator imports/calls it. Catalog tests retain SDKs/browser, COPY images;
+    # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
+    "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
+    # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
+    # produces translation workbooks/CSV/manifest, never API/browser fixtures.
+    # No other import/subprocess/workflow caller; translation test classification
+    # adds native/images and whole-directory COPY adds images.
+    "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
+    # Importers: wdpa_input_memory_probe, test_wdpa_disk_processing (native corpus)
+    # and test_wdpa_translation_inputs. WDPA Dockerfile COPY; the input-memory
+    # probe is exercised by production_image_contracts.
+    # Replay artifacts/reports feed WDPA validation, never API/browser fixtures.
+    "scripts/local_wdpa_sample.py": ("geospatial-integration", "production-images"),
+    # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
+    # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
+    # or other subprocess caller. WDPA test classification adds native/images;
+    # whole-directory COPY adds images. Shared authority modules remain broad.
+    "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
+}
+
+
 def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     if paths is None:
         return list(SUITES), "comparison history unavailable"
@@ -71,6 +108,12 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     for path in paths:
         if path in {"pyproject.toml", "uv.lock"} or path.startswith(".github/"):
             return list(SUITES), f"shared validation or workflow dependency: {path}"
+        if (
+            (path.startswith("scripts/") and path.count("/") == 1 and path.endswith(".md"))
+            or (path.startswith(("ingestion/", "services/")) and path.endswith(".md"))
+            or (path.startswith("api/") and path.endswith("/README.md"))
+        ):
+            continue
         if path.startswith("ingestion/") or path in NATIVE_TESTS:
             selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("api/"):
@@ -84,9 +127,9 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
                 selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("scripts/"):
-            # Scripts are imported by runtime, SDK fixtures, and browser rendering.
-            # An explicit narrower rule must prove those dependencies absent.
-            return list(SUITES), f"shared script dependency: {path}"
+            if path not in NARROW_SCRIPTS:
+                return list(SUITES), f"shared script dependency: {path}"
+            selected.update(NARROW_SCRIPTS[path])
         elif path.startswith("tests/"):
             if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "translation")):
                 selected.update({"geospatial-integration", "production-images"})
@@ -157,11 +200,11 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
-        if path.startswith("ingestion/eamlis_monthly/") or path in {
+        if (path.startswith("ingestion/eamlis_monthly/") and path != "ingestion/eamlis_monthly/README.md") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
         }:
             selected.add("eamlis")
-        if path.startswith("ingestion/sea_ice_daily/") or path in {
+        if (path.startswith("ingestion/sea_ice_daily/") and path != "ingestion/sea_ice_daily/README.md") or path in {
             ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
         }:
             selected.add("sea_ice")
@@ -171,10 +214,6 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
         }:
             selected.add("wdpa")
-        # New producer bytes require their own complete retained evidence. A
-        # producer/bootstrap change cannot launch an unready publication job.
-        if path == "catalog/wdpa-staged-validation.json":
-            selected.add("wdpa_processing")
         if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
@@ -193,6 +232,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("pmtiles_cdn")
         if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
             selected.add("ingestion_iam")
+        if path == "terraform/envs/prod/wdpa_validation_retirement_iam.tf":
+            selected.add("scratch_cleanup_iam")
         for target, filename in {
             "artifact_registry_iam": "artifact_registry_iam.tf",
             "preview_terraform_iam": "preview_terraform_iam.tf",
@@ -223,7 +264,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "wdpa_processing", "dataset_usage"}):
+    if selected & (ingestion | {"catalog_viewer", "dataset_usage"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

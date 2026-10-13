@@ -8,8 +8,8 @@ import { baseURL, packageDir, siteDir, workDir } from './paths.mjs';
 
 const readJSON = async (path) => JSON.parse(await readFile(path, 'utf8'));
 const comparisonColors = [[195,59,59], [22,129,83], [227,189,32]];
-const nearColor = (image, color) => {
-  for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
+const nearColor = (image, color, tolerance = 20) => {
+  for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < tolerance) return true;
   return false;
 };
 const sampleCanvas = async canvas => PNG.sync.read(await canvas.screenshot());
@@ -195,10 +195,7 @@ async function select(page, tier) {
   await page.locator(`#asset-list [data-slug="smoke-${tier}"]`).click();
 }
 
-async function clickPoint(page, old, testInfo) {
-  const canvas = page.locator('#map-preview canvas.maplibregl-canvas');
-  await expect(canvas).toBeVisible();
-  await expect(page.locator('#map-status')).toBeHidden();
+async function upperRightPointPosition(canvas) {
   const box = await canvas.boundingBox();
   expect(box.width).toBeGreaterThan(100);
   expect(box.height).toBeGreaterThan(100);
@@ -207,7 +204,14 @@ async function clickPoint(page, old, testInfo) {
   const mercatorY = (lat) => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
   const dx = 1 / 360, dy = mercatorY(0) - mercatorY(1);
   const scale = Math.min((box.width - 68) / dx, (box.height - 68) / dy, 512 * 2 ** 8);
-  await canvas.click({ position: { x: box.width / 2 + dx * scale / 2, y: box.height / 2 - dy * scale / 2 } });
+  return { x: box.width / 2 + dx * scale / 2, y: box.height / 2 - dy * scale / 2 };
+}
+
+async function clickPoint(page, old, testInfo) {
+  const canvas = page.locator('#map-preview canvas.maplibregl-canvas');
+  await expect(canvas).toBeVisible();
+  await expect(page.locator('#map-status')).toBeHidden();
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
   await expect(page.locator('#feature-inspector')).toContainText(old ? 'a2' : 'b2');
   await testInfo.attach(`${old ? 'historical' : 'latest'}-canvas.png`, { body: await canvas.screenshot(), contentType: 'image/png' });
 }
@@ -234,6 +238,86 @@ test('public latest and historical maps keep tile and inspector identity togethe
   await page.locator('#version-select').selectOption('latest');
   await clickPoint(page, false, testInfo);
   await expectMetadata(page, false);
+});
+
+test('color labels filter large metadata groups and show complete counts without moving the map', async ({ page }, testInfo) => {
+  await select(page, 'colorizer');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select option[value="name"]')).toHaveCount(1);
+  await page.locator('#colorize-select').selectOption('name');
+  const canvas = page.locator('#map-preview canvas.maplibregl-canvas');
+  const commonLabel = 'Common label with a long category name';
+  const common = page.locator(`#color-legend button[title="${commonLabel}"]`);
+  const rare = page.locator('#color-legend button[title="Rare label"]');
+  await expect(common).toBeVisible();
+  await expect(rare).toBeVisible();
+  const color = async label => label.locator('.color-legend-swatch').evaluate(n => getComputedStyle(n).backgroundColor.match(/\d+/g).map(Number));
+  const rareColor = await color(rare);
+  // An expanded control may explicitly restore visibility under a hidden parent.
+  // Give its pixels the category color so every renderer exercises that boundary.
+  await page.locator('.maplibregl-ctrl-attrib').evaluate((control, color) => {
+    control.classList.add('maplibregl-compact-show');
+    control.style.backgroundColor = color;
+  }, `rgb(${rareColor.join(',')})`);
+  // Circle opacity blends dark category colors with the neutral basemap.
+  // Attribution text can share category colors through font antialiasing.
+  // Capture real map pixels without the overlaid map controls.
+  const showsRare = async () => nearColor(PNG.sync.read(await canvas.screenshot({
+    style: '.maplibregl-control-container { opacity: 0 !important; }',
+  })), rareColor, 35);
+  await expect.poll(showsRare).toBe(true);
+  const camera = await viewport(page);
+  await common.click();
+  await expect(common).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(showsRare).toBe(false);
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  expect(await viewport(page)).toEqual(camera);
+  await expect(common).toHaveText(`${commonLabel} [8,001]`);
+  await expect(rare).toHaveText('Rare label [1]');
+  await expect(page.locator('.color-legend-heading')).toContainText('dataset counts');
+  const countFits = () => common.evaluate(button => {
+    const count = button.querySelector('.color-legend-count').getBoundingClientRect();
+    const bounds = button.getBoundingClientRect();
+    return count.width > 0 && count.right <= bounds.right;
+  });
+  expect(await countFits()).toBe(true);
+  expect(await common.locator('.color-legend-label').evaluate(label => label.scrollWidth > label.clientWidth)).toBe(true);
+  await testInfo.attach('color-legend-desktop.png', {body: await page.locator('#color-legend').screenshot(), contentType: 'image/png'});
+  await common.click();
+  await expect(common).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(showsRare).toBe(true);
+  await rare.click();
+  await expect.poll(showsRare).toBe(true);
+  await page.locator('.maplibregl-ctrl-attrib').evaluate(control => control.style.removeProperty('background-color'));
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
+  await expect(page.locator('#feature-inspector')).toContainText('Rare label');
+  expect(await viewport(page)).toEqual(camera);
+  await page.setViewportSize({width:390,height:844});
+  await common.scrollIntoViewIfNeeded();
+  expect(await countFits()).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.locator('.color-legend-heading strong').evaluate(title => title.getBoundingClientRect().height <= parseFloat(getComputedStyle(title).lineHeight) + 1)).toBe(true);
+  await testInfo.attach('color-legend-mobile.png', {body: await page.locator('#color-legend').screenshot(), contentType: 'image/png'});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.locator('#colorize-select').selectOption('');
+  await expect(page.locator('#color-legend')).toBeHidden();
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
+  await expect(page.locator('#feature-inspector')).toContainText('Rare label');
+  await page.locator('#asset-list [data-slug="smoke-tile-colorizer"]').click();
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#colorize-select').selectOption('feature_id');
+  const first = page.locator('#color-legend button[title="b1"]');
+  const second = page.locator('#color-legend button[title="b2"]');
+  await expect(first).toHaveText('b1 [1]');
+  await expect(second).toHaveText('b2 [1]');
+  await expect(page.locator('.color-legend-heading')).toContainText('loaded tile counts');
+  await first.click();
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await second.click();
+  await canvas.click({ position: await upperRightPointPosition(canvas) });
+  await expect(page.locator('#feature-inspector')).toContainText('b2');
 });
 
 for (const [tier, status] of [['private', 403], ['internal', 409]]) {
