@@ -117,4 +117,7 @@ independently from mutable index pointers to exercise replacement/retention.
 The three `usage.spec.mjs` scenarios also exercise the private usage endpoint's
 authentication/missing-summary behavior, report sorting/filters and safe DOM
 rendering, and independent stale-worker detection. The complete browser contract
-requires all nineteen scenarios, with no skips or retries.
+requires all twenty scenarios, with no skips or retries. Colorizer coverage checks
+that a category with 8,001 metadata IDs hides other categories, reports complete
+dataset counts, and toggles without moving the camera. Tile-backed color fields
+report loaded tile counts and filter both rendering and feature inspection.

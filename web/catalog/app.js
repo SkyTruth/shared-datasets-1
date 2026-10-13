@@ -2357,7 +2357,7 @@ function renderColorLegend(legend) {
   const title = document.createElement("strong");
   title.textContent = legend.field || "Categories";
   const count = document.createElement("span");
-  count.textContent = `${entries.length} unique values`;
+  count.textContent = `${entries.length} unique values · ${legend.countScope === "dataset" ? "dataset counts" : "loaded tile counts"}`;
   const actions = document.createElement("div");
   actions.className = "color-legend-actions";
   actions.append(count);
@@ -2384,12 +2384,16 @@ function renderColorLegend(legend) {
     swatch.className = "color-legend-swatch";
     swatch.style.background = entry.color;
     const label = document.createElement("span");
+    label.className = "color-legend-label";
     label.textContent = entry.value;
+    const count = document.createElement("span");
+    count.className = "color-legend-count";
+    count.textContent = ` [${entry.count.toLocaleString()}]`;
     item.addEventListener("click", () => {
       const toggleFocus = state.mapModule?.toggleLegendFocus || state.mapModule?.toggleCategoricalFocus;
       toggleFocus?.(entry.value);
     });
-    item.append(swatch, label);
+    item.append(swatch, label, count);
     items.append(item);
   }
 
