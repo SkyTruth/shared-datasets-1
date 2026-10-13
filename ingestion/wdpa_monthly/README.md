@@ -5,6 +5,10 @@ The production worker publishes approved retained bundles for `wdpa-marine` and
 for the pinned images, deployment prerequisites, execution commands, observer,
 recovery and evidence paths.
 
+Deployment, schedule control and teardown procedures live in the
+[deploy skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md) and its
+[job operations](../../.claude/skills/deploy-scheduled-ingestion/references/job-operations.md#wdpa-monthly-deployment).
+
 ## Runtime
 
 Production entrypoint (`Dockerfile.promotion`):
@@ -42,8 +46,10 @@ retry through the original owner and captured executor/inputs. Follow the
 
 ### Retained-build runtime
 
-The source-processing image uses `python -m ingestion.wdpa_monthly.run`; its
-isolated build workflow retains artifacts for later reviewed promotion.
+The source-processing image uses `python -m ingestion.wdpa_monthly.run`. The
+one-time October build workflow and isolated producer are retired; a future
+build needs a separately reviewed path. The accepted retained bundle remains
+the monthly publication input.
 `WDPA_SOURCE_URL_TEMPLATE` defaults to
 `https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip`
 and supports `{run_date}`, `{year}`, `{month}` and `{month_token}`.
@@ -114,26 +120,6 @@ tools/dependencies and adding reviewed consumer/publication code and the current
 locale catalog. `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the producer fingerprint.
 The publication-only entrypoint rejects a missing bundle before source processing;
 `WDPA_FAIL_BEFORE_WRITES=true` supports the controlled alert-delivery probe.
-
-## Deploy
-
-Use the [monthly operations runbook](../../docs/wdpa-monthly-runbook.md#deploy-an-accepted-month)
-and [scheduled-ingestion skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md).
-Production uses protected `wdpa-monthly-deploy.yml` from reviewed `main`.
-Deployments prepare a publication layer and pin its registry digest; the canary
-uses the captured bundle and build date. New months require newly reviewed build
-authority. Do not use a local production Terraform apply or hand-built image.
-
-Pause future automatic executions when stopping the job:
-
-```bash
-gcloud scheduler jobs pause wdpa-monthly \
-  --location=us-central1 --project=shared-datasets-1
-```
-
-Pausing does not drain running executions or release claims. Permanent teardown
-requires a reviewed PR and a constrained protected workflow covering worker,
-observer, scheduler and IAM. Published datasets and historical releases remain.
 
 ## Observer health
 

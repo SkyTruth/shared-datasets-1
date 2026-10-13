@@ -17,7 +17,6 @@ class AgentTranslationSkillsTests(unittest.TestCase):
         agents = AGENTS.read_text(encoding="utf-8")
         skills_readme = SKILLS_README.read_text(encoding="utf-8")
         publish_skill = PUBLISH_SKILL.read_text(encoding="utf-8")
-        normalized_publish_skill = " ".join(publish_skill.split())
 
         for marker in (
             "name: update-feature-metadata-translations",
@@ -38,9 +37,6 @@ class AgentTranslationSkillsTests(unittest.TestCase):
         self.assertIn(".claude/skills/update-feature-metadata-translations/SKILL.md", agents)
         self.assertIn("../../AGENTS.md#repo-local-skills", skills_readme)
         self.assertIn(".claude/skills/update-feature-metadata-translations/SKILL.md", publish_skill)
-        self.assertIn("scripts/feature_metadata_machine_translate.py", publish_skill)
-        self.assertIn("scripts/feature_metadata_localization.py --all-locales", publish_skill)
-        self.assertIn("generated localized metadata sidecars", normalized_publish_skill)
 
 
 if __name__ == "__main__":

@@ -52,8 +52,9 @@ Negative examples:
    - Read `.claude/skills/protected-terraform-apply/SKILL.md` before any
      catalog access-tier, PMTiles CDN, Cloud Run viewer, CORS, IAM, or other
      production Terraform mutation.
-   - Read `docs/catalog-web-preview.md`.
-   - Inspect `catalog/shared-datasets-catalog.csv`, relevant `docs/assets/*.md`, `scripts/catalog_site.py`, and `web/catalog/*`.
+   - Read [catalog contract](references/catalog-contract.md) only for runtime/API/UI changes.
+   - Use `uv run python scripts/catalog_site.py --help` for build inputs; inspect
+     the generated `catalog.json` and relevant asset docs for output contracts.
 
 2. Keep generated metadata authoritative:
    - Update asset frontmatter first when changing asset docs.
@@ -95,7 +96,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
      MBTiles output.
    - PMTiles display artifacts must preserve the feature properties needed by
      the catalog inspector. For release-oriented metadata lookup assets, the
-     required properties are stable `feature_id` and `ext_id`; full
+     required property is stable `feature_id`; full
      attributes and display labels are served from the metadata sidecar/API.
    - For dense point layers, confirm the effective command follows the
      GeoJSONSeq to Tippecanoe MBTiles to `pmtiles convert` path:
@@ -139,7 +140,7 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
    - Check search, filters, selected detail view, docs modal, copy buttons, map preview, feature inspector, version selector, and mobile/narrow layout.
    - For PMTiles regressions, test at zoomed-out levels where feature dropping is most visible.
 
-6. Safe GCS deployment:
+6. Safe GCS deployment (for full deploy, read [deployment](references/deployment.md)):
    - Stage manual deployment files under `_scratch/pending-publishes/catalog-web/{proposal-id}/`.
    - Promote approved objects through the GitHub `Approved dataset mutation` workflow.
    - For repo-generated catalog web changes that will trigger

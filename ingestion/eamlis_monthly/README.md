@@ -9,6 +9,10 @@ https://services.arcgis.com/Vsy5ieu7PwNdunLd/arcgis/rest/services/eAMLISExternal
 
 The source filter is `LAT_DEG > 0`, matching the public app's current map layer.
 
+Deployment, schedule control and teardown procedures live in the
+[deploy skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md) and its
+[job operations](../../.claude/skills/deploy-scheduled-ingestion/references/job-operations.md#eamlis-monthly-deployment).
+
 ## Runtime
 
 Entrypoint:
@@ -127,29 +131,3 @@ Build from the repo root:
 ```bash
 docker build -f ingestion/eamlis_monthly/Dockerfile -t eamlis-monthly .
 ```
-
-## Deploy
-
-Production deploys run through `.github/workflows/eamlis-monthly-deploy.yml`
-in the `shared-datasets-production` environment. Merging reviewed changes that
-touch this job, `ingestion/common/`, the copied `scripts/` modules, or the job
-Terraform builds a fresh image from `main`, smoke-tests it, pushes an immutable
-digest, applies only `module.eamlis_monthly_job.google_cloud_run_v2_job.this`,
-runs a waited canary execution, and validates the latest release metadata
-contract plus asset-scoped bucket hygiene. Use the workflow's `canary_run_date`
-dispatch input for a deliberate backfill or metadata-contract repair run. Do
-not deploy this job with a local `terraform apply` or by pushing hand-built
-images.
-
-## Cost Controls and Teardown
-
-Immediate stop:
-
-```bash
-gcloud scheduler jobs pause eamlis-monthly \
-  --location=us-central1 \
-  --project=shared-datasets-1
-```
-
-Pausing the scheduler stops future automatic monthly runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
