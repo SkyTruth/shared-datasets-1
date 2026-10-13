@@ -3,6 +3,7 @@ import ts from '../../api/typescript/node_modules/typescript/lib/typescript.js';
 import { test as base, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { baseURL, packageDir, siteDir, workDir } from './paths.mjs';
 
 const readJSON = async (path) => JSON.parse(await readFile(path, 'utf8'));
@@ -37,7 +38,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -45,8 +46,23 @@ const test = base.extend({
     await context.route('**/*', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
-      requests.push({ url: url.href, method: request.method(), range: request.headers().range || null });
+      requests.push({ url: url.href, method: request.method(), range: request.headers().range || null, cookie: (await request.allHeaders()).cookie || null });
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      if (url.origin === baseURL && url.pathname === '/catalog.json') return json(catalog);
+      if (url.origin === baseURL && url.pathname === '/session') return json({authorized: true});
+      const lookup = /^\/v1\/assets\/([a-z-]+)\/releases\/([0-9-]+):lookup$/.exec(url.pathname);
+      if (url.origin === baseURL && lookup) {
+        if (state.lookupStatus !== 200) {
+          expectedErrors.add(url.href);
+          return json({error:'Synthetic lookup unavailable'}, state.lookupStatus);
+        }
+        const file = indexes.get(lookup[1]).releases.find(release => release.date === lookup[2]).files.find(file => file.format === 'metadata' && !file.locale);
+        const data = gunzipSync(await readFile(resolve(workDir, 'objects', file.path.split('example-bucket/')[1]))).toString();
+        const records = data.trim().split('\n').map(JSON.parse);
+        const ids = request.postDataJSON().ids;
+        return json({asset_slug:lookup[1], resolved_release:lookup[2], sidecar_uri:file.path, sidecar_generation:file.generation,
+          items:ids.map(id => ({feature_id:id, found:true, properties:records.find(record => record.feature_id === id).properties}))});
+      }
       if (url.origin === baseURL && url.pathname === "/wdpa-monthly-execution.json") return json(state.execution);
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
@@ -112,12 +128,14 @@ const test = base.extend({
           expectedErrors.add(url.href);
           return json({ error: state.deny === 403 ? 'Synthetic authorization denied' : 'Synthetic generation changed' }, state.deny);
         }
-        return json({ gs_uri: file.path, resolved_release: date, generation: String(file.generation),
+        const tier = catalog.assets.find(asset => asset.slug === slug).access_tier;
+        const prefix = state.tierRoutes && format === 'pmtiles' ? `/pmtiles/${tier}/` : '/artifacts/';
+        return json({ gs_uri: file.path, resolved_release: date, generation: state.signerGeneration || String(file.generation),
           expires_at: '2300-01-01T00:00:00Z',
-          [format === 'pmtiles' ? 'pmtiles_url' : 'download_url']: `https://tiles.skytruth.org/artifacts/${file.path.split('example-bucket/')[1]}?generation=${file.generation}` });
+          [format === 'pmtiles' ? 'pmtiles_url' : 'download_url']: `https://tiles.skytruth.org${prefix}${file.path.split('example-bucket/')[1]}?generation=${file.generation}` });
       }
-      if (url.hostname === 'tiles.skytruth.org' && url.pathname.startsWith('/artifacts/')) {
-        const object = decodeURIComponent(url.pathname.slice('/artifacts/'.length));
+      if (url.hostname === 'tiles.skytruth.org' && /^\/(?:artifacts|pmtiles\/(?:private|internal))\//.test(url.pathname)) {
+        const object = decodeURIComponent(url.pathname.replace(/^\/(?:artifacts|pmtiles\/(?:private|internal))\//, ''));
         const file = storedFiles.find((entry) => entry.path === `gs://example-bucket/${object}` && String(entry.generation) === url.searchParams.get('generation'));
         if (file && state.unavailable.has(`${file.path}#${file.generation}`)) {
           expectedErrors.add(url.href);
@@ -144,6 +162,12 @@ const test = base.extend({
           return route.fulfill({ status: 206, headers, contentType: 'application/octet-stream', body: data.subarray(start, end + 1) });
         }
         return route.fulfill({ headers, contentType: 'application/octet-stream', body: data });
+      }
+      if (state.storageHosting && url.hostname === 'storage.googleapis.com' && !url.pathname.startsWith('/api/')) {
+        if (url.pathname === '/wdpa-monthly-execution.json') return json(state.execution);
+        const slug = /^\/releases\/([a-z-]+)\.json$/.exec(url.pathname)?.[1];
+        if (slug && indexes.has(slug)) return json(indexes.get(slug));
+        return route.fulfill({path: resolve(siteDir, url.pathname === '/' ? 'index.html' : url.pathname.slice(1))});
       }
       if (url.origin === baseURL && !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/v1/')) return route.continue();
       forbidden.push(`Unexpected network request: ${url.href}`);
@@ -797,4 +821,181 @@ test('single-release assets hide comparison while normal version selection remai
   await expect(page.locator('#version-select')).toBeVisible();
   await expect(page.locator('#compare-open')).toBeHidden();
   await expect(page.locator('#map-status')).toBeHidden();
+});
+
+test('dataset controls open docs, copy metadata and refresh localized inspection', async ({page, context, transport}, testInfo) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await select(page, 'public');
+  await expect(page.locator('#detail-slug')).toHaveText('smoke-public');
+  await expect(page.locator('#detail-docs')).toBeVisible();
+  await expect(page.locator('#download-fgb')).toBeVisible();
+  const [docs, download] = await Promise.all([page.locator('#detail-docs').boundingBox(), page.locator('#download-fgb').boundingBox()]);
+  expect(docs.x).toBeLessThan(download.x);
+  await page.locator('#detail-docs').click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog')).toContainText('Smoke public');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await expect(page.locator('#metadata-path-row')).toBeVisible();
+  await page.locator('#copy-metadata').click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(/smoke-public\.metadata\.ndjson\.gz$/);
+  await clickPoint(page, false, testInfo);
+  await expectMetadata(page, false);
+  await page.locator('#metadata-language-select').selectOption('es');
+  await expect(page.locator('#feature-inspector')).toContainText('Español b2');
+  await expect(page.locator('#detail-metadata')).toContainText('.metadata.es.ndjson.gz');
+  await page.locator('#metadata-language-select').selectOption('');
+  await expectMetadata(page, false);
+  const sourceDownloads = transport.requests.filter(entry => /smoke-public\.metadata\.ndjson\.gz/.test(entry.url));
+  expect(sourceDownloads).toHaveLength(1);
+  expect(transport.requests.some(entry => /metadata\.es\.ndjson\.gz\?generation=212/.test(entry.url))).toBe(true);
+  delete transport.catalog.assets.find(asset => asset.slug === 'smoke-public').docs_url;
+  await select(page, 'public');
+  await expect(page.locator('#detail-docs')).toBeHidden();
+  await expect(page.locator('#detail-docs')).not.toHaveAttribute('href');
+});
+
+for (const tier of ['private', 'internal']) {
+  test(`${tier} signed downloads keep generations, sessions and browser streaming`, async ({page, context, transport}, testInfo) => {
+    transport.tierRoutes = true;
+    await context.addCookies([{name:'fixture-session', value:'authorized', url:baseURL}]);
+    await page.addInitScript(() => {window.SHARED_DATASETS_PMTILES_SESSION_URL = '/session';});
+    await select(page, tier);
+    await clickPoint(page, false, testInfo);
+    await expectMetadata(page, false);
+    expect(transport.requests.some(entry => new URL(entry.url).pathname === '/session' && new URL(entry.url).searchParams.get('tier') === tier && entry.cookie?.includes('fixture-session=authorized'))).toBe(true);
+    expect(transport.requests.some(entry => entry.range && entry.url.includes(`/pmtiles/${tier}/`))).toBe(true);
+    const pendingDownload = page.waitForEvent('download');
+    await page.locator('#download-fgb').click();
+    const download = await pendingDownload;
+    expect(download.url()).toMatch(new RegExp(`smoke-${tier}\\.fgb\\?generation=200$`));
+    expect(await download.failure()).toBeNull();
+    const signer = transport.requests.find(entry => entry.url.includes('/api/download-url?') && new URL(entry.url).searchParams.get('format') === 'fgb');
+    expect(new URL(signer.url).searchParams.get('version')).toBe('2026-09-22');
+    expect(new URL(signer.url).searchParams.get('generation')).toBe('200');
+    expect(signer.cookie).toContain('fixture-session=authorized');
+    // A successful HTTP response with the wrong generation still must fail.
+    transport.signerGeneration = '999';
+    const prior = transport.requests.length;
+    await page.locator('#version-select').selectOption('2026-01-01');
+    await expect(page.locator('#map-status')).toContainText('Map unavailable');
+    await expect(page.locator('#map-preview canvas')).toHaveCount(0);
+    await expect(page.locator('#feature-inspector')).toBeHidden();
+    expect(transport.requests.slice(prior).filter(entry => entry.range)).toEqual([]);
+  });
+}
+
+test('sidecar colorization separates identifiers from measures and zooms the focused value', async ({page, transport}, testInfo) => {
+  await select(page, 'colors');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select option[value="code"]')).toHaveCount(1);
+  await expect(page.locator('#colorize-select option[value="fatalities"]')).toHaveCount(1);
+  await page.locator('#colorize-select').selectOption('code');
+  const items = page.locator('#color-legend button[aria-pressed]');
+  await expect(items).toHaveCount(2);
+  const identifierColors = await items.evaluateAll(nodes => nodes.map(node => node.querySelector('span').style.background));
+  expect(new Set(identifierColors).size).toBe(2);
+  await page.locator('#basemap-select').selectOption('satellite');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select option[value="code"]')).toHaveCount(1);
+  await page.locator('#colorize-select').selectOption('code');
+  await expect(items).toHaveCount(2);
+  // Discrete labels retain their colors; numeric ramps adapt to the basemap.
+  expect(await items.evaluateAll(nodes => nodes.map(node => node.querySelector('span').style.background))).toEqual(identifierColors);
+  await page.locator('#basemap-select').selectOption('map');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select option[value="code"]')).toHaveCount(1);
+  await page.locator('#colorize-select').selectOption('code');
+  await expect(items).toHaveCount(2);
+  await expect(page.locator('#zoom-selection')).toBeHidden();
+  await items.filter({hasText:'100'}).click();
+  await expect(page.locator('#zoom-selection')).toBeEnabled();
+  const before = await viewport(page);
+  await page.locator('#zoom-selection').click();
+  await expect.poll(async () => JSON.stringify(await viewport(page))).not.toBe(JSON.stringify(before));
+  await page.getByRole('button', {name:'Zoom to extents', exact:true}).click();
+  await page.locator('#colorize-select').selectOption('fatalities');
+  await expect(items).toHaveCount(5);
+  const measureColors = await items.evaluateAll(nodes => nodes.map(node => node.querySelector('span').style.background));
+  expect(new Set(measureColors).size).toBe(5);
+  const rgb = measureColors.map(color => color.match(/\d+/g).map(Number));
+  // Equal numeric increments interpolate on each half of the three-stop ramp.
+  for (let channel = 0; channel < 3; channel++) {
+    expect(Math.abs(rgb[1][channel] - (rgb[0][channel] + rgb[2][channel]) / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs(rgb[3][channel] - (rgb[2][channel] + rgb[4][channel]) / 2)).toBeLessThanOrEqual(1);
+  }
+  const canvas = page.locator('#map-preview canvas');
+  expect(nearColor(await sampleCanvas(canvas), rgb[2])).toBe(true);
+  expect(transport.requests.filter(entry => /smoke-colors\.metadata\.ndjson\.gz/.test(entry.url))).toHaveLength(1);
+});
+
+test('oversized metadata leaves a visible color-field reason and no speculative downloads', async ({page, transport}) => {
+  const index = transport.indexes.get('smoke-colors');
+  for (const release of index.releases) for (const file of release.files) if (file.format === 'metadata') file.size = 1024 ** 3;
+  await select(page, 'colors');
+  await expect(page.locator('#map-status')).toBeHidden();
+  expect(transport.requests.filter(entry => /\.metadata(?:\.es)?\.ndjson\.gz/.test(entry.url))).toEqual([]);
+  await page.locator('#colorize-select').selectOption('fatalities');
+  await expect(page.locator('#color-legend')).toBeVisible();
+  await expect(page.locator('#color-legend')).toContainText('fatalities');
+  await expect(page.locator('#color-legend')).toContainText(/unavailable.*autoload/i);
+  await expect(page.locator('#colorize-select')).toHaveValue('');
+  expect(transport.requests.filter(entry => /\.metadata(?:\.es)?\.ndjson\.gz/.test(entry.url))).toEqual([]);
+});
+
+test('tile-only and uncolorizable assets expose only their available fields', async ({page, transport}) => {
+  const asset = transport.catalog.assets.find(asset => asset.slug === 'smoke-public');
+  delete asset.feature_metadata;
+  asset.colorizer_metadata = {source:'pmtiles_vector_layers'};
+  for (const release of transport.indexes.get(asset.slug).releases) release.files = release.files.filter(file => !['metadata','schema'].includes(file.format));
+  await select(page, 'public');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select option[value="feature_id"]')).toHaveCount(1);
+  await expect(page.locator('#colorize-select option[value="fatalities"]')).toHaveCount(0);
+  await page.locator('#colorize-select').selectOption('feature_id');
+  await expect(page.locator('#color-legend button[aria-pressed]')).toHaveCount(2);
+  asset.colorizer_metadata = {source:'none'};
+  await select(page, 'public');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#colorize-select')).toBeDisabled();
+  await expect(page.locator('#colorize-select option[value="feature_id"]')).toHaveCount(0);
+  await expect(page.locator('#color-legend')).toBeHidden();
+  expect(transport.requests.filter(entry => /\.metadata\.ndjson\.gz/.test(entry.url))).toEqual([]);
+});
+
+test('direct storage hosting keeps public maps usable and refuses an implicit restricted signer', async ({page, transport}, testInfo) => {
+  transport.storageHosting = true;
+  await page.goto('https://storage.googleapis.com/');
+  await page.locator('#asset-list [data-slug="smoke-public"]').click();
+  await clickPoint(page, false, testInfo);
+  await expectMetadata(page, false);
+  await page.locator('#asset-list [data-slug="smoke-private"]').click();
+  await expect(page.locator('#map-status')).toContainText('Map unavailable');
+  await expect(page.locator('#map-preview canvas')).toHaveCount(0);
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  expect(transport.requests.filter(entry => entry.url.includes('storage.googleapis.com/api/'))).toEqual([]);
+});
+
+test('bounded inspection tries the pinned API before public sidecar streaming', async ({page, transport}, testInfo) => {
+  for (const release of transport.indexes.get('smoke-public').releases) {
+    for (const file of release.files) if (file.format === 'metadata') file.size = 1024 ** 3;
+  }
+  await select(page, 'public');
+  await clickPoint(page, false, testInfo);
+  await expectMetadata(page, false);
+  const apiRequests = transport.requests.filter(entry => entry.url.endsWith(':lookup'));
+  expect(apiRequests).toHaveLength(1);
+  expect(new URL(apiRequests[0].url).pathname).toBe('/v1/assets/smoke-public/releases/2026-09-22:lookup');
+  expect(apiRequests[0].method).toBe('POST');
+  expect(transport.requests.filter(entry => /\.metadata(?:\.es)?\.ndjson\.gz/.test(entry.url))).toEqual([]);
+  transport.lookupStatus = 404;
+  const prior = transport.requests.length;
+  await select(page, 'public');
+  await clickPoint(page, false, testInfo);
+  await expectMetadata(page, false);
+  const requests = transport.requests.slice(prior);
+  const lookupIndex = requests.findIndex(entry => entry.url.endsWith(':lookup'));
+  const sidecarIndex = requests.findIndex(entry => /smoke-public\.metadata\.ndjson\.gz\?generation=202/.test(entry.url));
+  expect(lookupIndex).toBeGreaterThanOrEqual(0);
+  expect(sidecarIndex).toBeGreaterThan(lookupIndex);
 });
