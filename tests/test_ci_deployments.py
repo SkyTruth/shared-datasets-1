@@ -16,6 +16,21 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
     assert ALWAYS <= set(select_suites(paths)[0])
 
 
+@pytest.mark.parametrize("job", ["eamlis_monthly", "sea_ice_daily", "wdpa_monthly"])
+def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
+    path = f"ingestion/{job}/README.md"
+    assert select_deployments([path]) == []
+    assert set(select_suites([path])[0]) == ALWAYS
+
+
+@pytest.mark.parametrize("job,target", [("eamlis_monthly", "eamlis"), ("sea_ice_daily", "sea_ice")])
+@pytest.mark.parametrize("runtime_file", ["run.py", "Dockerfile", "README.md.py"])
+def test_readme_exclusion_keeps_mixed_runtime_changes_deployable(job, target, runtime_file):
+    paths = [f"ingestion/{job}/README.md", f"ingestion/{job}/{runtime_file}"]
+    assert set(select_deployments(paths)) == {target, "ingestion_iam", "artifact_registry_iam"}
+    assert {"geospatial-integration", "production-images"} <= set(select_suites(paths)[0])
+
+
 def test_producer_changes_require_staged_evidence_before_launching_production_validation():
     assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == []
     assert select_deployments(["catalog/wdpa-staged-validation.json"]) == []

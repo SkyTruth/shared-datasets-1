@@ -200,11 +200,11 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
-        if path.startswith("ingestion/eamlis_monthly/") or path in {
+        if (path.startswith("ingestion/eamlis_monthly/") and path != "ingestion/eamlis_monthly/README.md") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
         }:
             selected.add("eamlis")
-        if path.startswith("ingestion/sea_ice_daily/") or path in {
+        if (path.startswith("ingestion/sea_ice_daily/") and path != "ingestion/sea_ice_daily/README.md") or path in {
             ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
         }:
             selected.add("sea_ice")
