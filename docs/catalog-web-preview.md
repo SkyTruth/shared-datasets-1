@@ -131,6 +131,15 @@ artifact CDN path as public sidecars. The authenticated catalog viewer can sign
 restricted schema files through `/api/download-url?format=schema`. This keeps
 colorizer field discovery bounded to a small JSON contract.
 
+Clicking a color legend label filters the map to that exact value; clicking the
+selected label again restores all features without moving the camera. Every
+label includes its count in square brackets. Metadata-backed counts use the
+complete loaded release sidecar, including records absent from the current
+display tiles. Tile-backed counts cover loaded source tiles and count each
+identified feature once per source layer, rather than once per tile fragment.
+The legend identifies which count scope is available. Counts are computed before
+color sampling and refresh as tiles load.
+
 Whole-sidecar hydration is a consumer policy decision, not a producer-granted
 permission. Release file entries expose enough information, including sidecar
 size when known, for each consumer to choose a strategy. The catalog viewer's

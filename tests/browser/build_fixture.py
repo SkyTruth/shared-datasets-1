@@ -58,6 +58,8 @@ def build(work: Path) -> None:
             "comparison",
             "polygons",
             "overlap",
+            "colorizer",
+            "tile-colorizer",
         )
     ] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
         root = f"gs://example-bucket/category/subcategory/{slug}"
@@ -68,7 +70,7 @@ def build(work: Path) -> None:
             subcategory="subcategory",
             status="active",
             access_tier="public"
-            if tier in {"comparison", "polygons", "overlap"}
+            if tier in {"comparison", "polygons", "overlap", "colorizer", "tile-colorizer"}
             else tier,
             owner="SkyTruth",
             update_cadence="manual",
@@ -87,7 +89,7 @@ def build(work: Path) -> None:
             available_formats=["fgb", "pmtiles"],
             metadata_paths=["README.md"],
             geometry_type="Polygon" if tier == "polygons" else "Point",
-            row_count=5 if tier == "overlap" else 4 if tier == "polygons" else 2,
+            row_count=8002 if tier == "colorizer" else 5 if tier == "overlap" else 4 if tier == "polygons" else 2,
             feature_identity=(
                 {
                     "strategy": "generated_sequence_content_hash",
@@ -108,6 +110,8 @@ def build(work: Path) -> None:
                 "provenance_default": True,
             },
         )
+        if tier == "tile-colorizer":
+            metadata.pop("feature_metadata")
         (docs / f"{slug}.md").write_text(
             f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release {'polygons' if tier == 'polygons' else 'points'}.\n"
         )
@@ -184,9 +188,15 @@ def build(work: Path) -> None:
                         }
                     )
             # Complete-input counts include records absent from display tiles.
-            for i in range(101 if tier in {"private", "comparison"} else 0):
+            if tier == "colorizer":
+                for record, name in zip(records, ("Common label with a long category name", "Rare label")):
+                    record["properties"]["name"] = name
+                    record["properties_hash"] = model.properties_hash(record["properties"])
+            for i in range(8000 if tier == "colorizer" else 101 if tier in {"private", "comparison"} else 0):
                 props = {"feature_id": f"z{i:03}", "name": f"Stable record {i}"}
-                if i == 0 and tier != "comparison":
+                if tier == "colorizer":
+                    props["name"] = "Common label with a long category name"
+                if i == 0 and tier == "private":
                     props["name"] = "Shared before" if old else "Shared after"
                     if not old:
                         props["optional"] = None
@@ -361,6 +371,14 @@ def build(work: Path) -> None:
     )
 
     shutil.copytree(REPO / "api/typescript/dist", work / "site/sdk", dirs_exist_ok=True)
+
+    if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "large-color-filter":
+        map_path = work / "site/map-preview.js"
+        source = map_path.read_text()
+        marker = "    const featureIds = [...mode.featureIdsByValue.get(focusedValue)];\n"
+        if source.count(marker) != 1:
+            raise ValueError("Color-filter negative control no longer matches the product")
+        map_path.write_text(source.replace(marker, marker + "    if (featureIds.length > 8000) return geometryFilter;\n"))
 
     if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "stale-inspector":
         app_path = work / "site/app.js"
