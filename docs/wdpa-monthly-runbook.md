@@ -117,12 +117,20 @@ allowlisted reason code. Raw messages/configuration are excluded. A new running
 attempt preserves the last completed result; API/IAM errors fail the observer
 and leave stale status. Catalog observations older than 15 minutes show as stale.
 
+Observer execution and Scheduler failures use the [recovery-window health policy](alert-routing.md#observer-recovery-window).
+It counts successful native completions over 15 minutes and confirms a count
+below one for two minutes before notifying; missing metrics count as unhealthy.
+A brief failure followed by recovery stays quiet. Worker failures retain their
+immediate alert. Verify the policy and recent successful metric samples without
+deliberately interrupting the production observer.
+
 Verify each asset's `_catalog/releases/{asset}.json` (`latest_release` and
 `latest_run`), owned receipts, manifest generations and `latest/` byte metadata
 under `100-geographic-reference/130-protected-areas/{asset}/`. Worker success,
-asset publication and observer freshness are separate checks. Test changed alert
-policies separately with protected `cron-alert-delivery-test.yml` and actual
-Slack delivery; routine deployments do not require an injected failure probe.
+asset publication and observer freshness are separate checks. Test immediate
+worker alert delivery separately with protected `cron-alert-delivery-test.yml`
+and actual Slack delivery; routine deployments do not require an injected
+failure probe. Observer-health verification follows the recovery-window contract.
 
 ## Recovery and evidence
 

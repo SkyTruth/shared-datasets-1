@@ -135,6 +135,16 @@ Pausing does not drain running executions or release claims. Permanent teardown
 requires a reviewed PR and a constrained protected workflow covering worker,
 observer, scheduler and IAM. Published datasets and historical releases remain.
 
+## Observer health
+
+The five-minute `wdpa-execution-observer` uses a separate health alert: no
+successful completion in a rolling 15-minute window, followed by two minutes
+of confirmation. Metric ingestion and evaluation add latency. A recovered next
+run stays quiet; missing completion metrics count as unhealthy. Only this exact
+observer and its Scheduler dispatch are excluded from immediate failure alerts.
+Worker failures retain their general alert. See [alert routing](../../docs/alert-routing.md#observer-recovery-window)
+for the native metric and deployment verification contract.
+
 ## Limits
 
 Terraform configures 4 CPU / 8 GiB, `86400s`, zero retries and a 100 GiB ephemeral
