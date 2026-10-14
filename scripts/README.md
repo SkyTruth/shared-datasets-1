@@ -2,6 +2,13 @@
 
 Use `uv run` for repo Python tools. Procedures live in the [skill catalog](../AGENTS.md#repo-local-skills); each CLI's top-level and subcommand `--help` own flags. JSON reports and exit codes supply validation evidence. Internal libraries have no standalone CLI; use their owning command below.
 
+## CI validation
+
+`ci_preflight.py` owns local container execution and host Docker credential
+isolation alongside the shared plan/run-suite/verify entrypoints. See
+[complete CI preflight](../docs/ci-preflight.md) for the required commands and
+evidence contract.
+
 ## Branch cleanup
 
 `tidy_branches.sh` previews verified merged-branch cleanup and retains a recovery report/bundle before authorized deletion. Use it without concurrent Git writers; preview fetches/prunes refs. Interface: `bash scripts/tidy_branches.sh --help`.

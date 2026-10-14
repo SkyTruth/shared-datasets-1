@@ -45,7 +45,7 @@ CONTRACT_FILES = (
     "scripts/check_workflow_syntax.py",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "scripts/check_identity_resolutions.py",
-    "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
+    "scripts/ci_source_proof.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
     "scripts/wdpa_processing_gate.py",
