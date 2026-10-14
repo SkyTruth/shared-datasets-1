@@ -196,6 +196,7 @@ class AlertPolicyTests(unittest.TestCase):
     def test_alert_policies_have_a_protected_apply_path(self):
         policies = {
             "google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure",
+            "google_monitoring_alert_policy.wdpa_execution_observer_unhealthy",
             "google_monitoring_alert_policy.release_awaiting_identity_decision",
             "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",
             "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",

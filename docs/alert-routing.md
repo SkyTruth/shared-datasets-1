@@ -13,12 +13,14 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | PR CI, build checks, manual GitHub checks | GitHub |
 | Synchronous EAMLIS/sea-ice deployment canary or WDPA upload preflight | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
-| Detached WDPA canary, validation, or runtime inspection | Monitoring Slack |
+| Five-minute WDPA execution observer or its Scheduler dispatch | Monitoring Slack only after persistent loss of successful completions |
+| Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
 
 The Cloud Run policy retains the project/region-wide failure condition and
-`protoPayload.status.code>0`, including OOM/system failures. Its only supervision
+`protoPayload.status.code>0`, including OOM/system failures. The frequent WDPA
+observer uses the health policy described below. Its only supervision
 exception requires both the authenticated execution creator in
 `protoPayload.response.metadata.annotations."run.googleapis.com/creator"` and the
 execution marker name in `protoPayload.response.spec.template.spec.containers.env`.
@@ -35,8 +37,42 @@ command loses connectivity, times out, or its runner is cancelled, GitHub report
 an unsuccessful workflow; the execution may still need manual inspection. A
 successful workflow is not permitted to abandon a marked execution.
 
-WDPA's ten-minute watch and detached validation retain Cloud Monitoring coverage.
-Do not suppress them based solely on their creator, branch, or workflow trigger.
+## Observer recovery window
+
+`wdpa-execution-observer` runs every five minutes. Its execution and Scheduler
+dispatch failures are excluded by exact job name from the immediate failure
+policies and covered by `wdpa_execution_observer_unhealthy`. Other jobs retain
+immediate failure coverage, including jobs added later.
+
+The health policy sums `run.googleapis.com/job/completed_execution_count` with
+`result="succeeded"` over a rolling 15-minute window. It notifies only when that
+sum stays below one for two minutes. Cloud Run metric ingestion and alert
+evaluation add latency. A later successful completion clears the condition;
+healthy runs and brief failures send no Slack messages. Notification prompts
+remain opening-only.
+
+Missing metric data counts as unhealthy. The completion metric also emits zero
+samples, so metric absence alone would not establish absence of successful runs.
+Repeated startup failures and a stopped Scheduler are both covered without
+relying on Python starting or an application log being emitted. Verify a recent
+successful metric sample after policy installation; never infer health from
+failure logs being absent.
+
+The grace period relies on the observer's five-minute cadence. Daily and monthly
+publishers currently have no Cloud Run task retries and need their own recovery
+and delivery deadlines before adopting delayed notifications. Do not add retries
+or suppress their failure alerts to emulate observer recovery.
+
+Before declaring the observer policy live, inspect its success selector, rolling
+window and missing-data behavior, replay historical metrics covering healthy
+operation and a brief failure, and verify the protected sync deployed the new
+policy together with both exact-job exclusions. Do not deliberately interrupt
+the production observer to test an outage notification.
+
+## Execution and delivery verification
+
+WDPA's ten-minute worker watch retains Cloud Monitoring coverage.
+Do not suppress it based solely on its creator, branch, or workflow trigger.
 Routine deployments no longer require deliberate failure probes. The explicit
 `cron-alert-delivery-test.yml` retains both existing fail-before-write modes and
 refuses to start while the selected job has an active execution. Its `start`

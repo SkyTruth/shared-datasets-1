@@ -1021,7 +1021,7 @@ def test_protected_catalog_serves_execution_module_and_revalidated_status():
         catalog_cache=cache, object_store=store, signer=FakeSigner(),
     )
     assert module.status == 200
-    assert b"export function executionStatusText" in module.body
+    assert module.body == (root / "release-reference.js").read_bytes()
 
     names = []
     observations = iter([b'{"observed_at":"2026-10-01T12:00:00Z"}', b'{"observed_at":"2026-10-01T12:05:00Z"}'])

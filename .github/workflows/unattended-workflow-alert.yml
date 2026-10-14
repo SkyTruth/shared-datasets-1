@@ -17,7 +17,6 @@ on:
       - EAMLIS monthly deploy
       - WDPA monthly deploy
       - Sea ice daily deploy
-      - WDPA isolated processing validation deploy
       - Artifact Registry IAM sync
       - Scheduled ingestion deploy IAM sync
       - Preview Terraform IAM sync

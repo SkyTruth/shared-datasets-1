@@ -7,7 +7,6 @@ const MISSING_COLOR = "#949d97";
 const FEATURE_ID_PROPERTY = "feature_id";
 const FEATURE_STATE_COLOR_FIELD = "colorizeField";
 const FEATURE_STATE_COLOR_VALUE = "colorizeValue";
-const METADATA_FOCUS_FILTER_ID_LIMIT = 8000;
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
 const GRADIENT_LEGEND_VALUE_LIMIT = 20;
@@ -930,6 +929,7 @@ function refreshColorSample(context) {
   const mode = inferColorMode(context.colorField, samples.values);
   mode.valueSource = "tile";
   mode.boundsByValue = samples.boundsByValue;
+  mode.countsByValue = samples.countsByValue;
   const signature = colorModeSignature(mode);
   const previousFocus = context.focusedLegendValue;
   context.colorMode = mode;
@@ -1008,6 +1008,7 @@ function applyMetadataColorValues(context, field, valuesByFeatureId) {
   mode.valueSource = "metadata";
   mode.boundsByValue = samples.boundsByValue;
   mode.featureIdsByValue = metadataFeatureIdsByValue(valuesByFeatureId);
+  mode.countsByValue = new Map([...mode.featureIdsByValue].map(([value, ids]) => [value, ids.size]));
   const signature = colorModeSignature(mode);
   const previousFocus = context.focusedLegendValue;
   context.colorMode = mode;
@@ -1022,21 +1023,29 @@ function applyMetadataColorValues(context, field, valuesByFeatureId) {
 function sampleFieldValues(context, field) {
   const values = [];
   const boundsByValue = new Map();
+  const countsByValue = new Map();
   let seen = 0;
   const random = seededRandom(hashString(field));
   for (const source of context.mapSources) {
     for (const layer of source.sourceLayers) {
+      const seenIds = new Set();
       for (const feature of querySourceLayerFeatures(context.map, source, layer)) {
         const properties = feature.properties || {};
         if (!Object.prototype.hasOwnProperty.call(properties, field) || isEmptyValue(properties[field])) {
           continue;
         }
-        seen += 1;
         const item = { raw: properties[field], text: normalizedValue(properties[field]) };
         const bounds = boundsFromFeatureGeometry(feature.geometry);
         if (bounds && item.text) {
           boundsByValue.set(item.text, combineTwoBounds(boundsByValue.get(item.text), bounds));
         }
+        const featureId = featureIdForProperties(properties) || feature.id;
+        if (featureId !== undefined) {
+          if (seenIds.has(featureId)) continue;
+          seenIds.add(featureId);
+        }
+        countsByValue.set(item.text, (countsByValue.get(item.text) || 0) + 1);
+        seen += 1;
         if (values.length < SAMPLE_LIMIT) {
           values.push(item);
         } else {
@@ -1048,7 +1057,7 @@ function sampleFieldValues(context, field) {
       }
     }
   }
-  return { values, boundsByValue };
+  return { values, boundsByValue, countsByValue };
 }
 
 function sampleMetadataFieldValues(context, field, valuesByFeatureId) {
@@ -1248,16 +1257,16 @@ function gradientLegendValues(items) {
 }
 
 function colorModeSignature(mode) {
-  const valueSource = mode.valueSource || "tile";
-  if (mode.type === "numeric") {
-    return `${mode.type}|${valueSource}|${mode.field}|${mode.min}|${mode.max}|${(mode.legendValues || []).join("\u001f")}`;
-  }
-  if (mode.type === "temporal") {
-    return `${mode.type}|${valueSource}|${mode.field}|${mode.min}|${mode.max}|${(mode.values || []).join("\u001f")}|${(
-      mode.legendValues || []
-    ).join("\u001f")}`;
-  }
-  return `${mode.type}|${valueSource}|${mode.field}|${mode.min ?? ""}|${mode.max ?? ""}|${(mode.values || []).join("\u001f")}`;
+  return JSON.stringify({
+    type: mode.type,
+    valueSource: mode.valueSource,
+    field: mode.field,
+    min: mode.min,
+    max: mode.max,
+    values: mode.values,
+    legendValues: mode.legendValues,
+    counts: legendValuesForMode(mode).map((value) => mode.countsByValue.get(value)),
+  });
 }
 
 function applyColorMode(context) {
@@ -1284,8 +1293,10 @@ function notifyColorLegend(context) {
     type: mode.type,
     field: mode.field,
     focusedValue: context.focusedLegendValue || "",
+    countScope: mode.valueSource === "metadata" ? "dataset" : "loaded",
     entries: values.map((value) => ({
       value,
+      count: mode.countsByValue.get(value),
       color: legendColorForValue(mode, value, context.basemap),
     })),
   });
@@ -1343,14 +1354,11 @@ function setLayerFilter(map, layerId, filter) {
 
 function layerFilter(geometryType, mode, focusedValue) {
   const geometryFilter = ["==", ["geometry-type"], geometryType];
-  if (!modeSupportsLegendFocus(mode) || !mode.field || !focusedValue) {
+  if (!modeSupportsLegendFocus(mode) || !focusedValue) {
     return geometryFilter;
   }
   if (mode.valueSource === "metadata") {
-    const featureIds = [...(mode.featureIdsByValue?.get(focusedValue) || [])];
-    if (!featureIds.length || featureIds.length > METADATA_FOCUS_FILTER_ID_LIMIT) {
-      return geometryFilter;
-    }
+    const featureIds = [...mode.featureIdsByValue.get(focusedValue)];
     return ["all", geometryFilter, ["in", featureIdStringExpression(), ["literal", featureIds]]];
   }
   return ["all", geometryFilter, ["==", fieldStringExpression(mode.field), focusedValue]];

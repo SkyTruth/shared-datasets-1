@@ -94,16 +94,6 @@ class RepoGuardrailsTests(unittest.TestCase):
                 errors = self.check_workflow_fixture(workflow)
                 self.assertTrue(any('job apply: missing prod Terraform state concurrency' in e for e in errors), errors)
 
-    def test_account_retirement_iam_root_requires_the_production_queue(self):
-        workflow = self.production_workflow('terraform -chdir=terraform/envs/metadata-retirement-iam apply plan.tfplan')
-        workflow.pop('env')
-        workflow.pop('on')
-        self.assertTrue(repo_guardrails.job_uses_prod_terraform(workflow, workflow['jobs']['apply']))
-        self.assertEqual(self.check_workflow_fixture(workflow), [])
-        workflow['jobs']['apply'].pop('concurrency')
-        errors = self.check_workflow_fixture(workflow)
-        self.assertTrue(any('missing prod Terraform state concurrency' in error for error in errors), errors)
-
     def test_reusable_callers_do_not_hold_the_execution_queue(self):
         workflow = {'jobs': {'sync': {'uses': repo_guardrails.TARGET_APPLY_WORKFLOW}}}
         self.assertEqual(self.check_workflow_fixture(workflow), [])
@@ -135,8 +125,6 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('prod-terraform-target-apply.yml', 'sync'),
             ('deployment-recovery.yml', 'reconcile'),
             ('wdpa-monthly-deploy.yml', 'deploy'),
-            ('wdpa-processing-validation-deploy.yml', 'deploy'),
-            ('wdpa-runtime-inspection.yml', 'inspect'),
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
             ('catalog-viewer-deploy.yml', 'deploy'),

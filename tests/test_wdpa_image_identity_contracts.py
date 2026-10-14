@@ -18,9 +18,6 @@ DAEMON = "sha256:" + "b" * 64
 REGISTRY = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:" + "c" * 64
 STEPS = (
     ("wdpa-monthly-deploy.yml", "deploy", "Prepare reviewed WDPA publication image", True),
-    ("wdpa-processing-validation-deploy.yml", "deploy", "Require small and sampled checks plus disk quota", False),
-    ("ci.yml", "wdpa-small-smoke", "Verify image and run the small sea-ice production path", False),
-    ("ci.yml", "wdpa-full-benchmark", "Load and verify the identical deployment image", False),
 )
 
 
@@ -57,7 +54,7 @@ def proof_contract(step, registry):
 
 
 @pytest.mark.parametrize("filename,job,name,registry", STEPS)
-def test_four_wdpa_consumers_prove_accepted_config_before_execution(filename, job, name, registry):
+def test_monthly_consumer_proves_accepted_config_before_execution(filename, job, name, registry):
     proof_contract(proof_step(filename, job, name), registry)
 
 
@@ -98,14 +95,6 @@ def test_missing_or_replaced_wdpa_identity_proof_fails_contract(filename, job, n
         step["run"] = step["run"].replace("steps.staged-image.outputs.config_digest", "steps.staged-image.outputs.daemon_id").replace("containerimage.config.digest", "containerimage.daemon.id")
     with pytest.raises(AssertionError):
         proof_contract(step, registry)
-
-
-def test_small_smoke_gets_verifier_from_exact_validation_revision():
-    steps = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["wdpa-small-smoke"]["steps"]
-    checkout = steps[0]
-    assert checkout["name"] == "Check out the tested image verifier"
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert checkout["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
 
 
 @pytest.mark.parametrize("media_type", ("application/vnd.docker.distribution.manifest.v2+json", "application/vnd.oci.image.manifest.v1+json"))
