@@ -222,6 +222,8 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
                 raise ValueError('Write auditing must be preserved')
             if any(item not in configs for item in before.get('audit_log_config', [])):
                 raise ValueError('Existing audit settings changed')
+            if sorted(json.dumps(item, sort_keys=True) for item in configs) != sorted(json.dumps(item, sort_keys=True) for item in before.get('audit_log_config', [])):
+                raise ValueError('Shared storage auditing must remain unchanged')
             if after['service'] != 'storage.googleapis.com' or after['project'] != 'shared-datasets-1':
                 raise ValueError('Unexpected audit scope')
         elif address.startswith('google_storage_bucket.dataset_usage_'):
@@ -252,6 +254,8 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
                 raise ValueError('The raw usage export must remain complete and unsampled')
         elif address == 'module.dataset_usage_job.google_cloud_run_v2_job.this':
             task = after['template'][0]['template'][0]
+            if task.get('service_account') != 'dataset-usage@shared-datasets-1.iam.gserviceaccount.com':
+                raise ValueError('Usage job must retain its registered runtime identity')
             if task['containers'][0]['image'] != image or task['max_retries'] != 0 or task['timeout'] != '1800s':
                 raise ValueError('Unexpected usage execution contract')
             if task['containers'][0]['resources'][0]['limits'] != {'cpu': '1', 'memory': '1Gi'}:
@@ -259,10 +263,19 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
         elif address == 'module.dataset_usage_scheduler.google_cloud_scheduler_job.this':
             if after['paused'] != (not verified) or after['schedule'] != '0 9 * * *' or after['time_zone'] != 'UTC' or after['retry_config'][0]['retry_count'] != 0:
                 raise ValueError('Unverified monitoring cannot enable a schedule')
+        elif address == 'google_cloud_run_v2_job_iam_member.dataset_usage_scheduler_invoker':
+            if after.get('project') != 'shared-datasets-1' or after.get('location') != 'us-central1' or after.get('name') not in {'dataset-usage', 'projects/shared-datasets-1/locations/us-central1/jobs/dataset-usage'} or after.get('role') != 'roles/run.invoker' or after.get('member') != 'serviceAccount:dataset-usage-scheduler@shared-datasets-1.iam.gserviceaccount.com':
+                raise ValueError('Usage invocation must remain private to its scheduler')
         elif address.startswith('google_storage_bucket_iam_member.'):
             if after.get('member') in {'allUsers', 'allAuthenticatedUsers'}:
                 raise ValueError('Telemetry must never be public')
             name = address.removeprefix('google_storage_bucket_iam_member.dataset_usage_')
+            if name == 'sink_writer':
+                sink = rows.get('google_logging_project_sink.dataset_usage', {}).get('change', {}).get('after') or {}
+                writer = sink.get('writer_identity')
+                if not isinstance(writer, str) or not writer.startswith('serviceAccount:'):
+                    raise ValueError('Legacy sink writer identity is unknown')
+                check_grant(after, (raw_bucket, 'roles/storage.objectCreator', writer, None))
             if name in grants:
                 if unknown(change.get('after_unknown', {}).get('condition', False)):
                     raise ValueError('Unknown usage IAM condition')

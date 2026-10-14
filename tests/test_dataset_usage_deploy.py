@@ -121,10 +121,12 @@ def test_no_destructive_usage_operations_or_unrelated_resources(actions):
         validate_plan({'resource_changes': [resource('module.sea_ice_daily_job.google_cloud_run_v2_job.this', {})]}, IMAGE, verified=False)
 
 
-def test_data_read_addition_preserves_existing_data_write():
+def test_shared_security_auditing_cannot_be_changed_by_usage_deployment():
     before = {'project': 'shared-datasets-1', 'service': 'storage.googleapis.com', 'audit_log_config': [{'log_type': 'DATA_WRITE', 'exempted_members': []}]}
+    validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', before, before)]}, IMAGE, verified=False)
     after = {**before, 'audit_log_config': [*before['audit_log_config'], {'log_type': 'DATA_READ', 'exempted_members': []}]}
-    validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
+    with pytest.raises(ValueError, match='must remain unchanged'):
+        validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
     after['audit_log_config'] = [{'log_type': 'DATA_READ'}]
     with pytest.raises(ValueError, match='Write auditing'):
         validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
@@ -195,6 +197,9 @@ def test_health_role_cannot_gain_object_or_project_authority():
     ('google_project_iam_custom_role.dataset_usage_health', {'project': 'shared-datasets-1', 'role_id': 'sharedDatasetsUsageHealth', 'permissions': ['resourcemanager.projects.setIamPolicy']}),
     ('google_project_iam_member.dataset_usage_health', {'project': 'shared-datasets-1', 'member': 'allUsers', 'role': 'roles/owner'}),
     ('google_service_account_iam_member.dataset_usage_deployer_act_as', {'member': 'allUsers', 'role': 'roles/iam.serviceAccountUser'}),
+    ('google_cloud_run_v2_job_iam_member.dataset_usage_scheduler_invoker', {'project': 'shared-datasets-1', 'location': 'us-central1', 'name': 'dataset-usage', 'member': 'allUsers', 'role': 'roles/run.invoker'}),
+    ('module.dataset_usage_job.google_cloud_run_v2_job.this', {'template': [{'template': [{'service_account': 'other@shared-datasets-1.iam.gserviceaccount.com'}]}]}),
+    ('google_storage_bucket_iam_member.dataset_usage_sink_writer', {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'member': 'allUsers', 'role': 'roles/storage.objectAdmin'}),
 ])
 def test_existing_usage_authority_cannot_be_broadened(address, after):
     with pytest.raises(ValueError):
@@ -278,9 +283,14 @@ def test_raw_retention_cannot_drift_or_delete_inputs_too_early(rules):
 
 
 def test_real_provider_plan_preserves_defaults_and_computed_creation_fields():
-    plan = json.loads((ROOT / 'tests/fixtures/dataset_usage/retention-plan.json').read_text())
+    full_plan = json.loads((ROOT / 'tests/fixtures/dataset_usage/retention-plan.json').read_text())
+    with pytest.raises(ValueError, match='sink writer identity is unknown'):
+        validate_plan(full_plan, IMAGE, verified=False)
+    # Retain the provider's real raw-bucket defaults; obsolete fresh sink setup
+    # with a computed writer is outside the replacement's grant authority.
+    plan = {**full_plan, 'resource_changes': [row for row in full_plan['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw']}
     validate_plan(plan, IMAGE, verified=False)
-    required = {p for _, permissions in plan_checks(plan, project_number='123', target='dataset-usage') for p in permissions}
+    required = {p for _, permissions in plan_checks(full_plan, project_number='123', target='dataset-usage') for p in permissions}
     assert {'logging.exclusions.create', 'logging.exclusions.get', 'logging.sinks.create', 'storage.buckets.create'} <= required
     raw = next(row for row in plan['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw')
     assert raw['change']['after']['lifecycle_rule'][0]['condition'][0]['with_state'] == 'ANY'
