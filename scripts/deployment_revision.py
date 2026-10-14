@@ -18,6 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import deployment_emission as emissions
+from scripts.github_api_read import read
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
@@ -63,10 +64,10 @@ def require(condition, message):
 
 class GitHub:
     def get(self, path):
-        return json.loads(subprocess.check_output(["gh", "api", path]))
+        return json.loads(read(path))
 
     def pages(self, path, field=None):
-        pages = json.loads(subprocess.check_output(["gh", "api", "--paginate", "--slurp", path]))
+        pages = json.loads(read(path, paginate=True))
         require(isinstance(pages, list) and pages, "missing API pages")
         if field:
             count = pages[0].get("total_count")

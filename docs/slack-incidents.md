@@ -74,6 +74,14 @@ privileged users; they are not an undeletable audit store.
 Each checkpoint is bound to its exact main workflow revision/run/attempt by the
 existing Sigstore receipt mechanism. Notification batches permit multiple signed
 subjects; production receipt verification keeps its single-subject default.
+Incident/deployment and reviewed-dataset authorization JSON reads, including
+paginated enumeration, use at most three attempts
+for HTTP 500/502/503/504, the CLI's confirmed GitHub connection failure, or a
+60-second command timeout, waiting 5 then 15 seconds. Each attempt repeats the
+same explicit GET; failed or partial output is discarded. Authentication,
+authorization, rate-limit responses and unknown CLI errors fail immediately.
+Successful responses still pass all existing JSON, enumeration and provenance
+checks. This transport policy never retries writes or uncertain Slack posts.
 The read-only verifier retries the exact GitHub attestation-service HTTP 503 for
 the same repository and receipt digest at most three times, waiting 5 then 15
 seconds. Every attempt uses the same bytes and signer/source policy. Exhausted
