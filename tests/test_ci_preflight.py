@@ -442,42 +442,38 @@ def test_browser_releases_only_its_download_cache_before_installing_chromium(tmp
 
 @pytest.mark.parametrize('architecture', ['amd64', 'arm64'])
 def test_local_runtime_uses_the_actual_linux_server_architecture(architecture):
-    from scripts import ci_runtime
     server = {'Os': 'linux', 'Arch': architecture, 'Version': '29.8.2'}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)) as execute:
-        record = ci_runtime.local_runtime()
+    with mock.patch.object(preflight.subprocess, 'check_output', return_value=json.dumps(server)) as execute:
+        record = preflight.local_runtime()
     assert record == {'platform': f'linux/{architecture}', 'server_architecture': architecture, 'docker_version': '29.8.2'}
     execute.assert_called_once_with(['docker', 'version', '--format', '{{json .Server}}'], text=True)
 
 
 @pytest.mark.parametrize('operating_system,architecture', [('darwin', 'arm64'), ('windows', 'amd64'), ('linux', 'riscv64'), ('linux', 'ppc64le')])
 def test_unsupported_docker_runtime_fails_before_validation(operating_system, architecture):
-    from scripts import ci_runtime
     server = {'Os': operating_system, 'Arch': architecture, 'Version': '29.8.2'}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)), pytest.raises(ValueError, match='Linux Docker server'):
-        ci_runtime.local_runtime()
+    with mock.patch.object(preflight.subprocess, 'check_output', return_value=json.dumps(server)), pytest.raises(ValueError, match='Linux Docker server'):
+        preflight.local_runtime()
 
 
 @pytest.mark.parametrize('image_platform', ['linux/amd64', 'windows/arm64'])
 def test_mismatched_image_platform_cannot_silently_enable_emulation(tmp_path, image_platform):
-    from scripts import ci_runtime
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=image_platform) as execute, mock.patch.object(ci_runtime.subprocess, 'run') as run, pytest.raises(ValueError, match='differs from native runtime'):
-        ci_runtime.run_container(ROOT, tmp_path, 'geospatial-integration', 'pinned-image', 'linux/arm64')
+    with mock.patch.object(preflight.subprocess, 'check_output', return_value=image_platform) as execute, mock.patch.object(preflight.subprocess, 'run') as run, pytest.raises(ValueError, match='differs from native runtime'):
+        preflight.run_container(ROOT, tmp_path, 'geospatial-integration', 'pinned-image', 'linux/arm64')
     execute.assert_called_once_with(['docker', 'image', 'inspect', '--format', '{{.Os}}/{{.Architecture}}', 'pinned-image'], text=True)
     run.assert_not_called()
 
 
 @pytest.mark.parametrize('exit_code', [0, 7])
 def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_path, exit_code):
-    from scripts import ci_runtime
     (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': exit_code}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(ci_runtime.subprocess, 'run') as run:
+    with mock.patch.object(preflight.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(preflight.subprocess, 'run') as run:
         if exit_code:
             with pytest.raises(ValueError, match='container failed'):
-                ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
+                preflight.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
         else:
-            record = ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
+            record = preflight.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
             assert record['image_id'] == 'sha256:test-image'
             assert record['environment']['CI'] == 'true'
             assert record['environment']['OPENSSL_armcap'] == '0'
@@ -497,14 +493,126 @@ def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_pat
 
 @pytest.mark.parametrize('suite', SUITES)
 def test_every_local_suite_runs_in_ci_mode_without_forwarded_credentials(tmp_path, suite):
-    from scripts import ci_runtime
     (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': 0}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']) as execute, mock.patch.object(ci_runtime.subprocess, 'run'):
-        record = ci_runtime.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64')
+    with mock.patch.object(preflight.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']) as execute, mock.patch.object(preflight.subprocess, 'run'):
+        record = preflight.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64')
     create = execute.call_args_list[1].args[0]
     assert 'CI=true' in create
     assert create[create.index('--platform') + 1] == 'linux/arm64'
     assert '--entrypoint' not in create
     assert record['environment']['CI'] == 'true'
     assert not any('TOKEN' in value or 'GITHUB_RUN_ID' in value for value in create)
+
+
+def context(host="unix:///owned/docker.sock", *, tls_path=None, files=(), skip_verify=False):
+    return json.dumps([{
+        "Endpoints": {"docker": {"Host": host, "SkipTLSVerify": skip_verify}},
+        "TLSMaterial": {"docker": list(files)}, "Storage": {"TLSPath": str(tls_path)},
+    }])
+
+
+def test_secret_environment_and_default_adc_are_not_forwarded(tmp_path):
+    original = tmp_path / "original-home"
+    adc = original / ".config/gcloud/application_default_credentials.json"
+    adc.parent.mkdir(parents=True)
+    adc.write_text('{"token": "must-not-be-forwarded"}')
+    docker = original / ".docker"
+    docker.mkdir()
+    (docker / "config.json").write_text('{"auths": {"private-registry": "secret"}}')
+    caller = {
+        "PATH": "/owned/bin", "HOME": str(original), "DOCKER_HOST": "unix:///owned/docker.sock",
+        "DOCKER_CONFIG": str(docker), "GOOGLE_APPLICATION_CREDENTIALS": str(adc), "GOOGLE_CLOUD_PROJECT": "production",
+        "GITHUB_TOKEN": "secret", "GH_TOKEN": "secret", "GITHUB_RUN_ID": "123", "GITHUB_EVENT_PATH": "/real-event",
+        "SSH_AUTH_SOCK": "/agent", "AWS_SECRET_ACCESS_KEY": "secret", "NPM_TOKEN": "secret",
+        "HTTPS_PROXY": "http://proxy.test", "SSL_CERT_FILE": "/owned/ca.pem", "LANG": "C.UTF-8",
+    }
+    with preflight.isolated_host_environment(tmp_path, caller) as environment:
+        assert environment["PATH"] == caller["PATH"]
+        assert environment["HTTPS_PROXY"] == caller["HTTPS_PROXY"]
+        assert environment["SSL_CERT_FILE"] == caller["SSL_CERT_FILE"]
+        assert not any(key in environment for key in (
+            "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_RUN_ID",
+            "GITHUB_EVENT_PATH", "SSH_AUTH_SOCK", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN",
+        ))
+        assert Path(environment["HOME"]) != original
+        assert not (Path(environment["HOME"]) / ".config/gcloud/application_default_credentials.json").exists()
+        assert not (Path(environment["CLOUDSDK_CONFIG"]) / "application_default_credentials.json").exists()
+        assert json.loads((Path(environment["DOCKER_CONFIG"]) / "config.json").read_text()) == {}
+        isolated_home = Path(environment["HOME"])
+    assert not isolated_home.exists()
+    assert adc.exists()
+    assert json.loads((docker / "config.json").read_text())["auths"]
+
+
+def test_explicit_endpoint_needs_no_context_or_user_configuration(tmp_path):
+    with mock.patch("scripts.ci_preflight.subprocess.check_output") as inspect:
+        with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin", "DOCKER_HOST": "tcp://localhost:2375"}) as environment:
+            assert environment["DOCKER_HOST"] == "tcp://localhost:2375"
+            assert "DOCKER_TLS_VERIFY" not in environment
+        inspect.assert_not_called()
+
+
+def test_context_endpoint_is_resolved_before_user_config_is_hidden(tmp_path):
+    caller = {"PATH": "/bin", "HOME": "/caller", "DOCKER_CONTEXT": "selected", "DOCKER_HOST": "unix:///overridden.sock"}
+    with mock.patch("scripts.ci_preflight.subprocess.check_output", return_value=context()) as inspect:
+        with preflight.isolated_host_environment(tmp_path, caller) as environment:
+            assert environment["DOCKER_HOST"] == "unix:///owned/docker.sock"
+            assert "DOCKER_CONTEXT" not in environment
+    assert inspect.call_args.args[0] == ["docker", "context", "inspect", "selected"]
+    assert inspect.call_args.kwargs["env"] is caller
+
+
+@pytest.mark.parametrize("skip_verify", [False, True])
+def test_context_preserves_only_required_daemon_tls_material(tmp_path, skip_verify):
+    original = tmp_path / "tls-store" / "docker"
+    original.mkdir(parents=True)
+    for name in ("ca.pem", "cert.pem", "key.pem"):
+        (original / name).write_text("transport-only-" + name)
+    (original / "registry-token").write_text("not-transport")
+    metadata = context("tcp://daemon.test:2376", tls_path=original.parent, files=("ca.pem", "cert.pem", "key.pem"), skip_verify=skip_verify)
+    with mock.patch("scripts.ci_preflight.subprocess.check_output", return_value=metadata):
+        with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin"}) as environment:
+            copied = Path(environment["DOCKER_CERT_PATH"])
+            assert copied != original
+            assert {path.name for path in copied.iterdir()} == {"ca.pem", "cert.pem", "key.pem"}
+            assert (copied / "key.pem").read_text() == "transport-only-key.pem"
+            assert (copied / "key.pem").stat().st_mode & 0o777 == 0o600
+            assert environment["DOCKER_TLS" if skip_verify else "DOCKER_TLS_VERIFY"] == "1"
+    assert not copied.exists()
+
+
+def test_explicit_tls_copies_daemon_keys_without_registry_auth(tmp_path):
+    source = tmp_path / "certificates"
+    source.mkdir()
+    for name in ("ca.pem", "cert.pem", "key.pem"):
+        (source / name).write_text(name)
+    (source / "config.json").write_text('{"auths": {"private": "secret"}}')
+    caller = {"PATH": "/bin", "DOCKER_HOST": "tcp://daemon.test:2376", "DOCKER_TLS_VERIFY": "1", "DOCKER_CERT_PATH": str(source)}
+    with preflight.isolated_host_environment(tmp_path, caller) as environment:
+        copied = Path(environment["DOCKER_CERT_PATH"])
+        assert {path.name for path in copied.iterdir()} == {"ca.pem", "cert.pem", "key.pem"}
+        assert not (copied / "config.json").exists()
+
+
+@pytest.mark.parametrize("metadata", ["[]", "{}", context("ssh://agent@host"), context(files=("registry-auth",)), context(files=("cert.pem",))])
+def test_missing_or_unsupported_context_fails_without_transport_fallback(tmp_path, metadata):
+    with mock.patch("scripts.ci_preflight.subprocess.check_output", return_value=metadata):
+        with pytest.raises(ValueError):
+            with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin"}):
+                pytest.fail("unsupported context was accepted")
+
+
+def test_missing_context_is_reported_as_configuration_failure(tmp_path):
+    with mock.patch("scripts.ci_preflight.subprocess.check_output", side_effect=subprocess.CalledProcessError(1, ["docker"])):
+        with pytest.raises(ValueError, match="Cannot resolve the Docker context"):
+            with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin"}):
+                pytest.fail("missing context was accepted")
+
+
+def test_missing_declared_tls_file_fails_before_using_another_identity(tmp_path):
+    metadata = context("tcp://daemon.test:2376", tls_path=tmp_path / "missing", files=("ca.pem",))
+    with mock.patch("scripts.ci_preflight.subprocess.check_output", return_value=metadata):
+        with pytest.raises(ValueError, match="Missing or invalid Docker transport TLS file"):
+            with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin"}):
+                pytest.fail("missing TLS file was accepted")
