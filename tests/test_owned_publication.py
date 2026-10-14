@@ -15,6 +15,8 @@ from ingestion.common.identity_reset import CONTRACT_ID, IdentityResetCandidate
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.sea_ice_daily import run as sea_ice
 from ingestion.wdpa_monthly import run as wdpa
+from scripts import gcs_asset
+from test_compliance_audit import audit, blob_info
 from test_identity_reset import fixture, install_fixture
 from test_publication import LostResponse, publication_temp_directory
 from test_sea_ice_daily import fake_asset_outputs as sea_outputs
@@ -147,6 +149,12 @@ class OwnedPublicationTests(unittest.TestCase):
                     version = store.inspect(readme_uri)
                     self.assertEqual(version.sha256, p.digest((outputs.fgb.parent / "asset_README.md").read_bytes()))
                 self.assertEqual(run.value["sha256"]["manifest"], store.inspect(f"gs://bucket/{asset.release_object(DATE, '.manifest.json')}").sha256)
+                categories = audit.load_categories(audit.REPO_ROOT / "catalog/categories.yaml")
+                for uri in store.objects:
+                    _bucket, name = p.split_uri(uri)
+                    if name.startswith(asset.root + "/"):
+                        self.assertEqual(gcs_asset.validate_asset_object_name(name, categories), [], name)
+                        self.assertEqual(audit.validate_object_layout(asset.root, blob_info(name)), [], name)
                 if asset.slug.startswith("wdpa-"):
                     self.assertEqual(len(record["release_paths"]), 12)
                     self.assertEqual(record["localization"]["translation_locales"], list(wdpa.translations.LOCALES))

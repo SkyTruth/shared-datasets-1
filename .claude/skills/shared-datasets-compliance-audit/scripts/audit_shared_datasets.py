@@ -36,6 +36,7 @@ from scripts.raster_asset import (
     validate_zarr_manifest_payload,
 )
 from scripts import release_feature_model
+from ingestion.common.publication import RUN_RECORD_NAME, protocol_path_kind
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
@@ -67,7 +68,6 @@ SYSTEM_TOP_LEVEL = {"000-system"}
 ROOT_ALLOWED_DOCS = {"README.md"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-RUN_RECORD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 UPLOADER_METADATA_KEYS = ("uploaded_by", "uploader", "created_by", "creator", "owner", "author")
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_MODES = {"report": "INFO", "warn": "WARN", "enforce": "ERROR"}
@@ -562,6 +562,8 @@ def validate_object_layout(root: str, blob: BlobInfo, row: Optional[Dict[str, st
 
     if rel == "README.md":
         return findings
+    if parts and parts[0] == "publications" and protocol_path_kind(blob.name) is not None:
+        return findings
     if len(parts) >= 2 and parts[0] == "previews":
         ext = Path(parts[-1]).suffix.lower()
         if ext not in PREVIEW_EXTENSIONS:
@@ -647,13 +649,13 @@ def validate_object_layout(root: str, blob: BlobInfo, row: Optional[Dict[str, st
         findings.extend(validate_data_extension(root=root, blob=blob, row=row, context="Release"))
         return findings
     if len(parts) == 2 and parts[0] == "runs":
-        if not RUN_RECORD_RE.match(parts[1]):
+        if not RUN_RECORD_NAME.fullmatch(parts[1]):
             findings.append(
                 Finding(
                     "ERROR",
                     blob.name,
                     "run-record-name",
-                    "`runs/` records should be named YYYY-MM-DD.json.",
+                    "`runs/` records should be named YYYY-MM-DD.json or YYYY-MM-DD.translation-notice.json.",
                     hint,
                     "Confirm run identity before renaming.",
                 )
@@ -689,7 +691,7 @@ def validate_object_layout(root: str, blob: BlobInfo, row: Optional[Dict[str, st
             "ERROR",
             blob.name,
             "asset-layout",
-            "Object is outside the standard README.md/latest/releases/runs asset layout.",
+            "Object is outside the standard asset layout or has a malformed publication path.",
             hint,
             "Do not move automatically; identify uploader/owner and confirm intended asset placement first.",
         )

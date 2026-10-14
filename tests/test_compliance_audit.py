@@ -10,6 +10,8 @@ from unittest import mock
 
 from google.auth.exceptions import RefreshError
 
+from scripts import gcs_asset
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = REPO_ROOT / ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py"
@@ -180,6 +182,37 @@ class LocalComplianceAuditTests(unittest.TestCase):
         )
 
         self.assertEqual(findings, [])
+
+    def test_operational_paths_agree_between_audit_and_upload_validation(self):
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        categories = {"100-geographic-reference": {"110-boundaries"}}
+        key = "a" * 64
+        valid = [
+            "publications/reset.json", "publications/state.json",
+            f"publications/receipts/{key}.json",
+            f"publications/inputs/{key}/0.catalog.json",
+            f"publications/inputs/{key}/1.fgb",
+            f"publications/inputs/{key}/2.metadata.pt_br.ndjson.gz",
+            "runs/2026-10-05.json", "runs/2026-10-05.translation-notice.json",
+        ]
+        invalid = [
+            "publications/unknown.json", "publications/state.json/extra",
+            f"publications/receipts/{key[:-1]}.json",
+            f"publications/receipts/{key.upper()}.json",
+            f"publications/inputs/{key}/01.fgb",
+            f"publications/inputs/{key}/0.sqlite",
+            f"publications/inputs/{key}/0.metadata.pt-BR.ndjson.gz",
+            f"publications/inputs/{key}/nested/0.fgb",
+            "runs/2026-10-05.other.json", "runs/2026-10-05.translation-notice.json.bak",
+            "runs/2026-10-05.translation-notice.json\n",
+            "runs/2026-10-05.json\n", "runs/2026-10-05/translation-notice.json",
+        ]
+        for allowed, paths in ((True, valid), (False, invalid)):
+            for relative in paths:
+                name = f"{root}/{relative}"
+                with self.subTest(name=name, allowed=allowed):
+                    self.assertEqual(not audit.validate_object_layout(root, blob_info(name)), allowed)
+                    self.assertEqual(not gcs_asset.validate_asset_object_name(name, categories), allowed)
 
     def test_readme_validation_flags_generic_properties_placeholder(self):
         readme = blob_info("100-geographic-reference/110-boundaries/example-asset/README.md")

@@ -31,7 +31,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ingestion.common.identity_reset import require_unmanaged_target
-from ingestion.common.publication import is_protocol_namespace, protocol_path_kind
+from ingestion.common.publication import RUN_RECORD_NAME, is_protocol_namespace, protocol_path_kind
 
 app = typer.Typer(no_args_is_help=True)
 release_index_app = typer.Typer(no_args_is_help=True)
@@ -39,7 +39,6 @@ app.add_typer(release_index_app, name="release-index")
 console = Console()
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-RUN_RECORD_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated", "000-system"}
 ROOT_ALLOWED_DOCS = {"README.md"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
@@ -240,8 +239,8 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
             errors.append(f"{rel[0]}/ file extension {ext or '<none>'} is not a documented source/archive format")
         return errors
     if rel[0] == "runs":
-        if len(rel) != 2 or not RUN_RECORD_PATTERN.fullmatch(rel[1]):
-            errors.append("runs/ records must be named YYYY-MM-DD.json")
+        if len(rel) != 2 or not RUN_RECORD_NAME.fullmatch(rel[1]):
+            errors.append("runs/ records must be named YYYY-MM-DD.json or YYYY-MM-DD.translation-notice.json")
         return errors
 
     errors.append("object is outside README.md/latest/releases/previews/source/archive/runs layout")
