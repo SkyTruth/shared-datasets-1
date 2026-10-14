@@ -145,7 +145,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("push", trigger)
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
-            ["Release index rebuild"],
+            ["Release index rebuild", "CI"],
         )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
@@ -154,6 +154,15 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             "executor_sha", "authorization_artifact_id", "authorization_sha256", "pr_number", "mutation_completed",
         })
         self.assertEqual(job["environment"], "shared-datasets-production")
+        self.assertEqual(job["needs"], "select-repo-changes")
+        self.assertIn("needs.select-repo-changes.outputs.should_deploy == 'true'", job["if"])
+        selection = workflow["jobs"]["select-repo-changes"]
+        self.assertEqual(selection["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read"})
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", selection["if"])
+        self.assertIn("github.event.workflow_run.event == 'push'", selection["if"])
+        selection_steps = workflow_steps_by_name(workflow, "select-repo-changes")
+        self.assertIn("--bootstrap", selection_steps["Verify exact successful main CI source"]["run"])
+        self.assertIn("catalog_web_changes.py", selection_steps["Select catalog inputs without duplicating publication refresh"]["run"])
         self.assertEqual(job["concurrency"]["group"], "catalog-web-deploy")
         self.assertFalse(job["concurrency"]["cancel-in-progress"])
         self.assertEqual(steps["Check out repository"]["with"]["ref"],

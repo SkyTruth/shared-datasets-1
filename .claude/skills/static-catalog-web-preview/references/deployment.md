@@ -1,5 +1,15 @@
 # Catalog deployment
 
+UI-only PRs also deploy automatically after their complete `main` CI run succeeds.
+The catalog workflow verifies the exact CI revision and retained comparison plan,
+requires merged same-repository PRs covering the changed catalog inputs, and
+selects `web/catalog/`, asset docs, catalog CSV/taxonomy, the catalog builder and
+its publication/selection helpers. Unrelated changes do not allocate publisher
+credentials. If the same push includes an immutable dataset mutation plan, its
+publication workflow owns the refresh instead, so there is no duplicate deploy.
+Automatic refreshes retain the protected publisher, serialized signed receipts,
+generation-preconditioned writes, live verification and no-cache metadata.
+
 After trusted PRs merge to `main`, the post-merge dataset mutation workflow
 runs first, including finalization of prepared translation bundles. When it
 succeeds, `.github/workflows/catalog-web-deploy.yml` downloads existing
