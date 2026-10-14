@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "collection_enabled": false,
+  "collection_enabled": true,
   "raw_retention_days": 7,
   "referrers": {
     "feature-three.cerulean.skytruth.org": "Cerulean",

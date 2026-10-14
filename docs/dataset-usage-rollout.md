@@ -78,6 +78,27 @@ UTC days can therefore require more than two wall-clock days after activation.
 Do not replace missing evidence with a passing status or fabricate receipts to
 claim all-consumer connection.
 
+## Initial collection trial (2026-10-14)
+
+The [trial cost forecast](dataset-usage-trial-cost-2026-10-14.json) uses one
+complete day of project-level Monitoring measurements: 5,301 source-bucket
+requests and 196 catalog requests. Its conservative allowances forecast $15.84
+per month against the $25 target. This is a forecast from measured demand, not
+an observed bill for the replacement sources or a hard spending cap. Recheck
+native CSV volume, receipt traffic, runtime and incremental logging during the
+trial and pause the affected source if its forecast exceeds the target.
+
+The initial protected deployment enables native bucket-log delivery and the
+catalog's daily application reporter, then runs one collector canary. Both
+source readiness records remain unverified, so the daily Scheduler stays paused.
+Record real delivery, probe exclusion, cached use, writer isolation and bounded
+failure evidence before a later reviewed change verifies a source and resumes
+its scheduled aggregation. Do not infer readiness from cost evidence alone.
+
+This stage retains all historical data and legacy resources. Other consumer
+adapters still need their own reviewed deployments; registering a writer does
+not establish that its application reports successfully.
+
 ## Adjacent finding
 
 A dependency resolution outside Cerulean UI's lockfile selected WeatherLayers
