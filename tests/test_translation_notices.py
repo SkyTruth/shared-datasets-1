@@ -9,7 +9,8 @@ import pytest
 from google.api_core.exceptions import PreconditionFailed
 
 from ingestion.common import feature_metadata, translation_notices as notices
-from scripts import feature_metadata_localization as loc, release_feature_model as model, translation_local_io
+from scripts import feature_metadata_localization as loc, gcs_asset, release_feature_model as model, translation_local_io
+from test_compliance_audit import audit, blob_info
 from test_feature_metadata_localization import sidecar_record, VALID_HASH_A
 
 
@@ -48,9 +49,8 @@ class Bucket:
         return Blob()
 
 
-def fixture(tmp_path, *, count=2, access="public", values=None, translation_rows=()):
+def fixture(tmp_path, *, count=2, access="public", values=None, translation_rows=(), root="category/group/example-asset"):
     bucket = Bucket()
-    root = "category/group/example-asset"
     prefix = f"{root}/releases/2026-05-01/example-asset"
     values = values if values is not None else [f"Sensitive <@ALL> {i}" for i in range(1, count + 1)]
     count = len(values)
@@ -113,6 +113,21 @@ def test_one_combined_notice_exports_all_debt_and_respects_privacy(tmp_path, mon
     assert marker["status"] == "delivered"
     assert len(marker["debt_files"]) == 2
     assert len(bucket.downloads) == 2
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+def test_persisted_notice_claims_pass_audit_and_upload_validation(tmp_path, monkeypatch, count):
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    root = "100-geographic-reference/110-boundaries/example-asset"
+    client, bucket, uri, row = fixture(tmp_path, count=count, root=root)
+    with mock.patch.object(notices.catalog_csv, "catalog_row", return_value=row), mock.patch.object(notices.slack_notify, "notify", return_value=True):
+        assert notices.notify_release(client, uri) == ("delivered" if count else "below_threshold")
+    claims = [name for name in bucket.objects if "/runs/" in name]
+    assert claims == ([f"{root}/runs/2026-05-01.translation-notice.json"] if count else [])
+    for name in claims:
+        assert json.loads(bucket.objects[name][1])["status"] == "delivered"
+        assert audit.validate_object_layout(root, blob_info(name)) == []
+        assert gcs_asset.validate_asset_object_name(name, {"100-geographic-reference": {"110-boundaries"}}) == []
 
 
 def test_unknown_delivery_is_not_reported_as_delivered_or_retried(tmp_path, monkeypatch, caplog):

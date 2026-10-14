@@ -21,6 +21,7 @@ FINALIZATION_VERSION = "finalize-promoted-release-v1"
 HEX64 = re.compile(r"[0-9a-f]{64}")
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 INPUT_NAME = re.compile(r"(?:0|[1-9][0-9]*)\.(?:fgb|pmtiles|geojson|ndgeojson|csv|tif|tiff|md|schema\.json|manifest\.json|metadata(?:\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*)?\.ndjson\.gz|catalog\.json)")
+RUN_RECORD_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\.translation-notice)?\.json")
 GLOBAL_TARGETS = {"_catalog/shared-datasets-catalog.csv", "_catalog/web/catalog.json"}
 PHASES = ("checkpoint", "data", "commit", "asset_derived", "global_derived")
 MODES = {"complete_release", "metadata_update", "object_repair", "catalog_update"}

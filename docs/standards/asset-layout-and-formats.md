@@ -113,6 +113,7 @@ chunked array products where COG would be a poor access pattern.
     {asset-slug}-preview.png
   runs/
     YYYY-MM-DD.json
+    YYYY-MM-DD.translation-notice.json # translation notification delivery claim
   index-loads/
     YYYY-MM-DD/
       {load-id}.json
@@ -138,6 +139,13 @@ reproducible downstream model/analysis snapshots.
 
 Use `runs/YYYY-MM-DD.json` when a scheduled job generated/refreshed the asset, a
 failed run needs documentation, or a backfill occurred.
+
+The shared translation completion hook uses
+`runs/YYYY-MM-DD.translation-notice.json` to claim a notification attempt and
+record its delivery outcome. This is a notification record, not a dataset run
+result. Only this additional suffix is allowed; arbitrary named records under
+`runs/` remain invalid. See [translation maintenance notices](../feature-metadata-api.md#translation-maintenance-notices)
+for the create-only claim and uncertain-delivery behavior.
 
 Use `index-loads/YYYY-MM-DD/{load-id}.json` when a release metadata sidecar is
 loaded into a NoSQL serving index. These records are operational status for the
