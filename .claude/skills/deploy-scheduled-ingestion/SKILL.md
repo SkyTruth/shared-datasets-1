@@ -220,29 +220,30 @@ production job that imports the shared helpers.
 
 4. If infrastructure is needed before an image can be pushed, add that
    prerequisite to Terraform and open a focused PR. After review and merge, let
-   the protected workflow apply it before pushing the image.
+   the protected IAM workflow apply it before the deployment workflow pushes
+   the image. First-time bootstrap does not require a local build or push.
 
-5. Build and push an immutable image after the required repository and auth
-   surface exists:
+5. Let the protected deployment workflow prepare and push the image after
+   successful main CI and the required repository and IAM prerequisites:
 
-```bash
-IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/<job-name>:YYYYMMDDHHMMSS
-gcloud auth configure-docker us-central1-docker.pkg.dev
-docker build --platform linux/amd64 -f ingestion/<job>/Dockerfile -t "$IMAGE" .
-docker push "$IMAGE"
-```
+   - `sea-ice-daily-deploy.yml` and `eamlis-monthly-deploy.yml` use
+     `scripts/tested_image_authorization.py` to verify and load the exact Linux
+     AMD64 image retained by main CI's successful `production-images` suite.
+     They tag and push those tested bytes without rebuilding.
+   - `wdpa-monthly-deploy.yml` verifies the accepted producer image and retained
+     bundle, then builds `Dockerfile.promotion` with reviewed publication code
+     inside the protected workflow. It does not regenerate dataset artifacts.
+   - The workflow resolves and deploys the immutable registry digest. Do not
+     substitute a locally built or pushed image, including during bootstrap.
 
-6. Update Terraform to reference the exact image URI and run a local review
-   plan, but do not apply it locally:
-
-```bash
-terraform -chdir=terraform/envs/prod plan  -var="wdpa_monthly_image=$IMAGE"
-```
-
-Open a PR with the Terraform change and plan summary. The protected production
-workflow applies after `jonaraphael` review and merge to `main`. If no workflow
-covers the resource class, add a constrained workflow in the PR instead of using
-a local apply.
+6. Include any job Terraform changes and a local review plan summary in the PR.
+   Confirm the selected deployment workflow's resource-change allowlist covers
+   the intended mutation. After `jonaraphael` review, merge to `main`, and
+   successful `ci-ready`, the protected workflow plans with its prepared image
+   digest and applies the saved, allowlisted plan. If no workflow covers the
+   resource class, add a constrained workflow in the PR instead of using a local
+   apply. See [job operations](references/job-operations.md) for job-specific
+   deployment inputs and canary behavior.
 
 7. Execute the job once. For short jobs, wait for completion:
 

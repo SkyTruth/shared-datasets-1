@@ -8,8 +8,11 @@ container recipes and processing limits remain in `ingestion/<job>/README.md`.
 Production deploys run through `.github/workflows/eamlis-monthly-deploy.yml`
 in the `shared-datasets-production` environment. Merging reviewed changes that
 touch this job, `ingestion/common/`, the copied `scripts/` modules, or the job
-Terraform builds a fresh image from `main`, smoke-tests it, pushes an immutable
-digest, applies only `module.eamlis_monthly_job.google_cloud_run_v2_job.this`,
+Terraform routes deployment through successful main CI. The deploy workflow
+uses `scripts/tested_image_authorization.py` to verify and load the exact image
+retained by CI's `production-images` suite, smoke-tests and pushes those bytes
+without rebuilding, pins the immutable registry digest, applies only
+`module.eamlis_monthly_job.google_cloud_run_v2_job.this`,
 runs a waited canary execution, and validates the latest release metadata
 contract plus asset-scoped bucket hygiene. Use the workflow's `canary_run_date`
 dispatch input for a deliberate backfill or metadata-contract repair run. Do
