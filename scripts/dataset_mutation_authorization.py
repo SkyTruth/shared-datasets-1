@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Bind mutation documents to accepted revisions and immutable Actions handoffs.
 
-Only this module talks to GitHub. Plan schemas/serialization live in
-reviewed_dataset_plan; storage transactions and receipts belong to the publisher.
+GitHub JSON read transport is shared with deployment verification. Plan schemas
+and serialization live in reviewed_dataset_plan; storage transactions and
+receipts belong to the publisher.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import reviewed_dataset_plan as plans
+from scripts.github_api_read import read
 
 Error = plans.PlanValidationError
 REVIEWER = "jonaraphael"
@@ -54,10 +56,10 @@ class GitHub:
     """Thin gh transport. --paginate follows every Link; --slurp preserves pages."""
 
     def get(self, path: str) -> Any:
-        return plans.strict_json_loads(subprocess.check_output(["gh", "api", path]))
+        return plans.strict_json_loads(read(path))
 
     def pages(self, path: str, *, field: str | None = None) -> list[dict[str, Any]]:
-        pages = plans.strict_json_loads(subprocess.check_output(["gh", "api", "--paginate", "--slurp", path]))
+        pages = plans.strict_json_loads(read(path, paginate=True))
         require(isinstance(pages, list) and bool(pages), "missing paginated API response")
         total = None
         if field is not None:
