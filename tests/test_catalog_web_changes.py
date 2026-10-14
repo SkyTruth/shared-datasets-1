@@ -1,0 +1,169 @@
+"""Exercise CI artifacts, real Git comparisons and the catalog selection CLI."""
+
+import base64
+from copy import deepcopy
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from scripts.catalog_web_changes import should_refresh
+from scripts import reviewed_dataset_plan as plans
+
+ROOT = Path(__file__).resolve().parents[1]
+REPO = {"id": 100, "full_name": "SkyTruth/shared-datasets-1", "default_branch": "main"}
+PREFIX = f"repos/{REPO['full_name']}"
+
+
+class GitHub:
+    def __init__(self, responses):
+        self.responses = responses
+
+    def get(self, path):
+        return self.responses[path]
+
+    def pages(self, path):
+        return self.responses[path]
+
+
+@pytest.fixture
+def case(tmp_path, monkeypatch):
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Catalog test")
+    git("commit", "--allow-empty", "-m", "base")
+    before = git("rev-parse", "HEAD")
+    monkeypatch.chdir(tmp_path)
+
+    def build(paths=("web/catalog/app.js",), *, mutation=False, count=1):
+        if mutation:
+            document = plans.normalize_document({"plan_version": 1,
+                "finalization_version": plans.FINALIZATION_VERSION,
+                "publish": {"asset_slug": "catalog-web", "proposal_id": "test",
+                    "promotions": [{"source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/test/app.js",
+                                    "source_generation": "10", "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/app.js",
+                                    "destination_generation": "20"}]}})
+            raw = plans.canonical_bytes(document)
+            plan_path = plans.document_path(document)
+            paths = (*paths, plan_path)
+        responses = {}
+        for number in range(1, count + 1):
+            for path in paths:
+                target = tmp_path / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw if mutation and path == plan_path else str(number).encode())
+            git("add", "--all")
+            git("commit", "-m", f"merged PR {number}")
+            head = git("rev-parse", "HEAD")
+            pr = {"number": number, "state": "closed", "merged": True, "merged_at": "2026-10-13T00:00:00Z",
+                  "draft": False, "head": {"sha": head, "repo": REPO},
+                  "base": {"ref": "main", "repo": REPO}, "merge_commit_sha": head,
+                  "changed_files": len(paths), "body": ""}
+            responses[f"{PREFIX}/commits/{head}/pulls?per_page=100"] = [pr]
+            responses[f"{PREFIX}/pulls/{number}"] = pr
+            responses[f"{PREFIX}/pulls/{number}/files?per_page=100"] = [
+                {"filename": path, "status": "added", "sha": git("rev-parse", f"HEAD:{path}")}
+                for path in paths]
+            if mutation:
+                blob = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+                responses[f"{PREFIX}/git/trees/{head}?recursive=1"] = {"truncated": False,
+                    "tree": [{"path": plan_path, "mode": "100644", "type": "blob", "sha": blob}]}
+                responses[f"{PREFIX}/git/blobs/{blob}"] = {"encoding": "base64", "content": base64.b64encode(raw).decode(), "sha": blob, "size": len(raw)}
+        run = {"id": 123, "run_attempt": 2, "head_sha": head, "path": ".github/workflows/ci.yml",
+               "event": "push", "head_branch": "main", "status": "completed", "conclusion": "success",
+               "repository": REPO, "head_repository": REPO}
+        responses[f"{PREFIX}/actions/runs/123/attempts/2"] = run
+        event = {"repository": REPO, "workflow_run": deepcopy(run)}
+        env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO["full_name"]}
+        plan = {"base": before, "head": head, "tested_sha": head,
+                "changed_paths": git("diff", "--name-only", before, head).splitlines(),
+                "source": {"run_id": "123", "run_attempt": 1}}
+        return GitHub(responses), event, env, [plan]
+
+    return build
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_merged_catalog_prs_refresh_once_after_successful_ci(case, count):
+    assert should_refresh(*case(count=count))
+
+
+@pytest.mark.parametrize("paths", [("docs/ci-preflight.md",), ("web/unrelated/app.js",), ("tests/test_catalog_web_changes.py",)])
+def test_unrelated_changes_do_not_allocate_publisher(case, paths):
+    assert not should_refresh(*case(paths))
+
+
+def test_publication_owns_the_refresh_for_mixed_ui_and_mutation_pr(case):
+    assert not should_refresh(*case(mutation=True))
+
+
+@pytest.mark.parametrize("path", ["web/catalog/styles.css", "scripts/catalog_site.py",
+    "catalog/shared-datasets-catalog.csv", "docs/assets/example.md"])
+def test_changed_bundle_and_catalog_inputs_refresh(case, path):
+    assert should_refresh(*case((path,)))
+
+
+def test_missing_ci_plan_is_rejected(case):
+    api, event, env, _ = case()
+    with pytest.raises(ValueError, match="missing validation plan"):
+        should_refresh(api, event, env, [])
+
+
+@pytest.mark.parametrize("field,value", [("conclusion", "failure"), ("status", "in_progress"),
+    ("event", "pull_request"), ("head_branch", "feature"), ("head_sha", "b" * 40),
+    ("path", ".github/workflows/other.yml"), ("head_repository", {"id": 200, "full_name": "evil/fork"})])
+def test_untrusted_or_unsuccessful_source_is_rejected(case, field, value):
+    args = case()
+    args[0].responses[f"{PREFIX}/actions/runs/123/attempts/2"][field] = value
+    with pytest.raises(ValueError):
+        should_refresh(*args)
+
+
+@pytest.mark.parametrize("changes", [{"changed_paths": []}, {"tested_sha": "b" * 40},
+    {"source": {"run_id": "124", "run_attempt": 1}}, {"source": {"run_id": "123", "run_attempt": 3}}])
+def test_another_or_corrupted_ci_plan_is_rejected(case, changes):
+    args = case()
+    args[3][0].update(changes)
+    with pytest.raises(ValueError):
+        should_refresh(*args)
+
+
+def test_missing_merged_pr_or_unreviewed_catalog_file_is_rejected(case):
+    args = case()
+    commit_path = f"{PREFIX}/commits/{args[1]['workflow_run']['head_sha']}/pulls?per_page=100"
+    pr = args[0].responses[commit_path][0]
+    args[0].responses[commit_path] = []
+    with pytest.raises(ValueError, match="merged same-repository PR"):
+        should_refresh(*args)
+    args[0].responses[commit_path] = [pr]
+    args[0].responses[f"{PREFIX}/pulls/1/files?per_page=100"] = [{"filename": "README.md"}]
+    with pytest.raises(ValueError, match="not covered"):
+        should_refresh(*args)
+
+
+def test_real_cli_consumes_saved_ci_artifact_and_writes_workflow_output(case, tmp_path):
+    api, event, env, plan = case()
+    fixture_dir = tmp_path / "fixture"
+    fixture_dir.mkdir()
+    (fixture_dir / "plan.json").write_text(json.dumps(plan[0]))
+    event_path = fixture_dir / "event.json"
+    event_path.write_text(json.dumps(event))
+    responses = fixture_dir / "responses.json"
+    responses.write_text(json.dumps(api.responses))
+    gh = fixture_dir / "gh"
+    gh.write_text(f"#!{sys.executable}\nimport json,os,sys\nvalue=json.load(open(os.environ['GH_FIXTURE']))[sys.argv[-1]]\nprint(json.dumps([value] if '--slurp' in sys.argv else value))\n")
+    gh.chmod(0o755)
+    output = fixture_dir / "github-output"
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/catalog_web_changes.py"), "--plan-dir", str(fixture_dir)],
+        env={**os.environ, **env, "PATH": str(fixture_dir) + os.pathsep + os.environ["PATH"],
+             "GH_FIXTURE": str(responses), "GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output)},
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == "should_deploy=true\n"
