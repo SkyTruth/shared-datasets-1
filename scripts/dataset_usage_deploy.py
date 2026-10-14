@@ -12,6 +12,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.dataset_usage.model import Classifier
 from ingestion.dataset_usage.run import activation_valid, cost_evidence_valid
 from scripts.catalog_csv import read_catalog_rows_text
+from scripts import deployment_revision
+
+READER_FILES = (
+    'services/catalog_viewer/usage.py',
+    'services/catalog_viewer/usage_assets/app.js',
+    'services/catalog_viewer/usage_assets/index.html',
+)
+
+
+def verify_reader_ready(root, api, repository):
+    """Require a signed deployment of the current reader before any writer switch.
+
+    A later failed or pending reader attempt cannot reuse an older success.
+    Unrelated executor changes may reuse the reader only when its bytes match.
+    This also guards standalone protected usage-workflow dispatches.
+    """
+    records = api.pages(f'repos/{repository}/deployments?environment=production-catalog-viewer&per_page=100')
+    if not records:
+        raise ValueError('Deploy the compatible catalog reader before the usage writer')
+    record = max(records, key=lambda row: row['id'])
+    payload = deployment_revision.verify_record(api, repository, record)
+    statuses = deployment_revision.verified_statuses(api, repository, record)
+    if payload['target'] != 'catalog-viewer' or not statuses or statuses[0].get('state') != 'success' or statuses[0].get('description') != 'verified':
+        raise ValueError('Latest catalog reader deployment is not verified')
+    for relative in READER_FILES:
+        deployed = subprocess.check_output(['git', 'show', f"{record['sha']}:{relative}"])
+        if deployed != (root / relative).read_bytes():
+            raise ValueError('Deploy the current compatible catalog reader before the usage writer')
 
 RETIREMENT_RESOURCES = {
     'google_logging_project_sink.dataset_usage',
@@ -214,6 +242,8 @@ def main():
     if args.targets:
         print('\n'.join(sorted(RESOURCES)))
     elif args.plan_json and args.image:
+        import os
+        verify_reader_ready(root, deployment_revision.GitHub(), os.environ['GITHUB_REPOSITORY'])
         plan = json.loads(args.plan_json.read_text())
         retirement_verified = False
         if args.retire_legacy:

@@ -52,7 +52,10 @@ absence of receipts never establishes zero use.
 ## Rollout order and evidence
 
 1. Review/merge the shared implementation and verify protected deployment and SDK
-   publication. Collection starts disabled; keep legacy exports disabled.
+   publication. CI deploys the compatible dashboard before the collector. The
+   writer's saved-plan guard requires the latest signed, verified dashboard
+   deployment to contain the current reader bytes, including for standalone
+   workflow dispatches. Collection starts disabled; keep legacy exports disabled.
 2. Pin real SDK bytes in focused consumer changes, finish their prerequisites,
    run each repository's checks and deploy through its normal reviewed path.
 3. Review measured incremental-cost forecasts for a controlled trial; enable

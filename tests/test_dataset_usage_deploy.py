@@ -4,16 +4,43 @@ import copy
 import json
 import re
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from ingestion.dataset_usage.run import COST_COMPONENTS
-from scripts.dataset_usage_deploy import validate_plan, validate_rollout
+from scripts import dataset_usage_deploy
+from scripts.dataset_usage_deploy import validate_plan, validate_rollout, verify_reader_ready
 from scripts.terraform_plan_permissions import plan_checks
 from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/dataset-usage@sha256:' + 'a' * 64
+
+
+def test_writer_requires_latest_verified_reader_and_matching_bytes(monkeypatch):
+    api = Mock()
+    latest = {'id': 2, 'sha': 'a' * 40}
+    api.pages.return_value = [{'id': 1, 'sha': 'b' * 40}, latest]
+    verify = Mock(return_value={'target': 'catalog-viewer'})
+    monkeypatch.setattr(dataset_usage_deploy.deployment_revision, 'verify_record', verify)
+    statuses = Mock(return_value=[{'state': 'success', 'description': 'verified'}])
+    monkeypatch.setattr(dataset_usage_deploy.deployment_revision, 'verified_statuses', statuses)
+    contents = [(ROOT / path).read_bytes() for path in dataset_usage_deploy.READER_FILES]
+    reader = Mock(side_effect=contents)
+    monkeypatch.setattr(dataset_usage_deploy.subprocess, 'check_output', reader)
+    verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    verify.assert_called_once_with(api, 'SkyTruth/shared-datasets-1', latest)
+    statuses.return_value = [{'state': 'failure', 'description': 'failed'}]
+    with pytest.raises(ValueError, match='not verified'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    statuses.return_value = [{'state': 'success', 'description': 'verified'}]
+    reader.side_effect = [b'old reader']
+    with pytest.raises(ValueError, match='current compatible'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    api.pages.return_value = []
+    with pytest.raises(ValueError, match='before the usage writer'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
 
 
 def resource(address, after, before=None, actions=None):
