@@ -78,9 +78,9 @@ def record(slug, operation):
     global _reporter
     producer = os.environ.get("DATASET_USAGE_PRODUCER")
     if not producer:
-        return
+        return False
     if _reporter is None:
         from skytruth_shared_datasets import UsageReporter
         _reporter = UsageReporter(producer, bucket=os.environ["DATASET_USAGE_RAW_BUCKET"])
     _reporter.recordUsage(slug, "use" if operation == "lookup" else "interest")
-    _reporter.flush()
+    return _reporter.flush()

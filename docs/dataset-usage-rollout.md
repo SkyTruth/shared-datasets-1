@@ -58,6 +58,10 @@ absence of receipts never establishes zero use.
    workflow dispatches. Collection starts disabled; keep legacy exports disabled.
 2. Pin real SDK bytes in focused consumer changes, finish their prerequisites,
    run each repository's checks and deploy through its normal reviewed path.
+   The private catalog advertises its same-origin report route only when its
+   producer is configured. Browser map loads report actual use after success,
+   including cached data; catalog display and URL resolution do not. Static GCS
+   hosting has no reporting marker and sends no telemetry POSTs.
 3. Review measured incremental-cost forecasts for a controlled trial; enable
    native delivery with the scheduler paused, then run a protected canary.
 4. Read the committed ledger's native probe token before read-only traffic

@@ -30,6 +30,7 @@ class UsageReporter:
         self.now = now or (lambda: dt.datetime.now(dt.timezone.utc))
         self.diagnostic = diagnostic or (lambda code: _LOG.warning("Dataset usage reporting failed: %s", code))
         self._pending, self._sent, self._blocked = {}, set(), {}
+        self._sending, self._inflight = set(), False
         self._lock = threading.Lock()
 
     def recordUsage(self, assetSlug: str, activity: str = "use") -> None:
@@ -41,7 +42,7 @@ class UsageReporter:
         with self._lock:
             self._sent = {entry for entry in self._sent if entry[0] == day}
             self._blocked = {entry: until for entry, until in self._blocked.items() if until > time.monotonic()}
-            if key in self._sent or key in self._pending or key in self._blocked:
+            if key in self._sent or key in self._pending or key in self._blocked or key in self._sending:
                 return
             if len(self._pending) >= 1024:
                 self.diagnostic("buffer_full")
@@ -52,15 +53,47 @@ class UsageReporter:
             self._pending[key] = (name, body)
 
     def flush(self) -> bool:
-        """Attempt each buffered receipt at most twice, with a one-second timeout.
+        """Bound the entire flush to three seconds, including credentials.
 
-        Failed observations are dropped and diagnosed. A later operation can
-        report that day again; failed telemetry never escapes to the caller.
+        Uploads attempt at most twice with a one-second request timeout. One
+        daemon worker handles a stalled credential/transport boundary; further
+        failed observations are dropped and diagnosed until its work completes.
+        No worker or pending upload delays process exit or persists offline.
         """
+        done, outcome = threading.Event(), [False]
         with self._lock:
             pending, self._pending = self._pending, {}
-        if not pending:
-            return True
+            if not pending:
+                return not self._inflight
+            if self._inflight:
+                self._blocked.update((key, time.monotonic() + 300) for key in pending)
+                busy = True
+            else:
+                self._inflight, self._sending, busy = True, set(pending), False
+        if busy:
+            self.diagnostic("flush_in_flight")
+            return False
+        deadline = time.monotonic() + 3
+
+        def upload():
+            try:
+                outcome[0] = self._flush_batch(pending, deadline)
+            finally:
+                with self._lock:
+                    self._inflight, self._sending = False, set()
+                done.set()
+
+        # A single daemon worker bounds ADC discovery/refresh as well as upload.
+        # A stalled transport cannot accumulate threads or delay process exit.
+        threading.Thread(target=upload, daemon=True, name="dataset-usage-flush").start()
+        if not done.wait(max(0, deadline - time.monotonic())):
+            with self._lock:
+                self._blocked.update((key, time.monotonic() + 300) for key in pending)
+            self.diagnostic("flush_deadline")
+            return False
+        return outcome[0]
+
+    def _flush_batch(self, pending, deadline):
         try:
             if self.client is None:
                 from google.cloud import storage
@@ -68,10 +101,11 @@ class UsageReporter:
             from google.api_core.exceptions import PreconditionFailed
             destination = self.client.bucket(self.bucket)
         except Exception as exc:
+            with self._lock:
+                self._blocked.update((key, time.monotonic() + 300) for key in pending)
             self.diagnostic(type(exc).__name__)
             return False
         success = True
-        deadline = time.monotonic() + 3
         for key, (name, body) in pending.items():
             if time.monotonic() >= deadline:
                 success = False

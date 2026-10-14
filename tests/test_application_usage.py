@@ -1,6 +1,8 @@
 import datetime as dt
 import json
 import sqlite3
+import threading
+import time
 from unittest.mock import Mock
 
 from google.api_core.exceptions import Forbidden, PreconditionFailed
@@ -9,6 +11,28 @@ import pytest
 from skytruth_shared_datasets import UsageReporter
 from ingestion.dataset_usage import run
 from test_dataset_usage import NOW, Store, classifier, execute, raw
+
+
+def test_python_flush_bounds_stalled_credentials_and_never_accumulates_workers(monkeypatch):
+    from google.cloud import storage
+    release, diagnostics = threading.Event(), []
+    def stalled_client():
+        release.wait(10)
+        return Mock()
+    factory = Mock(side_effect=stalled_client)
+    monkeypatch.setattr(storage, 'Client', factory)
+    reporter = UsageReporter('example-production', diagnostic=diagnostics.append)
+    reporter.recordUsage('example')
+    started = time.monotonic()
+    try:
+        assert reporter.flush() is False
+        assert time.monotonic() - started < 5
+        reporter.recordUsage('another')
+        assert reporter.flush() is False
+        assert factory.call_count == 1
+        assert diagnostics == ['flush_deadline', 'flush_in_flight']
+    finally:
+        release.set()
 
 
 def receipt(day=NOW, **changes):
