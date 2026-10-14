@@ -33,7 +33,7 @@ MANIFEST = "published/manifest.json"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS assets(slug TEXT PRIMARY KEY,title TEXT,status TEXT,registered TEXT,last_read TEXT,last_interest TEXT,last_catalog TEXT,mapping_started TEXT,root TEXT);
+CREATE TABLE IF NOT EXISTS assets(slug TEXT PRIMARY KEY,title TEXT,status TEXT,registered TEXT,last_read TEXT,last_interest TEXT,last_catalog TEXT,root TEXT);
 CREATE TABLE IF NOT EXISTS events(day TEXT,source TEXT,id TEXT,PRIMARY KEY(day,source,id));
 CREATE TABLE IF NOT EXISTS inputs(name TEXT,generation TEXT,seen_at TEXT,source TEXT,PRIMARY KEY(name,generation));
 CREATE TABLE IF NOT EXISTS daily(day TEXT,slug TEXT,source TEXT,kind TEXT,app TEXT,confidence TEXT,requests INTEGER,bytes INTEGER,last_at TEXT,PRIMARY KEY(day,slug,source,kind,app,confidence));
@@ -134,18 +134,10 @@ def initialize(db, classifier, now, activation):
     db.execute("PRAGMA cache_size=-8192")
     db.execute("PRAGMA journal_mode=DELETE")
     today = now.date().isoformat()
-    # Observation partitions must be whole UTC days. A registration or verified
-    # activation partway through today cannot certify its earlier hours.
-    first_complete_day = (now.date() + dt.timedelta(days=1)).isoformat()
-    verified = activation.get("verified_at")
-    start = max(first_complete_day, (timestamp(verified).date()+dt.timedelta(days=1)).isoformat()) if activation_valid(activation, classifier) else "9999-12-31"
     prior = db.execute("SELECT value FROM settings WHERE key='policy'").fetchone()
     if prior is None or prior[0] != classifier.version:
-        db.execute("INSERT OR REPLACE INTO settings VALUES('observation_start',?)", (start,))
         db.execute("INSERT OR REPLACE INTO settings VALUES('policy',?)", (classifier.version,))
         db.execute("DELETE FROM coverage WHERE day>=?", (today,))
-    elif db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0] == "9999-12-31" and start != "9999-12-31":
-        db.execute("UPDATE settings SET value=? WHERE key='observation_start'", (start,))
     estimate = activation.get("estimated_monthly_cost_usd")
     cost = {"target_monthly_usd": 25, "estimated_monthly_usd": estimate,
             "verified_at": activation.get("verified_at"),
@@ -155,9 +147,10 @@ def initialize(db, classifier, now, activation):
     previous_mapping = db.execute("SELECT value FROM settings WHERE key='catalog'").fetchone()
     for slug, row in classifier.assets.items():
         root = next(root for root, name in classifier.roots.items() if name == slug)
-        db.execute("""INSERT INTO assets VALUES(?,?,?,?,NULL,NULL,NULL,?,?) ON CONFLICT(slug) DO UPDATE SET
-        title=excluded.title,status=excluded.status,mapping_started=CASE WHEN root=excluded.root THEN mapping_started ELSE excluded.mapping_started END,root=excluded.root""",
-                   (slug, row.get("title", slug), row["status"], today, first_complete_day, root))
+        # Named columns also accept existing ledgers with extra unused columns.
+        db.execute("""INSERT INTO assets(slug,title,status,registered,root) VALUES(?,?,?,?,?) ON CONFLICT(slug) DO UPDATE SET
+        title=excluded.title,status=excluded.status,root=excluded.root""",
+                   (slug, row.get("title", slug), row["status"], today, root))
     snapshot = {"assets": classifier.assets, "roots": classifier.roots}
     classifier.catalog_version = digest(snapshot)
     db.execute("INSERT OR REPLACE INTO settings VALUES('catalog',?)", (classifier.catalog_version,))
@@ -306,8 +299,10 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         if last_run and (now - timestamp(last_run[0])).days >= retention_days:
             for source in SOURCES:
                 mark_gap(db, source, cutoff, "Worker outage exceeds raw evidence retention")
-        begin = dt.date.fromisoformat(db.execute("SELECT value FROM settings WHERE key='observation_start'").fetchone()[0])
-        begin = max(begin, cutoff - dt.timedelta(days=459))
+        # Delivered probes establish pipeline health, independently of asset age.
+        # Missing days between probes remain pending; earlier days stay unknown.
+        first_probe = db.execute("SELECT MIN(day) FROM probes").fetchone()[0]
+        begin = max(dt.date.fromisoformat(first_probe), cutoff - dt.timedelta(days=459)) if first_probe else cutoff + dt.timedelta(days=1)
         for offset in range(max(0, (cutoff - begin).days + 1)):
             day = (begin + dt.timedelta(days=offset)).isoformat()
             for source in SOURCES:
@@ -385,7 +380,7 @@ def main():
     from google.cloud import storage
     client = storage.Client()
     # Read the current published control-plane snapshot each day. An old worker
-    # image must not keep a deprecated asset eligible or miss newly mapped roots.
+    # image must not show obsolete lifecycle status or miss newly mapped roots.
     catalog_blob = client.bucket(bucket).blob("_catalog/shared-datasets-catalog.csv")
     catalog_blob.reload(timeout=30)
     if not 0 < catalog_blob.size <= 4 * 1024 * 1024:
