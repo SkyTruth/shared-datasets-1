@@ -404,6 +404,7 @@ def fetch_snapshot_artifact(
     cache_dir=None,
     force=False,
     timeout=60.0,
+    usage_reporter=None,
 ) -> FetchedSnapshotArtifact:
     """Download captured bytes using ADC by default; never read a release index.
 
@@ -447,6 +448,8 @@ def fetch_snapshot_artifact(
         force=force,
         timeout=timeout,
     )
+    if usage_reporter is not None:
+        usage_reporter.recordUsage(asset_slug, "use")
     return FetchedSnapshotArtifact(fetched, artifact["sha256"], artifact["size"])
 
 

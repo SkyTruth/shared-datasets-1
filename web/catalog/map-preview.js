@@ -64,6 +64,25 @@ let activeColorContext = null;
 let activeFeatureMarker = null;
 let restrictedSessionPromises = new Map();
 let privateSignerUnavailable = false;
+const reportedUsage = new Set();
+const attemptedUsage = new Map();
+
+export async function reportCatalogDatasetUse(slug) {
+  // Only the configured private backend inserts this opt-in marker. Static GCS
+  // hosting must never issue telemetry POSTs to an object-storage endpoint.
+  if (document.querySelector('meta[name="dataset-usage-endpoint"]')?.content !== "/api/usage/report") return;
+  const day = new Date().toISOString().slice(0, 10), key = `${day}/${slug}`;
+  for (const entry of reportedUsage) if (!entry.startsWith(day)) reportedUsage.delete(entry);
+  for (const [entry, at] of attemptedUsage) if (Date.now() - at >= 300000) attemptedUsage.delete(entry);
+  if (reportedUsage.has(key) || attemptedUsage.has(key)) return;
+  attemptedUsage.set(key, Date.now());
+  try {
+    const response = await fetch("/api/usage/report", {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({asset_slug: slug}), signal: AbortSignal.timeout(2000)});
+    if (response.status === 204) reportedUsage.add(key);
+    else console.warn("Catalog dataset usage reporting unavailable", response.status);
+  } catch { console.warn("Catalog dataset usage reporting unavailable"); }
+}
 
 function addExtentsControl(map, zoom) {
   map.addControl({
@@ -189,6 +208,7 @@ export async function renderMapPreview({
   }
 
   activeSelectionBounds = combinedBounds(mapSources.map((source) => source.bounds).filter(Boolean));
+  for (const source of mapSources) void reportCatalogDatasetUse(source.asset.slug);
   if (activeSelectionBounds) {
     map.fitBounds(activeSelectionBounds, { padding: 34, duration: 0, maxZoom: 8 });
   }

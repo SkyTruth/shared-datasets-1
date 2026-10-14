@@ -2,17 +2,45 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from ingestion.dataset_usage.run import COST_COMPONENTS
-from scripts.dataset_usage_deploy import validate_plan, validate_rollout
+from scripts import dataset_usage_deploy
+from scripts.dataset_usage_deploy import validate_plan, validate_rollout, verify_reader_ready
 from scripts.terraform_plan_permissions import plan_checks
 from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = 'us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/dataset-usage@sha256:' + 'a' * 64
+
+
+def test_writer_requires_latest_verified_reader_and_matching_bytes(monkeypatch):
+    api = Mock()
+    latest = {'id': 2, 'sha': 'a' * 40}
+    api.pages.return_value = [{'id': 1, 'sha': 'b' * 40}, latest]
+    verify = Mock(return_value={'target': 'catalog-viewer'})
+    monkeypatch.setattr(dataset_usage_deploy.deployment_revision, 'verify_record', verify)
+    statuses = Mock(return_value=[{'state': 'success', 'description': 'verified'}])
+    monkeypatch.setattr(dataset_usage_deploy.deployment_revision, 'verified_statuses', statuses)
+    contents = [(ROOT / path).read_bytes() for path in dataset_usage_deploy.READER_FILES]
+    reader = Mock(side_effect=contents)
+    monkeypatch.setattr(dataset_usage_deploy.subprocess, 'check_output', reader)
+    verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    verify.assert_called_once_with(api, 'SkyTruth/shared-datasets-1', latest)
+    statuses.return_value = [{'state': 'failure', 'description': 'failed'}]
+    with pytest.raises(ValueError, match='not verified'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    statuses.return_value = [{'state': 'success', 'description': 'verified'}]
+    reader.side_effect = [b'old reader']
+    with pytest.raises(ValueError, match='current compatible'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
+    api.pages.return_value = []
+    with pytest.raises(ValueError, match='before the usage writer'):
+        verify_reader_ready(ROOT, api, 'SkyTruth/shared-datasets-1')
 
 
 def resource(address, after, before=None, actions=None):
@@ -93,10 +121,12 @@ def test_no_destructive_usage_operations_or_unrelated_resources(actions):
         validate_plan({'resource_changes': [resource('module.sea_ice_daily_job.google_cloud_run_v2_job.this', {})]}, IMAGE, verified=False)
 
 
-def test_data_read_addition_preserves_existing_data_write():
+def test_shared_security_auditing_cannot_be_changed_by_usage_deployment():
     before = {'project': 'shared-datasets-1', 'service': 'storage.googleapis.com', 'audit_log_config': [{'log_type': 'DATA_WRITE', 'exempted_members': []}]}
+    validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', before, before)]}, IMAGE, verified=False)
     after = {**before, 'audit_log_config': [*before['audit_log_config'], {'log_type': 'DATA_READ', 'exempted_members': []}]}
-    validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
+    with pytest.raises(ValueError, match='must remain unchanged'):
+        validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
     after['audit_log_config'] = [{'log_type': 'DATA_READ'}]
     with pytest.raises(ValueError, match='Write auditing'):
         validate_plan({'resource_changes': [resource('google_project_iam_audit_config.storage_data_write', after, before)]}, IMAGE, verified=False)
@@ -112,7 +142,88 @@ def test_unverified_schedule_and_public_telemetry_refused():
         validate_plan({'resource_changes': [resource('google_storage_bucket_iam_member.dataset_usage_raw_reader', {'member': 'allUsers'})]}, IMAGE, verified=False)
 
 
-def test_collection_cost_gate_requires_measured_project_wide_evidence(tmp_path):
+def test_application_grants_cannot_cross_prefixes_or_gain_read_overwrite_authority():
+    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
+    producer = 'catalog-viewer-production'
+    after = {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'role': 'roles/storage.objectCreator',
+             'member': 'serviceAccount:' + config['producers'][producer]['service_account'],
+             'condition': [{'expression': f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"}]}
+    item = resource(f'google_storage_bucket_iam_member.dataset_usage_app_writer["{producer}"]', after, actions=['create'])
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    for field, value in [('role', 'roles/storage.objectAdmin'), ('bucket', 'skytruth-shared-datasets-1'),
+                         ('member', 'allUsers'), ('condition', []),
+                         ('condition', [{'expression': "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/')"}])]:
+        changed = copy.deepcopy(item)
+        changed['change']['after'][field] = value
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+
+
+def test_native_probe_scope_is_additive_and_legacy_grant_deletes_only_after_proof():
+    condition = "resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/100-geographic-reference/110-boundaries/lsib/latest/lsib.fgb'"
+    grant = {'bucket': 'skytruth-shared-datasets-1', 'role': 'roles/storage.objectViewer',
+             'member': 'serviceAccount:dataset-usage@shared-datasets-1.iam.gserviceaccount.com',
+             'condition': [{'title': 'usage_native_probe_sentinel_only', 'expression': condition}]}
+    address = 'google_storage_bucket_iam_member.dataset_usage_native_probe_reader'
+    validate_plan({'resource_changes': [resource(address, grant, actions=['create'])]}, IMAGE, verified=False)
+    for field, value in [('role', 'roles/storage.objectAdmin'), ('member', 'serviceAccount:other@example.iam.gserviceaccount.com'), ('condition', [{'expression': 'true'}])]:
+        changed = {**grant, field: value}
+        with pytest.raises(ValueError, match='exact registered scope'):
+            validate_plan({'resource_changes': [resource(address, changed)]}, IMAGE, verified=False)
+    legacy = copy.deepcopy(grant)
+    legacy['condition'][0]['title'] = 'usage_probe_sentinels_only'
+    legacy['bucket'] = 'b/skytruth-shared-datasets-1'
+    legacy['condition'][0]['expression'] += " || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/300-infrastructure-industrial/320-mining/wri-forest-atlas-drc-mining-permits/latest/wri-forest-atlas-drc-mining-permits.fgb' || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/_catalog/shared-datasets-catalog.csv'"
+    item = resource('google_storage_bucket_iam_member.dataset_usage_probe_reader', None, legacy, ['delete'])
+    with pytest.raises(ValueError, match='replacement evidence'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=True)
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+    item['change']['before']['condition'][0]['expression'] = 'true'
+    with pytest.raises(ValueError, match='exact registered scope'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+
+
+def test_health_role_cannot_gain_object_or_project_authority():
+    role = {'project': 'shared-datasets-1', 'role_id': 'sharedDatasetsUsageBucketHealth',
+            'permissions': ['storage.buckets.get', 'storage.buckets.getIamPolicy']}
+    address = 'google_project_iam_custom_role.dataset_usage_bucket_health'
+    validate_plan({'resource_changes': [resource(address, role)]}, IMAGE, verified=False)
+    for permission in ['storage.objects.get', 'storage.objects.delete', 'resourcemanager.projects.getIamPolicy']:
+        with pytest.raises(ValueError, match='bucket-read-only'):
+            validate_plan({'resource_changes': [resource(address, {**role, 'permissions': [*role['permissions'], permission]})]}, IMAGE, verified=False)
+
+
+@pytest.mark.parametrize('address,after', [
+    ('google_project_iam_custom_role.dataset_usage_health', {'project': 'shared-datasets-1', 'role_id': 'sharedDatasetsUsageHealth', 'permissions': ['resourcemanager.projects.setIamPolicy']}),
+    ('google_project_iam_member.dataset_usage_health', {'project': 'shared-datasets-1', 'member': 'allUsers', 'role': 'roles/owner'}),
+    ('google_service_account_iam_member.dataset_usage_deployer_act_as', {'member': 'allUsers', 'role': 'roles/iam.serviceAccountUser'}),
+    ('google_cloud_run_v2_job_iam_member.dataset_usage_scheduler_invoker', {'project': 'shared-datasets-1', 'location': 'us-central1', 'name': 'dataset-usage', 'member': 'allUsers', 'role': 'roles/run.invoker'}),
+    ('module.dataset_usage_job.google_cloud_run_v2_job.this', {'template': [{'template': [{'service_account': 'other@shared-datasets-1.iam.gserviceaccount.com'}]}]}),
+    ('google_storage_bucket_iam_member.dataset_usage_sink_writer', {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'member': 'allUsers', 'role': 'roles/storage.objectAdmin'}),
+])
+def test_existing_usage_authority_cannot_be_broadened(address, after):
+    with pytest.raises(ValueError):
+        validate_plan({'resource_changes': [resource(address, after)]}, IMAGE, verified=False)
+
+
+def test_exact_legacy_deletion_requires_replacement_proof_and_rejects_replacements():
+    before = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'disabled': True}
+    item = resource('google_logging_project_sink.dataset_usage', None, before, actions=['delete'])
+    with pytest.raises(ValueError, match='replacement evidence'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+    for changes in ({'name': 'other'}, {'disabled': False}, {'project': 'other'}):
+        changed = copy.deepcopy(item)
+        changed['change']['before'].update(changes)
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=True, retirement_verified=True)
+    for address, actions in [('google_storage_bucket.dataset_usage_raw', ['delete']),
+                             ('google_logging_project_sink.dataset_usage', ['delete', 'create'])]:
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [resource(address, {}, before, actions)]}, IMAGE, verified=True, retirement_verified=True)
+
+
+def test_collection_cost_gate_requires_measured_incremental_evidence(tmp_path):
     directory = tmp_path / 'catalog'
     directory.mkdir()
     for name in ('dataset-usage.json', 'dataset-usage-activation.json', 'shared-datasets-catalog.csv'):
@@ -126,7 +237,7 @@ def test_collection_cost_gate_requires_measured_project_wide_evidence(tmp_path):
         (directory/'dataset-usage-activation.json').write_text(json.dumps(activation))
         with pytest.raises(ValueError, match='cost evidence'):
             validate_rollout(tmp_path)
-    (directory/'dataset-usage-activation.json').write_text(json.dumps({'estimated_monthly_cost_usd': 20, 'evidence': {'cost': {'measurement_days': 7, 'project_wide_audit_volume_reviewed': True, 'logging_retention_and_exclusions_reviewed': True, 'monthly_usd': {key: (20 if key == 'project_logging' else 0) for key in COST_COMPONENTS}}}}))
+    (directory/'dataset-usage-activation.json').write_text(json.dumps({'estimated_monthly_cost_usd': 20, 'evidence': {'cost': {'measurement_days': 7, 'scope': 'tracker_incremental', 'monthly_usd': {key: (20 if key == 'worker' else 0) for key in COST_COMPONENTS}}}}))
     assert validate_rollout(tmp_path) is False  # Collection canary only; schedule remains paused.
 
 
@@ -137,8 +248,7 @@ def test_saved_plan_permissions_cover_logging_and_audit_configuration():
 
 
 def test_duplicate_storage_exclusion_is_scoped_and_disabled_with_collection():
-    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
-    exclusion = {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy', 'filter': config['sink_filter'], 'disabled': True}
+    exclusion = {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy', 'filter': json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', (ROOT/'terraform/envs/prod/dataset_usage_legacy.tf').read_text())[1]), 'disabled': True}
     item = resource('google_logging_project_exclusion.dataset_usage_duplicate', exclusion, actions=['create'])
     validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
     for field, value in [('filter', 'resource.type="gcs_bucket"'), ('disabled', False), ('project', 'other'), ('name', 'all-project-logs')]:
@@ -153,8 +263,7 @@ def test_duplicate_storage_exclusion_is_scoped_and_disabled_with_collection():
 
 
 def test_raw_export_cannot_be_sampled_or_have_a_different_destination():
-    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
-    sink = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'filter': config['sink_filter'], 'disabled': True, 'destination': 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw'}
+    sink = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'filter': json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', (ROOT/'terraform/envs/prod/dataset_usage_legacy.tf').read_text())[1]), 'disabled': True, 'destination': 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw'}
     item = resource('google_logging_project_sink.dataset_usage', sink, actions=['create'])
     # A new sink's computed writer is legitimately unknown before creation.
     item['change']['after_unknown']['writer_identity'] = True
@@ -174,9 +283,14 @@ def test_raw_retention_cannot_drift_or_delete_inputs_too_early(rules):
 
 
 def test_real_provider_plan_preserves_defaults_and_computed_creation_fields():
-    plan = json.loads((ROOT / 'tests/fixtures/dataset_usage/retention-plan.json').read_text())
+    full_plan = json.loads((ROOT / 'tests/fixtures/dataset_usage/retention-plan.json').read_text())
+    with pytest.raises(ValueError, match='sink writer identity is unknown'):
+        validate_plan(full_plan, IMAGE, verified=False)
+    # Retain the provider's real raw-bucket defaults; obsolete fresh sink setup
+    # with a computed writer is outside the replacement's grant authority.
+    plan = {**full_plan, 'resource_changes': [row for row in full_plan['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw']}
     validate_plan(plan, IMAGE, verified=False)
-    required = {p for _, permissions in plan_checks(plan, project_number='123', target='dataset-usage') for p in permissions}
+    required = {p for _, permissions in plan_checks(full_plan, project_number='123', target='dataset-usage') for p in permissions}
     assert {'logging.exclusions.create', 'logging.exclusions.get', 'logging.sinks.create', 'storage.buckets.create'} <= required
     raw = next(row for row in plan['resource_changes'] if row['address'] == 'google_storage_bucket.dataset_usage_raw')
     assert raw['change']['after']['lifecycle_rule'][0]['condition'][0]['with_state'] == 'ANY'

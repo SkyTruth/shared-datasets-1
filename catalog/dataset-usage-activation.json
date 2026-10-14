@@ -1,8 +1,16 @@
 {
-  "schema_version": 1,
-  "verified_at": null,
+  "schema_version": 2,
   "configuration_sha256": null,
-  "verified_sources": [],
   "estimated_monthly_cost_usd": null,
-  "evidence": null
+  "evidence": null,
+  "sources": {
+    "gcs_usage": {
+      "verified_at": null,
+      "checks": {}
+    },
+    "app_usage": {
+      "verified_at": null,
+      "checks": {}
+    }
+  }
 }

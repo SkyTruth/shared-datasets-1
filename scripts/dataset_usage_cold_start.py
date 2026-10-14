@@ -114,7 +114,6 @@ def exercise(directory, *, client=None):
     directory.mkdir(parents=True, exist_ok=True)
     config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
     config['collection_enabled'] = False
-    config['cdn_host'] = 'tiles.example.invalid'
     config_path, activation_path = directory / 'config.json', directory / 'activation.json'
     config_path.write_text(json.dumps(config))
     activation_path.write_text(json.dumps({'schema_version': 1, 'verified_at': None, 'evidence': None}))
@@ -143,24 +142,18 @@ def exercise(directory, *, client=None):
     assert payload['collection_errors'] == []
     assert len(payload['assets']) == 2
     assert all(asset['lifecycle_status'] == 'active' and not any(asset['windows'].values()) for asset in payload['assets'])
-    assert {row['source'] for row in payload['coverage']} == {'gcs_audit', 'cdn', 'gcs_usage', 'catalog'}
+    assert {row['source'] for row in payload['coverage']} == {'gcs_usage', 'app_usage'}
     assert all(row['state'] == 'gap' for row in payload['coverage'])
     ledger = directory / 'published-ledger.sqlite'
     ledger.write_bytes(client.objects[STATE, manifest['ledger']['path']][1])
     with sqlite3.connect(ledger) as db:
-        assert db.execute('SELECT COUNT(*),SUM(trusted),SUM(seen) FROM probes').fetchone() == (4, 0, 0)
+        assert db.execute('SELECT COUNT(*) FROM probes').fetchone()[0] == 0
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 2
     assert json.loads(config_path.read_text())['collection_enabled'] is False
     assert client.source_bucket.get_logging() is None
-    assert http.call_count == 2 and session.get.call_count == 1
-    public_requests = [call.args[0] for call in http.call_args_list]
-    assert [(request.type, request.host, request.get_method()) for request in public_requests] == [
-        ('https', 'tiles.example.invalid', 'GET'), ('https', 'storage.googleapis.com', 'HEAD'),
-    ]
-    assert session.get.call_args.args[0].startswith(f'https://storage.googleapis.com/storage/v1/b/{SHARED}/o/')
-    assert session.get.call_args.kwargs['stream'] is True
-    assert session.post.call_count == 0
-    print(json.dumps({'event': 'dataset_usage_cold_start_verified', 'schema_version': 1,
-                      'coverage': 'unverified', 'probes': 4, 'state_objects': 3}))
+    assert http.call_count == 0 and session.get.call_count == 0 and session.post.call_count == 0
+    print(json.dumps({'event': 'dataset_usage_cold_start_verified', 'schema_version': 2,
+                      'coverage': 'unverified', 'probes': 0, 'state_objects': 3}))
     return payload
 
 

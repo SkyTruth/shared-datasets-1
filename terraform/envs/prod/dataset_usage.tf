@@ -5,21 +5,28 @@ locals {
   dataset_usage_config          = jsondecode(file("${path.module}/../../../catalog/dataset-usage.json"))
   dataset_usage_activation      = jsondecode(file("${path.module}/../../../catalog/dataset-usage-activation.json"))
   dataset_usage_collect         = local.dataset_usage_config.collection_enabled
+  dataset_usage_source_checks = {
+    gcs_usage = ["authenticated_read", "anonymous_download", "raw_delivery"]
+    app_usage = ["receipt_delivery", "cached_use", "writer_isolation", "bounded_failure"]
+  }
   dataset_usage_verified = try(
     local.dataset_usage_collect &&
     local.dataset_usage_activation.configuration_sha256 == sha256(jsonencode({
-      version = 1, config = local.dataset_usage_config,
+      version = 2, config = local.dataset_usage_config,
       code = { for name in ["model.py", "run.py", "stream.py", "health.py"] :
       name => filesha256("${path.module}/../../../ingestion/dataset_usage/${name}") }
     })) &&
-    local.dataset_usage_activation.verified_at != null &&
-    toset(local.dataset_usage_activation.verified_sources) == toset(["gcs_audit", "cdn", "gcs_usage", "catalog"]) &&
+    anytrue([for source, checks in local.dataset_usage_source_checks :
+      local.dataset_usage_activation.sources[source].verified_at != null &&
+      alltrue([for check in checks : try(local.dataset_usage_activation.sources[source].checks[check], false)])
+    ]) &&
+    local.dataset_usage_activation.evidence.cost.scope == "tracker_incremental" &&
     local.dataset_usage_activation.estimated_monthly_cost_usd >= 0 &&
     local.dataset_usage_activation.estimated_monthly_cost_usd <= 25,
     false
   )
   dataset_usage_probe_paths = [
-    for tier in ["public", "restricted"] :
+    for tier in ["public"] :
     [for row in local.shared_catalog_rows : replace(row.canonical_path, "gs://${var.bucket_name}/", "")
       if(tier == "public" ? row.access_tier == "public" : row.access_tier != "public")
     ][0]
@@ -58,32 +65,6 @@ resource "google_storage_bucket" "dataset_usage_state" {
     condition { age = 460 }
   }
   lifecycle { prevent_destroy = true }
-}
-
-resource "google_logging_project_sink" "dataset_usage" {
-  project                = var.project_id
-  name                   = "dataset-usage"
-  destination            = "storage.googleapis.com/${google_storage_bucket.dataset_usage_raw.name}"
-  filter                 = local.dataset_usage_config.sink_filter
-  disabled               = !local.dataset_usage_collect
-  unique_writer_identity = true
-}
-
-resource "google_storage_bucket_iam_member" "dataset_usage_sink_writer" {
-  bucket = google_storage_bucket.dataset_usage_raw.name
-  role   = "roles/storage.objectCreator"
-  member = google_logging_project_sink.dataset_usage.writer_identity
-}
-
-# Only the duplicate in the project's _Default sink is excluded. The separate
-# complete GCS export remains unsampled, and other sinks retain their policies.
-resource "google_logging_project_exclusion" "dataset_usage_duplicate" {
-  project     = var.project_id
-  name        = "dataset-usage-exported-copy"
-  description = "Keep tracker evidence in its short-lived private GCS export."
-  filter      = local.dataset_usage_config.sink_filter
-  disabled    = !local.dataset_usage_collect
-  depends_on  = [google_storage_bucket_iam_member.dataset_usage_sink_writer]
 }
 
 resource "google_storage_bucket_iam_member" "dataset_usage_storage_logger" {
@@ -128,30 +109,14 @@ resource "google_storage_bucket_iam_member" "dataset_usage_viewer" {
   }
 }
 
-resource "google_storage_bucket_iam_member" "dataset_usage_probe_reader" {
+resource "google_storage_bucket_iam_member" "dataset_usage_native_probe_reader" {
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
   member = module.dataset_usage_service_account.member
   condition {
-    title      = "usage_probe_sentinels_only"
-    expression = join(" || ", [for path in concat(local.dataset_usage_probe_paths, ["_catalog/shared-datasets-catalog.csv"]) : "resource.name == '${local.shared_bucket_object_resource_prefix}${path}'"])
+    title      = "usage_native_probe_sentinel_only"
+    expression = join(" || ", [for path in local.dataset_usage_probe_paths : "resource.name == '${local.shared_bucket_object_resource_prefix}${path}'"])
   }
-}
-
-resource "google_project_iam_custom_role" "dataset_usage_health" {
-  project = var.project_id
-  role_id = "sharedDatasetsUsageHealth"
-  title   = "Dataset usage collection health reader"
-  permissions = [
-    "logging.sinks.get", "logging.exclusions.get", "monitoring.timeSeries.list",
-    "resourcemanager.projects.getIamPolicy",
-  ]
-}
-
-resource "google_project_iam_member" "dataset_usage_health" {
-  project = var.project_id
-  role    = google_project_iam_custom_role.dataset_usage_health.name
-  member  = module.dataset_usage_service_account.member
 }
 
 resource "google_storage_bucket_iam_member" "dataset_usage_configuration_reader" {
@@ -186,8 +151,7 @@ module "dataset_usage_job" {
   depends_on = [
     google_storage_bucket_iam_member.dataset_usage_raw_reader,
     google_storage_bucket_iam_member.dataset_usage_state_writer,
-    google_storage_bucket_iam_member.dataset_usage_probe_reader,
-    google_project_iam_member.dataset_usage_health,
+    google_storage_bucket_iam_member.dataset_usage_native_probe_reader,
     google_storage_bucket_iam_member.dataset_usage_configuration_reader,
     google_storage_bucket_iam_member.dataset_usage_raw_configuration_reader,
   ]
@@ -260,5 +224,18 @@ resource "google_project_iam_custom_role" "dataset_usage_bucket_health" {
   project     = var.project_id
   role_id     = "sharedDatasetsUsageBucketHealth"
   title       = "Dataset usage bucket configuration reader"
-  permissions = ["storage.buckets.get"]
+  permissions = ["storage.buckets.get", "storage.buckets.getIamPolicy"]
+}
+
+resource "google_storage_bucket_iam_member" "dataset_usage_app_writer" {
+  for_each = { for producer, registration in local.dataset_usage_config.producers : producer => registration
+    if registration.status == "configured"
+  }
+  bucket = local.dataset_usage_raw_bucket_name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${each.value.service_account}"
+  condition {
+    title      = "application_usage_${replace(each.key, "-", "_")}"
+    expression = "resource.name.startsWith('projects/_/buckets/${local.dataset_usage_raw_bucket_name}/objects/app-usage/${each.key}/')"
+  }
 }

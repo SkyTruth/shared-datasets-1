@@ -220,8 +220,12 @@ jobs:
       run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/dataset-usage.tfplan" > "${RUNNER_TEMP}/dataset-usage.tfplan.json"
     - name: Enforce dataset-usage resource-change allowlist
       if: ${{ steps.replay.outputs.proceed == 'true' }}
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        uv run --no-sync python scripts/dataset_usage_deploy.py --plan-json "$RUNNER_TEMP/dataset-usage.tfplan.json" --image "$DATASET_USAGE_IMAGE"
+        retirement_args=()
+        if [[ ! -f terraform/envs/prod/dataset_usage_legacy.tf ]]; then retirement_args+=(--retire-legacy); fi
+        uv run --no-sync python scripts/dataset_usage_deploy.py --plan-json "$RUNNER_TEMP/dataset-usage.tfplan.json" --image "$DATASET_USAGE_IMAGE" "${retirement_args[@]}"
     - name: Verify complete saved-plan mutation permissions
       if: ${{ steps.replay.outputs.proceed == 'true' }}
       run: python scripts/deployment_permissions.py --target dataset-usage --plan-json "$RUNNER_TEMP/dataset-usage.tfplan.json"

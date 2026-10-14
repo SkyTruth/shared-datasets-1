@@ -11,6 +11,7 @@ import mimetypes
 import os
 import posixpath
 import re
+import sys
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -27,6 +28,7 @@ from services.http_base import (
     api_headers,
     authenticated_user_email,
     email_domain_allowed,
+    header_value,
     json_response,
     send_handler_response,
     split_gs_uri,
@@ -329,6 +331,8 @@ def handle_request(
 ) -> Response:
     method = method.upper()
     request_path = urlsplit(path).path
+    if request_path == "/api/usage/report":
+        return handle_usage_report(method, headers, body, catalog_cache=catalog_cache, allowed_email_domains=allowed_email_domains)
     if request_path == "/api/usage" or request_path == "/usage" or request_path.startswith("/usage/"):
         return usage.handle(method, request_path, headers, reader=usage_reader, domains=allowed_email_domains, now=now())
     if request_path == "/healthz":
@@ -383,6 +387,41 @@ def handle_request(
     return handle_static(method, request_path, object_store=object_store)
 
 
+def handle_usage_report(method, headers, body, *, catalog_cache, allowed_email_domains):
+    email = authenticated_user_email(headers)
+    if not email:
+        return json_response(401, {"error": "IAP identity required"})
+    if not email_domain_allowed(email, allowed_email_domains):
+        return json_response(403, {"error": "Catalog access required"})
+    if method != "POST":
+        return json_response(405, {"error": "POST required"})
+    if header_value(headers, "Origin") != "https://" + (header_value(headers, "Host") or ""):
+        return json_response(403, {"error": "Same-origin request required"})
+    if len(body) > 1024:
+        return json_response(413, {"error": "Usage report exceeds 1 KiB"})
+    try:
+        receipt = json.loads(body)
+        if not isinstance(receipt, dict) or set(receipt) != {"asset_slug"} or not isinstance(receipt["asset_slug"], str):
+            raise ValueError("Dataset slug required")
+        slug = receipt["asset_slug"]
+        if len(slug) > 128 or not SLUG_RE.fullmatch(slug):
+            raise ValueError("Invalid dataset slug")
+    except (ValueError, UnicodeError, RecursionError):
+        return json_response(400, {"error": "A dataset slug is required"})
+    try:
+        asset = catalog_asset(catalog_cache.get(), slug)
+        if asset is None:
+            return json_response(404, {"error": "Dataset not found"})
+        catalog_access_tier(asset)
+        if not os.environ.get("DATASET_USAGE_PRODUCER"):
+            return json_response(202, {"status": "not configured"})
+        return Response(204 if usage.record(slug, "lookup") else 503, {"Cache-Control": NO_STORE})
+    except Exception:
+        # Telemetry is an external boundary; failures cannot affect map requests.
+        print("Catalog usage reporting unavailable", file=sys.stderr)
+        return json_response(503, {"error": "Usage reporting unavailable"})
+
+
 def handle_feature_lookup(
     method: str,
     path: str,
@@ -420,7 +459,7 @@ def handle_feature_lookup(
         max_response_bytes=feature_max_response_bytes,
     )
     if response.status in {200, 304}:
-        usage.emit(feature_preview_run.LOOKUP_RE.fullmatch(urlsplit(path).path).group("asset_slug"), "lookup")
+        usage.record(feature_preview_run.LOOKUP_RE.fullmatch(urlsplit(path).path).group("asset_slug"), "lookup")
     return response
 
 
@@ -613,7 +652,7 @@ def handle_artifact_url(method, path, headers, *, catalog_cache, object_store, s
         payload["filename"] = basename(selected.uri)
     if format_name == "metadata":
         payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=selected.uri))
-    usage.emit(slug, "url_intent")
+    usage.record(slug, "url_intent")
     return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
 
@@ -678,9 +717,12 @@ def handle_static(method: str, request_path: str, *, object_store: ObjectStore) 
     headers = {
         "Content-Type": static_object.content_type,
         "Cache-Control": static_object.cache_control or NO_CACHE,
-        "Content-Length": str(len(static_object.body)),
     }
-    return Response(HTTPStatus.OK, headers, b"" if method == "HEAD" else static_object.body)
+    payload = static_object.body
+    if object_name == "index.html" and os.environ.get("DATASET_USAGE_PRODUCER"):
+        payload = payload.replace(b'</head>', b'<meta name="dataset-usage-endpoint" content="/api/usage/report"></head>', 1)
+    headers["Content-Length"] = str(len(payload))
+    return Response(HTTPStatus.OK, headers, b"" if method == "HEAD" else payload)
 
 
 def static_object_name(request_path: str) -> str | None:
@@ -909,6 +951,10 @@ def make_handler(
 
         def do_POST(self) -> None:
             content_length = int(self.headers.get("Content-Length") or "0")
+            if urlsplit(self.path).path == "/api/usage/report" and content_length > 1024:
+                self.close_connection = True
+                self._send(json_response(413, {"error": "Usage report exceeds 1 KiB"}))
+                return
             if self.path.startswith("/api/comparisons") and content_length > 16 * 1024:
                 self.close_connection = True
                 self._send(json_response(413, {"error": "Comparison request exceeds 16 KiB"}))

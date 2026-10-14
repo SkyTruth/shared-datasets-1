@@ -1,95 +1,70 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 from google.api_core.exceptions import Forbidden
-from google.cloud.storage import Bucket
 import pytest
 
 from ingestion.dataset_usage.health import Health
+from test_dataset_usage import classifier
 
 
-DEFAULT_LOGGING = object()
+def health(*, logging=None, bindings=True, raw_days=7, private=True):
+    c = classifier()
+    source = Mock()
+    source.get_logging.return_value = logging
+    raw = Mock()
+    raw.lifecycle_rules = [{"action": {"type": "Delete"}, "condition": {"age": raw_days}}]
+    raw.iam_configuration = SimpleNamespace(uniform_bucket_level_access_enabled=private, public_access_prevention="enforced")
+    expression = "resource.name.startsWith('projects/_/buckets/raw/objects/app-usage/example-production/')"
+    raw.get_iam_policy.return_value = SimpleNamespace(bindings=[{"role": "roles/storage.objectCreator", "members": {"serviceAccount:example@example-project.iam.gserviceaccount.com"}, "condition": {"expression": expression}}] if bindings else [])
+    client = Mock()
+    client.get_bucket.side_effect = lambda bucket, **kwargs: raw if bucket == "raw" else source
+    return Health(c, client, "project", "raw")
 
 
-def health(*, pages, logging=DEFAULT_LOGGING, exemptions=None, raw_days=7, exclusion=None, sink_exclusions=()):
-    checker = Health.__new__(Health)
-    checker.raw_bucket = 'raw'
-    checker.project = 'project'
-    checker.classifier = SimpleNamespace(bucket='shared', config={'sink_filter': 'reviewed filter', 'raw_retention_days': 7})
-    if logging is DEFAULT_LOGGING:
-        logging = {'logBucket': 'raw', 'logObjectPrefix': 'storage-usage'}
-    checker.client = SimpleNamespace(get_bucket=lambda *args, **kwargs: SimpleNamespace(get_logging=lambda: logging, lifecycle_rules=[{'action': {'type': 'Delete'}, 'condition': {'age': raw_days}}]))
-    class Response:
-        def __init__(self, data):
-            self.data = data
-        def raise_for_status(self):
-            pass
-        def json(self):
-            return self.data
-    class Session:
-        def get(self, url, **kwargs):
-            if '/sinks/' in url:
-                return Response({'destination': 'storage.googleapis.com/raw', 'filter': 'reviewed filter', 'exclusions': list(sink_exclusions)})
-            if '/exclusions/' in url:
-                return Response(exclusion if exclusion is not None else {'filter': 'reviewed filter'})
-            return Response(pages.pop(0))
-        def post(self, url, **kwargs):
-            return Response({'auditConfigs': [{'service': 'storage.googleapis.com', 'auditLogConfigs': [{'logType': 'DATA_READ', 'exemptedMembers': exemptions or []}]}]})
-    checker.session = Session()
-    return checker
+def test_sources_have_independent_bucket_local_configuration_checks():
+    check = health(logging={"logBucket": "raw", "logObjectPrefix": "storage-usage"})
+    assert check.configuration_healthy() == {"gcs_usage": True, "app_usage": True}
+    assert health().configuration_healthy() == {"gcs_usage": False, "app_usage": True}
+    assert health(logging={"logBucket": "raw", "logObjectPrefix": "storage-usage"}, bindings=False).configuration_healthy() == {"gcs_usage": True, "app_usage": False}
 
 
-def test_sink_errors_on_later_metric_page_suspend_coverage():
-    checker = health(pages=[{'nextPageToken': 'two'}, {'timeSeries': [{'points': [{'value': {'int64Value': '1'}}]}]}])
-    assert checker.configuration_healthy() is False
+@pytest.mark.parametrize("options", [{"raw_days": 1}, {"raw_days": 30}, {"private": False}])
+def test_private_storage_and_retention_drift_suspend_both_sources(options):
+    assert health(**options).configuration_healthy() == {"gcs_usage": False, "app_usage": False}
 
 
-def test_read_audit_exemption_and_wrong_usage_prefix_suspend_coverage():
-    assert health(pages=[], exemptions=['serviceAccount:exempted']).configuration_healthy() is False
-    assert health(pages=[], logging={'logBucket': 'raw', 'logObjectPrefix': 'wrong'}).configuration_healthy() is False
-    assert health(pages=[{}]).configuration_healthy() is True
+def test_disabled_collection_never_discovers_credentials_or_configuration(monkeypatch):
+    monkeypatch.setattr("google.auth.default", Mock(side_effect=AssertionError("Credential discovery forbidden")))
+    check = health()
+    check.classifier.config["collection_enabled"] = False
+    assert check.configuration_healthy() == {"gcs_usage": False, "app_usage": False}
+    check.client.get_bucket.assert_not_called()
 
 
-@pytest.mark.parametrize('options', [
-    {'raw_days': 1}, {'raw_days': 30},
-    {'exclusion': {'filter': 'unreviewed broad filter'}},
-    {'exclusion': {'filter': 'reviewed filter', 'disabled': True}},
-    {'sink_exclusions': [{'filter': 'sample(insertId, 0.5)'}]},
-])
-def test_retention_or_routing_drift_suspends_verified_collection(options):
-    assert health(pages=[], **options).configuration_healthy() is False
+def test_failed_storage_read_cannot_become_a_healthy_pipeline():
+    check = health()
+    check.client.get_bucket.side_effect = Forbidden("denied")
+    with pytest.raises(Forbidden):
+        check.configuration_healthy()
 
 
-def test_disabled_raw_sink_exclusion_does_not_drop_records():
-    assert health(pages=[{}], sink_exclusions=[{'filter': 'unused', 'disabled': True}]).configuration_healthy() is True
+@pytest.mark.parametrize("logging", [[], "disabled", 0, False])
+def test_malformed_native_configuration_fails(logging):
+    with pytest.raises(TypeError, match="logging"):
+        health(logging=logging).configuration_healthy()
 
 
-def test_actual_storage_bucket_without_logging_suspends_coverage_without_other_api_calls():
-    bucket = Bucket(client=None, name='shared')
-    assert bucket.get_logging() is None
-    checker = health(pages=[], logging=None)
-    checker.client.get_bucket = Mock(return_value=bucket)
-    checker.session = Mock()
-    assert checker.configuration_healthy() is False
-    checker.client.get_bucket.assert_called_once_with('shared', timeout=30)
-    assert checker.session.mock_calls == []
-    assert bucket.get_logging() is None
+def test_wrong_bucket_prefix_only_suspends_native_source():
+    assert health(logging={"logBucket": "raw", "logObjectPrefix": "wrong"}).configuration_healthy() == {"gcs_usage": False, "app_usage": True}
 
 
-def test_empty_logging_configuration_is_not_replaced_with_a_healthy_fixture():
-    assert health(pages=[], logging={}).configuration_healthy() is False
-
-
-@pytest.mark.parametrize('logging', [[], 'disabled', 0, False])
-def test_malformed_logging_still_fails(logging):
-    with pytest.raises(TypeError, match='logging'):
-        health(pages=[], logging=logging).configuration_healthy()
-
-
-def test_failed_bucket_read_is_not_reported_as_disabled_logging():
-    checker = health(pages=[])
-    denied = Forbidden('bucket read denied')
-    checker.client.get_bucket = Mock(side_effect=denied)
-    with pytest.raises(Forbidden) as raised:
-        checker.configuration_healthy()
-    assert raised.value is denied
+def test_probe_is_native_head_only_and_cannot_probe_a_retired_source(monkeypatch):
+    check = health()
+    transport = MagicMock()
+    monkeypatch.setattr("urllib.request.urlopen", transport)
+    assert check.probe("gcs_usage", "usage-probe-" + "a" * 32) == "example"
+    request = transport.call_args.args[0]
+    assert request.get_method() == "HEAD" and request.host == "storage.googleapis.com"
+    with pytest.raises(ValueError, match="Only native"):
+        check.probe("cdn", "unused")

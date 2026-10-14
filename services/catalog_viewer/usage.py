@@ -24,7 +24,7 @@ class ReportReader:
         if len(raw) > 65536:
             raise ValueError("Usage manifest exceeds its budget")
         manifest = json.loads(raw)
-        if manifest["schema_version"] != 1:
+        if type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1:
             raise ValueError("Unsupported usage manifest")
         ref = manifest["report"]
         if not re.fullmatch(r"published/[0-9a-f]{32}/report\.json", ref["path"]) or not 0 < ref["size"] <= MAX_REPORT_BYTES:
@@ -34,7 +34,7 @@ class ReportReader:
         if len(raw) != ref["size"] or hashlib.sha256(raw).hexdigest() != ref["sha256"]:
             raise ValueError("Usage report integrity mismatch")
         payload = json.loads(raw)
-        if payload["schema_version"] != 1 or payload["generated_at"] != manifest["generated_at"]:
+        if type(payload["schema_version"]) is not int or payload["schema_version"] not in {1, 2} or payload["generated_at"] != manifest["generated_at"]:
             raise ValueError("Usage report identity mismatch")
         return payload
 
@@ -69,5 +69,18 @@ def handle(method, path, headers, *, reader, domains, now):
     return Response(200, {"Content-Type": content_type, "Cache-Control": NO_STORE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"}, body if method == "GET" else b"")
 
 
-def emit(slug, operation):
-    print(json.dumps({"event": "dataset_usage", "asset_slug": slug, "operation": operation}), flush=True)
+_reporter = None
+
+
+def record(slug, operation):
+    """Opt-in backend receipt; URL resolution records interest, not a download."""
+    import os
+    global _reporter
+    producer = os.environ.get("DATASET_USAGE_PRODUCER")
+    if not producer:
+        return False
+    if _reporter is None:
+        from skytruth_shared_datasets import UsageReporter
+        _reporter = UsageReporter(producer, bucket=os.environ["DATASET_USAGE_RAW_BUCKET"])
+    _reporter.recordUsage(slug, "use" if operation == "lookup" else "interest")
+    return _reporter.flush()

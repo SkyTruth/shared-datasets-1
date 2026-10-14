@@ -1,10 +1,7 @@
 {
-  "cdn_host": "tiles.skytruth.org",
-  "principals": {
-    "shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com": "Cerulean",
-    "shared-datasets-reader@x30-399415.iam.gserviceaccount.com": "30x30",
-    "shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com": "SkyTruthTech"
-  },
+  "schema_version": 2,
+  "collection_enabled": false,
+  "raw_retention_days": 7,
   "referrers": {
     "feature-three.cerulean.skytruth.org": "Cerulean",
     "test.cerulean.skytruth.org": "Cerulean",
@@ -13,13 +10,69 @@
     "30x30.skytruth.org": "30x30",
     "monitor.skytruth.org": "Monitor"
   },
-  "catalog_principals": [
-    "catalog-viewer@shared-datasets-1.iam.gserviceaccount.com"
-  ],
-  "maintenance_principals": [
-    "dataset-usage@shared-datasets-1.iam.gserviceaccount.com"
-  ],
-  "sink_filter": "(resource.type=\"gcs_bucket\" AND resource.labels.bucket_name=\"skytruth-shared-datasets-1\" AND logName:\"cloudaudit.googleapis.com%2Fdata_access\" AND protoPayload.methodName=\"storage.objects.get\") OR\n(resource.type=\"http_load_balancer\" AND resource.labels.url_map_name=\"shared-datasets-pmtiles-cdn\" AND httpRequest.requestMethod=(\"GET\" OR \"HEAD\")) OR\n(((resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"catalog-viewer\") OR (resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"dataset-usage\")) AND jsonPayload.event=(\"dataset_usage\" OR \"dataset_usage_probe\"))",
-  "collection_enabled": false,
-  "raw_retention_days": 7
+  "producers": {
+    "catalog-viewer-production": {
+      "application": "Shared datasets catalog",
+      "environment": "production",
+      "status": "configured",
+      "service_account": "catalog-viewer@shared-datasets-1.iam.gserviceaccount.com"
+    },
+    "cerulean-ui-production": {
+      "application": "Cerulean",
+      "environment": "production",
+      "status": "configured",
+      "service_account": "734798842681-compute@developer.gserviceaccount.com"
+    },
+    "cerulean-backend-production": {
+      "application": "Cerulean",
+      "environment": "production",
+      "status": "configured",
+      "service_account": "prod20240903-cr-orch@cerulean-338116.iam.gserviceaccount.com"
+    },
+    "thirty-by-thirty-production": {
+      "application": "30x30",
+      "environment": "production",
+      "status": "configured",
+      "service_account": "x30-prod-data-cf-sa@x30-399415.iam.gserviceaccount.com"
+    },
+    "monitor-production": {
+      "application": "Monitor",
+      "environment": "production",
+      "status": "registered"
+    },
+    "skytruth-tech-production": {
+      "application": "SkyTruthTech",
+      "environment": "production",
+      "status": "registered"
+    },
+    "env-cost-of-war-development": {
+      "application": "Environmental cost of war",
+      "environment": "development",
+      "status": "registered"
+    },
+    "cerulean-backend-development": {
+      "application": "Cerulean",
+      "environment": "development",
+      "status": "configured",
+      "service_account": "test-cr-orch@cerulean-338116.iam.gserviceaccount.com"
+    },
+    "thirty-by-thirty-development": {
+      "application": "30x30",
+      "environment": "development",
+      "status": "configured",
+      "service_account": "x30-dev-data-cf-sa@x30-399415.iam.gserviceaccount.com"
+    },
+    "cerulean-ui-development": {
+      "application": "Cerulean",
+      "environment": "development",
+      "status": "configured",
+      "service_account": "734798842681-compute@developer.gserviceaccount.com"
+    },
+    "cerulean-backend-staging": {
+      "application": "Cerulean",
+      "environment": "development",
+      "status": "configured",
+      "service_account": "staging-cr-orch@cerulean-338116.iam.gserviceaccount.com"
+    }
+  }
 }

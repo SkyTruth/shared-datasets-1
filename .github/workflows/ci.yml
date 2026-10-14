@@ -495,8 +495,8 @@ jobs:
     secrets: inherit
 
   dataset-usage:
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' }}
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -511,7 +511,7 @@ jobs:
     secrets: inherit
 
   catalog-viewer:
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam, dataset-usage]
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' }}
     permissions:
       contents: read

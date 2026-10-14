@@ -23,8 +23,8 @@ import uuid
 
 from google.api_core.exceptions import GoogleAPICallError
 
-from ingestion.dataset_usage.model import Classifier, SOURCES, VERSION, digest, iso, report, timestamp
-from ingestion.dataset_usage.stream import json_records, text_stream, usage_records
+from ingestion.dataset_usage.model import Classifier, SOURCES, VERSION, MANIFEST_VERSION, RETIRED_SOURCES, digest, iso, report, timestamp
+from ingestion.dataset_usage.stream import text_stream, usage_records
 from scripts.catalog_csv import read_catalog_rows_text
 
 MAX_LEDGER_BYTES = 128 * 1024 * 1024
@@ -32,6 +32,9 @@ MAX_REPORT_BYTES = 8 * 1024 * 1024
 MANIFEST = "published/manifest.json"
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_daily(day TEXT,slug TEXT,producer TEXT,application TEXT,environment TEXT,activity TEXT,last_at TEXT,PRIMARY KEY(day,slug,producer,activity));
+CREATE TABLE IF NOT EXISTS app_last(slug TEXT,producer TEXT,application TEXT,environment TEXT,activity TEXT,last_at TEXT,PRIMARY KEY(slug,producer,activity));
+CREATE TABLE IF NOT EXISTS retired_sources(source TEXT PRIMARY KEY,retired_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assets(slug TEXT PRIMARY KEY,title TEXT,status TEXT,registered TEXT,last_read TEXT,last_interest TEXT,last_catalog TEXT,root TEXT);
 CREATE TABLE IF NOT EXISTS events(day TEXT,source TEXT,id TEXT,PRIMARY KEY(day,source,id));
@@ -62,7 +65,7 @@ class GcsStore:
         if len(data) > 65536:
             raise ValueError("Usage manifest exceeds its budget")
         manifest = json.loads(data)
-        if manifest["schema_version"] != VERSION:
+        if manifest["schema_version"] != MANIFEST_VERSION:
             raise ValueError("Unsupported usage manifest")
         ref = manifest["ledger"]
         if not re.fullmatch(r"state/[0-9a-f]{32}/ledger\.sqlite", ref["path"]) or not 0 < ref["size"] <= MAX_LEDGER_BYTES:
@@ -81,16 +84,8 @@ class GcsStore:
         for blob in self.client.list_blobs(self.raw, page_size=256):
             if blob.name.startswith("storage-usage") and "_usage_" in blob.name:
                 source = "gcs_usage"
-            elif "cloudaudit.googleapis.com" in blob.name:
-                source = "gcs_audit"
-            elif blob.name.startswith("requests/"):
-                source = "cdn"
-            elif "run.googleapis.com" in blob.name and "/stdout/" not in blob.name:
-                # Exported log ID is run.googleapis.com%2Fstdout or its decoded
-                # hierarchy. Classification verifies the platform resource.
-                source = "catalog"
-            elif "stdout" in blob.name:
-                source = "catalog"
+            elif blob.name.startswith("app-usage/"):
+                source = "app_usage"
             else:
                 continue
             yield {"name": blob.name, "generation": str(blob.generation), "size": blob.size, "source": source}
@@ -100,7 +95,13 @@ class GcsStore:
         blob = self.raw.blob(item["name"], generation=int(item["generation"]))
         with blob.open("rb", chunk_size=1024 * 1024, if_generation_match=int(item["generation"]), timeout=30) as binary:
             with text_stream(binary) as stream:
-                yield usage_records(stream) if item["source"] == "gcs_usage" else json_records(stream)
+                if item["source"] == "gcs_usage":
+                    yield usage_records(stream)
+                else:
+                    data = stream.read(4097)
+                    if len(data.encode()) > 4096:
+                        raise ValueError("Application receipt exceeds its budget")
+                    yield iter([json.loads(data)])
 
     def publish(self, ledger, payload, generation):
         snapshot = uuid.uuid4().hex
@@ -117,7 +118,7 @@ class GcsStore:
                 blob.upload_from_string(data, content_type="application/json", if_generation_match=0, timeout=30)
                 size, sha = len(data), hashlib.sha256(data).hexdigest()
             refs[kind] = {"path": path, "generation": str(blob.generation), "size": size, "sha256": sha}
-        manifest = {"schema_version": VERSION, "generated_at": payload["generated_at"], **refs}
+        manifest = {"schema_version": MANIFEST_VERSION, "generated_at": payload["generated_at"], **refs}
         blob = self.state.blob(MANIFEST)
         blob.cache_control = "no-store"
         blob.upload_from_string(json.dumps(manifest), content_type="application/json", if_generation_match=generation, timeout=30)
@@ -130,7 +131,30 @@ def file_digest(path):
 
 
 def initialize(db, classifier, now, activation):
+    existed = db.execute("SELECT 1 FROM sqlite_master WHERE name='settings'").fetchone() is not None
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version not in (0, VERSION):
+        raise ValueError("Unsupported ledger schema")
+    migrated = existed and version == 0
     db.executescript(SCHEMA)
+    if migrated:
+        # Fixed-width UTC timestamps make SQL MAX chronological. Preserve the
+        # represented instants and the existing request-ID hash serialization.
+        for table, fields in (("assets", ("last_read", "last_interest", "last_catalog")), ("daily", ("last_at",))):
+            after = 0
+            while rows := db.execute(f"SELECT rowid,{','.join(fields)} FROM {table} WHERE rowid>? ORDER BY rowid LIMIT 256", (after,)).fetchall():
+                for row in rows:
+                    values = [iso(timestamp(value)) if value else value for value in row[1:]]
+                    db.execute(f"UPDATE {table} SET {','.join(field + '=?' for field in fields)} WHERE rowid=?", (*values, row[0]))
+                after = rows[-1][0]
+        for source in RETIRED_SOURCES:
+            db.execute("INSERT OR IGNORE INTO retired_sources VALUES(?,?)", (source, iso(now)))
+    db.execute(f"PRAGMA user_version={VERSION}")
+    for producer, application, environment in db.execute("SELECT DISTINCT producer,application,environment FROM app_last"):
+        current = classifier.producers.get(producer)
+        if current and (current["application"], current["environment"]) != (application, environment):
+            raise ValueError("An observed producer cannot be rebound to another application or environment")
+    db.execute("INSERT OR REPLACE INTO settings VALUES('configuration',?)", (json.dumps(classifier.config),))
     db.execute("PRAGMA cache_size=-8192")
     db.execute("PRAGMA journal_mode=DELETE")
     today = now.date().isoformat()
@@ -161,12 +185,17 @@ def initialize(db, classifier, now, activation):
         for root, slug in json.loads(data)["roots"].items():
             classifier.roots.setdefault(root, slug)
     db.commit()
-    return ((prior is not None and prior[0] != classifier.version)
+    return not migrated and ((prior is not None and prior[0] != classifier.version)
             or (previous_mapping is not None and previous_mapping[0] != classifier.catalog_version)
             or db.execute("SELECT 1 FROM settings WHERE key='reconciliation_pending' AND value='1'").fetchone() is not None)
 
 
 def add_event(db, event):
+    if event["source"] == "app_usage":
+        values = (event["slug"], event["producer"], event["application"], event["environment"], event["kind"], event["at"])
+        db.execute("INSERT INTO app_daily VALUES(?,?,?,?,?,?,?) ON CONFLICT(day,slug,producer,activity) DO UPDATE SET last_at=MAX(last_at,excluded.last_at)", (event["day"], *values))
+        db.execute("INSERT INTO app_last VALUES(?,?,?,?,?,?) ON CONFLICT(slug,producer,activity) DO UPDATE SET last_at=MAX(last_at,excluded.last_at)", values)
+        return
     inserted = db.execute("INSERT OR IGNORE INTO events VALUES(?,?,?)", (event["day"], event["source"], event["id"])).rowcount
     if not inserted:
         return
@@ -180,8 +209,11 @@ def add_event(db, event):
         db.execute("UPDATE probes SET seen=1 WHERE token=? AND source=?", (event["probe"], event["source"]))
 
 
-COST_COMPONENTS = {"project_logging", "raw_storage", "state_storage", "operations", "worker", "viewer"}
-TRAFFIC_CHECKS = {"authenticated_read", "anonymous_download", "cdn_cache_hit", "cached_sdk_interest", "catalog_cache_lookup"}
+COST_COMPONENTS = {"incremental_logging", "raw_storage", "state_storage", "operations", "worker", "viewer"}
+TRAFFIC_CHECKS = {
+    "gcs_usage": {"authenticated_read", "anonymous_download", "raw_delivery"},
+    "app_usage": {"receipt_delivery", "cached_use", "writer_isolation", "bounded_failure"},
+}
 
 
 def cost_evidence_valid(activation):
@@ -193,22 +225,21 @@ def cost_evidence_valid(activation):
     estimate = activation.get("estimated_monthly_cost_usd")
     return (type(estimate) in {int, float} and math.isfinite(estimate) and 0 <= estimate <= 25
             and type(cost.get("measurement_days")) in {int, float} and math.isfinite(cost["measurement_days"]) and cost["measurement_days"] >= 1
-            and cost.get("project_wide_audit_volume_reviewed") is True
-            and cost.get("logging_retention_and_exclusions_reviewed") is True
+            and cost.get("scope") == "tracker_incremental"
             and set(components) == COST_COMPONENTS
             and all(type(value) in {int, float} and math.isfinite(value) and value >= 0 for value in components.values())
             and abs(sum(components.values()) - estimate) < 0.01)
 
 
-def activation_valid(activation, classifier):
-    evidence = activation.get("evidence") or {}
-    return (activation.get("verified_at") is not None
-            and activation.get("configuration_sha256") == classifier.version
-            and set(activation.get("verified_sources", [])) == set(SOURCES)
-            and cost_evidence_valid(activation)
-            and evidence.get("inherited_audit_settings_reviewed") is True
-            and evidence.get("existing_sinks_and_exemptions_reviewed") is True
-            and all(evidence.get("traffic_checks", {}).get(check) is True for check in TRAFFIC_CHECKS))
+def activation_valid(activation, classifier, source=None):
+    if not (activation.get("schema_version") == VERSION and
+            activation.get("configuration_sha256") == classifier.version and cost_evidence_valid(activation)):
+        return False
+    if source is None:
+        return any(activation_valid(activation, classifier, item) for item in SOURCES)
+    entry = activation.get("sources", {}).get(source, {})
+    return (entry.get("verified_at") is not None and
+            all(entry.get("checks", {}).get(check) is True for check in TRAFFIC_CHECKS[source]))
 
 
 def collect(store, classifier, activation, now, directory, *, probe=None, configuration_healthy=False):
@@ -218,7 +249,9 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
     try:
         replay = initialize(db, classifier, now, activation)
         errors = []
-        valid = activation_valid(activation, classifier) and configuration_healthy
+        live = dict.fromkeys(SOURCES, configuration_healthy) if isinstance(configuration_healthy, bool) else configuration_healthy
+        valid = {source: activation_valid(activation, classifier, source) and live.get(source, False)
+                 and classifier.config.get("collection_enabled", False) for source in SOURCES}
         cutoff = (now - dt.timedelta(hours=48)).date() - dt.timedelta(days=1)
         retention_days = classifier.config["raw_retention_days"]
         oldest = (now.date() - dt.timedelta(days=retention_days)).isoformat()
@@ -232,7 +265,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         rebuilding = False
         if replay:
             assert previous_manifest is not None, "Reconciliation requires a committed ledger reference"
-            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE seen_at>=? AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest,)).fetchall()
+            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE source IN ('gcs_usage','app_usage') AND seen_at>=? AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest,)).fetchall()
             if missing:
                 # Never erase old totals when their original generations cannot
                 # be replayed. Keep original evidence versions and mark unknown.
@@ -245,9 +278,10 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 # when it is replacing previously committed historical evidence.
                 db.execute("SAVEPOINT reconciliation")
                 rebuilding = True
-                db.execute("DELETE FROM daily WHERE day>=?", (oldest,))
-                db.execute("DELETE FROM events WHERE day>=?", (oldest,))
-                db.execute("DELETE FROM inputs WHERE seen_at>=?", (oldest,))
+                db.execute("DELETE FROM app_daily WHERE day>=?", (oldest,))
+                db.execute("DELETE FROM daily WHERE source='gcs_usage' AND day>=?", (oldest,))
+                db.execute("DELETE FROM events WHERE source='gcs_usage' AND day>=?", (oldest,))
+                db.execute("DELETE FROM inputs WHERE source IN ('gcs_usage','app_usage') AND seen_at>=?", (oldest,))
         probes = {token: {"day": day, "source": source, "slug": slug} for token, day, source, slug in db.execute("SELECT token,day,source,slug FROM probes WHERE day>=?", (oldest,))}
         for name, item_generation, size, source in db.execute("SELECT name,generation,size,source FROM inventory ORDER BY name,generation"):
             item = {"name": name, "generation": item_generation, "size": size, "source": source}
@@ -259,7 +293,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                     for index, raw in enumerate(records):
                         if index % 256 == 0:
                             check_budget(db)
-                        event = classifier.event(item["source"], raw, probes)
+                        event = classifier.event(item["source"], raw, probes, name=item["name"])
                         if event is None:
                             continue
                         if event["day"] < oldest:
@@ -274,7 +308,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 db.execute("RELEASE input")
                 if not rebuilding:
                     db.commit()
-            except (ValueError, KeyError, TypeError, UnicodeError, csv.Error, GoogleAPICallError, OSError) as exc:
+            except (ValueError, KeyError, TypeError, OverflowError, RecursionError, UnicodeError, csv.Error, GoogleAPICallError, OSError) as exc:
                 # Publish the failure evidence with the unchanged checkpoint for
                 # this input. Never skip the malformed object on the next run.
                 db.execute("ROLLBACK TO input")
@@ -288,7 +322,8 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 # coverage for that source until a reviewed reconciliation.
                 mark_gap(db, item["source"], cutoff, "Input parsing or budget failure")
                 db.commit()
-                break
+                if replay:
+                    break
         if rebuilding:
             db.execute("RELEASE reconciliation")
         if replay:
@@ -301,32 +336,43 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 mark_gap(db, source, cutoff, "Worker outage exceeds raw evidence retention")
         # Delivered probes establish pipeline health, independently of asset age.
         # Missing days between probes remain pending; earlier days stay unknown.
-        first_probe = db.execute("SELECT MIN(day) FROM probes").fetchone()[0]
+        first_days = {
+            "gcs_usage": db.execute("SELECT MIN(day) FROM probes WHERE source='gcs_usage'").fetchone()[0],
+            "app_usage": db.execute("SELECT MIN(day) FROM app_daily").fetchone()[0],
+        }
+        first_probe = min((day for day in first_days.values() if day is not None), default=None)
         begin = max(dt.date.fromisoformat(first_probe), cutoff - dt.timedelta(days=459)) if first_probe else cutoff + dt.timedelta(days=1)
         for offset in range(max(0, (cutoff - begin).days + 1)):
             day = (begin + dt.timedelta(days=offset)).isoformat()
             for source in SOURCES:
+                if first_days[source] is None or day < first_days[source]:
+                    continue
                 if db.execute("SELECT 1 FROM coverage WHERE day=? AND source=? AND state='gap'", (day, source)).fetchone():
+                    continue
+                if source == "app_usage":
+                    seen = db.execute("SELECT 1 FROM app_daily WHERE day=? LIMIT 1", (day,)).fetchone()
+                    state = "healthy" if seen and valid[source] else "pending"
+                    db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,?,?)", (day, source, state, "Receipts observed; individual application coverage remains partial" if state == "healthy" else "No verified receipt pipeline observation"))
                     continue
                 seen = db.execute("SELECT MAX(seen) FROM probes WHERE day=? AND source=? AND trusted=1 AND policy=?", (day, source, classifier.version)).fetchone()[0]
                 prior = db.execute("SELECT state FROM coverage WHERE day=? AND source=?", (day, source)).fetchone()
                 healthy = seen == 1 or (prior and prior[0] == "healthy")
                 reason = "No known gaps; probe observed" if healthy else "Missing probe, unverified configuration, or cost gate"
                 db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,?,?)", (day, source, "healthy" if healthy else "pending", reason))
-        if not valid:
-            for source in SOURCES:
+        for source in SOURCES:
+            if not valid[source]:
                 for offset in range(5):
-                    db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,'gap','Unverified live collection configuration or cost gate')", ((now.date()-dt.timedelta(days=offset)).isoformat(), source))
-        if probe is not None:
-            for source in SOURCES:
-                token = "usage-probe-" + uuid.uuid4().hex
-                slug = probe(source, token)
-                db.execute("INSERT INTO probes VALUES(?,?,?,?,?,?,0)", (token, now.date().isoformat(), source, slug, classifier.version, int(valid)))
+                    db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,'gap','Unverified source configuration or incremental cost gate')", ((now.date()-dt.timedelta(days=offset)).isoformat(), source))
+        if probe is not None and classifier.config.get("collection_enabled", False):
+            token = "usage-probe-" + uuid.uuid4().hex
+            slug = probe("gcs_usage", token)
+            db.execute("INSERT INTO probes VALUES(?,?,?,?,?,?,0)", (token, now.date().isoformat(), "gcs_usage", slug, classifier.version, int(valid["gcs_usage"])))
         keep = (now.date() - dt.timedelta(days=460)).isoformat()
         db.execute("DELETE FROM events WHERE day < ?", (oldest,))
         db.execute("DELETE FROM probes WHERE day < ?", (keep,))
         db.execute("DELETE FROM inputs WHERE seen_at < ?", (keep,))
         db.execute("DELETE FROM daily WHERE day < ?", (keep,))
+        db.execute("DELETE FROM app_daily WHERE day < ?", (keep,))
         db.execute("DELETE FROM coverage WHERE day < ?", (keep,))
         db.execute("DELETE FROM evidence WHERE day < ?", (keep,))
         db.execute("DELETE FROM reconciliations WHERE at < ?", (keep,))

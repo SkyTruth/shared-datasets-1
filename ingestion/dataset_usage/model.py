@@ -12,9 +12,11 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
-VERSION = 1
-SOURCES = ("gcs_audit", "cdn", "gcs_usage", "catalog")
-KINDS = ("read", "interest", "catalog", "maintenance", "failed")
+VERSION = 2
+MANIFEST_VERSION = 1
+RETIRED_SOURCES = ("gcs_audit", "cdn", "catalog")
+SOURCES = ("gcs_usage", "app_usage")
+KINDS = ("read", "interest", "use", "maintenance", "failed")
 DISCLAIMER = "Observed activity only. Public usage logs are best-effort; logs cannot prove non-use of downloaded copies. Missing information never means zero use."
 
 
@@ -26,7 +28,7 @@ def timestamp(value):
 
 
 def iso(value):
-    return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
+    return value.astimezone(dt.UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def digest(value):
@@ -35,14 +37,28 @@ def digest(value):
 
 class Classifier:
     def __init__(self, catalog, config, bucket):
+        if type(config.get("schema_version")) is not int or config["schema_version"] != VERSION:
+            raise ValueError("Unsupported usage configuration schema")
         self.bucket = bucket
         self.config = config
         retention = config["raw_retention_days"]
         if type(retention) is not int or not 7 <= retention <= 30:
             raise ValueError("Raw retention must be 7–30 days to allow delayed delivery and recovery")
-        for mapping in (config.get("principals", {}), config.get("referrers", {})):
+        for mapping in (config.get("referrers", {}),):
             if len(mapping) > 100 or any(not isinstance(label, str) or not 1 <= len(label) <= 120 or "@" in label for label in mapping.values()):
                 raise ValueError("Application mappings require bounded display names, not personal identities")
+        self.producers = config.get("producers", {})
+        if len(self.producers) > 100:
+            raise ValueError("Producer registry exceeds its budget")
+        for producer, entry in self.producers.items():
+            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", producer):
+                raise ValueError("Invalid producer identifier")
+            if entry["environment"] not in {"production", "development"} or entry["status"] not in {"registered", "configured"}:
+                raise ValueError("Invalid producer registration")
+            if not isinstance(entry["application"], str) or not 1 <= len(entry["application"]) <= 120 or "@" in entry["application"]:
+                raise ValueError("Application labels must not contain personal identities")
+            if entry["status"] == "configured" and not re.fullmatch(r"(?:[a-z0-9-]+@[a-z0-9-]+\.iam|[0-9]+-compute@developer|[a-z0-9-]+@appspot)\.gserviceaccount\.com", entry.get("service_account", "")):
+                raise ValueError("Configured producers require a managed runtime identity")
         self.assets = {row["asset_slug"]: row for row in catalog}
         self.roots = {}
         for row in catalog:
@@ -57,7 +73,7 @@ class Classifier:
 
     def asset(self, path):
         path = unquote(path).lstrip("/")
-        if path.startswith(f"storage/v1/b/{self.bucket}/o/") or path.startswith(f"b/{self.bucket}/o/"):
+        if any(path.startswith(f"{prefix}{self.bucket}/o/") for prefix in ("storage/v1/b/", "download/storage/v1/b/", "b/")):
             path = path.split("/o/", 1)[1]
         if path.startswith(f"{self.bucket}/"):
             path = path[len(self.bucket) + 1:]
@@ -80,106 +96,62 @@ class Classifier:
                     return slug, False
         return None, False
 
-    def event(self, source, raw, probes):
-        principal = ""
-        referrer = ""
-        bytes_served = None
-        status = 200
-        method = "GET"
-        operation = ""
-        catalog_event = False
-        if source == "gcs_usage":
-            if raw["cs_bucket"] != self.bucket:
-                return None
-            when = iso(dt.datetime.fromtimestamp(int(raw["time_micros"]) / 1_000_000, dt.UTC))
-            path = raw.get("cs_object") or urlsplit(raw["cs_uri"]).path
-            method = raw["cs_method"]
-            operation = raw.get("cs_operation", "") or ""
-            status = int(raw["sc_status"])
-            bytes_served = int(raw["sc_bytes"]) if raw.get("sc_bytes") else None
-            referrer = raw.get("cs_referer", "")
-            identity = raw.get("s_request_id")
-        else:
-            when = iso(timestamp(raw["timestamp"]))
-            identity = raw.get("insertId")
-            if source == "gcs_audit":
-                payload = raw["protoPayload"]
-                if payload["serviceName"] != "storage.googleapis.com":
-                    return None
-                name = payload.get("resourceName", "")
-                marker = f"/buckets/{self.bucket}/objects/"
-                if marker not in name:
-                    labels = raw.get("resource", {}).get("labels", {})
-                    if labels.get("bucket_name") == self.bucket or f"/buckets/{self.bucket}" in name:
-                        raise ValueError("Unresolvable shared-bucket audit observation")
-                    return None
-                path = name.split(marker, 1)[1]
-                operation = payload["methodName"]
-                if operation != "storage.objects.get":
-                    return None
-                principal = payload.get("authenticationInfo", {}).get("principalEmail", "")
-                status = 403 if payload.get("status", {}).get("code", 0) else 200
-                # Audit get operations do not prove a bytes download. Preserve
-                # interest instead of guessing from an unavailable HTTP method.
-                method = "AUDIT_GET"
-            elif source == "cdn":
-                http = raw["httpRequest"]
-                url = urlsplit(http["requestUrl"])
-                if url.hostname != self.config["cdn_host"]:
-                    return None
-                path = url.path
-                status = int(http["status"])
-                method = http["requestMethod"]
-                referrer = http.get("referer", "")
-                bytes_served = int(http["responseSize"]) if "responseSize" in http else None
-            elif source == "catalog":
-                payload = raw.get("jsonPayload", {})
-                if payload.get("event") not in {"dataset_usage", "dataset_usage_probe"}:
-                    return None
-                resource = raw.get("resource", {})
-                if not ((resource.get("type") == "cloud_run_revision" and resource.get("labels", {}).get("service_name") == "catalog-viewer") or (payload.get("event") == "dataset_usage_probe" and resource.get("type") == "cloud_run_job" and resource.get("labels", {}).get("job_name") == "dataset-usage")):
-                    return None
-                path = f"_catalog/releases/{payload['asset_slug']}.json"
-                catalog_event = True
-            else:
-                raise ValueError("Unknown usage source")
+    def event(self, source, raw, probes, *, name=None):
+        if source == "app_usage":
+            match = re.fullmatch(r"app-usage/([a-z0-9-]+)/v1/(\d{4}-\d{2}-\d{2})/([0-9a-f]{32})\.json", name or "")
+            if not match or match[1] not in self.producers:
+                raise ValueError("Receipt requires a registered producer prefix")
+            producer = self.producers[match[1]]
+            if producer["status"] != "configured":
+                raise ValueError("Receipt producer has no verified runtime binding")
+            if set(raw) != {"schema_version", "asset_slug", "activity", "observed_at"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+                raise ValueError("Invalid application receipt schema")
+            if raw["asset_slug"] not in self.assets or raw["activity"] not in {"use", "interest"}:
+                raise ValueError("Invalid application receipt activity")
+            when = iso(timestamp(raw["observed_at"]))
+            if when[:10] != match[2]:
+                raise ValueError("Receipt day differs from observation")
+            return {"day": when[:10], "at": when, "slug": raw["asset_slug"], "source": source,
+                    "id": digest([source, name]), "kind": raw["activity"], "producer": match[1],
+                    "application": producer["application"], "environment": producer["environment"],
+                    "confidence": "application_reported", "bytes": None, "probe": None}
+        if source != "gcs_usage":
+            raise ValueError("Retired or unknown usage source")
+        if raw["cs_bucket"] != self.bucket:
+            return None
+        when = iso(dt.datetime.fromtimestamp(int(raw["time_micros"]) / 1_000_000, dt.UTC))
+        path = raw.get("cs_object") or urlsplit(raw["cs_uri"]).path
+        method, status = raw["cs_method"], int(raw["sc_status"])
+        operation = raw.get("cs_operation", "") or ""
+        bytes_served = int(raw["sc_bytes"]) if raw.get("sc_bytes") else None
         if bytes_served is not None and bytes_served < 0:
             raise ValueError("Negative response byte count")
         slug, index = self.asset(path)
-        if slug is None or method not in {"GET", "HEAD", "AUDIT_GET"}:
+        if slug is None or method not in {"GET", "HEAD"}:
             return None
+        identity = raw.get("s_request_id")
         if not identity:
             raise ValueError("Relevant log entry has no deduplication identifier")
         tokens = re.findall(r"usage-probe-[a-f0-9]{32}", json.dumps(raw))
-        matched = next((token for token in tokens if (probes.get(token, {}).get("source") == source or (source == "gcs_usage" and probes.get(token, {}).get("source") in {"gcs_audit", "cdn"})) and probes[token]["slug"] == slug), None)
-        app = self.config.get("principals", {}).get(principal)
-        confidence = "verified" if app else "unknown"
-        if not app:
-            app = self.config.get("referrers", {}).get(urlsplit(referrer).hostname)
-            confidence = "inferred" if app else "unknown"
+        matched = next((token for token in tokens if probes.get(token, {}).get("source") == source and probes[token]["slug"] == slug), None)
+        app = self.config.get("referrers", {}).get(urlsplit(raw.get("cs_referer", "")).hostname)
+        confidence = "inferred" if app else "unknown"
         app = app or "Unknown"
         if matched and status in {200, 206, 304}:
             kind, app, confidence = "maintenance", "Shared datasets maintenance", "verified"
-        elif catalog_event:
-            kind, app, confidence = "catalog", "Shared datasets catalog", "verified"
         elif status not in {200, 206, 304}:
             kind = "failed"
-        elif principal in self.config.get("maintenance_principals", []):
-            kind, app, confidence = "maintenance", "Shared datasets maintenance", "verified"
-        elif principal in self.config.get("catalog_principals", []):
-            kind, app, confidence = "catalog", "Shared datasets catalog", "verified"
-        elif principal.endswith("@cloud-cdn-fill.iam.gserviceaccount.com"):
-            kind, app, confidence = "maintenance", "CDN origin fill", "verified"
-        elif index or method in {"HEAD", "AUDIT_GET"} or status == 304 or operation == "GET_Object_Metadata":
+        elif index or method == "HEAD" or status == 304 or operation == "GET_Object_Metadata":
             kind = "interest"
         else:
             kind = "read"
         return {"day": when[:10], "at": when, "slug": slug, "source": source,
-                "id": digest([source, when, identity]), "kind": kind, "application": app,
+                "id": digest([source, timestamp(when).isoformat().replace("+00:00", "Z"), identity]), "kind": kind, "application": app,
                 "confidence": confidence, "bytes": bytes_served, "probe": matched}
 
 
 def report(db, now, manifest_time=None):
+    config = json.loads(db.execute("SELECT value FROM settings WHERE key='configuration'").fetchone()[0])
     generated = manifest_time or iso(now)
     stale = (now - timestamp(generated)).total_seconds() > 48 * 3600
     completed = (now - dt.timedelta(hours=48)).date() - dt.timedelta(days=1)
@@ -210,10 +182,28 @@ def report(db, now, manifest_time=None):
             if group_count > 20000:
                 raise ValueError("Usage report group budget exceeded")
             windows[str(days)] = groups
-        assets.append({"slug": slug, "title": title, "lifecycle_status": status, "registered_on": registered,
+        app_windows = {}
+        for days in (30, 90):
+            begin = (now.date() - dt.timedelta(days=days - 1)).isoformat()
+            app_windows[str(days)] = [dict(zip(("application", "environment", "activity", "active_days", "last_reported"), row))
+                for row in db.execute("SELECT application,environment,activity,COUNT(DISTINCT day),MAX(last_at) FROM app_daily WHERE slug=? AND day>=? GROUP BY application,environment,activity ORDER BY application,environment,activity", (slug, begin))]
+            group_count += len(app_windows[str(days)])
+            if group_count > 20000:
+                raise ValueError("Usage report group budget exceeded")
+        last_apps = [dict(zip(("application", "environment", "activity", "last_reported"), row)) for row in db.execute("SELECT application,environment,activity,MAX(last_at) FROM app_last WHERE slug=? GROUP BY application,environment,activity", (slug,))]
+        group_count += len(last_apps)
+        if group_count > 20000:
+            raise ValueError("Usage report group budget exceeded")
+        assets.append({"application_windows": app_windows, "last_application_activity": last_apps, "slug": slug, "title": title, "lifecycle_status": status, "registered_on": registered,
                        "last_read": last_read, "last_interest": last_interest, "last_catalog": last_catalog,
                        "windows": windows})
-    return {"schema_version": VERSION, "generated_at": generated, "stale": stale, "observed_through": completed.isoformat(),
+    producers = []
+    for producer, entry in config.get("producers", {}).items():
+        last = db.execute("SELECT MAX(last_at) FROM app_last WHERE producer=?", (producer,)).fetchone()[0]
+        producers.append({"producer": producer, "application": entry["application"], "environment": entry["environment"],
+                          "connection": "reporting" if last else "not_connected", "last_reported": last})
+    retired = [dict(zip(("source", "retired_at"), row)) for row in db.execute("SELECT source,retired_at FROM retired_sources ORDER BY source")]
+    return {"producers": producers, "retired_sources": retired, "limitations": ["Bucket logs are best-effort", "CDN cache hits do not reach the bucket", "Offline use cannot be observed", "Application activity depends on configured reporting"], "schema_version": VERSION, "generated_at": generated, "stale": stale, "observed_through": completed.isoformat(),
             "disclaimer": DISCLAIMER, "assets": assets, "coverage": sources[-120:], "source_health": source_health,
             "evidence_versions": [dict(zip(("day", "source", "policy", "catalog"), row)) for row in db.execute("SELECT day,source,policy,catalog FROM evidence ORDER BY day,source")],
             "cost": json.loads(db.execute("SELECT value FROM settings WHERE key='cost'").fetchone()[0])}

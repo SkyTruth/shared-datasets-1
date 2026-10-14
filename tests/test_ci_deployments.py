@@ -162,3 +162,22 @@ def test_shared_bucket_iam_waits_for_selected_logging_owner(target, owner_select
     assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare,
                                  ast.Eq, ast.NotEq, ast.Constant)) for node in ast.walk(tree))
     assert eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}}) is expected
+
+
+@pytest.mark.parametrize("selected,result,expected", [(False, "skipped", True), (True, "success", True), (True, "failure", False), (True, "skipped", False)])
+@pytest.mark.parametrize('registry_result', ['success', 'failure', 'cancelled', 'skipped'])
+def test_usage_writer_waits_for_compatible_reader(selected, result, expected, registry_result):
+    jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
+    assert 'catalog-viewer' in jobs['dataset-usage']['needs']
+    assert 'dataset-usage' not in jobs['catalog-viewer']['needs']
+    expression = jobs['dataset-usage']['if'].removeprefix('${{').removesuffix('}}').strip()
+    values = {
+        'always()': 'True', 'github.event_name': repr('push'), 'github.ref': repr('refs/heads/main'),
+        'needs.ci-ready.result': repr('success'), 'needs.geospatial-changes.outputs.dataset_usage': repr('true'),
+        'needs.artifact-registry-iam.result': repr(registry_result),
+        'needs.geospatial-changes.outputs.catalog_viewer': repr('true' if selected else 'false'),
+        'needs.catalog-viewer.result': repr(result),
+    }
+    for name, value in values.items():
+        expression = expression.replace(name, value)
+    assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (expected and registry_result == 'success')
