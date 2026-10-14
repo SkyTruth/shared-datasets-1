@@ -13,6 +13,34 @@ from ingestion.dataset_usage.model import Classifier
 from ingestion.dataset_usage.run import activation_valid, cost_evidence_valid
 from scripts.catalog_csv import read_catalog_rows_text
 
+RETIREMENT_RESOURCES = {
+    'google_logging_project_sink.dataset_usage',
+    'google_logging_project_exclusion.dataset_usage_duplicate',
+    'google_storage_bucket_iam_member.dataset_usage_sink_writer',
+    'google_project_iam_member.dataset_usage_health',
+    'google_project_iam_custom_role.dataset_usage_health',
+}
+
+
+def retirement_ready(root, payload):
+    """A reviewed cleanup must also have live replacement publication evidence."""
+    import datetime as dt
+    from ingestion.dataset_usage.model import SOURCES, timestamp
+    config = json.loads((root / 'catalog/dataset-usage.json').read_text())
+    activation = json.loads((root / 'catalog/dataset-usage-activation.json').read_text())
+    classifier = Classifier(read_catalog_rows_text((root / 'catalog/shared-datasets-catalog.csv').read_text()), config, 'skytruth-shared-datasets-1')
+    now = dt.datetime.now(dt.UTC)
+    if payload.get('schema_version') != 2 or payload.get('collection_errors') or not 0 <= (now - timestamp(payload['generated_at'])).total_seconds() <= 48 * 3600:
+        return False
+    if not all(activation_valid(activation, classifier, source) for source in SOURCES):
+        return False
+    health = {entry['source']: entry for entry in payload['source_health']}
+    if not all(health.get(source, {}).get('healthy_days', 0) >= 2 and len({entry['day'] for entry in payload['coverage'] if entry['source'] == source and entry['state'] == 'healthy' and entry['day'] >= activation['sources'][source]['verified_at'][:10] and entry['day'] >= (now - dt.timedelta(days=7)).date().isoformat()}) >= 2 for source in SOURCES):
+        return False
+    reporting = {entry['producer'] for entry in payload['producers'] if entry['connection'] == 'reporting'}
+    expected = {name for name, entry in config['producers'].items() if entry['status'] == 'configured' and entry['environment'] == 'production'}
+    return bool(expected) and expected <= reporting
+
 RESOURCES = {
     'google_storage_bucket.dataset_usage_raw', 'google_storage_bucket.dataset_usage_state',
     'google_logging_project_sink.dataset_usage',
@@ -28,7 +56,7 @@ RESOURCES = {
     'google_service_account_iam_member.dataset_usage_deployer_act_as',
     'google_service_account_iam_member.dataset_usage_scheduler_deployer_act_as',
     'google_project_iam_audit_config.storage_data_write',
-    'google_storage_bucket.shared_bucket',
+    'google_storage_bucket.shared_bucket', 'google_storage_bucket_iam_member.dataset_usage_app_writer',
     *('google_storage_bucket_iam_member.dataset_usage_' + name for name in (
         'sink_writer', 'storage_logger', 'raw_reader', 'state_writer', 'viewer',
         'probe_reader', 'configuration_reader', 'raw_configuration_reader')),
@@ -40,14 +68,17 @@ def validate_rollout(root):
     activation = json.loads((root / 'catalog/dataset-usage-activation.json').read_text())
     c = Classifier(read_catalog_rows_text((root / 'catalog/shared-datasets-catalog.csv').read_text()), config, 'skytruth-shared-datasets-1')
     if config['collection_enabled'] and not cost_evidence_valid(activation):
-        raise ValueError('Collection requires reviewed project-wide cost evidence at or below $25/month')
-    if activation.get('verified_at') and not activation_valid(activation, c):
-        raise ValueError('Activation does not match the complete current configuration and cost gate')
+        raise ValueError('Collection requires reviewed incremental tracking cost evidence at or below $25/month')
+    if any(entry.get('verified_at') and not activation_valid(activation, c, source) for source, entry in activation.get('sources', {}).items()):
+        raise ValueError('Activation does not match the current source configuration and cost gate')
     return activation_valid(activation, c) and config['collection_enabled']
 
 
-def validate_plan(plan, image, *, verified):
-    config = json.loads((Path(__file__).resolve().parents[1] / 'catalog/dataset-usage.json').read_text())
+def validate_plan(plan, image, *, verified, retirement_verified=False):
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((root / 'catalog/dataset-usage.json').read_text())
+    legacy_path = root / 'terraform/envs/prod/dataset_usage_legacy.tf'
+    legacy_filter = json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', legacy_path.read_text())[1]) if legacy_path.exists() else None
     if not re.fullmatch(r'[a-z0-9./_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('An immutable tested image is required')
     rows = {row['address']: row for row in plan.get('resource_changes', [])}
@@ -80,7 +111,27 @@ def validate_plan(plan, image, *, verified):
         if actions in ([], ['no-op'], ['read']):
             continue
         address = row['address']
-        if address not in RESOURCES or actions not in (['create'], ['update']):
+        if actions == ['delete'] and address in RETIREMENT_RESOURCES:
+            if not retirement_verified:
+                raise ValueError('Legacy retirement requires verified replacement evidence')
+            before = change.get('before') or {}
+            if address == 'google_logging_project_sink.dataset_usage' and before.get('name') != 'dataset-usage':
+                raise ValueError('Unexpected retired sink identity')
+            if address == 'google_logging_project_exclusion.dataset_usage_duplicate' and before.get('name') != 'dataset-usage-exported-copy':
+                raise ValueError('Unexpected retired exclusion identity')
+            if address.startswith('google_logging_project_') and (before.get('project') != 'shared-datasets-1' or not before.get('disabled')):
+                raise ValueError('Only disabled project usage exports may be retired')
+            if address == 'google_storage_bucket_iam_member.dataset_usage_sink_writer':
+                sink = rows.get('google_logging_project_sink.dataset_usage', {}).get('change', {}).get('before') or {}
+                if before.get('bucket') != 'skytruth-shared-datasets-1-usage-raw' or before.get('role') != 'roles/storage.objectCreator' or before.get('member') != sink.get('writer_identity'):
+                    raise ValueError('Retirement writer must match the exact retired sink')
+            if address == 'google_project_iam_member.dataset_usage_health' and (before.get('member') != 'serviceAccount:dataset-usage@shared-datasets-1.iam.gserviceaccount.com' or before.get('role') != 'projects/shared-datasets-1/roles/sharedDatasetsUsageHealth' or before.get('project') != 'shared-datasets-1'):
+                raise ValueError('Unexpected legacy health binding')
+            if address == 'google_project_iam_custom_role.dataset_usage_health' and (before.get('role_id') != 'sharedDatasetsUsageHealth' or before.get('project') != 'shared-datasets-1'):
+                raise ValueError('Unexpected legacy health role')
+            continue
+        producer_match = re.fullmatch(r'google_storage_bucket_iam_member\.dataset_usage_app_writer\["([a-z0-9-]+)"\]', address)
+        if (address not in RESOURCES and producer_match is None) or actions not in (['create'], ['update']):
             raise ValueError('Unrelated, destructive, or replacement change: ' + address)
         after, before = change.get('after') or {}, change.get('before') or {}
         if address == 'google_storage_bucket.shared_bucket':
@@ -121,7 +172,7 @@ def validate_plan(plan, image, *, verified):
         elif address in {'google_logging_project_sink.dataset_usage', 'google_logging_project_exclusion.dataset_usage_duplicate'}:
             exclusion = address == 'google_logging_project_exclusion.dataset_usage_duplicate'
             fields = {'project', 'filter', 'disabled', 'name'} | (set() if exclusion else {'destination', 'exclusions'})
-            if after.get('project') != 'shared-datasets-1' or after.get('filter') != config['sink_filter'] or after.get('disabled', False) != (not config['collection_enabled']) or any(unknown(change.get('after_unknown', {}).get(field, False)) for field in fields):
+            if after.get('project') != 'shared-datasets-1' or after.get('filter') != legacy_filter or after.get('disabled', False) is not True or any(unknown(change.get('after_unknown', {}).get(field, False)) for field in fields):
                 raise ValueError('Logging export and duplicate exclusion must match the reviewed configuration')
             if exclusion:
                 if after.get('name') != 'dataset-usage-exported-copy':
@@ -140,7 +191,14 @@ def validate_plan(plan, image, *, verified):
         elif address.startswith('google_storage_bucket_iam_member.'):
             if after.get('member') in {'allUsers', 'allAuthenticatedUsers'}:
                 raise ValueError('Telemetry must never be public')
-            if address in {'google_storage_bucket_iam_member.dataset_usage_probe_reader', 'google_storage_bucket_iam_member.dataset_usage_viewer'} and not after.get('condition'):
+            if producer_match:
+                producer = producer_match[1]
+                registration = config["producers"].get(producer)
+                expected = f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"
+                conditions = after.get("condition", [])
+                if not registration or registration["status"] != "configured" or after.get("member") != "serviceAccount:" + registration["service_account"] or after.get("role") != "roles/storage.objectCreator" or after.get("bucket") != "skytruth-shared-datasets-1-usage-raw" or len(conditions) != 1 or conditions[0].get("expression") != expected or unknown(change.get("after_unknown", {}).get("condition", False)):
+                    raise ValueError("Application writers require their exact registered create-only prefix")
+            if address in {'google_storage_bucket_iam_member.dataset_usage_probe_reader' , 'google_storage_bucket_iam_member.dataset_usage_viewer'} and not after.get('condition'):
                 raise ValueError('Usage readers require object-scoped grants')
 
 
@@ -149,6 +207,7 @@ def main():
     parser.add_argument('--plan-json', type=Path)
     parser.add_argument('--image')
     parser.add_argument('--targets', action='store_true')
+    parser.add_argument('--retire-legacy', action='store_true', help='Verify live replacement evidence before exact legacy deletion')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     verified = validate_rollout(root)
@@ -156,7 +215,13 @@ def main():
         print('\n'.join(sorted(RESOURCES)))
     elif args.plan_json and args.image:
         plan = json.loads(args.plan_json.read_text())
-        validate_plan(plan, args.image, verified=verified)
+        retirement_verified = False
+        if args.retire_legacy:
+            from services.catalog_viewer.usage import ReportReader
+            retirement_verified = retirement_ready(root, ReportReader('skytruth-shared-datasets-1-usage-state').read())
+            if not retirement_verified:
+                raise ValueError('Replacement is not yet verified for legacy retirement')
+        validate_plan(plan, args.image, verified=verified, retirement_verified=retirement_verified)
         # Refuse concurrent canaries before claiming a deployment. A new job has
         # no executions; all other errors remain failures rather than an empty list.
         job = next(row for row in plan['resource_changes'] if row['address'] == 'module.dataset_usage_job.google_cloud_run_v2_job.this')

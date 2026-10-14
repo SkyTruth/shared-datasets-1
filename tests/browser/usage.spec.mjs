@@ -66,3 +66,24 @@ test('usage page detects a dead worker independently and handles missing reports
   await expect(page.locator('#status')).toContainText('Missing information never means zero use');
   await expect(page.locator('#rows tr')).toHaveCount(0);
 });
+
+test('application days stay separate from bucket requests and default to production', async ({ page }) => {
+  await page.setExtraHTTPHeaders(identity);
+  const report = fixture();
+  report.schema_version = 2;
+  const rows = [
+    {application: 'Cerulean', environment: 'production', activity: 'use', active_days: 2, last_reported: report.generated_at},
+    {application: 'Cerulean', environment: 'development', activity: 'use', active_days: 9, last_reported: report.generated_at},
+  ];
+  report.assets[0].application_windows = {30: rows, 90: rows};
+  report.assets[0].last_application_activity = rows;
+  report.producers = [{application: 'Monitor', environment: 'production', connection: 'not_connected', last_reported: null}];
+  await page.route('**/api/usage', route => route.fulfill({json: report}));
+  await page.goto(`${baseURL}/usage`);
+  await expect(page.locator('#environment')).toHaveValue('production');
+  await expect(page.locator('#rows')).toContainText('Application reported · Cerulean (production) · use: 2 active days');
+  await expect(page.locator('#rows')).not.toContainText('9 active days');
+  await expect(page.locator('#producers')).toContainText('Monitor (production) · not connected');
+  await page.locator('#environment').selectOption('development');
+  await expect(page.locator('#rows')).toContainText('Cerulean (development) · use: 9 active days');
+});

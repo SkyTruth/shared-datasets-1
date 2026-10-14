@@ -420,7 +420,7 @@ def handle_feature_lookup(
         max_response_bytes=feature_max_response_bytes,
     )
     if response.status in {200, 304}:
-        usage.emit(feature_preview_run.LOOKUP_RE.fullmatch(urlsplit(path).path).group("asset_slug"), "lookup")
+        usage.record(feature_preview_run.LOOKUP_RE.fullmatch(urlsplit(path).path).group("asset_slug"), "lookup")
     return response
 
 
@@ -613,7 +613,7 @@ def handle_artifact_url(method, path, headers, *, catalog_cache, object_store, s
         payload["filename"] = basename(selected.uri)
     if format_name == "metadata":
         payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=selected.uri))
-    usage.emit(slug, "url_intent")
+    usage.record(slug, "url_intent")
     return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
 

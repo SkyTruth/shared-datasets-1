@@ -8,19 +8,18 @@ import io
 import json
 import shutil
 import sqlite3
-import tracemalloc
 
 import pytest
 
 from ingestion.dataset_usage import run
 from ingestion.dataset_usage.model import Classifier, SOURCES, iso, report
-from ingestion.dataset_usage.stream import json_records, usage_records
+from ingestion.dataset_usage.stream import usage_records
 from services.catalog_viewer import usage
 
 NOW = dt.datetime(2026, 10, 7, 9, tzinfo=dt.UTC)
 BUCKET = "shared"
 ROWS = [{"asset_slug": "example", "title": "Example", "status": "active", "canonical_path": "gs://shared/category/example/latest/example.csv", "access_tier": "public"}]
-CONFIG = {"raw_retention_days": 7, "cdn_host": "tiles.example.org", "principals": {"reader@example.org": "Application group"}, "referrers": {"app.example.org": "Inferred app"}, "maintenance_principals": ["worker@example.org"], "catalog_principals": ["viewer@example.org"]}
+CONFIG = {"schema_version": 2, "raw_retention_days": 7, "collection_enabled": True, "producers": {"example-production": {"application": "Example app", "environment": "production", "status": "configured", "service_account": "example@example-project.iam.gserviceaccount.com"}}, "cdn_host": "tiles.example.org", "principals": {"reader@example.org": "Application group"}, "referrers": {"app.example.org": "Inferred app"}, "maintenance_principals": ["worker@example.org"], "catalog_principals": ["viewer@example.org"]}
 
 
 def classifier():
@@ -35,11 +34,10 @@ def test_raw_retention_rejects_policies_without_delivery_and_recovery_room(days)
 
 
 def activation(c):
-    return {"verified_at": iso(NOW - dt.timedelta(days=400)), "configuration_sha256": c.version, "verified_sources": list(SOURCES), "estimated_monthly_cost_usd": 10,
-            "evidence": {"inherited_audit_settings_reviewed": True, "existing_sinks_and_exemptions_reviewed": True,
-                         "traffic_checks": dict.fromkeys(run.TRAFFIC_CHECKS, True),
-                         "cost": {"measurement_days": 7, "project_wide_audit_volume_reviewed": True, "logging_retention_and_exclusions_reviewed": True,
-                                  "monthly_usd": {key: (10 if key == "project_logging" else 0) for key in run.COST_COMPONENTS}}}}
+    return {"schema_version": 2, "configuration_sha256": c.version, "estimated_monthly_cost_usd": 10,
+            "sources": {source: {"verified_at": iso(NOW), "checks": dict.fromkeys(run.TRAFFIC_CHECKS[source], True)} for source in SOURCES},
+            "evidence": {"cost": {"measurement_days": 7, "scope": "tracker_incremental",
+                                  "monthly_usd": {key: (10 if key == "worker" else 0) for key in run.COST_COMPONENTS}}}}
 
 
 def raw(path="category/example/latest/example.csv", *, method="GET", status=200, identity="one", when=NOW):
@@ -69,14 +67,6 @@ def test_inferred_referrer_and_maintenance_user_agent_never_hide_activity():
     assert "private" not in json.dumps(event)
 
 
-def test_audit_is_conservative_interest_with_verified_group_attribution():
-    entry = {"timestamp": iso(NOW), "insertId": "a", "protoPayload": {"serviceName": "storage.googleapis.com", "methodName": "storage.objects.get", "resourceName": "projects/_/buckets/shared/objects/category/example/latest/example.csv", "authenticationInfo": {"principalEmail": "reader@example.org"}}}
-    event = classifier().event("gcs_audit", entry, {})
-    assert (event["kind"], event["application"], event["bytes"]) == ("interest", "Application group", None)
-    entry["protoPayload"]["authenticationInfo"]["principalEmail"] = "viewer@example.org"
-    assert classifier().event("gcs_audit", entry, {})["kind"] == "catalog"
-
-
 def test_exact_nonce_excludes_only_successful_source_and_asset_probe():
     token = "usage-probe-" + "a" * 32
     entry = raw()
@@ -88,46 +78,11 @@ def test_exact_nonce_excludes_only_successful_source_and_asset_probe():
     assert classifier().event("gcs_usage", entry, probes)["kind"] == "failed"
 
 
-def test_catalog_event_requires_platform_identity():
-    entry = {"timestamp": iso(NOW), "insertId": "a", "jsonPayload": {"event": "dataset_usage", "asset_slug": "example"}, "resource": {"type": "cloud_run_revision", "labels": {"service_name": "catalog-viewer"}}}
-    assert classifier().event("catalog", entry, {})["kind"] == "catalog"
-    entry["resource"]["labels"]["service_name"] = "other"
-    assert classifier().event("catalog", entry, {}) is None
-
-
 @pytest.mark.parametrize("path", ["_catalog/catalog.json", "category/example/README.md", "category/example/runs/one.json", "storage-usage_usage_2026.csv"])
 def test_general_catalog_and_non_dataset_paths_ignored(path):
     entry = raw(path)
     entry.pop("s_request_id")
     assert classifier().event("gcs_usage", entry, {}) is None
-
-
-@pytest.mark.parametrize("data", ['[{"x":1},{"x":2}]', '{"x":1}\n{"x":2}\n'])
-def test_streaming_json(data):
-    assert list(json_records(io.StringIO(data))) == [{"x": 1}, {"x": 2}]
-
-
-@pytest.mark.parametrize("data", ['[{"x":1},]', '[{"x":1}{"x":2}]', '[{"x":1}', '{"x":1}{"x":2}', '[1]', '[{}] garbage'])
-def test_malformed_stream_fails(data):
-    with pytest.raises(ValueError):
-        list(json_records(io.StringIO(data)))
-
-
-def test_large_shard_stream_has_bounded_memory():
-    class Shard:
-        remaining = 300_000
-        def read(self, size):
-            assert 0 < size <= 65536
-            count = min(self.remaining, size // 9)
-            self.remaining -= count
-            return '{"a":1}\n' * count
-    tracemalloc.start()
-    assert sum(1 for _ in json_records(Shard())) == 300_000
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    assert peak < 3 * 1024 * 1024
-    with pytest.raises(ValueError, match="budget"):
-        list(json_records(io.StringIO('{"x":"' + "x" * 1000 + '"}'), limit=100))
 
 
 def test_csv_header_forward_compatible_and_record_bounded():
@@ -255,7 +210,7 @@ def test_activity_visible_immediately_without_required_history(tmp_path, days):
     asset = payload["assets"][0]
     assert asset["last_read"] == iso(NOW)
     assert asset["windows"]["30"][0]["requests"] == 1
-    assert set(asset) == {"slug", "title", "lifecycle_status", "registered_on", "last_read", "last_interest", "last_catalog", "windows"}
+    assert set(asset) == {"slug", "title", "lifecycle_status", "registered_on", "last_read", "last_interest", "last_catalog", "windows", "application_windows", "last_application_activity"}
     assert set(asset["windows"]) == {"30", "90"}
     assert payload["observed_through"] == "2026-10-04"
     assert all(row["healthy_days"] == days and row["unknown_days"] == 460 - days for row in payload["source_health"])
@@ -266,9 +221,9 @@ def test_interest_gaps_policy_changes_and_lifecycle_remain_visible(tmp_path):
     db = seeded(tmp_path)
     run.add_event(db, classifier().event("gcs_usage", raw("_catalog/releases/example.json"), {}))
     assert report(db, NOW)["assets"][0]["last_interest"] == iso(NOW)
-    db.execute("UPDATE coverage SET state='gap' WHERE source='cdn'")
+    db.execute("UPDATE coverage SET state='gap' WHERE source='gcs_usage'")
     payload = report(db, NOW)
-    assert next(row for row in payload["source_health"] if row["source"] == "cdn")["gap_days"] == 460
+    assert next(row for row in payload["source_health"] if row["source"] == "gcs_usage")["gap_days"] == 460
     assert payload["assets"][0]["windows"]["30"][0]["application"] == "Unknown"
     assert report(db, NOW, iso(NOW-dt.timedelta(days=3)))["stale"] is True
     c = classifier()
@@ -503,10 +458,10 @@ def test_failed_reconciliation_preserves_all_totals_and_retries_same_policy(tmp_
 def test_report_exposes_old_gaps_outside_recent_daily_health(tmp_path):
     db = seeded(tmp_path)
     day = (NOW-dt.timedelta(days=200)).date().isoformat()
-    db.execute("UPDATE coverage SET state='gap' WHERE source='cdn' AND day=?", (day,))
+    db.execute("UPDATE coverage SET state='gap' WHERE source='gcs_usage' AND day=?", (day,))
     payload = report(db, NOW)
     assert not any(row['state'] == 'gap' for row in payload['coverage'])
-    assert next(row for row in payload['source_health'] if row['source'] == 'cdn')['gap_days'] == 1
+    assert next(row for row in payload['source_health'] if row['source'] == 'gcs_usage')['gap_days'] == 1
 
 
 def test_root_changes_preserve_registration_and_historical_activity(tmp_path):
@@ -541,10 +496,10 @@ def test_delivered_probe_marks_health_and_missing_days_remain_pending(tmp_path):
     with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
         db.execute('UPDATE probes SET seen=1')
     execute(store, tmp_path, NOW + dt.timedelta(days=4))
-    rows = store.payload['coverage']
+    rows = [row for row in store.payload['coverage'] if row['source'] == 'gcs_usage']
     assert {row['state'] for row in rows if row['day'] == NOW.date().isoformat()} == {'healthy'}
     assert {row['state'] for row in rows if row['day'] == (NOW.date()+dt.timedelta(days=1)).isoformat()} == {'pending'}
-    assert all(row['healthy_days'] == 1 and row['pending_days'] == 1 and row['unknown_days'] == 458 for row in store.payload['source_health'])
+    assert all(row['healthy_days'] == 1 and row['pending_days'] == 1 and row['unknown_days'] == 458 for row in store.payload['source_health'] if row['source'] == 'gcs_usage')
 
 
 def test_native_csv_multiline_record_budget_is_total_not_per_line():
@@ -562,25 +517,6 @@ def test_untrusted_probe_does_not_certify_historical_coverage(tmp_path):
     execute(store, tmp_path, NOW+dt.timedelta(days=3))
     with sqlite3.connect(tmp_path/'committed.sqlite') as db:
         assert not db.execute("SELECT * FROM coverage WHERE state='healthy'").fetchall()
-
-
-def test_nonce_overlap_does_not_substitute_for_independent_source_probe(tmp_path):
-    db = seeded(tmp_path)
-    token = 'usage-probe-'+'a'*32
-    db.execute('INSERT INTO probes VALUES(?,?,?,?,?,?,?)', (token, NOW.date().isoformat(), 'cdn', 'example', classifier().version, 1, 0))
-    entry = raw()
-    entry['cs_user_agent'] = token
-    event = classifier().event('gcs_usage', entry, {token: {'source': 'cdn', 'slug': 'example'}})
-    assert event['kind'] == 'maintenance'
-    run.add_event(db, event)
-    assert db.execute('SELECT seen FROM probes WHERE token=?', (token,)).fetchone()[0] == 0
-
-
-def test_ambiguous_audit_shapes_cannot_become_zero_interest():
-    entry = {'timestamp': iso(NOW), 'insertId': 'a', 'resource': {'labels': {'bucket_name': BUCKET}},
-             'protoPayload': {'serviceName': 'storage.googleapis.com', 'methodName': 'storage.objects.get', 'resourceName': 'projects/_/buckets/shared'}}
-    with pytest.raises(ValueError, match='Unresolvable'):
-        classifier().event('gcs_audit', entry, {})
 
 
 def test_missing_usage_headers_and_misaligned_rows_are_explicit_failures():

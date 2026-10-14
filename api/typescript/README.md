@@ -753,3 +753,32 @@ The dataset API also supports non-PMTiles canonical artifacts through Python.
 Because `web/catalog/workspace-contract.js` is compiled into the package, its
 changes and changes to `scripts/copy-snapshot-contract.mjs` participate in the
 same reviewed version-increase check and publish trigger as package sources.
+
+## Opt-in daily usage reporting
+
+Backend code can import `createGcsUsageReporter` from the server entrypoint. Supply
+an ADC-backed `@google-cloud/storage` client with `retryOptions.autoRetry: false`;
+the SDK keeps its main/browser entrypoint free of Google credential dependencies.
+Register the backend producer before enabling its exact create-only prefix grant.
+
+```ts
+import {Storage} from '@google-cloud/storage';
+import {createGcsUsageReporter} from '@skytruth/shared-datasets/server';
+
+const reporter = createGcsUsageReporter({
+  producer: 'my-application-production',
+  storage: new Storage({retryOptions: {autoRetry: false}}),
+});
+reporter.recordUsage('iho-world-seas', 'use'); // After successful access or cached use.
+await reporter.flush();
+```
+
+`createUsageReporter` in the main entrypoint accepts an application-owned
+`writeReceipt` transport. Browser callers use their existing same-origin backend;
+the backend supplies identity and time, validates access, and writes the receipt.
+Do not send credentials or arbitrary producer names to browsers. Snapshot layer
+options accept `usageReporter` and record interest after successful resolution;
+map helpers record use after a successful map load. Record application-owned cache
+consumption explicitly. Flush before requests/jobs exit. Upload failures are
+diagnosed and return `false` without failing dataset access. No personal identifiers
+or query contents are recorded.

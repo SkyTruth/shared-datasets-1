@@ -15,25 +15,15 @@ def test_real_entrypoint_cold_start_without_bucket_logging(tmp_path, capsys):
     assert payload['collection_errors'] == []
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [event['event'] for event in events] == [
-        'dataset_usage_probe', 'dataset_usage_published', 'dataset_usage_cold_start_verified',
+        'dataset_usage_published', 'dataset_usage_cold_start_verified',
     ]
 
 
-def test_cold_start_malformed_logging_cannot_publish_coverage(tmp_path):
-    client = Client(logging=[])
-    with pytest.raises(TypeError, match='logging'):
-        exercise(tmp_path, client=client)
-    assert client.writes == []
-
-
-def test_cold_start_denied_storage_read_is_not_healthy_or_disabled(tmp_path):
+def test_disabled_collection_does_not_read_bucket_configuration(tmp_path):
     client = Client()
-    denied = Forbidden('fixture bucket read denied')
-    client.get_bucket = Mock(side_effect=denied)
-    with pytest.raises(Forbidden) as raised:
-        exercise(tmp_path, client=client)
-    assert raised.value is denied
-    assert client.writes == []
+    client.get_bucket = Mock(side_effect=Forbidden('configuration access deliberately absent'))
+    exercise(tmp_path, client=client)
+    client.get_bucket.assert_not_called()
 
 
 def test_cold_start_incompatible_persisted_manifest_still_fails(tmp_path):
@@ -49,16 +39,6 @@ def test_cold_start_missing_published_catalog_still_fails(tmp_path):
     client.objects.clear()
     with pytest.raises(NotFound, match='fixture object absent'):
         exercise(tmp_path, client=client)
-    assert client.writes == []
-
-
-def test_cold_start_failed_probe_cannot_publish_success(tmp_path, monkeypatch):
-    client = Client()
-    denied = Forbidden('fixture probe denied')
-    monkeypatch.setattr('scripts.dataset_usage_cold_start.Response.raise_for_status', Mock(side_effect=denied))
-    with pytest.raises(Forbidden) as raised:
-        exercise(tmp_path, client=client)
-    assert raised.value is denied
     assert client.writes == []
 
 

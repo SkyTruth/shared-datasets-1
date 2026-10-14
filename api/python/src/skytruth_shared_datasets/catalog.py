@@ -392,6 +392,7 @@ class Catalog:
         access: AccessMode = "public",
         client=None,
         version: str = "latest",
+        usage_reporter=None,
     ) -> DatasetRef:
         """Fetch one generation-pinned artifact and verify its local cache bytes."""
         asset = self.get(slug)
@@ -409,7 +410,10 @@ class Catalog:
             ref = self.resolve(slug, format)
         else:
             ref = _release_ref(asset, release_index, version, format, index_generation=index_generation)
-        return _fetch_ref(ref, cache_dir=cache_dir, force=force, timeout=timeout, access=access_mode, client=client)
+        result = _fetch_ref(ref, cache_dir=cache_dir, force=force, timeout=timeout, access=access_mode, client=client)
+        if usage_reporter is not None:
+            usage_reporter.recordUsage(slug, "use")
+        return result
 
 
 def _fetch_ref(ref: DatasetRef, *, cache_dir=None, force=False, timeout=60.0, access="gcs", client=None) -> DatasetRef:
@@ -470,6 +474,7 @@ def fetch_dataset(
     format: str | None = None,
     *,
     version: str = "latest",
+    usage_reporter=None,
     cache_dir: str | os.PathLike[str] | None = None,
     force: bool = False,
     timeout: float = 60.0,
@@ -481,7 +486,7 @@ def fetch_dataset(
     return catalog.fetch(
         slug,
         format,
-        version=version,
+        version=version, usage_reporter=usage_reporter,
         cache_dir=cache_dir,
         force=force,
         timeout=timeout,

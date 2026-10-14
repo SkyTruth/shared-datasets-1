@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -112,7 +113,41 @@ def test_unverified_schedule_and_public_telemetry_refused():
         validate_plan({'resource_changes': [resource('google_storage_bucket_iam_member.dataset_usage_raw_reader', {'member': 'allUsers'})]}, IMAGE, verified=False)
 
 
-def test_collection_cost_gate_requires_measured_project_wide_evidence(tmp_path):
+def test_application_grants_cannot_cross_prefixes_or_gain_read_overwrite_authority():
+    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
+    producer = 'catalog-viewer-production'
+    after = {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'role': 'roles/storage.objectCreator',
+             'member': 'serviceAccount:' + config['producers'][producer]['service_account'],
+             'condition': [{'expression': f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"}]}
+    item = resource(f'google_storage_bucket_iam_member.dataset_usage_app_writer["{producer}"]', after, actions=['create'])
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    for field, value in [('role', 'roles/storage.objectAdmin'), ('bucket', 'skytruth-shared-datasets-1'),
+                         ('member', 'allUsers'), ('condition', []),
+                         ('condition', [{'expression': "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/')"}])]:
+        changed = copy.deepcopy(item)
+        changed['change']['after'][field] = value
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+
+
+def test_exact_legacy_deletion_requires_replacement_proof_and_rejects_replacements():
+    before = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'disabled': True}
+    item = resource('google_logging_project_sink.dataset_usage', None, before, actions=['delete'])
+    with pytest.raises(ValueError, match='replacement evidence'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+    for changes in ({'name': 'other'}, {'disabled': False}, {'project': 'other'}):
+        changed = copy.deepcopy(item)
+        changed['change']['before'].update(changes)
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [changed]}, IMAGE, verified=True, retirement_verified=True)
+    for address, actions in [('google_storage_bucket.dataset_usage_raw', ['delete']),
+                             ('google_logging_project_sink.dataset_usage', ['delete', 'create'])]:
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [resource(address, {}, before, actions)]}, IMAGE, verified=True, retirement_verified=True)
+
+
+def test_collection_cost_gate_requires_measured_incremental_evidence(tmp_path):
     directory = tmp_path / 'catalog'
     directory.mkdir()
     for name in ('dataset-usage.json', 'dataset-usage-activation.json', 'shared-datasets-catalog.csv'):
@@ -126,7 +161,7 @@ def test_collection_cost_gate_requires_measured_project_wide_evidence(tmp_path):
         (directory/'dataset-usage-activation.json').write_text(json.dumps(activation))
         with pytest.raises(ValueError, match='cost evidence'):
             validate_rollout(tmp_path)
-    (directory/'dataset-usage-activation.json').write_text(json.dumps({'estimated_monthly_cost_usd': 20, 'evidence': {'cost': {'measurement_days': 7, 'project_wide_audit_volume_reviewed': True, 'logging_retention_and_exclusions_reviewed': True, 'monthly_usd': {key: (20 if key == 'project_logging' else 0) for key in COST_COMPONENTS}}}}))
+    (directory/'dataset-usage-activation.json').write_text(json.dumps({'estimated_monthly_cost_usd': 20, 'evidence': {'cost': {'measurement_days': 7, 'scope': 'tracker_incremental', 'monthly_usd': {key: (20 if key == 'worker' else 0) for key in COST_COMPONENTS}}}}))
     assert validate_rollout(tmp_path) is False  # Collection canary only; schedule remains paused.
 
 
@@ -137,8 +172,7 @@ def test_saved_plan_permissions_cover_logging_and_audit_configuration():
 
 
 def test_duplicate_storage_exclusion_is_scoped_and_disabled_with_collection():
-    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
-    exclusion = {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy', 'filter': config['sink_filter'], 'disabled': True}
+    exclusion = {'project': 'shared-datasets-1', 'name': 'dataset-usage-exported-copy', 'filter': json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', (ROOT/'terraform/envs/prod/dataset_usage_legacy.tf').read_text())[1]), 'disabled': True}
     item = resource('google_logging_project_exclusion.dataset_usage_duplicate', exclusion, actions=['create'])
     validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
     for field, value in [('filter', 'resource.type="gcs_bucket"'), ('disabled', False), ('project', 'other'), ('name', 'all-project-logs')]:
@@ -153,8 +187,7 @@ def test_duplicate_storage_exclusion_is_scoped_and_disabled_with_collection():
 
 
 def test_raw_export_cannot_be_sampled_or_have_a_different_destination():
-    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
-    sink = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'filter': config['sink_filter'], 'disabled': True, 'destination': 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw'}
+    sink = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'filter': json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', (ROOT/'terraform/envs/prod/dataset_usage_legacy.tf').read_text())[1]), 'disabled': True, 'destination': 'storage.googleapis.com/skytruth-shared-datasets-1-usage-raw'}
     item = resource('google_logging_project_sink.dataset_usage', sink, actions=['create'])
     # A new sink's computed writer is legitimately unknown before creation.
     item['change']['after_unknown']['writer_identity'] = True

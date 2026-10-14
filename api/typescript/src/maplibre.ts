@@ -61,7 +61,11 @@ export async function showDataset(container: string | HTMLElement, reference: Da
   const map = new maplibregl.Map({...options.mapOptions, container,
     style: {version: 8, sources: {dataset: {type: 'vector', url: `pmtiles://${layer.tileUrl}`}},
       layers: [{id: 'background', type: 'background', paint: {'background-color': '#f7faf8'}}, ...layers]}});
-  map.once('load', () => map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]], {padding: 34, maxZoom: 8, duration: 0}));
+  map.once('load', () => {
+    map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]], {padding: 34, maxZoom: 8, duration: 0});
+    options.usageReporter?.recordUsage(layer.dataset.asset_slug, 'use');
+    void options.usageReporter?.flush();
+  });
   map.on('click', event => {
     const hit = map.queryRenderedFeatures(event.point, {layers: layers.map(item => item.id)})[0];
     if (!hit) return;

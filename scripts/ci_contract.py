@@ -223,6 +223,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
         }:
             selected.add("catalog_viewer")
+        if path in {"catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"}:
+            selected.add("catalog_viewer")
         if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
             ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
             "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",

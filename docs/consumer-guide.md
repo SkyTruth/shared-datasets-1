@@ -459,3 +459,16 @@ local files if your analysis requires independent retention. See the
 [Python API](../api/python/README.md#fetch-an-exact-artifact),
 [MapLibre helper](../api/typescript/README.md#show-a-dataset-on-a-map), and
 [portable contract](standards/workspace-snapshot-v1.md).
+
+## Daily application usage reporting
+
+Shared usage visibility combines observed bucket traffic with opt-in daily
+application reports. Register actual runtime identities, not assumed reader
+accounts. Use the Python or TypeScript reporter after successful access, including
+application-owned cache returns. Browser reports go through the consuming backend
+with existing authentication and dataset access checks. Production/development
+producers are separate. Flush before a short-lived worker/request exits.
+
+The private dashboard reports active days, last activity and connection state.
+Missing reports never establish zero use. See `ingestion/dataset_usage/README.md`
+and the SDK READMEs for the receipt, permission and rollout contracts.
