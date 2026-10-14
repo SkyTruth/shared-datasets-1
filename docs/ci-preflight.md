@@ -155,6 +155,14 @@ base/tree/toolchain contract matches. The latest result for each suite wins;
 a newer failed result cannot reuse an older success. `ci-ready-evidence` names
 the exact selected plan and suite artifacts for consumers of tested bytes.
 
+Deployment consumers distinguish the triggering CI attempt from the attempt
+that actually executed `ci-ready`. A downstream-only rerun can retain that
+successful execution while Actions reports it under a newer attempt. Consumers
+select the single unexpired gate-evidence artifact created within the effective
+gate's start/completion window and verify the same execution in its declared
+producing attempt. Plan and suite references cannot be newer than that gate.
+A newly executed gate with missing evidence fails; it cannot reuse an older gate.
+
 Each suite first uploads its complete `ci-result-<suite>-attempt<N>` artifact,
 then uploads `ci-gate-result-<suite>-attempt<N>` containing only `result.json`.
 The compact upload requires successful retention of the complete artifact and

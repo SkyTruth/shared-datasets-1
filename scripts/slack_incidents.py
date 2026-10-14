@@ -34,6 +34,8 @@ WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_TARGETS = {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
+SDK_WORKFLOW = "publish-typescript-sdk.yml"
+SDK_CANDIDATE_STEP = "Verify tested SDK candidate and reviewed version"
 
 
 class IncidentError(RuntimeError):
@@ -116,7 +118,7 @@ def job_targets(root=ROOT):
                     require(sync in deployments.TERRAFORM_SYNCS, "unregistered Terraform synchronization name")
                     target = "terraform-" + hashlib.sha256(sync.encode()).hexdigest()[:16]
                 walk(leaf, path + " / ", target or inherited, supplied, source)
-            elif inherited:
+            elif inherited and (filename, key) != (SDK_WORKFLOW, "candidate"):
                 targets[(source, path)] = inherited
 
     walk("ci.yml")
@@ -187,7 +189,9 @@ def source_observations(api, event, targets):
     # Observer failures need their own exact job scope. A healthy observer with
     # no verification matrix cannot cover a previously failed matrix record.
     successful = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
-                  and (alerts.WORKFLOW_PATHS[run["name"]], registered_name(job["name"])) not in targets]
+                  and (alerts.WORKFLOW_PATHS[run["name"]], registered_name(job["name"])) not in targets
+                  and (alerts.WORKFLOW_PATHS[run["name"]] != SDK_WORKFLOW or job["name"] != "candidate"
+                       or candidate_verified(job))]
     result = [from_job(run, job, targets) for job in failures + successful]
     if not failures or run["conclusion"] == "success":
         result.append(from_workflow(run))  # Includes startup failures with no allocated jobs.
@@ -199,6 +203,56 @@ def source_observations(api, event, targets):
                     pr = next(iter(prs))
                     item.update(scope=f"publication:pr-{pr}:reset", kind="publication", label=f"Dataset PR #{pr} (reset)")
     return result
+
+
+def candidate_verified(job):
+    steps = [step for step in job.get("steps", []) if step["name"] == SDK_CANDIDATE_STEP]
+    return len(steps) == 1 and steps[0]["status"] == "completed" and steps[0]["conclusion"] == "success"
+
+
+def migrate_sdk_candidate(api, state):
+    """Reclassify only a signed open episode proven to precede publication."""
+    incident = state["incident"]
+    if state["scope"] != "deployment:typescript-sdk" or incident["resolution"] is not None:
+        return state
+    observations = incident["failures"] + state["deferred"]
+    if not any(item["job_name"] == "candidate" for item in observations):
+        return state
+    require(all(item["job_name"] == "candidate" and item["proof"] is None
+                and item["conclusion"] in alerts.FAILED_CONCLUSIONS for item in observations),
+            "mixed SDK candidate/publication incident cannot be reclassified")
+    for item in observations:
+        prefix = f"repos/{REPOSITORY}/actions/runs/{item['run_id']}/attempts/{item['attempt']}"
+        run = api.get(prefix)
+        require(run.get("id") == item["run_id"] and run.get("name") == "Publish TypeScript SDK" and run.get("path") == ".github/workflows/" + SDK_WORKFLOW
+                and run.get("run_attempt") == item["attempt"] and run.get("head_sha") == item["sha"]
+                and alerts.verify_source_event(api, run), "untrusted historical SDK candidate failure")
+        jobs = api.pages(prefix + "/jobs?per_page=100", field="jobs")
+        candidate = [job for job in jobs if job["name"] == "candidate"]
+        publish = [job for job in jobs if job["name"] == "publish"]
+        require(len(candidate) == len(publish) == 1 and candidate[0]["id"] == item["job_id"]
+                and candidate[0]["status"] == "completed" and candidate[0]["conclusion"] == item["conclusion"]
+                and candidate[0]["completed_at"] == item["time"] and publish[0]["status"] == "completed"
+                and publish[0]["conclusion"] == "skipped", "historical SDK failure did not precede publication")
+    migrated = copy.deepcopy(state)
+    scope, kind, label = scope_for_job("candidate", {}, SDK_WORKFLOW)
+    migrated.update(scope=scope, kind=kind, label=label, healthy=None)
+    for item in migrated["incident"]["failures"] + migrated["deferred"]:
+        item.update(scope=scope, kind=kind, label=label)
+    # The original signed bytes retain the old deployment watermark as audit
+    # history; it cannot describe health of the newly distinct read-only job.
+    return validate_state(migrated)
+
+
+def same_migrated_episode(original, current):
+    """A scope alias must preserve the acknowledged parent and old failures."""
+    if original["identity"] != current["identity"] or original["incident"]["id"] != current["incident"]["id"]:
+        return False
+    old, new = original["incident"], current["incident"]
+    failures = {observation_key(item): item for item in new["failures"] + current["deferred"]}
+    return ((not old["permalink"] or old["permalink"] == new["permalink"])
+            and all(failures.get(observation_key(item)) == item for item in old["failures"] + original["deferred"])
+            and all(new["posts"].get(key) == post for key, post in old["posts"].items() if post["state"] == "delivered"))
 
 
 def replay_observations(api, targets, since, *, now=None):
@@ -501,7 +555,41 @@ class Ledger:
             scope = payload["state"]["scope"]
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
-        return {scope: self.verify(record) for scope, record in latest.items()}
+        states = {scope: self.verify(record) for scope, record in latest.items()}
+        old_scope = "deployment:typescript-sdk"
+        if old_scope not in states:
+            return states
+        original = states[old_scope]
+        migrated = migrate_sdk_candidate(self.api, original)
+        if migrated["scope"] == old_scope:
+            return states
+        scope = migrated["scope"]
+        if scope in states:
+            current = states[scope]
+            require(latest[scope]["id"] > latest[old_scope]["id"], "candidate migration checkpoint predates its source")
+            if current["incident"]["id"] == migrated["incident"]["id"]:
+                require(same_migrated_episode(migrated, current), "candidate migration conflicts with its Slack parent or history")
+            else:
+                # Later episodes may replace the current candidate state only
+                # after a signed canonical checkpoint resolved the migrated one.
+                bridges = []
+                for record in records:
+                    payload = record["payload"]
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    historical = payload["state"]
+                    if (record["id"] < latest[scope]["id"] and historical["scope"] == scope
+                            and historical["incident"]["id"] == migrated["incident"]["id"]):
+                        bridges.append(record)
+                require(bool(bridges), "candidate migration collides with another incident")
+                bridge = self.verify(max(bridges, key=lambda record: record["id"]))
+                require(bridge["incident"]["resolution"] is not None and not pending_posts(bridge)
+                        and same_migrated_episode(migrated, bridge),
+                        "candidate migration has no signed resolved predecessor")
+        else:
+            states[scope] = migrated
+        del states[old_scope]
+        return states
 
     def save(self, state, phase):
         validate_state(state)

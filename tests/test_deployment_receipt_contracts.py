@@ -33,7 +33,11 @@ class ReceiptContractTests(unittest.TestCase):
         self.workflows = self.root / ".github/workflows"
         self.workflows.mkdir(parents=True)
         for name in contracts.WORKFLOWS:
-            self.write(name, leaf(name))
+            value = leaf(name)
+            if name == "publish-typescript-sdk.yml":
+                source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
+                value = yaml.safe_load(source.read_text())
+            self.write(name, value)
 
     def write(self, name, value):
         (self.workflows / name).write_text(yaml.safe_dump(value))
