@@ -52,15 +52,9 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Dataset object promotion/deletion:
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
-- Isolated WDPA artifact build:
-  `.github/workflows/wdpa-processing-validation-deploy.yml` after reviewed small
-  and sampled checks, merge and quota approval. Its exact allowlist covers the
-  isolated identity/deployer/job plus two custom roles and three bucket bindings.
-  Build access is create-only for objects and HNS folders under
-  `_scratch/wdpa-builds/`; a real upload probe precedes processing. The worker can read
-  that prefix. Canonical data permissions, deletes, production worker changes and
-  resource increases are refused. One retained complete build is then promoted
-  through the reviewed protected worker workflow without rebuilding artifacts.
+- Retired WDPA validation resources: the exact retirement scope in
+  `scratch-cleanup-iam-sync.yml` uses the existing protected target-apply workflow.
+  The monthly worker's retained-bundle read role and binding remain managed.
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.

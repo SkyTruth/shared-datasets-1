@@ -11,8 +11,6 @@ import re
 PROBES = {
     "wdpa-monthly": ("WDPA_FAIL_BEFORE_WRITES", "true",
                      "Controlled WDPA execution failure before any dataset writes"),
-    "wdpa-processing-validation": ("WDPA_FAIL_BEFORE_DATASET_WRITES", "1",
-                                   "Controlled WDPA validation failure before any dataset writes"),
 }
 
 

@@ -1,3 +1,7 @@
+locals {
+  wdpa_execution_observer_job_name = "wdpa-execution-observer"
+}
+
 module "wdpa_observer_service_account" {
   source       = "../../modules/service_account"
   project_id   = var.project_id
@@ -43,7 +47,7 @@ module "wdpa_execution_observer_job" {
   source                = "../../modules/cloud_run_job"
   project_id            = var.project_id
   location              = var.region
-  name                  = "wdpa-execution-observer"
+  name                  = local.wdpa_execution_observer_job_name
   image                 = var.wdpa_monthly_image
   command               = ["python", "-m", "ingestion.wdpa_monthly.execution_observer"]
   service_account_email = module.wdpa_observer_service_account.email
@@ -75,7 +79,7 @@ module "wdpa_execution_observer_scheduler" {
   source                = "../../modules/scheduler_job"
   project_id            = var.project_id
   region                = var.region
-  name                  = "wdpa-execution-observer"
+  name                  = local.wdpa_execution_observer_job_name
   description           = "Observe WDPA executions independently of the processing worker every five minutes."
   schedule              = "*/5 * * * *"
   target_job_location   = var.region
