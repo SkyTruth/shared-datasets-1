@@ -158,7 +158,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Tiered PMTiles browser access | [PMTiles CDN](docs/pmtiles-cdn.md) |
 | Infrastructure | [terraform/](terraform/) |
 | Ingestion job structure and shared runtime behavior | [ingestion/README.md](ingestion/README.md) |
-| Passive dataset usage and retirement review | [usage collector](ingestion/dataset_usage/README.md), [usage registry](catalog/dataset-usage.json) |
+| Passive dataset usage visibility and collection health | [usage collector](ingestion/dataset_usage/README.md), [usage registry](catalog/dataset-usage.json) |
 
 ## Non-Negotiable Rules
 

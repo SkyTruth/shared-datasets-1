@@ -142,7 +142,7 @@ def exercise(directory, *, client=None):
     payload = json.loads(client.objects[STATE, manifest['report']['path']][1])
     assert payload['collection_errors'] == []
     assert len(payload['assets']) == 2
-    assert all(asset['state'] == 'collecting_history' and asset['observed_from'] is None for asset in payload['assets'])
+    assert all(asset['lifecycle_status'] == 'active' and not any(asset['windows'].values()) for asset in payload['assets'])
     assert {row['source'] for row in payload['coverage']} == {'gcs_audit', 'cdn', 'gcs_usage', 'catalog'}
     assert all(row['state'] == 'gap' for row in payload['coverage'])
     ledger = directory / 'published-ledger.sqlite'
