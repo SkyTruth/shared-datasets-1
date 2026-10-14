@@ -1,0 +1,39 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "catalog-web",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/javascript",
+        "destination_generation": "1791430097005138",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/app.js",
+        "source_generation": "1791937838502712",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/label-filter-counts-20261013/app.js"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/javascript",
+        "destination_generation": "1791430120556786",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/map-preview.js",
+        "source_generation": "1791937840045948",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/label-filter-counts-20261013/map-preview.js"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/css",
+        "destination_generation": "1791430122228889",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/styles.css",
+        "source_generation": "1791937841683379",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/label-filter-counts-20261013/styles.css"
+      }
+    ],
+    "proposal_id": "label-filter-counts-20261013",
+    "release_index_asset_slugs": []
+  }
+}
