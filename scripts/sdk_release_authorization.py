@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime
 import hashlib
 import io
 import json
@@ -120,6 +121,7 @@ def producing_job(api, repository, run_id, attempt, sha, name, workflow_id, repo
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
     found = [job for job in jobs if job.get("name") == name]
     require(len(found) == 1 and found[0].get("status") == "completed" and found[0].get("conclusion") == "success", "artifact producing job did not complete successfully")
+    return found[0]
 
 
 def reference_attempt(reference, prefix, current):
@@ -135,16 +137,41 @@ def verify_candidate(candidate, package, manifest, sha):
     require(candidate.get("integrity") == "sha512-" + base64.b64encode(hashlib.sha512(package).digest()).decode(), "tested package integrity mismatch")
 
 
+def execution_time(value):
+    require(isinstance(value, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z", value), "missing or invalid gate execution timestamp")
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def gate_execution(job):
+    start, end = (execution_time(job.get(key)) for key in ("started_at", "completed_at"))
+    require(start <= end, "invalid gate execution window")
+    return start, end
+
+
 def verified_plan(api, repository, run_id, attempt, sha, root):
     run = verify_ci(api, repository, sha, run_id, attempt)
+    gate = producing_job(api, repository, run_id, attempt, sha, "ci-ready", run["workflow_id"], run["repository"]["id"])
+    start, end = gate_execution(gate)
     artifacts = api.pages(f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100", field="artifacts")
-    evidence = json.loads(artifact_files(api, repository, run_id, artifacts, f"ci-ready-evidence-attempt{attempt}")["evidence.json"])
-    require(evidence.get("source") == {"run_id": str(run_id), "run_attempt": attempt} and evidence.get("status") == "success" and evidence.get("tested_sha") == sha and evidence.get("head") == sha, "ci-ready evidence source mismatch")
-    plan_attempt = reference_attempt(evidence.get("plan_artifact"), "ci-validation-plan", attempt)
+    # Selective downstream reruns retain the gate's original execution window,
+    # while Actions rewrites its job ID and run_attempt. Only that execution's
+    # upload is eligible; an older successful gate is never a fallback.
+    candidates = [artifact for artifact in artifacts
+                  if re.fullmatch(r"ci-ready-evidence-attempt[1-9][0-9]*", str(artifact.get("name")))
+                  and not artifact.get("expired") and start <= execution_time(artifact.get("created_at")) <= end]
+    require(len(candidates) == 1, "missing or ambiguous evidence for the successful ci-ready execution")
+    reference = candidates[0]["name"]
+    gate_attempt = reference_attempt(reference, "ci-ready-evidence", attempt)
+    producer = gate if gate_attempt == attempt else producing_job(api, repository, run_id, gate_attempt, sha, "ci-ready", run["workflow_id"], run["repository"]["id"])
+    require(gate_execution(producer) == (start, end), "ci-ready evidence belongs to another gate execution")
+    evidence = json.loads(artifact_files(api, repository, run_id, artifacts, reference)["evidence.json"])
+    require(evidence.get("source") == {"run_id": str(run_id), "run_attempt": gate_attempt} and evidence.get("status") == "success" and evidence.get("tested_sha") == sha and evidence.get("head") == sha, "ci-ready evidence source mismatch")
+    plan_attempt = reference_attempt(evidence.get("plan_artifact"), "ci-validation-plan", gate_attempt)
     plan = json.loads(artifact_files(api, repository, run_id, artifacts, evidence["plan_artifact"])["plan.json"])
     require(plan.get("source") == {"run_id": str(run_id), "run_attempt": plan_attempt} and all(plan.get(key) == evidence.get(key) for key in (*IDENTITY, "suites", "changed_paths", "selection_reason")), "validation plan differs from ci-ready evidence")
     require(plan.get("schema_version") == 1 and plan.get("tree") == subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip() and plan.get("contract_digest") == contract_digest(root), "validation tree or contract changed")
     producing_job(api, repository, run_id, plan_attempt, sha, "geospatial-changes", run["workflow_id"], run["repository"]["id"])
+    print(f"Verified CI trigger attempt {attempt} using ci-ready evidence from attempt {gate_attempt}.")
     return run, artifacts, evidence, plan
 
 
@@ -158,7 +185,7 @@ def download(api, repository, run_id, attempt, sha, directory, root):
         require(outputs["release_needed"] == "false", "release requires missing SDK validation")
         return outputs
     reference = evidence.get("suite_artifacts", {}).get("sdk-node24")
-    suite_attempt = reference_attempt(reference, "ci-result-sdk-node24", attempt)
+    suite_attempt = reference_attempt(reference, "ci-result-sdk-node24", evidence["source"]["run_attempt"])
     files = artifact_files(api, repository, run_id, artifacts, reference)
     result = json.loads(files["result.json"])
     require(result.get("source") == {"run_id": str(run_id), "run_attempt": suite_attempt} and result.get("suite") == "sdk-node24" and result.get("status") == "success", "SDK result source or status mismatch")

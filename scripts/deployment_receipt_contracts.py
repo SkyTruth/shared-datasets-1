@@ -198,10 +198,33 @@ def sdk_boundary(filename, identifier, job):
     return False
 
 
+def sdk_candidate_read_only(workflow):
+    """The recoverable candidate job cannot acquire publication authority."""
+    candidate = workflow["jobs"].get("candidate", {})
+    effective = candidate.get("permissions", workflow.get("permissions", {}))
+    if (not candidate.get("steps") or "uses" in candidate or not isinstance(effective, dict)
+            or any(value not in {"read", "none"} for value in effective.values())):
+        return ["SDK candidate must remain a read-only job"]
+    checks = [step for step in candidate["steps"] if step.get("id") == "candidate"]
+    if (len(checks) != 1 or checks[0].get("name") != "Verify tested SDK candidate and reviewed version"
+            or "python scripts/sdk_release_authorization.py " not in checks[0].get("run", "")
+            or "--admit-source" in checks[0]["run"] or not enabled(checks[0])):
+        return ["SDK candidate must retain its observable package verification step"]
+    for identifier, job in workflow["jobs"].items():
+        if identifier == "publish":
+            continue
+        for step in job.get("steps", []):
+            if any(mutations(step)) or command(step, "(?:start|finish|observe|reconcile)"):
+                return ["SDK publication and deployment writes must remain confined to publish"]
+    return []
+
+
 def boundaries(root):
     errors = []
     for filename in WORKFLOWS:
         value = yaml.safe_load((root / ".github/workflows" / filename).read_text())
+        if filename == "publish-typescript-sdk.yml":
+            errors.extend(sdk_candidate_read_only(value))
         for job_id, job in value["jobs"].items():
             steps = job.get("steps", [])
             rehearsed, claim, barrier = False, None, None

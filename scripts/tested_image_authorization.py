@@ -92,7 +92,7 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     run, artifacts, evidence, plan = proof.verified_plan(api, repository, run_id, attempt, sha, root)
     require("production-images" in plan["suites"], "production images were not selected for validation")
     reference = evidence.get("suite_artifacts", {}).get("production-images")
-    suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", attempt)
+    suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
     proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
     directory.mkdir(parents=True, exist_ok=True)
     archive = directory / f"{target}.docker.tar"

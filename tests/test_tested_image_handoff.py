@@ -134,14 +134,14 @@ def handoff(tmp_path, monkeypatch):
               "tools": proof.expected_tools("production-images"), "commands": [{"argv": ["images"], "exit_code": 0}], "production_images": manifest}
     files.update({"result.json": result, "images/manifest.json": manifest, "logs/untrusted-script.py": b"never extract me"})
     payloads = [zipped({"evidence.json": evidence}), zipped({"plan.json": plan}), zipped(files)]
-    artifacts = [{"id": index, "name": name, "expired": False, "workflow_run": {"id": 123},
+    artifacts = [{"id": index, "name": name, "expired": False, "created_at": "2026-10-14T01:31:53Z", "workflow_run": {"id": 123},
                   "size_in_bytes": len(raw), "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
                  for index, (name, raw) in enumerate(zip(["ci-ready-evidence-attempt2", "ci-validation-plan-attempt1", "ci-result-production-images-attempt1"], payloads), 1)]
     repository = {"id": 9, "full_name": REPO}
     workflow = {"id": 7, "path": ".github/workflows/ci.yml"}
     run = {"id": 123, "workflow_id": 7, "repository": repository, "head_repository": repository, "event": "push", "head_branch": "main",
            "head_sha": SHA, "path": workflow["path"], "status": "in_progress"}
-    jobs = [{"name": name, "status": "completed", "conclusion": "success"} for name in ("ci-ready", "geospatial-changes", "production-images")]
+    jobs = [{"name": name, "status": "completed", "conclusion": "success", "started_at": "2026-10-14T01:31:38Z", "completed_at": "2026-10-14T01:31:54Z"} for name in ("ci-ready", "geospatial-changes", "production-images")]
     api = Mock()
     api.get.side_effect = lambda endpoint: repository if endpoint == f"repos/{REPO}" else workflow if "/workflows/" in endpoint else {**run, "run_attempt": int(endpoint.rsplit("/", 1)[-1])}
     api.pages.side_effect = lambda endpoint, field=None: artifacts if field == "artifacts" else jobs
@@ -181,6 +181,17 @@ def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_sti
     assert handoff["calls"] == [["docker", "image", "load", "--input", result["archive"]]]
     assert handoff["api"].archive.call_count == 2
     assert handoff["api"].archive_to.call_count == 1
+
+
+@pytest.mark.parametrize("trigger_attempt", [2, 3])
+def test_downstream_only_rerun_loads_images_from_the_reused_original_gate(handoff, trigger_attempt):
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][0])) as archive:
+        evidence = json.loads(archive.read("evidence.json"))
+    evidence["source"]["run_attempt"] = 1
+    handoff["payloads"][0] = zipped({"evidence.json": evidence})
+    handoff["artifacts"][0].update(name="ci-ready-evidence-attempt1", digest="sha256:" + hashlib.sha256(handoff["payloads"][0]).hexdigest())
+    result = consumer.download(handoff["api"], REPO, 123, trigger_attempt, SHA, "sea-ice-daily", handoff["root"] / "loaded", handoff["root"])
+    assert Path(result["archive"]).read_bytes() == handoff["files"]["images/sea-ice-daily.docker.tar"]
 
 
 @pytest.mark.parametrize("job", ["ci-ready", "geospatial-changes", "production-images"])

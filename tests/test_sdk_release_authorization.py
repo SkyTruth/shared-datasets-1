@@ -24,7 +24,7 @@ def archive(files):
     return output.getvalue()
 
 
-def fixture(tmp_path, monkeypatch, *, sdk_attempt=1):
+def fixture(tmp_path, monkeypatch, *, sdk_attempt=1, gate_attempt=2):
     package = b'exact tested package bytes'
     manifest = {'name': '@skytruth/shared-datasets', 'version': '0.12.0'}
     path = tmp_path / 'api/typescript/package.json'
@@ -33,16 +33,19 @@ def fixture(tmp_path, monkeypatch, *, sdk_attempt=1):
     candidate = {**manifest, 'tested_sha': SHA, 'tarball': 'sdk.tgz', 'sha256': hashlib.sha256(package).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(package).digest()).decode()}
     identity = {'schema_version': 1, 'base': 'b' * 40, 'head': SHA, 'tested_sha': SHA, 'tree': 'tree', 'contract_digest': 'contract'}
     plan = {**identity, 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
-    evidence = {**plan, 'status': 'success', 'source': {'run_id': '123', 'run_attempt': 2}, 'plan_artifact': 'ci-validation-plan-attempt1', 'suite_artifacts': {'sdk-node24': f'ci-result-sdk-node24-attempt{sdk_attempt}'}}
+    evidence = {**plan, 'status': 'success', 'source': {'run_id': '123', 'run_attempt': gate_attempt}, 'plan_artifact': 'ci-validation-plan-attempt1', 'suite_artifacts': {'sdk-node24': f'ci-result-sdk-node24-attempt{sdk_attempt}'}}
     result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}], 'package': candidate}
     payloads = [archive({'evidence.json': evidence}), archive({'plan.json': plan}), archive({'result.json': result, 'package/candidate.json': candidate, 'package/sdk.tgz': package, 'logs/arbitrary-script.py': b'not executed or extracted'})]
-    artifacts = [{'id': index, 'name': name, 'expired': False, 'workflow_run': {'id': 123}, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()} for index, (name, raw) in enumerate(zip(['ci-ready-evidence-attempt2', 'ci-validation-plan-attempt1', f'ci-result-sdk-node24-attempt{sdk_attempt}'], payloads), 1)]
+    artifacts = [{'id': index, 'name': name, 'expired': False, 'created_at': '2026-10-14T01:31:53Z', 'workflow_run': {'id': 123}, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()} for index, (name, raw) in enumerate(zip([f'ci-ready-evidence-attempt{gate_attempt}', 'ci-validation-plan-attempt1', f'ci-result-sdk-node24-attempt{sdk_attempt}'], payloads), 1)]
     run = {'id': 123, 'workflow_id': 7, 'repository': {'id': 9, 'full_name': REPO}, 'head_repository': {'id': 9, 'full_name': REPO}, 'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'path': '.github/workflows/ci.yml', 'run_attempt': 1}
     api = Mock()
     api.archive.side_effect = lambda repo, artifact: payloads[artifact - 1]
-    api.get.side_effect = lambda endpoint: {**run, 'run_attempt': int(endpoint.rsplit('/', 1)[-1])}
-    api.pages.side_effect = lambda endpoint, field=None: artifacts if field == 'artifacts' else [{'name': 'geospatial-changes', 'status': 'completed', 'conclusion': 'success'}, {'name': 'sdk-validation (Node 24)', 'status': 'completed', 'conclusion': 'success'}]
-    monkeypatch.setattr(release, 'verify_ci', lambda *args: run)
+    repository = run['repository']
+    workflow = {'id': 7, 'path': run['path']}
+    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else workflow if '/workflows/' in endpoint else {**run, 'run_attempt': int(endpoint.rsplit('/', 1)[-1])}
+    api.pages.side_effect = lambda endpoint, field=None: artifacts if field == 'artifacts' else [
+        {'name': name, 'status': 'completed', 'conclusion': 'success', 'started_at': '2026-10-14T01:31:38Z', 'completed_at': '2026-10-14T01:31:54Z'}
+        for name in ('ci-ready', 'geospatial-changes', 'sdk-validation (Node 24)')]
     monkeypatch.setattr(release, 'contract_digest', lambda root: 'contract')
     monkeypatch.setattr(release.subprocess, 'check_output', lambda args, **kwargs: 'release_needed=true' if args[0] == 'node' else 'tree')
     return api, candidate, package, artifacts, payloads
@@ -55,6 +58,61 @@ def test_selective_retry_releases_original_successful_sdk_bytes(tmp_path, monkey
     assert json.loads(Path(outputs['candidate']).read_text())['integrity'] == candidate['integrity']
     assert outputs['artifact'] == 'sdk@sha256:' + candidate['sha256']
     assert set((tmp_path / 'output').iterdir()) == {Path(outputs['tarball']), Path(outputs['candidate'])}
+
+
+@pytest.mark.parametrize('trigger_attempt', [2, 3])
+def test_downstream_only_rerun_reuses_the_gate_execution_that_actually_uploaded_evidence(tmp_path, monkeypatch, trigger_attempt):
+    api, _, package, *_ = fixture(tmp_path, monkeypatch, gate_attempt=1)
+    outputs = release.download(api, REPO, 123, trigger_attempt, SHA, tmp_path / 'output', tmp_path)
+    assert Path(outputs['tarball']).read_bytes() == package
+
+
+@pytest.mark.parametrize('defect', ['missing', 'expired', 'duplicate', 'corrupt', 'future-gate', 'future-plan',
+                                   'future-suite', 'wrong-source', 'wrong-contract', 'new-execution',
+                                   'producer-execution', 'failed-gate', 'missing-timestamp'])
+def test_reused_gate_cannot_substitute_missing_incompatible_or_newer_failed_evidence(tmp_path, monkeypatch, defect):
+    api, _, _, artifacts, payloads = fixture(tmp_path, monkeypatch, gate_attempt=1,
+                                            sdk_attempt=2 if defect == 'future-suite' else 1)
+    if defect == 'missing':
+        artifacts.pop(0)
+    elif defect == 'expired':
+        artifacts[0]['expired'] = True
+    elif defect == 'duplicate':
+        artifacts.append(dict(artifacts[0]))
+    elif defect == 'corrupt':
+        artifacts[0]['digest'] = 'sha256:' + '0' * 64
+    elif defect == 'future-gate':
+        artifacts[0]['name'] = 'ci-ready-evidence-attempt4'
+    elif defect in {'future-plan', 'wrong-source', 'wrong-contract'}:
+        with zipfile.ZipFile(io.BytesIO(payloads[0])) as zipped:
+            evidence = json.loads(zipped.read('evidence.json'))
+        if defect == 'future-plan':
+            evidence['plan_artifact'] = 'ci-validation-plan-attempt2'
+        elif defect == 'wrong-source':
+            evidence['source']['run_attempt'] = 3
+        else:
+            evidence['contract_digest'] = 'wrong'
+        payloads[0] = archive({'evidence.json': evidence})
+        artifacts[0]['digest'] = 'sha256:' + hashlib.sha256(payloads[0]).hexdigest()
+    else:
+        original = api.pages.side_effect
+        def pages(endpoint, field=None):
+            values = original(endpoint, field)
+            if field == 'artifacts':
+                return values
+            for job in values:
+                if job['name'] == 'ci-ready':
+                    if defect == 'failed-gate':
+                        job['conclusion'] = 'failure'
+                    elif defect == 'missing-timestamp':
+                        del job['started_at']
+                    elif defect == 'new-execution' or '/attempts/1/' in endpoint:
+                        job.update(started_at='2026-10-14T02:00:00Z', completed_at='2026-10-14T02:01:00Z')
+            return values
+        api.pages.side_effect = pages
+    with pytest.raises(DeploymentError):
+        release.download(api, REPO, 123, 3, SHA, tmp_path / 'output', tmp_path)
+    assert not (tmp_path / 'output').exists()
 
 
 def test_consumer_accepts_the_actual_preflight_package_producer(tmp_path, monkeypatch):
@@ -94,7 +152,10 @@ def test_candidate_tampering_is_rejected(tmp_path, monkeypatch, change):
 def test_passing_receipt_cannot_hide_failed_producing_job(tmp_path, monkeypatch):
     api, *_ = fixture(tmp_path, monkeypatch)
     original = api.pages.side_effect
-    api.pages.side_effect = lambda endpoint, field=None: original(endpoint, field) if field == 'artifacts' else [{'name': 'geospatial-changes', 'status': 'completed', 'conclusion': 'success'}, {'name': 'sdk-validation (Node 24)', 'status': 'completed', 'conclusion': 'failure'}]
+    def pages(endpoint, field=None):
+        values = original(endpoint, field)
+        return values if field == 'artifacts' else [{**job, 'conclusion': 'failure'} if job['name'] == 'sdk-validation (Node 24)' else job for job in values]
+    api.pages.side_effect = pages
     with pytest.raises(DeploymentError, match='producing job'):
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
 

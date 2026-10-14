@@ -23,6 +23,23 @@ sync. Job paths are derived from the checked-in reusable caller graph, including
 the original reviewed PR number for dataset mutation jobs. Unknown job paths
 remain separate incidents instead of guessing a target.
 
+The TypeScript SDK's read-only `candidate` job has its own exact-job scope;
+`publish` retains the deployment scope below. Candidate recovery requires the
+package-verification step to have actually succeeded. Successful wrappers that
+skip verification for obsolete or ineligible CI do not recover a candidate
+incident. A verified candidate with no release needed can recover it without
+publishing a package.
+
+Existing open SDK deployment episodes containing only candidate failures are
+reclassified after their checkpoint signature and every historical job are
+verified, including that each publication job was skipped. The original incident
+ID, parent, delivery claims and failure identities are retained; signed source
+checkpoints remain audit history. Canonical checkpoints must preserve the same
+parent and history. A later candidate episode requires a signed resolved
+checkpoint for the migrated predecessor. Mixed publication episodes or conflicting
+parents fail visibly. During this rollout, pause notification-workflow admission,
+drain existing workers before merging, then re-enable it on the new main revision.
+
 Deployment recovery requires the existing cryptographically verified terminal
 record for that production target, its tested executor SHA and artifact. Runtime
 targets require `verified`; an asynchronous start or `applied` without terminal
