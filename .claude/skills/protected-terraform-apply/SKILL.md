@@ -44,17 +44,35 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 
 ## Existing Protected Paths
 
+### Which workflow applies what
+
+Workflow filenames below are under `.github/workflows/`. `ci.yml` routes selected
+main-push changes after successful `ci-ready`; the five sync callers delegate
+their applies to `prod-terraform-target-apply.yml`. That reusable workflow owns
+the `shared-datasets-production` environment, production-state queue, saved-plan
+apply, and `scripts/terraform_plan_allowlist.py` enforcement of each caller's
+explicit targets and allowed resource changes.
+
+| Workflow | Apply scope and enforcement |
+|---|---|
+| `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
+| `prod-terraform-target-apply.yml` | Reusable protected apply for the five sync callers below; refuses changes outside their declared resource allowlists. |
+| `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
+| `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer/WDPA observer roles and bindings, retained-bundle read access, and translation notice/debt access. |
+| `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
+| `scratch-cleanup-iam-sync.yml` | Syncs pending-publish read/cleanup bindings and the explicit WDPA validation retirement resources after retirement IAM bootstrap; preserves the monthly worker's retained-bundle read access. |
+| `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then syncs the five declared ingestion, observer, identity-decision, Scheduler, and unapproved-writer alert policies. |
+| `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` | Apply only their own Cloud Run Job through `scripts/terraform_plan_allowlist.py`, including the expected immutable image check. |
+| `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker, observer job/identity/IAM/scheduler, and canonical destructive-action deny policy; also validates image, retained bundle, and runtime limits. |
+| `pmtiles-cdn-sync.yml` | Applies managed-folder IAM bootstrap checked by `scripts/cdn_plan_readiness.py check-bootstrap`, then shared-bucket/CDN URL-map/public managed-folder changes under its inline allowlist. |
+
+Other protected publication paths:
+
 - Catalog web bundle publication: `.github/workflows/catalog-web-deploy.yml`
   after trusted `main` pushes.
-- PMTiles CDN route and public-folder sync:
-  `.github/workflows/pmtiles-cdn-sync.yml` after trusted `main` pushes, with a
-  Terraform plan allowlist.
 - Dataset object promotion/deletion:
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
-- Retired WDPA validation resources: the exact retirement scope in
-  `scratch-cleanup-iam-sync.yml` uses the existing protected target-apply workflow.
-  The monthly worker's retained-bundle read role and binding remain managed.
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.
