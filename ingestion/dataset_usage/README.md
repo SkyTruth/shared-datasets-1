@@ -118,7 +118,8 @@ of activation.
 ## Staged retirement
 
 `terraform/envs/prod/dataset_usage_legacy.tf` temporarily retains disabled old
-exports and their unused permissions. Its exact five resources are the only
+exports, their unused permissions and the previous multi-source probe grant.
+Its exact six resources are the only
 permitted deletion scope. After replacement proof, a focused retirement PR
 removes that file, drops obsolete Logging deployment permissions and removes
 version-1 viewer compatibility. Preserve both buckets and all existing evidence.

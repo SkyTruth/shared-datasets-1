@@ -42,6 +42,7 @@ def verify_reader_ready(root, api, repository):
             raise ValueError('Deploy the current compatible catalog reader before the usage writer')
 
 RETIREMENT_RESOURCES = {
+    'google_storage_bucket_iam_member.dataset_usage_probe_reader',
     'google_logging_project_sink.dataset_usage',
     'google_logging_project_exclusion.dataset_usage_duplicate',
     'google_storage_bucket_iam_member.dataset_usage_sink_writer',
@@ -87,7 +88,7 @@ RESOURCES = {
     'google_storage_bucket.shared_bucket', 'google_storage_bucket_iam_member.dataset_usage_app_writer',
     *('google_storage_bucket_iam_member.dataset_usage_' + name for name in (
         'sink_writer', 'storage_logger', 'raw_reader', 'state_writer', 'viewer',
-        'probe_reader', 'configuration_reader', 'raw_configuration_reader')),
+        'probe_reader', 'native_probe_reader', 'configuration_reader', 'raw_configuration_reader')),
 }
 
 
@@ -107,6 +108,31 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
     config = json.loads((root / 'catalog/dataset-usage.json').read_text())
     legacy_path = root / 'terraform/envs/prod/dataset_usage_legacy.tf'
     legacy_filter = json.loads(re.search(r'dataset_usage_legacy_filter\s*=\s*("[^\n]+")', legacy_path.read_text())[1]) if legacy_path.exists() else None
+    legacy_probe = " || ".join(f"resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/{path}'" for path in (
+        '100-geographic-reference/110-boundaries/lsib/latest/lsib.fgb',
+        '300-infrastructure-industrial/320-mining/wri-forest-atlas-drc-mining-permits/latest/wri-forest-atlas-drc-mining-permits.fgb',
+        '_catalog/shared-datasets-catalog.csv'))
+    public = next(row for row in read_catalog_rows_text((root / 'catalog/shared-datasets-catalog.csv').read_text()) if row['access_tier'] == 'public')
+    native_probe = "resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/" + public['canonical_path'].split('skytruth-shared-datasets-1/', 1)[1] + "'"
+    collector = 'serviceAccount:dataset-usage@shared-datasets-1.iam.gserviceaccount.com'
+    raw_bucket, state_bucket = 'skytruth-shared-datasets-1-usage-raw', 'skytruth-shared-datasets-1-usage-state'
+    health_role = 'projects/shared-datasets-1/roles/sharedDatasetsUsageBucketHealth'
+    grants = {
+        'raw_reader': (raw_bucket, 'roles/storage.objectViewer', collector, None),
+        'state_writer': (state_bucket, 'roles/storage.objectUser', collector, None),
+        'viewer': (state_bucket, 'roles/storage.objectViewer', 'serviceAccount:catalog-viewer@shared-datasets-1.iam.gserviceaccount.com', f"resource.name.startsWith('projects/_/buckets/{state_bucket}/objects/published/')"),
+        'probe_reader': ('skytruth-shared-datasets-1', 'roles/storage.objectViewer', collector, legacy_probe),
+        'native_probe_reader': ('skytruth-shared-datasets-1', 'roles/storage.objectViewer', collector, native_probe),
+        'configuration_reader': ('skytruth-shared-datasets-1', health_role, collector, None),
+        'raw_configuration_reader': (raw_bucket, health_role, collector, None),
+        'storage_logger': (raw_bucket, 'roles/storage.objectCreator', 'group:cloud-storage-analytics@google.com', None),
+    }
+    def check_grant(after, expected):
+        bucket, role, member, expression = expected
+        conditions = after.get('condition') or []
+        actual = conditions[0].get('expression') if len(conditions) == 1 else None
+        if after.get('bucket', '').removeprefix('b/') != bucket or after.get('role') != role or after.get('member') != member or actual != expression or (expression is None and conditions):
+            raise ValueError('Usage IAM grant exceeds its exact registered scope')
     if not re.fullmatch(r'[a-z0-9./_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('An immutable tested image is required')
     rows = {row['address']: row for row in plan.get('resource_changes', [])}
@@ -143,6 +169,10 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
             if not retirement_verified:
                 raise ValueError('Legacy retirement requires verified replacement evidence')
             before = change.get('before') or {}
+            if address == 'google_storage_bucket_iam_member.dataset_usage_probe_reader':
+                check_grant(before, grants['probe_reader'])
+                if before['condition'][0].get('title') != 'usage_probe_sentinels_only':
+                    raise ValueError('Unexpected legacy probe binding')
             if address == 'google_logging_project_sink.dataset_usage' and before.get('name') != 'dataset-usage':
                 raise ValueError('Unexpected retired sink identity')
             if address == 'google_logging_project_exclusion.dataset_usage_duplicate' and before.get('name') != 'dataset-usage-exported-copy':
@@ -151,7 +181,7 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
                 raise ValueError('Only disabled project usage exports may be retired')
             if address == 'google_storage_bucket_iam_member.dataset_usage_sink_writer':
                 sink = rows.get('google_logging_project_sink.dataset_usage', {}).get('change', {}).get('before') or {}
-                if before.get('bucket') != 'skytruth-shared-datasets-1-usage-raw' or before.get('role') != 'roles/storage.objectCreator' or before.get('member') != sink.get('writer_identity'):
+                if before.get('bucket', '').removeprefix('b/') != 'skytruth-shared-datasets-1-usage-raw' or before.get('role') != 'roles/storage.objectCreator' or before.get('member') != sink.get('writer_identity'):
                     raise ValueError('Retirement writer must match the exact retired sink')
             if address == 'google_project_iam_member.dataset_usage_health' and (before.get('member') != 'serviceAccount:dataset-usage@shared-datasets-1.iam.gserviceaccount.com' or before.get('role') != 'projects/shared-datasets-1/roles/sharedDatasetsUsageHealth' or before.get('project') != 'shared-datasets-1'):
                 raise ValueError('Unexpected legacy health binding')
@@ -162,7 +192,20 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
         if (address not in RESOURCES and producer_match is None) or actions not in (['create'], ['update']):
             raise ValueError('Unrelated, destructive, or replacement change: ' + address)
         after, before = change.get('after') or {}, change.get('before') or {}
-        if address == 'google_storage_bucket.shared_bucket':
+        if address == 'google_project_iam_custom_role.dataset_usage_bucket_health':
+            if after.get('project') != 'shared-datasets-1' or after.get('role_id') != 'sharedDatasetsUsageBucketHealth' or set(after.get('permissions', [])) != {'storage.buckets.get', 'storage.buckets.getIamPolicy'}:
+                raise ValueError('Usage health role must remain bucket-read-only')
+        elif address == 'google_project_iam_custom_role.dataset_usage_health':
+            if after.get('project') != 'shared-datasets-1' or after.get('role_id') != 'sharedDatasetsUsageHealth' or set(after.get('permissions', [])) != {'logging.sinks.get', 'logging.exclusions.get', 'monitoring.timeSeries.list', 'resourcemanager.projects.getIamPolicy'}:
+                raise ValueError('Legacy health authority must not expand')
+        elif address == 'google_project_iam_member.dataset_usage_health':
+            if after.get('project') != 'shared-datasets-1' or after.get('member') != collector or after.get('role') != 'projects/shared-datasets-1/roles/sharedDatasetsUsageHealth' or after.get('condition'):
+                raise ValueError('Legacy health binding must not expand')
+        elif address in {'google_service_account_iam_member.dataset_usage_deployer_act_as', 'google_service_account_iam_member.dataset_usage_scheduler_deployer_act_as'}:
+            account = 'dataset-usage-scheduler' if 'scheduler_deployer' in address else 'dataset-usage'
+            if after.get('role') != 'roles/iam.serviceAccountUser' or after.get('member') != 'serviceAccount:shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com' or after.get('service_account_id') != f'projects/shared-datasets-1/serviceAccounts/{account}@shared-datasets-1.iam.gserviceaccount.com':
+                raise ValueError('Usage deployment authority must remain scoped to its runtime')
+        elif address == 'google_storage_bucket.shared_bucket':
             if actions != ['update']:
                 raise ValueError('Shared bucket must already exist')
             computed = {'id', 'self_link', 'url', 'effective_labels', 'terraform_labels'}
@@ -219,6 +262,11 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
         elif address.startswith('google_storage_bucket_iam_member.'):
             if after.get('member') in {'allUsers', 'allAuthenticatedUsers'}:
                 raise ValueError('Telemetry must never be public')
+            name = address.removeprefix('google_storage_bucket_iam_member.dataset_usage_')
+            if name in grants:
+                if unknown(change.get('after_unknown', {}).get('condition', False)):
+                    raise ValueError('Unknown usage IAM condition')
+                check_grant(after, grants[name])
             if producer_match:
                 producer = producer_match[1]
                 registration = config["producers"].get(producer)

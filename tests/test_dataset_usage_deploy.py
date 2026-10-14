@@ -157,6 +157,50 @@ def test_application_grants_cannot_cross_prefixes_or_gain_read_overwrite_authori
             validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
 
 
+def test_native_probe_scope_is_additive_and_legacy_grant_deletes_only_after_proof():
+    condition = "resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/100-geographic-reference/110-boundaries/lsib/latest/lsib.fgb'"
+    grant = {'bucket': 'skytruth-shared-datasets-1', 'role': 'roles/storage.objectViewer',
+             'member': 'serviceAccount:dataset-usage@shared-datasets-1.iam.gserviceaccount.com',
+             'condition': [{'title': 'usage_native_probe_sentinel_only', 'expression': condition}]}
+    address = 'google_storage_bucket_iam_member.dataset_usage_native_probe_reader'
+    validate_plan({'resource_changes': [resource(address, grant, actions=['create'])]}, IMAGE, verified=False)
+    for field, value in [('role', 'roles/storage.objectAdmin'), ('member', 'serviceAccount:other@example.iam.gserviceaccount.com'), ('condition', [{'expression': 'true'}])]:
+        changed = {**grant, field: value}
+        with pytest.raises(ValueError, match='exact registered scope'):
+            validate_plan({'resource_changes': [resource(address, changed)]}, IMAGE, verified=False)
+    legacy = copy.deepcopy(grant)
+    legacy['condition'][0]['title'] = 'usage_probe_sentinels_only'
+    legacy['bucket'] = 'b/skytruth-shared-datasets-1'
+    legacy['condition'][0]['expression'] += " || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/300-infrastructure-industrial/320-mining/wri-forest-atlas-drc-mining-permits/latest/wri-forest-atlas-drc-mining-permits.fgb' || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/_catalog/shared-datasets-catalog.csv'"
+    item = resource('google_storage_bucket_iam_member.dataset_usage_probe_reader', None, legacy, ['delete'])
+    with pytest.raises(ValueError, match='replacement evidence'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=True)
+    validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+    item['change']['before']['condition'][0]['expression'] = 'true'
+    with pytest.raises(ValueError, match='exact registered scope'):
+        validate_plan({'resource_changes': [item]}, IMAGE, verified=True, retirement_verified=True)
+
+
+def test_health_role_cannot_gain_object_or_project_authority():
+    role = {'project': 'shared-datasets-1', 'role_id': 'sharedDatasetsUsageBucketHealth',
+            'permissions': ['storage.buckets.get', 'storage.buckets.getIamPolicy']}
+    address = 'google_project_iam_custom_role.dataset_usage_bucket_health'
+    validate_plan({'resource_changes': [resource(address, role)]}, IMAGE, verified=False)
+    for permission in ['storage.objects.get', 'storage.objects.delete', 'resourcemanager.projects.getIamPolicy']:
+        with pytest.raises(ValueError, match='bucket-read-only'):
+            validate_plan({'resource_changes': [resource(address, {**role, 'permissions': [*role['permissions'], permission]})]}, IMAGE, verified=False)
+
+
+@pytest.mark.parametrize('address,after', [
+    ('google_project_iam_custom_role.dataset_usage_health', {'project': 'shared-datasets-1', 'role_id': 'sharedDatasetsUsageHealth', 'permissions': ['resourcemanager.projects.setIamPolicy']}),
+    ('google_project_iam_member.dataset_usage_health', {'project': 'shared-datasets-1', 'member': 'allUsers', 'role': 'roles/owner'}),
+    ('google_service_account_iam_member.dataset_usage_deployer_act_as', {'member': 'allUsers', 'role': 'roles/iam.serviceAccountUser'}),
+])
+def test_existing_usage_authority_cannot_be_broadened(address, after):
+    with pytest.raises(ValueError):
+        validate_plan({'resource_changes': [resource(address, after)]}, IMAGE, verified=False)
+
+
 def test_exact_legacy_deletion_requires_replacement_proof_and_rejects_replacements():
     before = {'project': 'shared-datasets-1', 'name': 'dataset-usage', 'disabled': True}
     item = resource('google_logging_project_sink.dataset_usage', None, before, actions=['delete'])

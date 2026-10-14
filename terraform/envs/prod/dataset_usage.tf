@@ -109,13 +109,13 @@ resource "google_storage_bucket_iam_member" "dataset_usage_viewer" {
   }
 }
 
-resource "google_storage_bucket_iam_member" "dataset_usage_probe_reader" {
+resource "google_storage_bucket_iam_member" "dataset_usage_native_probe_reader" {
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
   member = module.dataset_usage_service_account.member
   condition {
-    title      = "usage_probe_sentinels_only"
-    expression = join(" || ", [for path in concat(local.dataset_usage_probe_paths, ["_catalog/shared-datasets-catalog.csv"]) : "resource.name == '${local.shared_bucket_object_resource_prefix}${path}'"])
+    title      = "usage_native_probe_sentinel_only"
+    expression = join(" || ", [for path in local.dataset_usage_probe_paths : "resource.name == '${local.shared_bucket_object_resource_prefix}${path}'"])
   }
 }
 
@@ -151,7 +151,7 @@ module "dataset_usage_job" {
   depends_on = [
     google_storage_bucket_iam_member.dataset_usage_raw_reader,
     google_storage_bucket_iam_member.dataset_usage_state_writer,
-    google_storage_bucket_iam_member.dataset_usage_probe_reader,
+    google_storage_bucket_iam_member.dataset_usage_native_probe_reader,
     google_storage_bucket_iam_member.dataset_usage_configuration_reader,
     google_storage_bucket_iam_member.dataset_usage_raw_configuration_reader,
   ]
