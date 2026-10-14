@@ -293,6 +293,7 @@ test('color labels filter large metadata groups and show complete counts without
   await canvas.click({ position: await upperRightPointPosition(canvas) });
   await expect(page.locator('#feature-inspector')).toContainText('Rare label');
   expect(await viewport(page)).toEqual(camera);
+  const desktopCanvas = await canvas.boundingBox();
   await page.setViewportSize({width:390,height:844});
   await common.scrollIntoViewIfNeeded();
   expect(await countFits()).toBe(true);
@@ -300,6 +301,12 @@ test('color labels filter large metadata groups and show complete counts without
   expect(await page.locator('.color-legend-heading strong').evaluate(title => title.getBoundingClientRect().height <= parseFloat(getComputedStyle(title).lineHeight) + 1)).toBe(true);
   await testInfo.attach('color-legend-mobile.png', {body: await page.locator('#color-legend').screenshot(), contentType: 'image/png'});
   await page.setViewportSize({width:1440,height:1000});
+  // MapLibre resizes its canvas asynchronously. Derive click coordinates only
+  // after the desktop canvas has returned from the mobile layout.
+  await expect.poll(async () => {
+    const box = await canvas.boundingBox();
+    return {width: box.width, height: box.height};
+  }).toEqual({width: desktopCanvas.width, height: desktopCanvas.height});
   await page.locator('#colorize-select').selectOption('');
   await expect(page.locator('#color-legend')).toBeHidden();
   await canvas.click({ position: await upperRightPointPosition(canvas) });
