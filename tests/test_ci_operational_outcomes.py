@@ -91,13 +91,15 @@ def test_successful_or_skipped_upstream_events_cannot_allocate_failure_alert_wor
     assert 'github.event.workflow_run.head_repository.full_name == github.repository' in condition
 
 
-def test_catalog_worker_allocation_requires_actual_mutation_completion_or_index_rebuild():
+def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or_selected_main_ci():
     publisher = load_workflow(ROOT / '.github/workflows/publish-dataset.yml')
     refresh = publisher['jobs']['refresh-catalog']
     assert "needs.apply-approved-pr-plans.outputs.mutation_completed == 'true'" in refresh['if']
     assert refresh['with']['mutation_completed'] is True
     catalog = load_workflow(ROOT / '.github/workflows/catalog-web-deploy.yml')
-    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Release index rebuild']
+    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Release index rebuild', 'CI']
+    assert "github.event.workflow_run.name == 'Release index rebuild'" in catalog['jobs']['deploy']['if']
+    assert "needs.select-repo-changes.outputs.should_deploy == 'true'" in catalog['jobs']['deploy']['if']
     viewer = load_workflow(ROOT / '.github/workflows/catalog-viewer-deploy.yml')
     triggers = workflow_triggers(viewer)
     assert set(triggers) == {'workflow_call', 'workflow_dispatch'}

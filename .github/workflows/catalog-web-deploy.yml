@@ -21,6 +21,7 @@ on:
   workflow_run:
     workflows:
       - Release index rebuild
+      - CI
     branches:
       - main
     types:
@@ -46,20 +47,62 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  select-repo-changes:
+    name: Select reviewed catalog changes
+    if: >-
+      ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'CI' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      should_deploy: ${{ steps.select.outputs.should_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact successful main CI source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python scripts/deployment_source.py --bootstrap --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: ci-validation-plan-attempt*
+          path: ci-plans
+      - name: Select catalog inputs without duplicating publication refresh
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/catalog_web_changes.py --plan-dir ci-plans
+
   deploy:
     name: Build and publish catalog web
     runs-on: ubuntu-latest
     environment: shared-datasets-production
+    needs: select-repo-changes
     if: >-
       ${{
+        always() && (
         inputs.mutation_completed == true ||
+        needs.select-repo-changes.outputs.should_deploy == 'true' ||
         (
           github.event_name == 'workflow_run' &&
+          github.event.workflow_run.name == 'Release index rebuild' &&
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           github.event.workflow_run.event == 'workflow_dispatch'
-        )
+        ))
       }}
     concurrency:
       group: catalog-web-deploy
@@ -139,7 +182,7 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --pr-number "$PR_NUMBER"
 
       - name: Verify successful release index rebuild provenance
-        if: ${{ github.event_name == 'workflow_run' }}
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release index rebuild' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
