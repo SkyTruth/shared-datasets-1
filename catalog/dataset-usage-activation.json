@@ -1,8 +1,25 @@
 {
   "schema_version": 2,
-  "configuration_sha256": null,
-  "estimated_monthly_cost_usd": null,
-  "evidence": null,
+  "configuration_sha256": "71c122a9ea6193407f3a643df7b7f133f785bc078ba20c8b25139afc03cc9ea0",
+  "estimated_monthly_cost_usd": 15.84,
+  "evidence": {
+    "cost": {
+      "measurement_days": 1,
+      "scope": "tracker_incremental",
+      "monthly_usd": {
+        "raw_storage": 0.654709,
+        "state_storage": 1.670781,
+        "operations": 2.321111,
+        "worker": 1.116,
+        "viewer": 5.994927,
+        "incremental_logging": 4.082184
+      },
+      "measurement_start": "2026-10-13T20:05:23+00:00",
+      "measurement_end": "2026-10-14T20:05:23+00:00",
+      "forecast_document": "docs/dataset-usage-trial-cost-2026-10-14.json",
+      "forecast_sha256": "d0fb53dcb8af44a18803dd30e62fea9c964d5c3321b1e44897d6151e25c11843"
+    }
+  },
   "sources": {
     "gcs_usage": {
       "verified_at": null,

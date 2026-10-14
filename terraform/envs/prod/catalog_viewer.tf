@@ -33,6 +33,8 @@ module "catalog_viewer_service_account" {
 }
 
 resource "google_storage_bucket_iam_member" "catalog_viewer_object_viewer" {
+  # The bucket is already provisioned. Its usage logging belongs to the later
+  # collector deployment, outside this reader workflow's saved-plan scope.
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
   member = module.catalog_viewer_service_account.member
@@ -43,7 +45,6 @@ resource "google_storage_bucket_iam_member" "catalog_viewer_object_viewer" {
     expression  = local.catalog_viewer_object_viewer_condition
   }
 
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_project_iam_custom_role" "catalog_viewer_sign_blob" {

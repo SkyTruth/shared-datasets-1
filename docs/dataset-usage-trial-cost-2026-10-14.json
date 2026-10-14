@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "purpose": "Forecast incremental controlled-trial costs from one complete day of measured demand; these are not observed costs of an active replacement collector.",
+  "measurement": {
+    "start": "2026-10-13T20:05:23+00:00",
+    "end": "2026-10-14T20:05:23+00:00",
+    "days": 1,
+    "source_bucket_requests": 5301,
+    "catalog_requests": 196,
+    "catalog_billable_instance_time_seconds": 8790.215880378271,
+    "observed_tracking_storage_max_bytes": 457597.0,
+    "raw_delivery": "Not yet enabled or observed; no missing storage metric is treated as zero use."
+  },
+  "retained_measurement_sha256": {
+    "source_requests.json": "c5e43f6759e5f587928cc019079dc635b5a4e879f059fbf5cda164181104cd08",
+    "catalog_requests.json": "987212fe95c3ba2f6001af0c37e2a1530dc6d65d2fe6381084a708c7179e0a8e",
+    "catalog_billable_time.json": "5c48b575a57173b39d200c88b8e225bab95e6c4a1db9112bde51c42d318a28a8",
+    "usage_billable_time.json": "928e54afcf2fc5e00efa978b374b4dc7075d39c5fed782a23ee98b1825ad9937",
+    "tracking_storage.json": "810b4eed36d12baed9b365540f1068ca3c1b674cad9d3141793eec1236c90b4e"
+  },
+  "forecast": {
+    "days_per_month": 31,
+    "demand_multiplier": 10,
+    "native_requests_per_day": 53010,
+    "receipt_creates_per_day": 1960,
+    "native_csv_objects_per_day_allowance": 96,
+    "native_csv_bytes_per_request_allowance": 16384,
+    "receipt_bytes_limit": 4096,
+    "raw_retention_days": 7,
+    "snapshot_bytes_limit": 142606336,
+    "snapshot_retention_days": 460,
+    "snapshot_publications_per_day": 1,
+    "worker_seconds_per_day_budget": 1800,
+    "worker_vcpu": 1,
+    "worker_gib": 1,
+    "viewer_incremental_instance_seconds_per_day_reserve": 8790.215880378271,
+    "viewer_vcpu": 1,
+    "viewer_gib": 2,
+    "dashboard_report_reads_per_day_allowance": 196,
+    "report_bytes_limit": 8388608,
+    "incremental_audit_entries_per_tracker_operation_allowance": 4,
+    "audit_bytes_per_entry_allowance": 16384,
+    "free_tier_credits_assumed": false
+  },
+  "rates_usd": {
+    "us_multi_region_standard_gib_month": 0.026,
+    "us_multi_region_class_a_per_1000": 0.01,
+    "class_b_per_1000_conservative": 0.0005,
+    "replication_per_gib": 0.02,
+    "data_transfer_per_gib_allowance": 0.02,
+    "instance_vcpu_second": 1.8e-05,
+    "instance_gib_second": 2e-06,
+    "logging_gib": 0.5
+  },
+  "monthly_usd": {
+    "raw_storage": 0.654709,
+    "state_storage": 1.670781,
+    "operations": 2.321111,
+    "worker": 1.116,
+    "viewer": 5.994927,
+    "incremental_logging": 4.082184
+  },
+  "estimated_monthly_cost_usd": 15.84,
+  "pricing_sources": [
+    "https://cloud.google.com/storage/pricing",
+    "https://cloud.google.com/run/pricing",
+    "https://cloud.google.com/products/observability/pricing"
+  ],
+  "limitations": [
+    "The existing viewer is instance billed. The forecast reserves an additional full measured viewer lifetime or flush time at ten times observed demand, whichever is greater; it does not attribute the existing service bill to tracking.",
+    "Native CSV sizing/file frequency and security-log amplification are forecast allowances, not measured new-source delivery. Confirm them during the trial and revise or pause if the forecast exceeds $25/month.",
+    "Source-bucket dataset transfer already occurring is excluded. Operations includes only incremental tracker operations/transfer plus Scheduler/metric-read allowances; raw/state includes their replication.",
+    "This forecast covers native logs and the currently deployable catalog reporter. Re-measure before claiming cost coverage for additional consumer runtime rollout or traffic outside these allowances.",
+    "One deployment canary is authorized initially. Source readiness stays unverified and the daily Scheduler stays paused until a source passes real delivery checks. No organization policy/sink review is a prerequisite.",
+    "This is a spending target and forecast, not a hard billing cap. Preserve historical evidence; do not remove legacy resources during this trial."
+  ]
+}
