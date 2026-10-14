@@ -83,7 +83,7 @@ def case(tmp_path, monkeypatch):
         event = {"repository": REPO, "workflow_run": deepcopy(run)}
         env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO["full_name"]}
         plan = {"base": before, "head": head, "tested_sha": head,
-                "changed_paths": git("diff", "--name-only", before, head).splitlines(),
+                "changed_paths": [path for path in git("diff", "--name-only", "-z", before, head).split("\0") if path],
                 "source": {"run_id": "123", "run_attempt": 1}}
         return GitHub(responses), event, env, [plan]
 
@@ -114,6 +114,10 @@ def test_missing_ci_plan_is_rejected(case):
     api, event, env, _ = case()
     with pytest.raises(ValueError, match="missing validation plan"):
         should_refresh(api, event, env, [])
+
+
+def test_git_filenames_match_nul_delimited_ci_contract(case):
+    assert should_refresh(*case(("web/catalog/legend-é.svg",)))
 
 
 @pytest.mark.parametrize("field,value", [("conclusion", "failure"), ("status", "in_progress"),

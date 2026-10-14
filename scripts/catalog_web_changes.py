@@ -49,7 +49,8 @@ def should_refresh(api: GitHub, event: dict, env: dict, plans: list[dict]) -> bo
     plan = select_plan(plans, run_id=str(run["id"]), attempt=run["run_attempt"])
     before, after = sha(plan["base"]), sha(plan["tested_sha"])
     require(after == run["head_sha"] and plan["head"] == after, "catalog plan revision mismatch")
-    paths = subprocess.check_output(["git", "diff", "--name-only", before, after], text=True).splitlines()
+    changed = subprocess.check_output(["git", "diff", "--name-only", "-z", before, after], text=True)
+    paths = [path for path in changed.split("\0") if path]
     require(paths == plan["changed_paths"], "catalog plan does not describe its Git range")
     if not any(map(affects_catalog, paths)):
         return False
