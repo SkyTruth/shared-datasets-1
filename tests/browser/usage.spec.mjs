@@ -36,7 +36,7 @@ test('usage report filters, sorts, and renders separate source evidence safely',
   await expect(page.locator('#rows')).toContainText('No activity recorded in this window');
   await expect(page.locator('#disclaimer')).toContainText('logs cannot prove non-use of downloaded copies');
   await expect(page.locator('#rows img')).toHaveCount(0);
-  await expect(page.locator('#rows')).toContainText('gcs_usage · interest · Unknown (unknown): 2 requests, 1 active days, 10 reported bytes');
+  await expect(page.locator('#rows')).toContainText('gcs_usage · interest · Unknown (unknown): 2 requests, 1 days with requests, 10 reported bytes');
   await page.locator('#application').selectOption('Unknown');
   await expect(page.locator('#rows tr')).toHaveCount(1);
   await expect(page.locator('#rows')).toContainText('Active');
@@ -67,23 +67,23 @@ test('usage page detects a dead worker independently and handles missing reports
   await expect(page.locator('#rows tr')).toHaveCount(0);
 });
 
-test('application days stay separate from bucket requests and default to production', async ({ page }) => {
+for (const version of [2, 3]) test(`native-only dashboard handles report v${version} without application reporting`, async ({ page }) => {
   await page.setExtraHTTPHeaders(identity);
   const report = fixture();
-  report.schema_version = 2;
-  const rows = [
-    {application: 'Cerulean', environment: 'production', activity: 'use', active_days: 2, last_reported: report.generated_at},
-    {application: 'Cerulean', environment: 'development', activity: 'use', active_days: 9, last_reported: report.generated_at},
-  ];
-  report.assets[0].application_windows = {30: rows, 90: rows};
-  report.assets[0].last_application_activity = rows;
-  report.producers = [{application: 'Monitor', environment: 'production', connection: 'not_connected', last_reported: null}];
+  report.schema_version = version;
+  if (version === 2) {
+    report.assets[0].application_windows = {30: [{application: 'Retired reporter', active_days: 999}]};
+    report.assets[0].last_application_activity = [{last_reported: report.generated_at}];
+    report.producers = [{application: 'Retired reporter', connection: 'reporting'}];
+  }
+  report.retired_sources = [{source: 'app_usage', retired_at: report.generated_at}];
   await page.route('**/api/usage', route => route.fulfill({json: report}));
   await page.goto(`${baseURL}/usage`);
-  await expect(page.locator('#environment')).toHaveValue('production');
-  await expect(page.locator('#rows')).toContainText('Application reported · Cerulean (production) · use: 2 active days');
-  await expect(page.locator('#rows')).not.toContainText('9 active days');
-  await expect(page.locator('#producers')).toContainText('Monitor (production) · not connected');
-  await page.locator('#environment').selectOption('development');
-  await expect(page.locator('#rows')).toContainText('Cerulean (development) · use: 9 active days');
+  await expect(page.locator('#rows tr')).toHaveCount(2);
+  await expect(page.locator('thead th')).toHaveCount(3);
+  await expect(page.locator('#rows')).not.toContainText('Retired reporter');
+  await expect(page.locator('#rows')).not.toContainText('999');
+  await expect(page.locator('#environment')).toHaveCount(0);
+  await expect(page.locator('#producers')).toHaveCount(0);
+  await expect(page.locator('#retired')).toContainText('app_usage: collection ended');
 });

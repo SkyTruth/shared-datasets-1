@@ -1,144 +1,79 @@
-# Dataset usage visibility
+# Passive dataset usage visibility
 
-The private `/usage` page and `/api/usage` endpoint show two distinct observations:
+The private `/usage` page and `/api/usage` endpoint show native Cloud Storage CSV
+observations: successful and partial reads, metadata checks, failures and response
+bytes. Referrer-derived application labels are inferred; missing attribution stays
+unknown. The 30/90-day views show days with requests, not application active days.
 
-- `gcs_usage`: native Cloud Storage CSV logs provide observed requests and response
-  bytes, including anonymous requests. Referrer application labels are inferred.
-- `app_usage`: opted-in application backends create daily receipts using managed
-  runtime identities. These show application–dataset active days and last reported
-  activity, including successful cache returns. They are application reports,
-  not download counts or independent proof of a user's behavior.
+Downstream consumers have no tracking responsibilities. They do not install or
+upgrade an SDK, send reports, instrument caches, expose reporting endpoints or
+obtain telemetry write permissions. Keep their existing access and caching logic.
+No organization audit-policy or Log Router inspection is required.
 
-Neither source establishes non-use. Native logs are best-effort and exclude CDN
-cache hits. Uninstrumented applications and offline use remain unobserved. No
-organization audit-policy or sink read is required, and the tracker never enables
-project-wide `DATA_READ` auditing. Existing security auditing and CDN operational
-logging remain independent.
+Native logs are best-effort. CDN cache hits, application-owned caches, downloaded
+copies and offline use are outside coverage. Neither silence nor missing evidence
+establishes that a dataset is unused. Existing security auditing, signing and CDN
+operational logging remain independent.
 
-## Producer registration and permissions
+## Collection and history
 
-`catalog/dataset-usage.json` is the producer registry. Each producer has a stable
-identifier, application display name, `production` or `development` environment,
-and either `registered` status or `configured` status with its verified runtime
-service account. A reserved reader account is not evidence of an application's
-actual runtime identity. The report calls a producer `not_connected` until a valid
-receipt has been observed; this never means zero use.
+The daily Cloud Run job parses generation-pinned native logs, maps dataset paths,
+deduplicates request IDs and publishes a bounded SQLite ledger plus a private
+report. Known nonce probes are excluded as maintenance. Raw retention remains
+seven days and aggregate/snapshot retention remains 460 days. Last-observed
+bucket timestamps survive aggregate expiry.
 
-Configured writers get only `roles/storage.objectCreator` on their exact prefix:
+Configuration, report and ledger schema version 3 retire `app_usage`. The worker
+accepts existing version-2 ledgers and the older unversioned ledger, preserves
+historical tables, totals, timestamps and original source labels, and records a
+stable collection cutoff for retired sources. Historical application tables are
+retained as archival data under the original 460-day aggregate retention; last
+timestamps survive expiry. They are never collected, replayed, reset or shown as
+current activity. Prior immutable published reports remain available under their
+existing retention policy. New ledgers contain no application-reporting tables.
 
-```text
-app-usage/{producer}/v1/{UTC-date}/{random-uuid}.json
-```
+Only native CSV inputs are collected. Existing `app-usage/` objects are ignored
+and retain their existing raw lifecycle; no remote objects are manually deleted.
+The dashboard reads report versions 1, 2 and 3 during deployment, renders bucket
+observations only and provides no application connection or environment controls.
+Deploy this compatible reader before the version-3 writer. The signed reader
+byte gate enforces that order. Remove transitional reader compatibility only after
+verification; do not discard historical reports to simplify migration.
 
-The raw bucket stays private, with uniform bucket-level access. Writers cannot
-read tracking records or overwrite/delete receipts. No dataset write grant is
-added. Browser code reports through its own application's authorized backend;
-credentials, application names, producer identifiers and observation timestamps
-come from the backend, never the browser body. Validate the dataset slug and its
-current access tier with the application's existing access policy before recording.
+Ledger and report snapshots remain immutable and checksum-bound. Only the small
+manifest is replaced with its observed generation. Failed or concurrent publication
+leaves the previous committed snapshot usable.
 
-The receipt body contains exactly `schema_version: 1`, `asset_slug`, `activity`
-(`use` or `interest`), and `observed_at` (UTC). It contains no user identifier,
-fingerprint, feature selection, full URL or query contents. The collector derives
-application and environment from the IAM-bound prefix and rejects unregistered
-prefixes, extra fields and mismatched days.
+## Activation and cost
 
-## SDK and catalog reporting
+`catalog/dataset-usage.json` configures passive collection and bounded referrer
+mapping. There is no producer registry. `catalog/dataset-usage-activation.json`
+binds incremental cost evidence to the current configuration/code hash and native
+checks: `authenticated_read`, `anonymous_download` and `raw_delivery`.
 
-Python `UsageReporter` and TypeScript `createUsageReporter` expose `recordUsage`
-and `flush`. Reporting is opt-in. Record `use` after successfully consuming data,
-including a verified cache return, and `interest` after resolving a URL. Fetch
-failures do not produce use receipts. Python `Catalog.fetch`, `fetch_dataset` and
-`fetch_snapshot_artifact` accept `usage_reporter`. TypeScript snapshot layer
-resolution accepts `usageReporter` and records interest; the map helper records
-use after the map loads successfully. Application-owned caches need an explicit
-record at their successful consumption boundary.
+The budget target remains $25/month. A cost-approved bounded canary can run while
+source readiness is unverified; Scheduler stays paused until all native checks
+pass. Health checks verify bucket privacy, seven-day retention, logging destination
+and the native log-delivery permission. They never query organization policy.
+A successful source read alone does not prove delivered logs.
 
-Flush before short-lived workers or requests exit. Reporter uploads are bounded,
-create-only, and retry a lost acknowledgement using the same immutable object
-name. Upload errors are diagnosed without throwing into dataset operations.
-There is no persistent/offline queue. Use an ADC-backed TypeScript Storage client
-with automatic retries disabled; the reporter owns its bounded retry policy.
-The catalog viewer produces backend receipts only when its producer environment
-variable is enabled by the reviewed collection deployment.
+## Removing obsolete reporting and exports
 
-## Aggregation and history
+Application reporting is withdrawn for every consumer. The shared deployment
+removes the catalog reporter environment and all eight exact previously deployed
+application writer grants. Its temporary deletion allowance validates the precise
+tracking bucket, principal, create-only role, prefix and condition title; all new
+writer grants, unrelated deletions and replacements are refused. Remove that
+transitional allowance after the grants are verified absent. No consumer project
+resource or dataset access permission changes.
 
-The existing daily Cloud Run job consumes generation-pinned raw inputs into a
-bounded SQLite ledger. Raw evidence expires after seven days. Daily aggregates,
-coverage, receipt inventory and catalog versions are retained for 460 days;
-last-observed timestamps survive aggregate expiry.
+`terraform/envs/prod/dataset_usage_legacy.tf` separately retains the six disabled
+old audit/export resources. Their removal still requires fresh error-free native
+publication, reviewed activation/cost evidence and two healthy native UTC days.
+Application receipts and consumer deployments are no longer prerequisites. Keep
+both buckets, historical aggregates and recovery evidence. Use the reviewed,
+serialized protected workflow for every infrastructure mutation; never apply
+production Terraform locally.
 
-The report schema is version 2. Its immutable manifest envelope remains version 1
-because the publication format has not changed. Application active days are in
-`application_windows` and `last_application_activity`; request counts remain in
-`windows`. Production is the dashboard default. Historical audit/CDN/catalog
-observations retain their original labels in `windows`, and `retired_sources`
-records their collection cutoff. No historical counts are reinterpreted as new
-application receipts.
-
-The first version-2 publication upgrades an existing version-1 ledger in place,
-without resetting totals or replaying retired-source inputs. Later active-source
-policy reconciliation still requires complete retained generation evidence;
-missing input generations preserve old totals and publish an explicit gap.
-Ledger/report bytes are immutable and checksum-bound. Only the manifest is
-replaced, using its observed generation. A failed upload or concurrent writer
-leaves the previous committed publication usable.
-
-## Activation and controlled trial
-
-Collection starts disabled. `catalog/dataset-usage-activation.json` records measured
-incremental cost evidence (at least one measured day, target at most $25/month)
-and independent source checks bound to the current configuration/code hash.
-Costs cover raw/state storage, operations, worker, viewer and incremental logging
-caused by tracker operations; unrelated project or organization costs are not
-represented as tracking costs. Use measured traffic to forecast trial costs,
-then update the estimate with observed delivery and runtime volume.
-
-Native readiness checks are `authenticated_read`, `anonymous_download` and
-`raw_delivery`. Receipt readiness checks are `receipt_delivery`, `cached_use`,
-`writer_isolation` and `bounded_failure`. A source can be verified independently.
-Collection can be enabled for a bounded canary once cost evidence passes; the
-scheduler remains paused until at least one source is verified. The worker also
-checks live bucket privacy, retention, native delivery configuration and exact
-configured-writer prefix bindings. It never queries organization policy or sinks.
-
-The daily native HEAD probe uses a ledger-recorded nonce. Only the matching
-successful request is excluded as maintenance. Disabled collection sends no
-probes. Application coverage is explicitly partial, even when valid receipts
-are observed; an absent application's report does not establish its inactivity.
-
-All infrastructure changes use reviewed PRs and the protected dataset-usage
-workflow. Use `uv run python scripts/ci_preflight.py --base <current-main-sha>
---head <head-sha>` from the frozen clean checkout before pushing. The tested
-worker image, queued saved-plan validation/apply and signed deployment receipts
-remain required. No local production apply or canonical object mutation is part
-of activation.
-
-## Staged retirement
-
-`terraform/envs/prod/dataset_usage_legacy.tf` temporarily retains disabled old
-exports, their unused permissions and the previous multi-source probe grant.
-Its exact six resources are the only
-permitted deletion scope. After replacement proof, a focused retirement PR
-removes that file, drops obsolete Logging deployment permissions and removes
-version-1 viewer compatibility. Preserve both buckets and all existing evidence.
-
-The cleanup validator reads the current checksum-bound private report and requires
-both source activation checks, a fresh error-free version-2 publication, at least
-two healthy UTC days for each new source, and observed receipts from each configured
-production producer. Only then may `--retire-legacy` admit exact legacy deletes;
-replacements and unrelated deletions remain refused. The protected workflow
-selects this verification when the legacy file is removed. Add only the temporary
-sink/exclusion delete permissions needed for that reviewed cleanup and remove
-them after successful retirement.
-
-Monitor and SkyTruthTech registrations remain visible while their actual runtime
-or shared-data consumption boundary is unverified. Existing consumer integration
-PRs are prerequisites, not permission to take over their branches or merge them.
-Claim all-consumer completion only after each actual consumer's rollout evidence
-is retained. Pause a failed source/reporter and preserve data; do not restore the
-organization-dependent tracking design.
-
-The verified runtime inventory, consumer prerequisites and outstanding identity
-work are recorded in [the rollout inventory](../../docs/dataset-usage-rollout.md).
+See [the rollout plan](../../docs/dataset-usage-rollout.md) and
+[CI preflight](../../docs/ci-preflight.md) for integration and validation boundaries.

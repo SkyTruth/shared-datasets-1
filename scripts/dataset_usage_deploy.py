@@ -50,6 +50,10 @@ RETIREMENT_RESOURCES = {
     'google_project_iam_custom_role.dataset_usage_health',
 }
 
+# Application reporting is retired. Remove these exact deployed writer grants
+# through the protected deployment, then remove this temporary deletion scope.
+RETIRED_APP_WRITERS = {'catalog-viewer-production': 'catalog-viewer@shared-datasets-1.iam.gserviceaccount.com', 'cerulean-ui-production': '734798842681-compute@developer.gserviceaccount.com', 'cerulean-backend-production': 'prod20240903-cr-orch@cerulean-338116.iam.gserviceaccount.com', 'thirty-by-thirty-production': 'x30-prod-data-cf-sa@x30-399415.iam.gserviceaccount.com', 'cerulean-backend-development': 'test-cr-orch@cerulean-338116.iam.gserviceaccount.com', 'thirty-by-thirty-development': 'x30-dev-data-cf-sa@x30-399415.iam.gserviceaccount.com', 'cerulean-ui-development': '734798842681-compute@developer.gserviceaccount.com', 'cerulean-backend-staging': 'staging-cr-orch@cerulean-338116.iam.gserviceaccount.com'}
+
 
 def retirement_ready(root, payload):
     """A reviewed cleanup must also have live replacement publication evidence."""
@@ -59,16 +63,14 @@ def retirement_ready(root, payload):
     activation = json.loads((root / 'catalog/dataset-usage-activation.json').read_text())
     classifier = Classifier(read_catalog_rows_text((root / 'catalog/shared-datasets-catalog.csv').read_text()), config, 'skytruth-shared-datasets-1')
     now = dt.datetime.now(dt.UTC)
-    if payload.get('schema_version') != 2 or payload.get('collection_errors') or not 0 <= (now - timestamp(payload['generated_at'])).total_seconds() <= 48 * 3600:
+    if payload.get('schema_version') != 3 or payload.get('collection_errors') or not 0 <= (now - timestamp(payload['generated_at'])).total_seconds() <= 48 * 3600:
         return False
     if not all(activation_valid(activation, classifier, source) for source in SOURCES):
         return False
     health = {entry['source']: entry for entry in payload['source_health']}
     if not all(health.get(source, {}).get('healthy_days', 0) >= 2 and len({entry['day'] for entry in payload['coverage'] if entry['source'] == source and entry['state'] == 'healthy' and entry['day'] >= activation['sources'][source]['verified_at'][:10] and entry['day'] >= (now - dt.timedelta(days=7)).date().isoformat()}) >= 2 for source in SOURCES):
         return False
-    reporting = {entry['producer'] for entry in payload['producers'] if entry['connection'] == 'reporting'}
-    expected = {name for name, entry in config['producers'].items() if entry['status'] == 'configured' and entry['environment'] == 'production'}
-    return bool(expected) and expected <= reporting
+    return True
 
 RESOURCES = {
     'google_storage_bucket.dataset_usage_raw', 'google_storage_bucket.dataset_usage_state',
@@ -85,7 +87,7 @@ RESOURCES = {
     'google_service_account_iam_member.dataset_usage_deployer_act_as',
     'google_service_account_iam_member.dataset_usage_scheduler_deployer_act_as',
     'google_project_iam_audit_config.storage_data_write',
-    'google_storage_bucket.shared_bucket', 'google_storage_bucket_iam_member.dataset_usage_app_writer',
+    'google_storage_bucket.shared_bucket',
     *('google_storage_bucket_iam_member.dataset_usage_' + name for name in (
         'sink_writer', 'storage_logger', 'raw_reader', 'state_writer', 'viewer',
         'probe_reader', 'native_probe_reader', 'configuration_reader', 'raw_configuration_reader')),
@@ -165,6 +167,16 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
         if actions in ([], ['no-op'], ['read']):
             continue
         address = row['address']
+        producer_match = re.fullmatch(r'google_storage_bucket_iam_member\.dataset_usage_app_writer\["([a-z0-9-]+)"\]', address)
+        if actions == ['delete'] and producer_match and producer_match[1] in RETIRED_APP_WRITERS:
+            producer = producer_match[1]
+            before = change.get('before') or {}
+            check_grant(before, (raw_bucket, 'roles/storage.objectCreator',
+                'serviceAccount:' + RETIRED_APP_WRITERS[producer],
+                f"resource.name.startsWith('projects/_/buckets/{raw_bucket}/objects/app-usage/{producer}/')"))
+            if before['condition'][0].get('title') != 'application_usage_' + producer.replace('-', '_'):
+                raise ValueError('Unexpected withdrawn application writer binding')
+            continue
         if actions == ['delete'] and address in RETIREMENT_RESOURCES:
             if not retirement_verified:
                 raise ValueError('Legacy retirement requires verified replacement evidence')
@@ -188,8 +200,7 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
             if address == 'google_project_iam_custom_role.dataset_usage_health' and (before.get('role_id') != 'sharedDatasetsUsageHealth' or before.get('project') != 'shared-datasets-1'):
                 raise ValueError('Unexpected legacy health role')
             continue
-        producer_match = re.fullmatch(r'google_storage_bucket_iam_member\.dataset_usage_app_writer\["([a-z0-9-]+)"\]', address)
-        if (address not in RESOURCES and producer_match is None) or actions not in (['create'], ['update']):
+        if address not in RESOURCES or actions not in (['create'], ['update']):
             raise ValueError('Unrelated, destructive, or replacement change: ' + address)
         after, before = change.get('after') or {}, change.get('before') or {}
         if address == 'google_project_iam_custom_role.dataset_usage_bucket_health':
@@ -280,13 +291,6 @@ def validate_plan(plan, image, *, verified, retirement_verified=False):
                 if unknown(change.get('after_unknown', {}).get('condition', False)):
                     raise ValueError('Unknown usage IAM condition')
                 check_grant(after, grants[name])
-            if producer_match:
-                producer = producer_match[1]
-                registration = config["producers"].get(producer)
-                expected = f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"
-                conditions = after.get("condition", [])
-                if not registration or registration["status"] != "configured" or after.get("member") != "serviceAccount:" + registration["service_account"] or after.get("role") != "roles/storage.objectCreator" or after.get("bucket") != "skytruth-shared-datasets-1-usage-raw" or len(conditions) != 1 or conditions[0].get("expression") != expected or unknown(change.get("after_unknown", {}).get("condition", False)):
-                    raise ValueError("Application writers require their exact registered create-only prefix")
             if address in {'google_storage_bucket_iam_member.dataset_usage_probe_reader' , 'google_storage_bucket_iam_member.dataset_usage_viewer'} and not after.get('condition'):
                 raise ValueError('Usage readers require object-scoped grants')
 
@@ -301,7 +305,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     verified = validate_rollout(root)
     if args.targets:
-        print('\n'.join(sorted(RESOURCES)))
+        print('\n'.join(sorted(RESOURCES | {f'google_storage_bucket_iam_member.dataset_usage_app_writer["{producer}"]' for producer in RETIRED_APP_WRITERS})))
     elif args.plan_json and args.image:
         import os
         verify_reader_ready(root, deployment_revision.GitHub(), os.environ['GITHUB_REPOSITORY'])

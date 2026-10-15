@@ -34,7 +34,7 @@ class ReportReader:
         if len(raw) != ref["size"] or hashlib.sha256(raw).hexdigest() != ref["sha256"]:
             raise ValueError("Usage report integrity mismatch")
         payload = json.loads(raw)
-        if type(payload["schema_version"]) is not int or payload["schema_version"] not in {1, 2} or payload["generated_at"] != manifest["generated_at"]:
+        if type(payload["schema_version"]) is not int or payload["schema_version"] not in {1, 2, 3} or payload["generated_at"] != manifest["generated_at"]:
             raise ValueError("Usage report identity mismatch")
         return payload
 
@@ -67,20 +67,3 @@ def handle(method, path, headers, *, reader, domains, now):
     body = (ASSETS / name).read_bytes()
     content_type = "text/javascript" if name.endswith(".js") else mimetypes.guess_type(name)[0]
     return Response(200, {"Content-Type": content_type, "Cache-Control": NO_STORE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"}, body if method == "GET" else b"")
-
-
-_reporter = None
-
-
-def record(slug, operation):
-    """Opt-in backend receipt; URL resolution records interest, not a download."""
-    import os
-    global _reporter
-    producer = os.environ.get("DATASET_USAGE_PRODUCER")
-    if not producer:
-        return False
-    if _reporter is None:
-        from skytruth_shared_datasets import UsageReporter
-        _reporter = UsageReporter(producer, bucket=os.environ["DATASET_USAGE_RAW_BUCKET"])
-    _reporter.recordUsage(slug, "use" if operation == "lookup" else "interest")
-    return _reporter.flush()

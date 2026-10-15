@@ -12,11 +12,11 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
-VERSION = 2
+VERSION = 3
 MANIFEST_VERSION = 1
-RETIRED_SOURCES = ("gcs_audit", "cdn", "catalog")
-SOURCES = ("gcs_usage", "app_usage")
-KINDS = ("read", "interest", "use", "maintenance", "failed")
+RETIRED_SOURCES = ("gcs_audit", "cdn", "catalog", "app_usage")
+SOURCES = ("gcs_usage",)
+KINDS = ("read", "interest", "maintenance", "failed")
 DISCLAIMER = "Observed activity only. Public usage logs are best-effort; logs cannot prove non-use of downloaded copies. Missing information never means zero use."
 
 
@@ -39,6 +39,8 @@ class Classifier:
     def __init__(self, catalog, config, bucket):
         if type(config.get("schema_version")) is not int or config["schema_version"] != VERSION:
             raise ValueError("Unsupported usage configuration schema")
+        if set(config) - {"schema_version", "raw_retention_days", "collection_enabled", "referrers"}:
+            raise ValueError("Unsupported passive usage configuration field")
         self.bucket = bucket
         self.config = config
         retention = config["raw_retention_days"]
@@ -47,18 +49,6 @@ class Classifier:
         for mapping in (config.get("referrers", {}),):
             if len(mapping) > 100 or any(not isinstance(label, str) or not 1 <= len(label) <= 120 or "@" in label for label in mapping.values()):
                 raise ValueError("Application mappings require bounded display names, not personal identities")
-        self.producers = config.get("producers", {})
-        if len(self.producers) > 100:
-            raise ValueError("Producer registry exceeds its budget")
-        for producer, entry in self.producers.items():
-            if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", producer):
-                raise ValueError("Invalid producer identifier")
-            if entry["environment"] not in {"production", "development"} or entry["status"] not in {"registered", "configured"}:
-                raise ValueError("Invalid producer registration")
-            if not isinstance(entry["application"], str) or not 1 <= len(entry["application"]) <= 120 or "@" in entry["application"]:
-                raise ValueError("Application labels must not contain personal identities")
-            if entry["status"] == "configured" and not re.fullmatch(r"(?:[a-z0-9-]+@[a-z0-9-]+\.iam|[0-9]+-compute@developer|[a-z0-9-]+@appspot)\.gserviceaccount\.com", entry.get("service_account", "")):
-                raise ValueError("Configured producers require a managed runtime identity")
         self.assets = {row["asset_slug"]: row for row in catalog}
         self.roots = {}
         for row in catalog:
@@ -97,24 +87,6 @@ class Classifier:
         return None, False
 
     def event(self, source, raw, probes, *, name=None):
-        if source == "app_usage":
-            match = re.fullmatch(r"app-usage/([a-z0-9-]+)/v1/(\d{4}-\d{2}-\d{2})/([0-9a-f]{32})\.json", name or "")
-            if not match or match[1] not in self.producers:
-                raise ValueError("Receipt requires a registered producer prefix")
-            producer = self.producers[match[1]]
-            if producer["status"] != "configured":
-                raise ValueError("Receipt producer has no verified runtime binding")
-            if set(raw) != {"schema_version", "asset_slug", "activity", "observed_at"} or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
-                raise ValueError("Invalid application receipt schema")
-            if raw["asset_slug"] not in self.assets or raw["activity"] not in {"use", "interest"}:
-                raise ValueError("Invalid application receipt activity")
-            when = iso(timestamp(raw["observed_at"]))
-            if when[:10] != match[2]:
-                raise ValueError("Receipt day differs from observation")
-            return {"day": when[:10], "at": when, "slug": raw["asset_slug"], "source": source,
-                    "id": digest([source, name]), "kind": raw["activity"], "producer": match[1],
-                    "application": producer["application"], "environment": producer["environment"],
-                    "confidence": "application_reported", "bytes": None, "probe": None}
         if source != "gcs_usage":
             raise ValueError("Retired or unknown usage source")
         if raw["cs_bucket"] != self.bucket:
@@ -151,12 +123,11 @@ class Classifier:
 
 
 def report(db, now, manifest_time=None):
-    config = json.loads(db.execute("SELECT value FROM settings WHERE key='configuration'").fetchone()[0])
     generated = manifest_time or iso(now)
     stale = (now - timestamp(generated)).total_seconds() > 48 * 3600
     completed = (now - dt.timedelta(hours=48)).date() - dt.timedelta(days=1)
     sources = [dict(zip(("day", "source", "state", "reason"), row)) for row in db.execute(
-        "SELECT day,source,state,reason FROM coverage ORDER BY day,source")]
+        "SELECT day,source,state,reason FROM coverage WHERE source='gcs_usage' ORDER BY day,source")]
     health_days = 460
     window_start = completed - dt.timedelta(days=health_days - 1)
     source_health = []
@@ -182,28 +153,11 @@ def report(db, now, manifest_time=None):
             if group_count > 20000:
                 raise ValueError("Usage report group budget exceeded")
             windows[str(days)] = groups
-        app_windows = {}
-        for days in (30, 90):
-            begin = (now.date() - dt.timedelta(days=days - 1)).isoformat()
-            app_windows[str(days)] = [dict(zip(("application", "environment", "activity", "active_days", "last_reported"), row))
-                for row in db.execute("SELECT application,environment,activity,COUNT(DISTINCT day),MAX(last_at) FROM app_daily WHERE slug=? AND day>=? GROUP BY application,environment,activity ORDER BY application,environment,activity", (slug, begin))]
-            group_count += len(app_windows[str(days)])
-            if group_count > 20000:
-                raise ValueError("Usage report group budget exceeded")
-        last_apps = [dict(zip(("application", "environment", "activity", "last_reported"), row)) for row in db.execute("SELECT application,environment,activity,MAX(last_at) FROM app_last WHERE slug=? GROUP BY application,environment,activity", (slug,))]
-        group_count += len(last_apps)
-        if group_count > 20000:
-            raise ValueError("Usage report group budget exceeded")
-        assets.append({"application_windows": app_windows, "last_application_activity": last_apps, "slug": slug, "title": title, "lifecycle_status": status, "registered_on": registered,
+        assets.append({"slug": slug, "title": title, "lifecycle_status": status, "registered_on": registered,
                        "last_read": last_read, "last_interest": last_interest, "last_catalog": last_catalog,
                        "windows": windows})
-    producers = []
-    for producer, entry in config.get("producers", {}).items():
-        last = db.execute("SELECT MAX(last_at) FROM app_last WHERE producer=?", (producer,)).fetchone()[0]
-        producers.append({"producer": producer, "application": entry["application"], "environment": entry["environment"],
-                          "connection": "reporting" if last else "not_connected", "last_reported": last})
     retired = [dict(zip(("source", "retired_at"), row)) for row in db.execute("SELECT source,retired_at FROM retired_sources ORDER BY source")]
-    return {"producers": producers, "retired_sources": retired, "limitations": ["Bucket logs are best-effort", "CDN cache hits do not reach the bucket", "Offline use cannot be observed", "Application activity depends on configured reporting"], "schema_version": VERSION, "generated_at": generated, "stale": stale, "observed_through": completed.isoformat(),
+    return {"retired_sources": retired, "limitations": ["Bucket logs are best-effort", "CDN cache hits do not reach the bucket", "Cached and offline use cannot be observed", "Referrer attribution is inferred; missing referrers remain unknown"], "schema_version": VERSION, "generated_at": generated, "stale": stale, "observed_through": completed.isoformat(),
             "disclaimer": DISCLAIMER, "assets": assets, "coverage": sources[-120:], "source_health": source_health,
             "evidence_versions": [dict(zip(("day", "source", "policy", "catalog"), row)) for row in db.execute("SELECT day,source,policy,catalog FROM evidence ORDER BY day,source")],
             "cost": json.loads(db.execute("SELECT value FROM settings WHERE key='cost'").fetchone()[0])}

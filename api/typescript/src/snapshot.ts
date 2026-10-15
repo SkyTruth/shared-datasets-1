@@ -1,4 +1,3 @@
-import type {UsageReporter} from './usage.js';
 import {parseSnapshotJson, validateSnapshot} from './snapshot-contract.js';
 import {sharedDatasetArtifactUrlFromGsUri, DEFAULT_SHARED_DATASETS_BUCKET} from './artifact-url.js';
 import {parseSharedDatasetMetadataRecords, type SharedDatasetMetadataRecord} from './metadata-records.js';
@@ -29,7 +28,7 @@ export function validateWorkspaceSnapshot(input: unknown, {bucket = DEFAULT_SHAR
 }
 export type AuthorizedSnapshotArtifact = {gs_uri: string; generation: string; resolved_release: string | null; url: string};
 export type SnapshotLayerOptions = {
-  bucket?: string; artifactBaseUrl?: string; usageReporter?: UsageReporter;
+  bucket?: string; artifactBaseUrl?: string;
   authorizeArtifact?: (dataset: SnapshotDataset, artifact: SnapshotArtifact) => Promise<AuthorizedSnapshotArtifact>;
   probeArtifact?: (url: string, artifact: SnapshotArtifact) => Promise<void>;
 };
@@ -75,7 +74,6 @@ export async function resolveSnapshotLayer(input: unknown, slug: string, options
   const requested = snapshot.presentation ? snapshot.presentation.locale : (artifacts.find(e => e.artifact.role === 'metadata' && e.artifact.requested_locale !== null)?.artifact.requested_locale ?? null);
   const metadata = artifacts.find(e => e.artifact.role === 'metadata' && e.artifact.requested_locale === requested)
     ?? artifacts.find(e => e.artifact.role === 'metadata' && e.artifact.resolved_locale === null) ?? null;
-  options.usageReporter?.recordUsage(slug, 'interest');
   return {dataset, tileUrl: tiles.url, metadata, artifacts};
 }
 /** Execute this for every layer before mounting any layers for an atomic workspace restore. */

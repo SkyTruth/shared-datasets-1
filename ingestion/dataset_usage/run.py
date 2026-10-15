@@ -32,8 +32,6 @@ MAX_REPORT_BYTES = 8 * 1024 * 1024
 MANIFEST = "published/manifest.json"
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS app_daily(day TEXT,slug TEXT,producer TEXT,application TEXT,environment TEXT,activity TEXT,last_at TEXT,PRIMARY KEY(day,slug,producer,activity));
-CREATE TABLE IF NOT EXISTS app_last(slug TEXT,producer TEXT,application TEXT,environment TEXT,activity TEXT,last_at TEXT,PRIMARY KEY(slug,producer,activity));
 CREATE TABLE IF NOT EXISTS retired_sources(source TEXT PRIMARY KEY,retired_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS assets(slug TEXT PRIMARY KEY,title TEXT,status TEXT,registered TEXT,last_read TEXT,last_interest TEXT,last_catalog TEXT,root TEXT);
@@ -81,11 +79,9 @@ class GcsStore:
 
     def inputs(self):
         # Listing is paged; SQLite holds the durable receipt inventory on disk.
-        for blob in self.client.list_blobs(self.raw, page_size=256):
+        for blob in self.client.list_blobs(self.raw, prefix="storage-usage", page_size=256):
             if blob.name.startswith("storage-usage") and "_usage_" in blob.name:
                 source = "gcs_usage"
-            elif blob.name.startswith("app-usage/"):
-                source = "app_usage"
             else:
                 continue
             yield {"name": blob.name, "generation": str(blob.generation), "size": blob.size, "source": source}
@@ -95,13 +91,7 @@ class GcsStore:
         blob = self.raw.blob(item["name"], generation=int(item["generation"]))
         with blob.open("rb", chunk_size=1024 * 1024, if_generation_match=int(item["generation"]), timeout=30) as binary:
             with text_stream(binary) as stream:
-                if item["source"] == "gcs_usage":
-                    yield usage_records(stream)
-                else:
-                    data = stream.read(4097)
-                    if len(data.encode()) > 4096:
-                        raise ValueError("Application receipt exceeds its budget")
-                    yield iter([json.loads(data)])
+                yield usage_records(stream)
 
     def publish(self, ledger, payload, generation):
         snapshot = uuid.uuid4().hex
@@ -133,7 +123,7 @@ def file_digest(path):
 def initialize(db, classifier, now, activation):
     existed = db.execute("SELECT 1 FROM sqlite_master WHERE name='settings'").fetchone() is not None
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (0, VERSION):
+    if version not in (0, 2, VERSION):
         raise ValueError("Unsupported ledger schema")
     migrated = existed and version == 0
     db.executescript(SCHEMA)
@@ -147,13 +137,9 @@ def initialize(db, classifier, now, activation):
                     values = [iso(timestamp(value)) if value else value for value in row[1:]]
                     db.execute(f"UPDATE {table} SET {','.join(field + '=?' for field in fields)} WHERE rowid=?", (*values, row[0]))
                 after = rows[-1][0]
-        for source in RETIRED_SOURCES:
-            db.execute("INSERT OR IGNORE INTO retired_sources VALUES(?,?)", (source, iso(now)))
+    for source in RETIRED_SOURCES:
+        db.execute("INSERT OR IGNORE INTO retired_sources VALUES(?,?)", (source, iso(now)))
     db.execute(f"PRAGMA user_version={VERSION}")
-    for producer, application, environment in db.execute("SELECT DISTINCT producer,application,environment FROM app_last"):
-        current = classifier.producers.get(producer)
-        if current and (current["application"], current["environment"]) != (application, environment):
-            raise ValueError("An observed producer cannot be rebound to another application or environment")
     db.execute("INSERT OR REPLACE INTO settings VALUES('configuration',?)", (json.dumps(classifier.config),))
     db.execute("PRAGMA cache_size=-8192")
     db.execute("PRAGMA journal_mode=DELETE")
@@ -161,7 +147,7 @@ def initialize(db, classifier, now, activation):
     prior = db.execute("SELECT value FROM settings WHERE key='policy'").fetchone()
     if prior is None or prior[0] != classifier.version:
         db.execute("INSERT OR REPLACE INTO settings VALUES('policy',?)", (classifier.version,))
-        db.execute("DELETE FROM coverage WHERE day>=?", (today,))
+        db.execute("DELETE FROM coverage WHERE day>=? AND source='gcs_usage'", (today,))
     estimate = activation.get("estimated_monthly_cost_usd")
     cost = {"target_monthly_usd": 25, "estimated_monthly_usd": estimate,
             "verified_at": activation.get("verified_at"),
@@ -191,11 +177,6 @@ def initialize(db, classifier, now, activation):
 
 
 def add_event(db, event):
-    if event["source"] == "app_usage":
-        values = (event["slug"], event["producer"], event["application"], event["environment"], event["kind"], event["at"])
-        db.execute("INSERT INTO app_daily VALUES(?,?,?,?,?,?,?) ON CONFLICT(day,slug,producer,activity) DO UPDATE SET last_at=MAX(last_at,excluded.last_at)", (event["day"], *values))
-        db.execute("INSERT INTO app_last VALUES(?,?,?,?,?,?) ON CONFLICT(slug,producer,activity) DO UPDATE SET last_at=MAX(last_at,excluded.last_at)", values)
-        return
     inserted = db.execute("INSERT OR IGNORE INTO events VALUES(?,?,?)", (event["day"], event["source"], event["id"])).rowcount
     if not inserted:
         return
@@ -212,7 +193,6 @@ def add_event(db, event):
 COST_COMPONENTS = {"incremental_logging", "raw_storage", "state_storage", "operations", "worker", "viewer"}
 TRAFFIC_CHECKS = {
     "gcs_usage": {"authenticated_read", "anonymous_download", "raw_delivery"},
-    "app_usage": {"receipt_delivery", "cached_use", "writer_isolation", "bounded_failure"},
 }
 
 
@@ -265,7 +245,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         rebuilding = False
         if replay:
             assert previous_manifest is not None, "Reconciliation requires a committed ledger reference"
-            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE source IN ('gcs_usage','app_usage') AND seen_at>=? AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest,)).fetchall()
+            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE source='gcs_usage' AND seen_at>=? AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest,)).fetchall()
             if missing:
                 # Never erase old totals when their original generations cannot
                 # be replayed. Keep original evidence versions and mark unknown.
@@ -278,10 +258,9 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 # when it is replacing previously committed historical evidence.
                 db.execute("SAVEPOINT reconciliation")
                 rebuilding = True
-                db.execute("DELETE FROM app_daily WHERE day>=?", (oldest,))
                 db.execute("DELETE FROM daily WHERE source='gcs_usage' AND day>=?", (oldest,))
                 db.execute("DELETE FROM events WHERE source='gcs_usage' AND day>=?", (oldest,))
-                db.execute("DELETE FROM inputs WHERE source IN ('gcs_usage','app_usage') AND seen_at>=?", (oldest,))
+                db.execute("DELETE FROM inputs WHERE source='gcs_usage' AND seen_at>=?", (oldest,))
         probes = {token: {"day": day, "source": source, "slug": slug} for token, day, source, slug in db.execute("SELECT token,day,source,slug FROM probes WHERE day>=?", (oldest,))}
         for name, item_generation, size, source in db.execute("SELECT name,generation,size,source FROM inventory ORDER BY name,generation"):
             item = {"name": name, "generation": item_generation, "size": size, "source": source}
@@ -338,7 +317,6 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         # Missing days between probes remain pending; earlier days stay unknown.
         first_days = {
             "gcs_usage": db.execute("SELECT MIN(day) FROM probes WHERE source='gcs_usage'").fetchone()[0],
-            "app_usage": db.execute("SELECT MIN(day) FROM app_daily").fetchone()[0],
         }
         first_probe = min((day for day in first_days.values() if day is not None), default=None)
         begin = max(dt.date.fromisoformat(first_probe), cutoff - dt.timedelta(days=459)) if first_probe else cutoff + dt.timedelta(days=1)
@@ -348,11 +326,6 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 if first_days[source] is None or day < first_days[source]:
                     continue
                 if db.execute("SELECT 1 FROM coverage WHERE day=? AND source=? AND state='gap'", (day, source)).fetchone():
-                    continue
-                if source == "app_usage":
-                    seen = db.execute("SELECT 1 FROM app_daily WHERE day=? LIMIT 1", (day,)).fetchone()
-                    state = "healthy" if seen and valid[source] else "pending"
-                    db.execute("INSERT OR REPLACE INTO coverage VALUES(?,?,?,?)", (day, source, state, "Receipts observed; individual application coverage remains partial" if state == "healthy" else "No verified receipt pipeline observation"))
                     continue
                 seen = db.execute("SELECT MAX(seen) FROM probes WHERE day=? AND source=? AND trusted=1 AND policy=?", (day, source, classifier.version)).fetchone()[0]
                 prior = db.execute("SELECT state FROM coverage WHERE day=? AND source=?", (day, source)).fetchone()
@@ -372,7 +345,10 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         db.execute("DELETE FROM probes WHERE day < ?", (keep,))
         db.execute("DELETE FROM inputs WHERE seen_at < ?", (keep,))
         db.execute("DELETE FROM daily WHERE day < ?", (keep,))
-        db.execute("DELETE FROM app_daily WHERE day < ?", (keep,))
+        # Version-2 ledgers retain retired application aggregates under the
+        # original retention policy; fresh passive ledgers have no such table.
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_daily'").fetchone():
+            db.execute("DELETE FROM app_daily WHERE day < ?", (keep,))
         db.execute("DELETE FROM coverage WHERE day < ?", (keep,))
         db.execute("DELETE FROM evidence WHERE day < ?", (keep,))
         db.execute("DELETE FROM reconciliations WHERE at < ?", (keep,))

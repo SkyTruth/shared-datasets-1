@@ -460,15 +460,14 @@ local files if your analysis requires independent retention. See the
 [MapLibre helper](../api/typescript/README.md#show-a-dataset-on-a-map), and
 [portable contract](standards/workspace-snapshot-v1.md).
 
-## Daily application usage reporting
+## Passive usage visibility
 
-Shared usage visibility combines observed bucket traffic with opt-in daily
-application reports. Register actual runtime identities, not assumed reader
-accounts. Use the Python or TypeScript reporter after successful access, including
-application-owned cache returns. Browser reports go through the consuming backend
-with existing authentication and dataset access checks. Production/development
-producers are separate. Flush before a short-lived worker/request exits.
+The shared tracker observes native bucket requests and transferred bytes.
+Consumers keep their existing dataset access, SDK versions and application caches;
+they do not send telemetry, expose reporting endpoints or obtain tracking write
+permissions. No downstream tracking integration is required.
 
-The private dashboard reports active days, last activity and connection state.
-Missing reports never establish zero use. See `ingestion/dataset_usage/README.md`
-and the SDK READMEs for the receipt, permission and rollout contracts.
+Referrer attribution, when available, is inferred. Cached/offline use and CDN
+cache hits are outside this source’s coverage. Missing observations never mean
+zero use. See [the collector](../ingestion/dataset_usage/README.md) for retention,
+source health and the private dashboard.

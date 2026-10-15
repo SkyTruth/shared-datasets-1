@@ -50,10 +50,6 @@ const test = base.extend({
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
       if (url.origin === baseURL && url.pathname === '/catalog.json') return json(catalog);
       if (url.origin === baseURL && url.pathname === '/session') return json({authorized: true});
-      if (url.origin === baseURL && url.pathname === '/api/usage/report') {
-        (state.usageReports ??= []).push(request.postDataJSON());
-        return route.fulfill({status: 204});
-      }
       const lookup = /^\/v1\/assets\/([a-z-]+)\/releases\/([0-9-]+):lookup$/.exec(url.pathname);
       if (url.origin === baseURL && lookup) {
         if (state.lookupStatus !== 200) {
@@ -228,12 +224,13 @@ async function expectMetadata(page, old) {
 }
 
 test('public latest and historical maps keep tile and inspector identity together', async ({ page, transport }, testInfo) => {
+  // A stale deployed shell marker must not reactivate removed telemetry.
   await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
     const meta = document.createElement('meta');
     meta.name = 'dataset-usage-endpoint'; meta.content = '/api/usage/report'; document.head.append(meta);
   }));
   await page.goto(baseURL);
-  expect(transport.usageReports || []).toEqual([]);
+  expect(transport.requests.filter(entry => new URL(entry.url).pathname === '/api/usage/report')).toEqual([]);
   await page.locator('#asset-list [data-slug="smoke-public"]').click();
   await clickPoint(page, false, testInfo);
   await expectMetadata(page, false);
@@ -248,7 +245,7 @@ test('public latest and historical maps keep tile and inspector identity togethe
   await page.locator('#version-select').selectOption('latest');
   await clickPoint(page, false, testInfo);
   await expectMetadata(page, false);
-  await expect.poll(() => transport.usageReports).toEqual([{asset_slug: 'smoke-public'}]);
+  expect(transport.requests.filter(entry => new URL(entry.url).pathname === '/api/usage/report')).toEqual([]);
 });
 
 test('color labels filter large metadata groups and show complete counts without moving the map', async ({ page }, testInfo) => {

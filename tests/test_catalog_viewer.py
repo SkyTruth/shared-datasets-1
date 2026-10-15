@@ -321,49 +321,18 @@ def feature_lookup_request(body, headers=None, resolver=None, index=None, featur
 
 
 class CatalogViewerTests(unittest.TestCase):
-    def test_browser_reports_validate_access_and_accept_only_the_slug(self):
-        from services.catalog_viewer.run import handle_usage_report
-        headers = {"Host": "catalog.example", "Origin": "https://catalog.example",
-                   "X-Goog-Authenticated-User-Email": "accounts.google.com:viewer@skytruth.org"}
-        cache = CatalogJsonCache(loader=lambda: catalog_payload())
-        def request(body, selected_headers=headers):
-            return handle_usage_report("POST", selected_headers, json.dumps(body).encode(), catalog_cache=cache, allowed_email_domains=("skytruth.org",))
-        with mock.patch.dict("os.environ", {"DATASET_USAGE_PRODUCER": "catalog-viewer-production"}), mock.patch("services.catalog_viewer.usage.record", return_value=True) as recorder:
-            assert request({"asset_slug": "wdpa-marine"}, {}).status == 401
-            assert request({"asset_slug": "wdpa-marine"}, {**headers, "Origin": "https://other.example"}).status == 403
-            assert request({"asset_slug": "wdpa-marine", "producer": "forged"}).status == 400
-            assert request({"asset_slug": "missing"}).status == 404
-            recorder.assert_not_called()
-            assert request({"asset_slug": "wdpa-marine"}).status == 204
-            recorder.assert_called_once_with("wdpa-marine", "lookup")
-            recorder.side_effect = RuntimeError("tracking unavailable")
-            assert request({"asset_slug": "wdpa-marine"}).status == 503
-
-    def test_only_the_configured_private_backend_advertises_browser_reporting(self):
+    def test_retired_reporting_endpoint_and_browser_marker_cannot_be_reenabled(self):
         from services.catalog_viewer.run import handle_static
         store = FakeStore(catalog_payload())
         store.static['index.html'] = StaticObject(b'<html><head></head><body></body></html>', 'text/html')
         with mock.patch.dict("os.environ", {"DATASET_USAGE_PRODUCER": "catalog-viewer-production"}):
-            result = handle_static("GET", "/", object_store=store)
-            assert b'content="/api/usage/report"' in result.body
-            assert int(result.headers['Content-Length']) == len(result.body)
-        with mock.patch.dict("os.environ", {}, clear=True):
-            assert b'dataset-usage-endpoint' not in handle_static("GET", "/", object_store=store).body
+            response = handle_request("POST", "/api/usage/report", {}, b'{"asset_slug":"wdpa-marine"}',
+                catalog_cache=CatalogJsonCache(loader=lambda: catalog_payload()), object_store=store, signer=FakeSigner())
+            self.assertIn(response.status, (404, 405))
+            self.assertNotIn(b'dataset-usage-endpoint', handle_static("GET", "/", object_store=store).body)
 
-    def test_usage_receipts_include_cached_successful_sidecar_lookups_only(self):
-        index = feature_preview_run.GcsSidecarFeatureIndex(bucket_name="skytruth-shared-datasets-1-preview")
-        with mock.patch.object(index, "_load_sidecar_records", return_value=FakeFeatureIndex().documents) as loader, mock.patch("services.catalog_viewer.usage.record") as recorder:
-            for _ in range(2):
-                response, _, _ = feature_lookup_request(
-                    {"ids": ["48943"]},
-                    {"X-Goog-Authenticated-User-Email": "accounts.google.com:viewer@skytruth.org"},
-                    index=index,
-                )
-                self.assertEqual(response.status, 200)
-            response, _, _ = feature_lookup_request({"ids": ["48943"]}, index=index)
-            self.assertEqual(response.status, 401)
-        self.assertEqual(loader.call_count, 1)
-        self.assertEqual(recorder.call_args_list, [mock.call("wdpa-marine", "lookup")] * 2)
+
+
 
     def test_unknown_slug_returns_404(self):
         response, _signer = signed_url_request("missing")
