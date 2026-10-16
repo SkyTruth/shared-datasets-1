@@ -116,7 +116,7 @@ jobs:
     needs: candidate
     if: needs.candidate.outputs.release_needed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -239,12 +239,18 @@ jobs:
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: |
           set -euo pipefail
-          # Read-only propagation polling never republishes package bytes.
-          for attempt in {1..12}; do
-            if [[ "$(GITHUB_OUTPUT= node scripts/release-policy.mjs registry "$CANDIDATE")" == should_publish=false ]]; then exit 0; fi
-            sleep 5
+          # npm may process an accepted publication for several minutes.
+          # Only an absent version is retried; verifier errors fail immediately.
+          # These reads never republish package bytes.
+          for attempt in {0..60}; do
+            registry_result="$(GITHUB_OUTPUT='' node scripts/release-policy.mjs registry "$CANDIDATE")"
+            if [[ "$registry_result" == should_publish=false ]]; then exit 0; fi
+            if (( attempt < 60 )); then
+              echo "Waiting for npm publication visibility (check $((attempt + 1))/61)"
+              sleep 10
+            fi
           done
-          echo "Registry has not confirmed the exact tested package integrity" >&2
+          echo "Registry has not confirmed the exact tested package integrity after ten minutes of propagation waits; inspect the existing publication before recovery" >&2
           exit 1
       - name: Record terminal SDK outcome
         id: deployment-outcome
