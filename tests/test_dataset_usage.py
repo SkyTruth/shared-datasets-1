@@ -19,7 +19,7 @@ from services.catalog_viewer import usage
 NOW = dt.datetime(2026, 10, 7, 9, tzinfo=dt.UTC)
 BUCKET = "shared"
 ROWS = [{"asset_slug": "example", "title": "Example", "status": "active", "canonical_path": "gs://shared/category/example/latest/example.csv", "access_tier": "public"}]
-CONFIG = {"schema_version": 2, "raw_retention_days": 7, "collection_enabled": True, "producers": {"example-production": {"application": "Example app", "environment": "production", "status": "configured", "service_account": "example@example-project.iam.gserviceaccount.com"}}, "cdn_host": "tiles.example.org", "principals": {"reader@example.org": "Application group"}, "referrers": {"app.example.org": "Inferred app"}, "maintenance_principals": ["worker@example.org"], "catalog_principals": ["viewer@example.org"]}
+CONFIG = {"schema_version": 3, "raw_retention_days": 7, "collection_enabled": True, "referrers": {"app.example.org": "Inferred app"}}
 
 
 def classifier():
@@ -34,7 +34,7 @@ def test_raw_retention_rejects_policies_without_delivery_and_recovery_room(days)
 
 
 def activation(c):
-    return {"schema_version": 2, "configuration_sha256": c.version, "estimated_monthly_cost_usd": 10,
+    return {"schema_version": 3, "configuration_sha256": c.version, "estimated_monthly_cost_usd": 10,
             "sources": {source: {"verified_at": iso(NOW), "checks": dict.fromkeys(run.TRAFFIC_CHECKS[source], True)} for source in SOURCES},
             "evidence": {"cost": {"measurement_days": 7, "scope": "tracker_incremental",
                                   "monthly_usd": {key: (10 if key == "worker" else 0) for key in run.COST_COMPONENTS}}}}
@@ -210,7 +210,7 @@ def test_activity_visible_immediately_without_required_history(tmp_path, days):
     asset = payload["assets"][0]
     assert asset["last_read"] == iso(NOW)
     assert asset["windows"]["30"][0]["requests"] == 1
-    assert set(asset) == {"slug", "title", "lifecycle_status", "registered_on", "last_read", "last_interest", "last_catalog", "windows", "application_windows", "last_application_activity"}
+    assert set(asset) == {"slug", "title", "lifecycle_status", "registered_on", "last_read", "last_interest", "last_catalog", "windows"}
     assert set(asset["windows"]) == {"30", "90"}
     assert payload["observed_through"] == "2026-10-04"
     assert all(row["healthy_days"] == days and row["unknown_days"] == 460 - days for row in payload["source_health"])
@@ -371,6 +371,16 @@ def test_manifest_cas_and_lost_ack_recover_committed_checkpoint(tmp_path):
         store.publish(ledger, payload, 0)
     assert json.loads(state.objects[run.MANIFEST][1]) == manifest
     assert generation == state.objects[run.MANIFEST][0]
+
+
+@pytest.mark.parametrize('version', [1, 2, 3])
+def test_compatible_reader_accepts_old_and_native_only_reports_before_writer_switch(tmp_path, version):
+    store, _state = gcs_store()
+    ledger = tmp_path / 'ledger.sqlite'
+    ledger.write_bytes(b'checkpoint')
+    payload = {'schema_version': version, 'generated_at': iso(NOW), 'assets': []}
+    store.publish(ledger, payload, 0)
+    assert usage.ReportReader('state', store.client).read() == payload
 
 
 def test_viewer_checks_report_integrity_and_cannot_follow_ledger_reference(tmp_path):

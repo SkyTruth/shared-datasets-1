@@ -84,8 +84,8 @@ class Client:
         assert name == SHARED
         return self.source_bucket
 
-    def list_blobs(self, bucket, *, page_size):
-        assert bucket.name == RAW and page_size == 256
+    def list_blobs(self, bucket, *, prefix, page_size):
+        assert bucket.name == RAW and prefix == 'storage-usage' and page_size == 256
         return []
 
 
@@ -142,17 +142,17 @@ def exercise(directory, *, client=None):
     assert payload['collection_errors'] == []
     assert len(payload['assets']) == 2
     assert all(asset['lifecycle_status'] == 'active' and not any(asset['windows'].values()) for asset in payload['assets'])
-    assert {row['source'] for row in payload['coverage']} == {'gcs_usage', 'app_usage'}
+    assert {row['source'] for row in payload['coverage']} == {'gcs_usage'}
     assert all(row['state'] == 'gap' for row in payload['coverage'])
     ledger = directory / 'published-ledger.sqlite'
     ledger.write_bytes(client.objects[STATE, manifest['ledger']['path']][1])
     with sqlite3.connect(ledger) as db:
         assert db.execute('SELECT COUNT(*) FROM probes').fetchone()[0] == 0
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 2
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 3
     assert json.loads(config_path.read_text())['collection_enabled'] is False
     assert client.source_bucket.get_logging() is None
     assert http.call_count == 0 and session.get.call_count == 0 and session.post.call_count == 0
-    print(json.dumps({'event': 'dataset_usage_cold_start_verified', 'schema_version': 2,
+    print(json.dumps({'event': 'dataset_usage_cold_start_verified', 'schema_version': 3,
                       'coverage': 'unverified', 'probes': 0, 'state_objects': 3}))
     return payload
 

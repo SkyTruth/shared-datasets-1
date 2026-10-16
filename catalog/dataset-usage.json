@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "collection_enabled": true,
   "raw_retention_days": 7,
   "referrers": {
@@ -9,70 +9,5 @@
     "cerulean.skytruth.org": "Cerulean",
     "30x30.skytruth.org": "30x30",
     "monitor.skytruth.org": "Monitor"
-  },
-  "producers": {
-    "catalog-viewer-production": {
-      "application": "Shared datasets catalog",
-      "environment": "production",
-      "status": "configured",
-      "service_account": "catalog-viewer@shared-datasets-1.iam.gserviceaccount.com"
-    },
-    "cerulean-ui-production": {
-      "application": "Cerulean",
-      "environment": "production",
-      "status": "configured",
-      "service_account": "734798842681-compute@developer.gserviceaccount.com"
-    },
-    "cerulean-backend-production": {
-      "application": "Cerulean",
-      "environment": "production",
-      "status": "configured",
-      "service_account": "prod20240903-cr-orch@cerulean-338116.iam.gserviceaccount.com"
-    },
-    "thirty-by-thirty-production": {
-      "application": "30x30",
-      "environment": "production",
-      "status": "configured",
-      "service_account": "x30-prod-data-cf-sa@x30-399415.iam.gserviceaccount.com"
-    },
-    "monitor-production": {
-      "application": "Monitor",
-      "environment": "production",
-      "status": "registered"
-    },
-    "skytruth-tech-production": {
-      "application": "SkyTruthTech",
-      "environment": "production",
-      "status": "registered"
-    },
-    "env-cost-of-war-development": {
-      "application": "Environmental cost of war",
-      "environment": "development",
-      "status": "registered"
-    },
-    "cerulean-backend-development": {
-      "application": "Cerulean",
-      "environment": "development",
-      "status": "configured",
-      "service_account": "test-cr-orch@cerulean-338116.iam.gserviceaccount.com"
-    },
-    "thirty-by-thirty-development": {
-      "application": "30x30",
-      "environment": "development",
-      "status": "configured",
-      "service_account": "x30-dev-data-cf-sa@x30-399415.iam.gserviceaccount.com"
-    },
-    "cerulean-ui-development": {
-      "application": "Cerulean",
-      "environment": "development",
-      "status": "configured",
-      "service_account": "734798842681-compute@developer.gserviceaccount.com"
-    },
-    "cerulean-backend-staging": {
-      "application": "Cerulean",
-      "environment": "development",
-      "status": "configured",
-      "service_account": "staging-cr-orch@cerulean-338116.iam.gserviceaccount.com"
-    }
   }
 }

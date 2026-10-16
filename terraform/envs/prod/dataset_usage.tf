@@ -7,12 +7,11 @@ locals {
   dataset_usage_collect         = local.dataset_usage_config.collection_enabled
   dataset_usage_source_checks = {
     gcs_usage = ["authenticated_read", "anonymous_download", "raw_delivery"]
-    app_usage = ["receipt_delivery", "cached_use", "writer_isolation", "bounded_failure"]
   }
   dataset_usage_verified = try(
     local.dataset_usage_collect &&
     local.dataset_usage_activation.configuration_sha256 == sha256(jsonencode({
-      version = 2, config = local.dataset_usage_config,
+      version = 3, config = local.dataset_usage_config,
       code = { for name in ["model.py", "run.py", "stream.py", "health.py"] :
       name => filesha256("${path.module}/../../../ingestion/dataset_usage/${name}") }
     })) &&
@@ -225,17 +224,4 @@ resource "google_project_iam_custom_role" "dataset_usage_bucket_health" {
   role_id     = "sharedDatasetsUsageBucketHealth"
   title       = "Dataset usage bucket configuration reader"
   permissions = ["storage.buckets.get", "storage.buckets.getIamPolicy"]
-}
-
-resource "google_storage_bucket_iam_member" "dataset_usage_app_writer" {
-  for_each = { for producer, registration in local.dataset_usage_config.producers : producer => registration
-    if registration.status == "configured"
-  }
-  bucket = local.dataset_usage_raw_bucket_name
-  role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${each.value.service_account}"
-  condition {
-    title      = "application_usage_${replace(each.key, "-", "_")}"
-    expression = "resource.name.startsWith('projects/_/buckets/${local.dataset_usage_raw_bucket_name}/objects/app-usage/${each.key}/')"
-  }
 }

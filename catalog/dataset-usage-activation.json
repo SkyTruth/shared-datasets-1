@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "configuration_sha256": "71c122a9ea6193407f3a643df7b7f133f785bc078ba20c8b25139afc03cc9ea0",
+  "schema_version": 3,
+  "configuration_sha256": "b5548a3ceb21466f9c5e78e9fe3d965b03116174df325ceedd0f40c4618dce40",
   "estimated_monthly_cost_usd": 15.84,
   "evidence": {
     "cost": {
@@ -22,10 +22,6 @@
   },
   "sources": {
     "gcs_usage": {
-      "verified_at": null,
-      "checks": {}
-    },
-    "app_usage": {
       "verified_at": null,
       "checks": {}
     }

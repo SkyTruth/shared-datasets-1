@@ -54,6 +54,8 @@ import { realpathSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getPmtilesFetchCredentials, validateWorkspaceSnapshot, resolveSnapshotLayer } from '${packageName}';
 import { getExpiredPmtilesCookies, authorizeSnapshotArtifact } from '${packageName}/server';
+import * as browserApi from '${packageName}';
+import * as serverApi from '${packageName}/server';
 const root = realpathSync('./node_modules/${packageName}') + '/';
 for (const name of ['${packageName}', '${packageName}/server', '${packageName}/maplibre']) {
   assert(realpathSync(fileURLToPath(import.meta.resolve(name))).startsWith(root));
@@ -63,6 +65,8 @@ assert.equal(getPmtilesFetchCredentials('https://tiles.skytruth.org/pmtiles/priv
 assert.equal(getExpiredPmtilesCookies().length, 2);
 assert.equal(typeof resolveSnapshotLayer, "function");
 assert.equal(typeof authorizeSnapshotArtifact, "function");
+assert.equal('createUsageReporter' in browserApi, false);
+assert.equal('createGcsUsageReporter' in serverApi, false);
 assert.throws(() => validateWorkspaceSnapshot({schema_version: 999}));
 `);
   run(process.execPath, ['runtime.mjs'], consumer);

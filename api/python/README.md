@@ -455,26 +455,9 @@ package's GitHub archive distribution. Unreleased local builds instead show
 the editable installation instruction; they do not claim an older published
 revision contains these APIs.
 
-## Opt-in daily usage reporting
+## Passive usage visibility
 
-Register a managed backend producer in the shared usage registry before enabling
-reporting. It gets create-only access to its own private telemetry prefix.
-
-```python
-from skytruth_shared_datasets import Catalog, UsageReporter
-
-reporter = UsageReporter("my-application-production")
-ref = Catalog.load().fetch("iho-world-seas", "fgb", usage_reporter=reporter)
-# A verified cache return records use too. For app-owned cached data:
-reporter.recordUsage("iho-world-seas", "use")
-reporter.flush()  # Before a request or short-lived process exits.
-```
-
-`fetch_dataset` and `fetch_snapshot_artifact` also accept `usage_reporter`.
-Resolution alone is interest; record `interest` explicitly when appropriate.
-Reporting is disabled unless configured. The reporter uses ADC and the optional
-`gcs` extra, buffers at most 1,024 daily observations, and uploads immutable small
-receipts with bounded retries. Upload failures return `False` and log a diagnostic;
-they do not fail dataset operations. No user identifiers or query contents are
-collected, and there is no offline queue. See the usage collector README for
-coverage limits, retention and source-specific activation.
+The shared tracker observes native bucket traffic. Consumers do not configure
+reporters, send telemetry, change caches or grant tracking permissions. Cached
+and offline use remains outside that source’s coverage. Ordinary dataset access
+requires no SDK upgrade for tracking.

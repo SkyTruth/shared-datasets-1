@@ -1,107 +1,73 @@
-# Daily usage rollout inventory
+# Passive usage rollout
 
-The shared collector and SDK changes must land before consumer reporting is
-released. This chat owns final integration/recovery; record exact heads, required
-CI, approvals and rollout receipts in each PR and the retained local evidence.
+This chat owns integration and recovery. The tracker uses native bucket logs
+alone. Downstream consumers, including 30x30, Cerulean, Monitor and other existing
+users, make no tracking changes: no reporting SDK upgrade, telemetry hook, cache
+instrumentation, backend reporting route or tracking IAM grant is required.
 
-## Confirmed runtime bindings (read-only inventory, 2026-10-14)
+## What is measured
 
-| Producer | Runtime | Verified managed identity |
-| --- | --- | --- |
-| Catalog production | `catalog-viewer` | `catalog-viewer@shared-datasets-1.iam.gserviceaccount.com` |
-| Cerulean UI production | `cerulean-ui-production` | `734798842681-compute@developer.gserviceaccount.com` |
-| Cerulean UI development | `cerulean-ui-develop`, `cerulean-ui-test` | Same compute identity as production |
-| Cerulean backend production | `cerulean-cloud-prod20240903-cr-orchestrator` | `prod20240903-cr-orch@cerulean-338116.iam.gserviceaccount.com` |
-| Cerulean backend development | `cerulean-cloud-test-cr-orchestrator` | `test-cr-orch@cerulean-338116.iam.gserviceaccount.com` |
-| Cerulean backend staging | `cerulean-cloud-staging-cr-orchestrator` | `staging-cr-orch@cerulean-338116.iam.gserviceaccount.com` |
-| 30x30 production | `x30-prod-data` | `x30-prod-data-cf-sa@x30-399415.iam.gserviceaccount.com` |
-| 30x30 development | `x30-dev-data` | `x30-dev-data-cf-sa@x30-399415.iam.gserviceaccount.com` |
+Keep observed reads/partial reads, metadata checks, failures and response bytes
+separate. Infer an application label only when a mapped referrer was observed;
+otherwise retain unknown attribution. Bucket traffic is not application active
+days. CDN/application cache hits, downloaded copies and offline use are outside
+coverage, and missing activity never proves non-use.
 
-Consumer adapters select only these verified runtimes using Cloud Run's
-server-provided `K_SERVICE`, never a browser application/environment label.
-Unknown and local runtimes do not report. `DATASET_USAGE_ENABLED=false` pauses a
-consumer reporter. UI environments share a runtime identity, so environment is
-application-reported rather than independently attested by different principals.
-See [the Cloud Run runtime contract](https://docs.cloud.google.com/run/docs/container-contract#env-vars).
+The private raw/state buckets, daily collector, Scheduler, dashboard, 30/90-day
+views, seven-day raw retention and 460-day aggregate/snapshot retention remain.
+No organization audit-policy or sink review is required. Shared security auditing,
+CDN logging, signing and existing dataset access stay independent.
 
-## Prerequisites and pending registrations
+## Withdrawn application reporting
 
-Cerulean UI adoption depends on [PR 363](https://github.com/SkyTruth/cerulean-ui/pull/363).
-Cerulean backend adoption depends on [PR 202](https://github.com/SkyTruth/cerulean-cloud/pull/202).
-Do not merge or modify another owner's branch to finish this rollout. Prepare
-focused follow-up changes and reconcile current main after the owners land them.
-TypeScript consumers need the verified `0.13.0` registry artifact; Python
-consumers need an immutable archive of the committed SDK implementation. Verify
-real package installation, not just local imports, before consumer deployment.
+30x30 [PR 531](https://github.com/SkyTruth/skytruth-30x30/pull/531) is closed without
+merging. The prepared Cerulean reporting adapters and SDK pins are withdrawn;
+their worktrees are restored to their prerequisite heads, preserving the existing
+owners' unrelated work. Cerulean UI PR 363 and backend PR 202 are not tracking
+prerequisites and must not be merged or modified to finish this rollout.
 
-Monitor frontend uses an Alerts App Engine API, rather than the reserved Monitor
-reader identity. Both `skytruth-monitor` and `skytruth-alerts2` runtime inventory
-reads returned 403; the backend repositories have no GitHub Actions deployment
-records supplying an alternate live identity proof. Keep the producer registered
-and unconnected until the application owner supplies a verified runtime identity
-and shared-dataset consumption boundary. Do not guess an account or grant a
-reserved reader account write authority.
+Remove reporting helpers/hooks from future SDK releases, catalog browser/backend
+reporting, receipt ingestion, producer registration, application active-day UI,
+and receipt-based readiness/completion gates. Already published SDK versions stay
+immutable; passive tracking requires no consumer upgrade.
 
-SkyTruthTech is a project registration, not a distinct proven consumer. Its
-inventory includes `dc-api`, `dc-web`, `tipg`, and `tipg-mining`; their shared-data
-consumption boundary remains unverified. Environmental-cost-of-war code also
-references shared datasets, but no managed reporting identity is confirmed for
-its local/development usage. These registrations remain visibly unconnected;
-absence of receipts never establishes zero use.
+Remove the catalog reporter's environment and all eight exact shared tracking
+writer grants through reviewed protected deployment. Preserve dataset access and
+consumer-project resources. Retain the exact-grant deletion allowance only until
+absence is verified, then remove it. Keep previous ledger tables and reports as
+historical evidence with an `app_usage` collection cutoff.
 
-## Rollout order and evidence
+## Deployment and completion
 
-1. Review/merge the shared implementation and verify protected deployment and SDK
-   publication. CI deploys the compatible dashboard before the collector. The
-   writer's saved-plan guard requires the latest signed, verified dashboard
-   deployment to contain the current reader bytes, including for standalone
-   workflow dispatches. Collection starts disabled; keep legacy exports disabled.
-2. Pin real SDK bytes in focused consumer changes, finish their prerequisites,
-   run each repository's checks and deploy through its normal reviewed path.
-   The private catalog advertises its same-origin report route only when its
-   producer is configured. Browser map loads report actual use after success,
-   including cached data; catalog display and URL resolution do not. Static GCS
-   hosting has no reporting marker and sends no telemetry POSTs.
-3. Review measured incremental-cost forecasts for a controlled trial; enable
-   native delivery with the scheduler paused, then run a protected canary.
-4. Read the committed ledger's native probe token before read-only traffic
-   checks. Bind anonymous and authenticated sample reads to that known nonce so
-   they cannot inflate real-use counts. Verify delivered matching CSV records.
-5. Observe real consumer receipts, cached-use behavior, writer isolation and
-   bounded failures. Activate each source independently using current evidence.
-6. Verify scheduled publications across distinct UTC days and retain cost/health
-   evidence. Run the narrow retirement only after its live readiness predicate
-   passes; preserve buckets, historical aggregates and prior recovery evidence.
+1. Prepare the native-only reader, worker, migration, SDK removals, scoped IAM
+   withdrawal and docs as one focused shared-datasets change. Record exact branch,
+   head, base and this chat as integration/recovery owner. There are no downstream
+   consumer PR dependencies.
+2. Freeze a clean committed head after current-main synchronization and run full
+   `uv run python scripts/ci_preflight.py --base <main-sha> --head <head-sha>`.
+   Respect its exclusive local validation slot and normal review/CI protections.
+3. Deploy the compatible dashboard first. It reads existing report versions and
+   exposes only passive traffic. Verify its exact signed deployment before the
+   worker switches to schema 3. Remove reporting configuration and scoped writer
+   grants only through the saved-plan allowlisted production workflow.
+4. Verify preserved ledger history and immutable publication, absence of the
+   reporter endpoint/marker and all writer grants, and normal consumer access.
+   Retain existing publication and recovery evidence. Do not manufacture reports
+   or change consumer code as a collection test.
+5. Bind authenticated and anonymous sample reads to the current ledger-recorded
+   maintenance nonce. Verify matching delivered native CSV records, probe exclusion
+   and source health. Read success alone is not delivery proof. Keep Scheduler
+   paused until the native readiness checks pass.
+6. Measure incremental raw/state storage, operations, worker/viewer runtime and
+   tracker logging against the $25/month target. The initial $15.84/month estimate
+   in [the trial forecast](dataset-usage-trial-cost-2026-10-14.json) is a conservative
+   forecast, not an observed bill or hard cap. Recheck actual trial costs.
+7. Verify scheduled publication across two healthy native UTC days. Only then
+   remove the exact six disabled legacy export/probe resources and their obsolete
+   permissions. Remove temporary cleanup permissions and compatibility after
+   verification. Preserve both buckets and history.
 
-The native health window retains a 48-hour delivery allowance. Two healthy probe
-UTC days can therefore require more than two wall-clock days after activation.
-Do not replace missing evidence with a passing status or fabricate receipts to
-claim all-consumer connection.
-
-## Initial collection trial (2026-10-14)
-
-The [trial cost forecast](dataset-usage-trial-cost-2026-10-14.json) uses one
-complete day of project-level Monitoring measurements: 5,301 source-bucket
-requests and 196 catalog requests. Its conservative allowances forecast $15.84
-per month against the $25 target. This is a forecast from measured demand, not
-an observed bill for the replacement sources or a hard spending cap. Recheck
-native CSV volume, receipt traffic, runtime and incremental logging during the
-trial and pause the affected source if its forecast exceeds the target.
-
-The initial protected deployment enables native bucket-log delivery and the
-catalog's daily application reporter, then runs one collector canary. Both
-source readiness records remain unverified, so the daily Scheduler stays paused.
-Record real delivery, probe exclusion, cached use, writer isolation and bounded
-failure evidence before a later reviewed change verifies a source and resumes
-its scheduled aggregation. Do not infer readiness from cost evidence alone.
-
-This stage retains all historical data and legacy resources. Other consumer
-adapters still need their own reviewed deployments; registering a writer does
-not establish that its application reports successfully.
-
-## Adjacent finding
-
-A dependency resolution outside Cerulean UI's lockfile selected WeatherLayers
-2026.9.1 (requiring Deck.gl 9.4) against the project's Deck.gl 9.3 pin. Preserve
-locked dependencies for this change. Resolve that independent upgrade in a
-separate task; do not force conflicting peers to make usage adoption pass.
+Native delivery retains a 48-hour health allowance; two healthy probe UTC days
+may require more than two wall-clock days. Rollback pauses passive collection and
+preserves evidence. It does not restore application reporting or the
+organization-dependent audit design.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import json
 import re
 from pathlib import Path
@@ -8,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ingestion.dataset_usage.run import COST_COMPONENTS
+from ingestion.dataset_usage.run import COST_COMPONENTS, TRAFFIC_CHECKS
 from scripts import dataset_usage_deploy
 from scripts.dataset_usage_deploy import validate_plan, validate_rollout, verify_reader_ready
 from scripts.terraform_plan_permissions import plan_checks
@@ -142,21 +143,52 @@ def test_unverified_schedule_and_public_telemetry_refused():
         validate_plan({'resource_changes': [resource('google_storage_bucket_iam_member.dataset_usage_raw_reader', {'member': 'allUsers'})]}, IMAGE, verified=False)
 
 
-def test_application_grants_cannot_cross_prefixes_or_gain_read_overwrite_authority():
-    config = json.loads((ROOT / 'catalog/dataset-usage.json').read_text())
-    producer = 'catalog-viewer-production'
-    after = {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'role': 'roles/storage.objectCreator',
-             'member': 'serviceAccount:' + config['producers'][producer]['service_account'],
-             'condition': [{'expression': f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"}]}
-    item = resource(f'google_storage_bucket_iam_member.dataset_usage_app_writer["{producer}"]', after, actions=['create'])
+
+
+@pytest.mark.parametrize('producer', sorted(dataset_usage_deploy.RETIRED_APP_WRITERS))
+def test_retired_receipt_grants_can_only_be_removed_at_their_exact_existing_scope(producer):
+    address = f'google_storage_bucket_iam_member.dataset_usage_app_writer["{producer}"]'
+    grant = {'bucket': 'skytruth-shared-datasets-1-usage-raw', 'role': 'roles/storage.objectCreator',
+             'member': 'serviceAccount:' + dataset_usage_deploy.RETIRED_APP_WRITERS[producer],
+             'condition': [{'title': 'application_usage_' + producer.replace('-', '_'),
+                            'expression': f"resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/{producer}/')"}]}
+    item = resource(address, None, grant, ['delete'])
     validate_plan({'resource_changes': [item]}, IMAGE, verified=False)
-    for field, value in [('role', 'roles/storage.objectAdmin'), ('bucket', 'skytruth-shared-datasets-1'),
-                         ('member', 'allUsers'), ('condition', []),
-                         ('condition', [{'expression': "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1-usage-raw/objects/app-usage/')"}])]:
+    for field, value in [('bucket', 'skytruth-shared-datasets-1'), ('role', 'roles/storage.objectViewer'),
+                         ('member', 'serviceAccount:other@x30-399415.iam.gserviceaccount.com'),
+                         ('condition', []),
+                         ('condition', [{'title': 'unexpected', 'expression': grant['condition'][0]['expression']}]),
+                         ('condition', [{'title': grant['condition'][0]['title'], 'expression': 'true'}])]:
         changed = copy.deepcopy(item)
-        changed['change']['after'][field] = value
+        changed['change']['before'][field] = value
         with pytest.raises(ValueError):
             validate_plan({'resource_changes': [changed]}, IMAGE, verified=False)
+    for actions in (['create'], ['delete', 'create']):
+        with pytest.raises(ValueError):
+            validate_plan({'resource_changes': [resource(address, grant, grant, actions)]}, IMAGE, verified=False)
+    unrelated = resource('google_storage_bucket_iam_member.dataset_usage_app_writer["unknown-production"]', None, grant, ['delete'])
+    with pytest.raises(ValueError):
+        validate_plan({'resource_changes': [unrelated]}, IMAGE, verified=False, retirement_verified=True)
+
+
+def test_retirement_requires_native_health_without_any_application_receipts(tmp_path):
+    directory = tmp_path / 'catalog'
+    directory.mkdir()
+    for name in ('dataset-usage.json', 'dataset-usage-activation.json', 'shared-datasets-catalog.csv'):
+        (directory / name).write_bytes((ROOT / 'catalog' / name).read_bytes())
+    now = dt.datetime.now(dt.UTC)
+    activation = json.loads((directory / 'dataset-usage-activation.json').read_text())
+    for source, entry in activation['sources'].items():
+        entry.update(verified_at=(now - dt.timedelta(days=4)).isoformat(), checks=dict.fromkeys(TRAFFIC_CHECKS[source], True))
+    (directory / 'dataset-usage-activation.json').write_text(json.dumps(activation))
+    payload = {'schema_version': 3, 'collection_errors': [], 'generated_at': now.isoformat(),
+               'source_health': [{'source': source, 'healthy_days': 2} for source in TRAFFIC_CHECKS],
+               'coverage': [{'source': source, 'day': (now - dt.timedelta(days=days)).date().isoformat(), 'state': 'healthy'}
+                            for source in TRAFFIC_CHECKS for days in (3, 2)],
+               }
+    assert dataset_usage_deploy.retirement_ready(tmp_path, payload)
+    payload['coverage'].pop()
+    assert not dataset_usage_deploy.retirement_ready(tmp_path, payload)
 
 
 def test_native_probe_scope_is_additive_and_legacy_grant_deletes_only_after_proof():

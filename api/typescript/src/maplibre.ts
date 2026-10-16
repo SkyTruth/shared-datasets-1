@@ -63,8 +63,6 @@ export async function showDataset(container: string | HTMLElement, reference: Da
       layers: [{id: 'background', type: 'background', paint: {'background-color': '#f7faf8'}}, ...layers]}});
   map.once('load', () => {
     map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]], {padding: 34, maxZoom: 8, duration: 0});
-    options.usageReporter?.recordUsage(layer.dataset.asset_slug, 'use');
-    void options.usageReporter?.flush();
   });
   map.on('click', event => {
     const hit = map.queryRenderedFeatures(event.point, {layers: layers.map(item => item.id)})[0];
