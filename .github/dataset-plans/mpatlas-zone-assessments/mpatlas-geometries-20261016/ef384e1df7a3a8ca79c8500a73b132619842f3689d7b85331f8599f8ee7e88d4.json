@@ -1,0 +1,111 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "mpatlas-zone-assessments",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/flatgeobuf",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/releases/2026-10-16/mpatlas-zone-assessments.fgb",
+        "source_generation": "1792187861133439",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.fgb"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/vnd.pmtiles",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/releases/2026-10-16/mpatlas-zone-assessments.pmtiles",
+        "source_generation": "1792187866138111",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.pmtiles"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/releases/2026-10-16/mpatlas-zone-assessments.metadata.ndjson.gz",
+        "source_generation": "1792187868667410",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.metadata.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/releases/2026-10-16/mpatlas-zone-assessments.schema.json",
+        "source_generation": "1792187870935663",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.schema.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/releases/2026-10-16/mpatlas-zone-assessments.manifest.json",
+        "source_generation": "1792187873265324",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/flatgeobuf",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/latest/mpatlas-zone-assessments.fgb",
+        "source_generation": "1792187861133439",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.fgb"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/vnd.pmtiles",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/latest/mpatlas-zone-assessments.pmtiles",
+        "source_generation": "1792187866138111",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.pmtiles"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/latest/mpatlas-zone-assessments.metadata.ndjson.gz",
+        "source_generation": "1792187868667410",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.metadata.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/latest/mpatlas-zone-assessments.schema.json",
+        "source_generation": "1792187870935663",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.schema.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/latest/mpatlas-zone-assessments.manifest.json",
+        "source_generation": "1792187873265324",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/mpatlas-zone-assessments.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/markdown",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/README.md",
+        "source_generation": "1792187875404000",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/mpatlas-zone-assessments/mpatlas-geometries-20261016/README.md"
+      }
+    ],
+    "proposal_id": "mpatlas-geometries-20261016",
+    "release_index_asset_slugs": []
+  }
+}
