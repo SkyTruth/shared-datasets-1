@@ -1,6 +1,8 @@
 name: Catalog web deploy
 
 on:
+  schedule:
+    - cron: '17 * * * *'
   workflow_call:
     inputs:
       executor_sha:
@@ -93,6 +95,7 @@ jobs:
     if: >-
       ${{
         always() && (
+        github.event_name == 'schedule' ||
         inputs.mutation_completed == true ||
         needs.select-repo-changes.outputs.should_deploy == 'true' ||
         (
@@ -142,13 +145,13 @@ jobs:
         id: bootstrap
         env:
           GH_TOKEN: ${{ github.token }}
-          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
         run: python scripts/deployment_source.py --bootstrap --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA"
 
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -156,7 +159,7 @@ jobs:
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
-          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
         run: python scripts/deployment_source.py --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA"
 
       - name: Download immutable mutation authorization
@@ -274,7 +277,7 @@ jobs:
         id: deployment
         env:
           GH_TOKEN: ${{ github.token }}
-          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
           SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
           SOURCE_RUN_ATTEMPT: ${{ steps.source.outputs.source_run_attempt }}
         run: |
