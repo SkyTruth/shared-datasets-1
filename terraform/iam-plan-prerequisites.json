@@ -55,6 +55,9 @@
       "module.shared_datasets_publisher_service_account.google_service_account.this"
     ],
     "scratch-cleanup-iam-sync.yml/retirement-bootstrap": [],
-    "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": []
+    "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [],
+    "preview-terraform-iam-sync.yml/published-reader": [
+      "module.feature_preview_service_account.google_service_account.this"
+    ]
   }
 }

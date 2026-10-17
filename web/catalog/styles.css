@@ -1391,3 +1391,11 @@ h3 {
 .use-help { margin-left: auto; }
 @media (max-width: 620px) { .detail-header { grid-template-columns: minmax(0, 1fr); } }
 .detail-actions { flex-wrap: wrap; }
+
+/* Preview identity stays visible even if catalog loading fails. */
+.feature-preview .catalog-header { background: #fff0bd; border-top: 8px solid #a64b00; padding: 20px; }
+.feature-preview .catalog-header h1 { color: #793600; font-size: 1.8rem; letter-spacing: .035em; }
+.preview-notice { margin: 0; padding: 14px 20px; background: #fff8e4; color: #633000; border-bottom: 2px solid #d59732; font-weight: 600; }
+.published-toggle { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.published-toggle input { width: 18px; height: 18px; accent-color: #a64b00; }
+.published-status { margin: 8px 0; font-size: .85rem; }

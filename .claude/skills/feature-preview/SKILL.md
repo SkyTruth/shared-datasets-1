@@ -226,9 +226,13 @@ gh workflow run feature-preview-deploy.yml --ref "$PREVIEW_REF" \
    required; deployment preserves historical Firestore database bytes.
 
 8. Confirm that the preserve-mode deploy refreshed the preview catalog viewer.
-   The viewer includes only preview-bucket release-index assets, materializes
+   The viewer initially includes only preview-bucket release-index assets, materializes
    top-level "latest" from those release indexes, and treats every preview asset
    as private so the authenticated viewer signs short-lived preview-bucket URLs.
+   Its amber FEATURE PREVIEW title and notice distinguish the environment.
+   Include published datasets optionally loads the published catalog for map
+   overlays through authenticated, read-only `/published/` routes; those entries
+   retain their own access tiers, buckets, slugs and generation-pinned releases.
    The generated catalog must preserve every release-index `files` entry in
    `versions[].files`, including metadata sidecars, schemas, manifests, and any
    other new sidecar datafiles in the preview release bundle.

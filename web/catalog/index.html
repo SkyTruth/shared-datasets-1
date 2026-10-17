@@ -18,6 +18,11 @@
         </header>
 
         <section class="filters" aria-label="Catalog filters">
+          <p id="preview-notice" hidden class="preview-notice">Test environment. Preview datasets are experimental. Published datasets are available for comparison.</p>
+          <div id="published-control" hidden>
+            <label class="published-toggle"><input id="include-published" type="checkbox" /> Include published datasets</label>
+            <p id="published-status" class="published-status" role="status" aria-live="polite"></p>
+          </div>
           <label class="search-label" for="search-input">Search</label>
           <input
             id="search-input"

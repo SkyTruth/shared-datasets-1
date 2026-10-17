@@ -95,3 +95,16 @@ resource "google_service_account_iam_member" "feature_preview_service_self_sign_
   role               = google_project_iam_custom_role.catalog_viewer_sign_blob.name
   member             = module.feature_preview_service_account.member
 }
+
+# Published comparison reads only catalog and canonical dataset prefixes.
+resource "google_storage_bucket_iam_member" "feature_preview_published_reader" {
+  bucket = var.bucket_name
+  role   = "roles/storage.objectViewer"
+  member = module.feature_preview_service_account.member
+
+  condition {
+    title       = "preview_published_catalog_read"
+    description = "Read published catalog and dataset artifacts for authenticated preview comparisons."
+    expression  = local.catalog_viewer_object_viewer_condition
+  }
+}

@@ -325,10 +325,31 @@ def handle_request(
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
     usage_reader=None,
+    published_context: dict[str, Any] | None = None,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
     method = method.upper()
     request_path = urlsplit(path).path
+    if request_path.startswith("/published/"):
+        if published_context is None:
+            return json_response(HTTPStatus.NOT_FOUND, {"error": "published catalog is unavailable"})
+        email = authenticated_user_email(headers)
+        if not email or not email_domain_allowed(email, allowed_email_domains):
+            return json_response(HTTPStatus.FORBIDDEN, {"error": "authorized viewer identity required"})
+        source_path = path.removeprefix("/published")
+        source_route = urlsplit(source_path).path
+        if not (source_route in {"/catalog.json", "/wdpa-monthly-execution.json", "/api/download-url", "/api/pmtiles/signed-url", "/api/comparisons"}
+                or source_route.startswith(("/docs/assets/", "/releases/", "/api/comparisons/"))
+                or feature_preview_run.LOOKUP_RE.fullmatch(source_route)):
+            return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown published catalog route"})
+        return handle_request(
+            method, source_path, headers, body, **published_context,
+            signed_url_ttl_seconds=signed_url_ttl_seconds,
+            allowed_email_domains=allowed_email_domains,
+            feature_max_ids=feature_max_ids, feature_max_fields=feature_max_fields,
+            feature_max_response_bytes=feature_max_response_bytes,
+            feature_require_iap=True, comparison_jobs=comparison_jobs, now=now,
+        )
     if request_path == "/api/usage" or request_path == "/usage" or request_path.startswith("/usage/"):
         return usage.handle(method, request_path, headers, reader=usage_reader, domains=allowed_email_domains, now=now())
     if request_path == "/healthz":
@@ -894,6 +915,7 @@ def make_handler(
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
     usage_reader=None,
+    published_context: dict[str, Any] | None = None,
 ):
     comparison_jobs = comparison_jobs or comparisons.ComparisonJobs()
 
@@ -909,7 +931,7 @@ def make_handler(
 
         def do_POST(self) -> None:
             content_length = int(self.headers.get("Content-Length") or "0")
-            if self.path.startswith("/api/comparisons") and content_length > 16 * 1024:
+            if urlsplit(self.path).path.startswith(("/api/comparisons", "/published/api/comparisons")) and content_length > 16 * 1024:
                 self.close_connection = True
                 self._send(json_response(413, {"error": "Comparison request exceeds 16 KiB"}))
                 return
@@ -963,6 +985,7 @@ def make_handler(
             feature_require_iap=feature_require_iap,
             comparison_jobs=comparison_jobs,
             usage_reader=usage_reader,
+            published_context=published_context,
         )
 
     return Handler
@@ -985,6 +1008,22 @@ def comparison_jobs_from_env():
     if os.environ.get("K_SERVICE") and not bucket:
         raise ValueError("Cloud Run comparisons require CATALOG_VIEWER_COMPARISON_BUCKET")
     return comparisons.ComparisonJobs(store=GcsComparisonStore(bucket) if bucket else None)
+
+
+def published_context_from_env() -> dict[str, Any] | None:
+    if not bool_env("CATALOG_VIEWER_INCLUDE_PUBLISHED", False):
+        return None
+    if bucket_from_env() == DEFAULT_BUCKET:
+        raise ValueError("Published comparison is only available in a preview viewer")
+    store = GcsCatalogWebStore(bucket_name=DEFAULT_BUCKET, site_prefix=DEFAULT_SITE_PREFIX)
+    return {
+        "bucket_name": DEFAULT_BUCKET,
+        "object_store": store,
+        "catalog_cache": CatalogJsonCache(loader=store.read_catalog_json, ttl_seconds=catalog_cache_ttl_from_env()),
+        "signer": GcsV4UrlSigner(bucket_name=DEFAULT_BUCKET, service_account_email=os.environ.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT")),
+        "feature_release_resolver": feature_preview_run.CatalogReleaseResolver(bucket_name=DEFAULT_BUCKET, ttl_seconds=catalog_cache_ttl_from_env()),
+        "feature_index": feature_preview_run.GcsSidecarFeatureIndex(bucket_name=DEFAULT_BUCKET),
+    }
 
 
 def main() -> None:
@@ -1021,6 +1060,7 @@ def main() -> None:
         ),
         feature_require_iap=bool_env("CATALOG_VIEWER_FEATURE_LOOKUP_REQUIRE_IAP", True),
         comparison_jobs=comparison_jobs_from_env(),
+        published_context=published_context_from_env(),
         usage_reader=usage.ReportReader(os.environ["DATASET_USAGE_STATE_BUCKET"]) if os.environ.get("DATASET_USAGE_STATE_BUCKET") else None,
     )
     port = int(os.environ.get("PORT", "8080"))

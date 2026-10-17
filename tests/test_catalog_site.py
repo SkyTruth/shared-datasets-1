@@ -616,3 +616,20 @@ def test_release_urls_and_variants_use_shared_snapshot_fixture():
     for generation in [True, None, 0, -1, 1.5, "01", "18446744073709551616"]:
         with pytest.raises(catalog_site.CatalogSiteError, match="generation"):
             catalog_site.release_artifact_url({**tile, "generation": generation})
+
+
+def test_feature_preview_branding_is_built_into_shell(tmp_path):
+    from unittest.mock import patch
+    for preview in (False, True):
+        out = tmp_path / str(preview)
+        with patch.object(catalog_site, "build_catalog_payload", return_value={"assets": []}):
+            catalog_site.build_site(catalog_path=tmp_path / "unused.csv", categories_path=tmp_path / "unused.yaml",
+                docs_dir=tmp_path, static_dir=REPO_ROOT / "web/catalog", out_dir=out,
+                bucket="preview-bucket", site_prefix="_catalog/web", feature_preview=preview)
+        html = (out / "index.html").read_text()
+        payload = json.loads((out / "catalog.json").read_text())
+        assert ('<title>FEATURE PREVIEW · SkyTruth Datasets</title>' in html) is preview
+        assert ('<h1>FEATURE PREVIEW</h1>' in html) is preview
+        assert ('id="published-control" hidden' in html) is not preview
+        assert ('id="preview-notice" hidden' in html) is not preview
+        assert payload.get("feature_preview", False) is preview
