@@ -1,5 +1,5 @@
 import {createComparisonController, changedPropertyFields} from "./compare-releases.js";
-import {executionStatusText, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
+import {assetKey, catalogApiUrl, executionStatusText, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
 import {captureWorkspace, pythonSnippet, typescriptSnippet} from "./workspace.js";
 
@@ -7,6 +7,7 @@ const state = {
   catalog: null,
   referenceCache: new Map(),
   assets: [],
+  publishedLoaded: false,
   filtered: [],
   selectedSlug: null,
   selectedSlugs: [],
@@ -54,6 +55,8 @@ function createToastElement() {
 
 const elements = {
   count: document.querySelector("#catalog-count"),
+  includePublished: document.querySelector("#include-published"),
+  publishedStatus: document.querySelector("#published-status"),
   list: document.querySelector("#asset-list"),
   template: document.querySelector("#asset-card-template"),
   search: document.querySelector("#search-input"),
@@ -191,6 +194,16 @@ async function init() {
     }
     state.catalog = await response.json();
     state.assets = Array.isArray(state.catalog.assets) ? state.catalog.assets : [];
+    state.assets.forEach(asset => { asset.catalog_bucket = state.catalog.bucket; });
+    if (state.catalog.feature_preview) {
+      document.body.classList.add("feature-preview");
+      document.title = "FEATURE PREVIEW · SkyTruth Datasets";
+      document.querySelector(".catalog-header h1").textContent = "FEATURE PREVIEW";
+      document.querySelector(".catalog-header .eyebrow").textContent = "SkyTruth · Test environment";
+      document.querySelector("#preview-notice").hidden = false;
+      document.querySelector("#published-control").hidden = false;
+      state.assets.forEach(asset => { asset.title += " · Preview"; });
+    }
     await hydrateReleaseIndexes();
     state.filtered = state.assets;
     state.basemap = "map";
@@ -201,6 +214,40 @@ async function init() {
   } catch (error) {
     renderFatalError(error);
   }
+}
+
+async function togglePublishedDatasets() {
+  if (elements.includePublished.checked && !state.publishedLoaded) {
+    elements.includePublished.disabled = true;
+    elements.publishedStatus.textContent = "Loading published datasets…";
+    try {
+      const response = await fetch(cacheBustedUrl("/published/catalog.json", Date.now()), {cache: "no-store", credentials: "include"});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const catalog = await response.json();
+      if (catalog.bucket !== DEFAULT_SHARED_DATASETS_BUCKET || !Array.isArray(catalog.assets)) throw new Error("Invalid published catalog");
+      const assets = catalog.assets.map(asset => ({...asset,
+        catalog_source: "published", catalog_bucket: catalog.bucket,
+        title: `${asset.title} · Published`,
+        docs_url: `/published/docs/assets/${encodeURIComponent(asset.slug)}.md`,
+        release_index_url: `/published/releases/${encodeURIComponent(asset.slug)}.json`,
+      }));
+      await Promise.allSettled(assets.map(hydrateReleaseIndex));
+      state.assets.push(...assets);
+      state.publishedLoaded = true;
+      // Retain the user's current filters while exposing additional values.
+      const filters = [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier];
+      const values = filters.map(select => select.value);
+      populateFilters();
+      filters.forEach((select, index) => { select.value = values[index]; });
+      elements.publishedStatus.textContent = "Use Ctrl/⌘-click to compare datasets on the map.";
+    } catch (error) {
+      elements.includePublished.checked = false;
+      elements.publishedStatus.textContent = `Published datasets unavailable (${error.message}). Toggle to retry.`;
+    } finally {
+      elements.includePublished.disabled = false;
+    }
+  }
+  applyFilters();
 }
 
 async function hydrateReleaseIndexes() {
@@ -352,6 +399,7 @@ function gsToHttps(path) {
 
 function wireEvents() {
   wireUseEvents();
+  elements.includePublished.addEventListener("change", togglePublishedDatasets);
   elements.search.addEventListener("input", applyFilters);
   for (const select of [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier]) {
     select.addEventListener("change", applyFilters);
@@ -366,7 +414,7 @@ function wireEvents() {
   );
   elements.docs.addEventListener("click", (event) => {
     event.preventDefault();
-    const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
+    const asset = state.assets.find((candidate) => assetKey(candidate) === state.selectedSlug);
     if (asset && asset.docs_url) {
       openDocs(asset);
     }
@@ -384,9 +432,9 @@ function wireEvents() {
     }
   });
   elements.versionSelect.addEventListener("change", () => {
-    const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
+    const asset = state.assets.find((candidate) => assetKey(candidate) === state.selectedSlug);
     if (!asset) return;
-    state.versionBySlug[asset.slug] = elements.versionSelect.value;
+    state.versionBySlug[assetKey(asset)] = elements.versionSelect.value;
     renderSelection();
   });
   elements.basemap.addEventListener("change", () => {
@@ -455,6 +503,7 @@ function applyFilters() {
   const accessTier = elements.accessTier.value;
 
   state.filtered = state.assets.filter((asset) => {
+    if (asset.catalog_source === "published" && !elements.includePublished.checked) return false;
     if (category && asset.category !== category) return false;
     if (format && !asset.available_formats.includes(format)) return false;
     if (cadence && asset.update_cadence !== cadence) return false;
@@ -467,7 +516,7 @@ function applyFilters() {
   renderList();
   updateCount();
 
-  const filteredSlugs = new Set(state.filtered.map((asset) => asset.slug));
+  const filteredSlugs = new Set(state.filtered.map(assetKey));
   state.selectedSlugs = state.selectedSlugs.filter((slug) => filteredSlugs.has(slug));
   if (state.selectedSlug && !filteredSlugs.has(state.selectedSlug)) {
     state.selectedSlug = state.selectedSlugs[state.selectedSlugs.length - 1] || null;
@@ -476,7 +525,7 @@ function applyFilters() {
   if (!state.selectedSlugs.length) {
     const firstVisible = orderedAssetsForList(state.filtered)[0];
     if (firstVisible) {
-      selectAsset(firstVisible.slug, { scroll: false });
+      selectAsset(assetKey(firstVisible), { scroll: false });
     } else {
       clearDetail();
     }
@@ -576,9 +625,9 @@ function renderSubcategoryHeading(asset) {
 
 function renderAssetCard(asset, selectedSet) {
   const node = elements.template.content.firstElementChild.cloneNode(true);
-  node.dataset.slug = asset.slug;
-  node.setAttribute("aria-selected", selectedSet.has(asset.slug) ? "true" : "false");
-  node.style.setProperty("--selection-color", colorForSlug(asset.slug));
+  node.dataset.slug = assetKey(asset);
+  node.setAttribute("aria-selected", selectedSet.has(assetKey(asset)) ? "true" : "false");
+  node.style.setProperty("--selection-color", colorForSlug(assetKey(asset)));
   node.querySelector(".asset-title").textContent = asset.title;
   node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
   node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
@@ -590,19 +639,19 @@ function renderAssetCard(asset, selectedSet) {
     formats.append(chip);
   }
   node.addEventListener("click", (event) => {
-    selectAsset(asset.slug, { additive: event.metaKey || event.ctrlKey });
+    selectAsset(assetKey(asset), { additive: event.metaKey || event.ctrlKey });
   });
   return node;
 }
 
 function updateCount() {
-  const total = state.assets.length;
+  const total = state.assets.filter(asset => asset.catalog_source !== "published" || elements.includePublished.checked).length;
   const shown = state.filtered.length;
   elements.count.textContent = `${shown} of ${total} assets`;
 }
 
 function selectAsset(slug, options = {}) {
-  const asset = state.assets.find((candidate) => candidate.slug === slug);
+  const asset = state.assets.find((candidate) => assetKey(candidate) === slug);
   if (!asset) return;
   state.selectedSlug = slug;
   if (options.additive) {
@@ -648,12 +697,12 @@ function renderSelection() {
 
 function selectedAssets() {
   return state.selectedSlugs
-    .map((slug) => state.assets.find((asset) => asset.slug === slug))
+    .map((slug) => state.assets.find((asset) => assetKey(asset) === slug))
     .filter(Boolean);
 }
 
 function renderDetail(asset) {
-  comparisonController.setAsset(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+  comparisonController.setAsset(asset, selectedVersionValue(asset), {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
   elements.empty.hidden = true;
   elements.detail.hidden = false;
   elements.detail.classList.remove("multi-detail");
@@ -734,22 +783,23 @@ function renderLastRun(asset) {
 }
 
 let executionRequest = 0;
-let executionObservation = null;
+const executionObservations = new Map();
 
 async function refreshExecutionStatus(asset) {
   const request = ++executionRequest;
+  const executionObservation = executionObservations.get(asset?.catalog_source || "preview");
   const wdpa = ["wdpa-marine", "wdpa-terrestrial"].includes(asset?.slug);
   elements.executionCard.hidden = !wdpa;
   if (!wdpa) return;
   elements.executionStatus.textContent = executionObservation
     ? executionStatusText(executionObservation) : "Loading execution status…";
   try {
-    const response = await fetch(new URL("../wdpa-monthly-execution.json", window.location.href), {cache: "no-cache"});
+    const response = await fetch(new URL(asset.catalog_source === "published" ? "/published/wdpa-monthly-execution.json" : "../wdpa-monthly-execution.json", window.location.href), {cache: "no-cache"});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const observation = await response.json();
     const text = executionStatusText(observation);
     if (request !== executionRequest) return;
-    executionObservation = observation;
+    executionObservations.set(asset.catalog_source || "preview", observation);
     elements.executionStatus.textContent = text;
   } catch (_error) {
     if (request !== executionRequest) return;
@@ -760,7 +810,7 @@ async function refreshExecutionStatus(asset) {
 
 setInterval(() => {
   if (document.hidden || elements.detail.hidden || state.selectedSlugs.length > 1) return;
-  refreshExecutionStatus(state.assets.find(asset => asset.slug === state.selectedSlug));
+  refreshExecutionStatus(state.assets.find(asset => assetKey(asset) === state.selectedSlug));
 }, 60_000);
 
 function renderLifecycle(asset) {
@@ -813,13 +863,13 @@ function renderVersionSelector(asset) {
 }
 
 function selectedVersionValue(asset) {
-  return state.versionBySlug[asset.slug] || "latest";
+  return state.versionBySlug[assetKey(asset)] || "latest";
 }
 
 function selectedReference(asset) {
-  const key = `${asset.slug}\n${selectedVersionValue(asset)}`;
+  const key = `${assetKey(asset)}\n${selectedVersionValue(asset)}`;
   try {
-    if (!state.referenceCache.has(key)) state.referenceCache.set(key, selectReleaseReference(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET}));
+    if (!state.referenceCache.has(key)) state.referenceCache.set(key, selectReleaseReference(asset, selectedVersionValue(asset), {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET}));
     return state.referenceCache.get(key);
   } catch (error) {
     return {...asset, files: [], pmtiles_url: null, public_url: "", canonical_path: "", release_error: error.message};
@@ -840,7 +890,7 @@ function renderSelectionLegend(assets) {
     item.className = "selection-legend-item";
     const swatch = document.createElement("span");
     swatch.className = "selection-swatch";
-    swatch.style.background = colorForSlug(asset.slug, mapAssets);
+    swatch.style.background = colorForSlug(assetKey(asset), mapAssets);
     const label = document.createElement("span");
     label.textContent = asset.title;
     item.append(swatch, label);
@@ -855,7 +905,7 @@ function renderSelectionLegend(assets) {
 }
 
 function colorForSlug(slug, mapAssets = selectedMapReferences()) {
-  const index = mapAssets.findIndex((asset) => asset.slug === slug);
+  const index = mapAssets.findIndex((asset) => assetKey(asset) === slug);
   if (index === -1) {
     return "#8b938d";
   }
@@ -1195,7 +1245,7 @@ async function handleFgbDownloadClick(event) {
   const reference = elements.downloadFgb._reference;
   setFgbDownloadBusy("Preparing");
   try {
-    const response = await fetch(downloadUrlRequestUrl(slug, version, reference?.canonical_file), { credentials: "include", cache: "no-store" });
+    const response = await fetch(catalogApiUrl(reference, downloadUrlRequestUrl(slug, version, reference?.canonical_file)), { credentials: "include", cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.error || `download URL returned HTTP ${response.status}`);
@@ -1496,7 +1546,7 @@ function lookupFeatureMetadataFromIndex(ids, index) {
 }
 
 async function lookupFeatureMetadataViaApi(group) {
-  const response = await fetch(featureMetadataLookupApiUrl(group.assetSlug, group.release), {
+  const response = await fetch(catalogApiUrl(group.reference, featureMetadataLookupApiUrl(group.assetSlug, group.release)), {
     method: "POST",
     cache: "no-store",
     credentials: "include",
@@ -1849,7 +1899,7 @@ function featureMetadataApiDownloadUrl(reference, format = "metadata", locale = 
   const params = new URLSearchParams({slug: reference.slug, format, version: reference.date, generation: artifactGeneration(file.generation)});
   const normalizedLocale = normalizeMetadataLocale(locale);
   if (format === "metadata" && normalizedLocale) params.set("locale", normalizedLocale);
-  return `/api/download-url?${params.toString()}`;
+  return catalogApiUrl(reference, `/api/download-url?${params.toString()}`);
 }
 
 function publicFeatureMetadataSidecarUrl(asset, sidecarFile) {
@@ -1857,7 +1907,7 @@ function publicFeatureMetadataSidecarUrl(asset, sidecarFile) {
   if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
     return "";
   }
-  return artifactUrl(sidecarFile, {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+  return artifactUrl(sidecarFile, {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
 }
 
 function publicFeatureMetadataSchemaUrl(asset, schemaFile) {
@@ -1865,7 +1915,7 @@ function publicFeatureMetadataSchemaUrl(asset, schemaFile) {
   if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
     return "";
   }
-  return artifactUrl(schemaFile, {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+  return artifactUrl(schemaFile, {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
 }
 
 function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
@@ -2517,8 +2567,7 @@ function featureMetadataUnavailableMessage(feature) {
   if (feature?.metadataLookupSkipped) {
     return "Metadata lookup skipped for this overlapping hit; zoom in or click a more precise point.";
   }
-  const asset = state.assets.find((candidate) => candidate.slug === feature?.assetSlug);
-  const accessTier = String(feature?.accessTier || asset?.access_tier || "").toLowerCase();
+  const accessTier = String(feature.accessTier || feature.releaseReference?.access_tier || "").toLowerCase();
   if (isRestrictedAccessTier(accessTier) && !catalogViewerApiAvailable()) {
     return "Restricted feature metadata requires an authorized catalog viewer or consuming application backend.";
   }
@@ -2939,7 +2988,7 @@ function renderUseSection(reference) {
   section.hidden = comparisonController.isOpen(); error.hidden = true;
   document.querySelector('#use-copy-code').disabled = false;
   try {
-    const snapshot = captureWorkspace([reference], {bucket: state.catalog.bucket, locale: state.metadataLocale || null});
+    const snapshot = captureWorkspace([reference], {bucket: reference.catalog_bucket || state.catalog.bucket, locale: state.metadataLocale || null});
     document.querySelector('#use-python').textContent = pythonSnippet(snapshot);
     const typescript = typescriptSnippet(snapshot);
     document.querySelector('#use-typescript').textContent = typescript || '';

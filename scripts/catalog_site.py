@@ -1301,6 +1301,7 @@ def build_site(
     force_access_tier: str | None = None,
     generated_at: str | None = None,
     metadata_sidecar_autoload_max_bytes: int | None = None,
+    feature_preview: bool = False,
 ) -> list[Path]:
     payload = build_catalog_payload(
         catalog_path=catalog_path,
@@ -1319,6 +1320,17 @@ def build_site(
     written = copy_static_files(static_dir, out_dir)
     if metadata_sidecar_autoload_max_bytes is not None:
         inject_metadata_sidecar_autoload_meta(out_dir / "index.html", metadata_sidecar_autoload_max_bytes)
+    if feature_preview:
+        payload["feature_preview"] = True
+        html_path = out_dir / "index.html"
+        html = html_path.read_text()
+        html = html.replace("<title>SkyTruth Shared Datasets</title>", "<title>FEATURE PREVIEW · SkyTruth Datasets</title>")
+        html = html.replace('<body>', '<body class="feature-preview">')
+        html = html.replace("<h1>Shared datasets</h1>", "<h1>FEATURE PREVIEW</h1>")
+        html = html.replace("SkyTruth data plane", "SkyTruth · Test environment")
+        html = html.replace('id="preview-notice" hidden', 'id="preview-notice"')
+        html = html.replace('id="published-control" hidden', 'id="published-control"')
+        html_path.write_text(html)
     written.extend(copy_docs(docs_dir, out_dir))
     catalog_json = out_dir / "catalog.json"
     catalog_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -1361,6 +1373,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=sorted(ACCESS_TIERS),
         help="Override emitted asset access_tier values, for private preview deployments.",
     )
+    parser.add_argument("--feature-preview", action="store_true", help="Show the feature-preview title, banner and published dataset toggle.")
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
     parser.add_argument(
         "--metadata-sidecar-autoload-max-bytes",
@@ -1390,6 +1403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         force_access_tier=args.force_access_tier,
         generated_at=args.generated_at,
         metadata_sidecar_autoload_max_bytes=args.metadata_sidecar_autoload_max_bytes,
+        feature_preview=args.feature_preview,
     )
     print(json.dumps({"output": str(args.out), "files": [str(path) for path in written]}, indent=2))
     return 0

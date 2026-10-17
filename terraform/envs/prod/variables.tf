@@ -132,6 +132,7 @@ variable "pmtiles_cdn_allowed_origins" {
     "https://cerulean.skytruth.org",
     "https://30x30.skytruth.org",
     "https://monitor.skytruth.org",
+    "https://feature-preview-catalog-viewer-vmust7rama-uc.a.run.app",
   ]
 }
 

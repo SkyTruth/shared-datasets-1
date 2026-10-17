@@ -22,6 +22,7 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         self.assertIn('"https://cerulean.skytruth.org"', variables_tf)
         self.assertIn('"https://30x30.skytruth.org"', variables_tf)
         self.assertIn('"https://monitor.skytruth.org"', variables_tf)
+        self.assertIn('"https://feature-preview-catalog-viewer-vmust7rama-uc.a.run.app"', variables_tf)
         self.assertIn("PMTILES_ALLOWED_ORIGIN_REGEXES", pmtiles_cdn_tf)
         self.assertIn("value = join(\",\", var.pmtiles_cdn_allowed_origin_regexes)", pmtiles_cdn_tf)
         self.assertIn('allow_credentials = split("/", path_rule.key)[0] != "public"', pmtiles_cdn_tf)
@@ -34,6 +35,12 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         self.assertNotIn("edge_security_policy", pmtiles_cdn_tf)
         self.assertIn("pmtiles_redirector_count   = 1", pmtiles_cdn_tf)
         self.assertNotIn("count = local.pmtiles_redirector_enabled ? 1 : 0", pmtiles_cdn_tf)
+
+    def test_published_preview_reads_share_the_exact_origin_cors_allowlist(self):
+        viewer = (REPO_ROOT / "terraform/envs/prod/catalog_viewer.tf").read_text()
+        bucket = (REPO_ROOT / "terraform/envs/prod/shared_bucket_public.tf").read_text()
+        self.assertIn("var.pmtiles_cdn_allowed_origins,", viewer)
+        self.assertIn("origin          = local.pmtiles_browser_allowed_origins", bucket)
 
     def test_tiles_endpoint_serves_catalog_without_credentials(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()

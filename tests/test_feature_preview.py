@@ -174,6 +174,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn('gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"', workflow)
         self.assertIn("Preview data reset requested; building catalog without prior release indexes.", workflow)
         self.assertIn("Build preview catalog web bundle", workflow)
+        self.assertIn("--feature-preview", workflow)
         self.assertIn("--release-index-assets-only", workflow)
         self.assertIn("--latest-from-release-index", workflow)
         self.assertIn("--allow-release-index-only-assets", workflow)
@@ -416,3 +417,26 @@ class FeaturePreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_published_reader_is_scoped_and_owned_by_protected_iam_sync():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    resource = (root / "terraform/envs/prod/preview_terraform_iam.tf").read_text().split('resource "google_storage_bucket_iam_member" "feature_preview_published_reader"')[1]
+    assert 'role   = "roles/storage.objectViewer"' in resource
+    assert 'expression  = local.catalog_viewer_object_viewer_condition' in resource
+    assert 'bucket = var.bucket_name' in resource
+    workflow = (root / ".github/workflows/preview-terraform-iam-sync.yml").read_text()
+    assert workflow.count("google_storage_bucket_iam_member.feature_preview_published_reader") == 2
+    preview = (root / "terraform/envs/preview/catalog_viewer.tf").read_text()
+    assert 'name  = "CATALOG_VIEWER_INCLUDE_PUBLISHED"' in preview
+
+
+def test_published_reader_job_checks_bucket_authority_and_preserves_bootstrap_order():
+    import yaml
+    job = yaml.safe_load(PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text())["jobs"]["published-reader"]
+    assert job["needs"] == "sync"
+    assert job["with"]["readiness_target"] == "bucket-iam"
+    assert job["with"]["block_deletes"] is True
+    assert job["with"]["targets"].split() == ["google_storage_bucket_iam_member.feature_preview_published_reader"]
+    assert job["with"]["allowed_exact"] == job["with"]["targets"]

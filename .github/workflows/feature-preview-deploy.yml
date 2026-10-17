@@ -497,6 +497,7 @@ jobs:
           uv run python scripts/catalog_site.py \
             --bucket "${SHARED_DATASETS_BUCKET}" \
             --release-index-dir "${RUNNER_TEMP}/preview-release-indexes" \
+            --feature-preview \
             --release-index-assets-only \
             --latest-from-release-index \
             --allow-release-index-only-assets \
