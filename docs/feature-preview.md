@@ -25,6 +25,11 @@ viewers do not enable these routes or show the toggle.
 
 The protected **Preview Terraform IAM sync** must provision the conditional
 `feature_preview_published_reader` grant after merge, before deploying the new
-preview viewer. It grants read-only access to the production catalog and canonical
+preview viewer. The protected **PMTiles CDN route sync** must also apply the
+production bucket/CDN CORS allowlist, which includes the preview viewer origin
+`https://feature-preview-catalog-viewer-vmust7rama-uc.a.run.app`. If that service
+origin changes, update `pmtiles_cdn_allowed_origins` through the same reviewed
+workflow before testing published private tiles or metadata. The IAM grant
+provides read-only access to the production catalog and canonical
 dataset prefixes, excluding scratch and system objects. The preview root only
 sets `CATALOG_VIEWER_INCLUDE_PUBLISHED=true`; it does not manage production IAM.
