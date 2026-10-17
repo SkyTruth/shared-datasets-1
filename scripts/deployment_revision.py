@@ -41,6 +41,7 @@ TERRAFORM_SYNCS = {
     "Artifact Registry writer binding sync": "artifact-registry-iam-sync.yml",
     "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
+    "Preview published dataset reader": "preview-terraform-iam-sync.yml",
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
