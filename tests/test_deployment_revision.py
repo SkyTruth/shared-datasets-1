@@ -165,6 +165,46 @@ class CallerAndRecordTests(unittest.TestCase):
     setUp = DeploymentProvenanceTests.setUp
     route = DeploymentProvenanceTests.route
 
+    def test_scheduled_catalog_refresh_requires_its_exact_tested_main_revision(self):
+        from types import SimpleNamespace
+        args = SimpleNamespace(workflow="catalog-web-deploy.yml", executor_sha=CURRENT, source_run_id=13, source_run_attempt=2)
+        execution = {**self.run, "id": 14, "run_attempt": 1, "event": "schedule", "workflow_id": 21,
+                     "path": ".github/workflows/catalog-web-deploy.yml"}
+        def route(path):
+            if path.endswith("/actions/runs/14"):
+                return execution
+            if path.endswith("/actions/workflows/catalog-web-deploy.yml"):
+                return {"id": 21, "path": execution["path"]}
+            return self.route(path)
+        env = {"GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "14", "GITHUB_RUN_ATTEMPT": "1"}
+        with patch.dict(d.os.environ, env), patch.object(self.api, "get", side_effect=route), patch.object(d.subprocess, "check_output", return_value=CURRENT), patch.object(d, "git_ancestor", return_value=True):
+            self.assertEqual(d.verify_context(args, self.api), REPO)
+            for key, value in [("head_sha", OLD), ("head_branch", "feature"), ("path", ".github/workflows/ci.yml")]:
+                with self.subTest(key=key), patch.dict(execution, {key: value}), self.assertRaises(d.DeploymentError):
+                    d.verify_context(args, self.api)
+            with patch.object(self.api, "pages", return_value=[{"name": "ci-ready", "status": "completed", "conclusion": "failure"}]), self.assertRaises(d.DeploymentError):
+                d.verify_context(args, self.api)
+        self.api.post.assert_not_called()
+
+    def test_scheduled_catalog_record_retains_execution_and_ci_provenance(self):
+        record = ReplayTests.record(CURRENT)
+        record["environment"] = "production-catalog-web"
+        record["payload"].update(target="catalog-web", execution_run_id=14, execution_run_attempt=1)
+        execution = {**self.run, "id": 14, "run_attempt": 1, "event": "schedule", "workflow_id": 21,
+                     "path": ".github/workflows/catalog-web-deploy.yml"}
+        def route(path):
+            if path.endswith("/actions/runs/14/attempts/1"):
+                return execution
+            if path.endswith("/actions/workflows/catalog-web-deploy.yml"):
+                return {"id": 21, "path": execution["path"]}
+            return self.route(path)
+        with patch.object(self.api, "get", side_effect=route):
+            self.assertEqual(d.verify_record_identity(self.api, REPO, record)["target"], "catalog-web")
+            for key, value in [("head_sha", OLD), ("head_branch", "feature"), ("path", ".github/workflows/ci.yml")]:
+                with self.subTest(key=key), patch.dict(execution, {key: value}), self.assertRaises(d.DeploymentError):
+                    d.verify_record_identity(self.api, REPO, record)
+        self.api.post.assert_not_called()
+
     def test_trusted_bootstrap_proves_candidate_before_executing_it(self):
         from types import SimpleNamespace
         args = SimpleNamespace(workflow="wdpa-monthly-deploy.yml", executor_sha=CURRENT, source_run_id=13, source_run_attempt=2, bootstrap=True)
