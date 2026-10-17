@@ -1,4 +1,5 @@
 import ast
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 import pytest
@@ -166,9 +167,13 @@ def test_shared_bucket_iam_waits_for_selected_logging_owner(target, owner_select
 
 @pytest.mark.parametrize("selected,result,expected", [(False, "skipped", True), (True, "success", True), (True, "failure", False), (True, "skipped", False)])
 @pytest.mark.parametrize('registry_result', ['success', 'failure', 'cancelled', 'skipped'])
-def test_usage_writer_waits_for_compatible_reader(selected, result, expected, registry_result):
+@pytest.mark.parametrize('cdn_selected,cdn_result,cdn_ready', [
+    (False, 'skipped', True), (True, 'success', True), (True, 'failure', False),
+    (True, 'cancelled', False), (True, 'skipped', False),
+])
+def test_usage_writer_waits_for_reader_and_bucket_cors(selected, result, expected, registry_result, cdn_selected, cdn_result, cdn_ready):
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    assert 'catalog-viewer' in jobs['dataset-usage']['needs']
+    assert {'catalog-viewer', 'pmtiles-cdn'} <= set(jobs['dataset-usage']['needs'])
     assert 'dataset-usage' not in jobs['catalog-viewer']['needs']
     expression = jobs['dataset-usage']['if'].removeprefix('${{').removesuffix('}}').strip()
     values = {
@@ -177,7 +182,19 @@ def test_usage_writer_waits_for_compatible_reader(selected, result, expected, re
         'needs.artifact-registry-iam.result': repr(registry_result),
         'needs.geospatial-changes.outputs.catalog_viewer': repr('true' if selected else 'false'),
         'needs.catalog-viewer.result': repr(result),
+        'needs.geospatial-changes.outputs.pmtiles_cdn': repr('true' if cdn_selected else 'false'),
+        'needs.pmtiles-cdn.result': repr(cdn_result),
     }
     for name, value in values.items():
         expression = expression.replace(name, value)
-    assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (expected and registry_result == 'success')
+    assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (expected and cdn_ready and registry_result == 'success')
+
+
+def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
+    jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
+    order = list(TopologicalSorter({
+        name: [needs] if isinstance(needs := job.get('needs', []), str) else needs
+        for name, job in jobs.items()
+    }).static_order())
+    assert order.index('pmtiles-cdn') < order.index('dataset-usage')
+    assert 'needs.dataset-usage' not in jobs['pmtiles-cdn']['if']
