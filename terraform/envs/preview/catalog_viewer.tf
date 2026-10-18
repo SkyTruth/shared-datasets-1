@@ -30,6 +30,11 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       }
 
       env {
+        name  = "CATALOG_VIEWER_INCLUDE_PUBLISHED"
+        value = "true"
+      }
+
+      env {
         name  = "CATALOG_VIEWER_COMPARISON_BUCKET"
         value = google_storage_bucket.preview_comparisons.name
       }

@@ -35,6 +35,13 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         self.assertIn("pmtiles_redirector_count   = 1", pmtiles_cdn_tf)
         self.assertNotIn("count = local.pmtiles_redirector_enabled ? 1 : 0", pmtiles_cdn_tf)
 
+    def test_published_preview_origin_is_bucket_only_for_signed_gcs_reads(self):
+        origin = "https://feature-preview-catalog-viewer-vmust7rama-uc.a.run.app"
+        bucket = (REPO_ROOT / "terraform/envs/prod/shared_bucket_public.tf").read_text()
+        self.assertIn(f'"{origin}"', bucket.split("cors {", 1)[1].split("}", 1)[0])
+        for name in ("variables.tf", "catalog_viewer.tf", "pmtiles_cdn.tf"):
+            self.assertNotIn(origin, (REPO_ROOT / "terraform/envs/prod" / name).read_text())
+
     def test_tiles_endpoint_serves_catalog_without_credentials(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 

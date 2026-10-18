@@ -21,7 +21,11 @@ resource "google_storage_bucket" "shared_bucket" {
   }
 
   cors {
-    origin          = local.pmtiles_browser_allowed_origins
+    # Preview signs GCS URLs directly; it does not use the CDN redirector.
+    origin = distinct(concat(
+      local.pmtiles_browser_allowed_origins,
+      ["https://feature-preview-catalog-viewer-vmust7rama-uc.a.run.app"],
+    ))
     method          = ["GET", "HEAD", "OPTIONS"]
     response_header = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag", "Range"]
     max_age_seconds = 3600

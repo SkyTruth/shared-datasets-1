@@ -41,6 +41,7 @@ TERRAFORM_SYNCS = {
     "Artifact Registry writer binding sync": "artifact-registry-iam-sync.yml",
     "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
+    "Preview published dataset reader": "preview-terraform-iam-sync.yml",
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
@@ -126,7 +127,10 @@ def verify_record_identity(api, repository, record):
     allowed_callers = {".github/workflows/ci.yml", f".github/workflows/{target_workflow}"}
     if payload["target"] == "catalog-web":
         allowed_callers.add(".github/workflows/publish-dataset.yml")
-    require(execution.get("path") in allowed_callers and execution.get("event") in {"push", "workflow_dispatch", "workflow_run"}
+    allowed_events = {"push", "workflow_dispatch", "workflow_run"}
+    if payload["target"] == "catalog-web" and execution.get("path") == ".github/workflows/catalog-web-deploy.yml" and execution.get("head_sha") == record["sha"]:
+        allowed_events.add("schedule")
+    require(execution.get("path") in allowed_callers and execution.get("event") in allowed_events
             and execution.get("head_branch") == "main", "record originates from an untrusted execution")
     workflow = api.get(f"repos/{repository}/actions/workflows/{execution['path'].rsplit('/', 1)[-1]}")
     repo = api.get(f"repos/{repository}")
@@ -227,7 +231,10 @@ def verify_context(args, api):
     if args.workflow == "catalog-web-deploy.yml":
         allowed_callers.add(".github/workflows/publish-dataset.yml")
     require(current.get("path") in allowed_callers, "untrusted deployment caller")
-    require(current.get("event") in {"push", "workflow_dispatch", "workflow_run"} and current.get("head_branch") == "main", "untrusted deployment event")
+    allowed_events = {"push", "workflow_dispatch", "workflow_run"}
+    if args.workflow == "catalog-web-deploy.yml" and current.get("path") == allowed_path and current.get("head_sha") == args.executor_sha:
+        allowed_events.add("schedule")
+    require(current.get("event") in allowed_events and current.get("head_branch") == "main", "untrusted deployment event")
     repo = api.get(f"repos/{repository}")
     workflow = api.get(f"repos/{repository}/actions/workflows/{current['path'].rsplit('/', 1)[-1]}")
     require(current.get("workflow_id") == workflow.get("id") and workflow.get("path") == current["path"], "deployment workflow identity mismatch")

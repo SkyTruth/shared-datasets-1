@@ -1038,3 +1038,51 @@ def test_protected_catalog_serves_execution_module_and_revalidated_status():
         response = handle_request("GET", path, {}, catalog_cache=cache, object_store=gcs, signer=FakeSigner())
         assert response.status == 404
     assert len(names) == 2
+
+
+class PublishedCatalogRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self.preview = FakeStore({"assets": []})
+        self.published = FakeStore(catalog_payload())
+        self.published.static["catalog.json"] = StaticObject(json.dumps(self.published.catalog).encode(), "application/json")
+        self.published.static["docs/assets/table-only.md"] = StaticObject(b"Published docs", "text/markdown")
+        self.signer = FakeSigner()
+        self.context = dict(bucket_name="skytruth-shared-datasets-1", object_store=self.published,
+                            catalog_cache=CatalogJsonCache(loader=self.published.read_catalog_json), signer=self.signer)
+        self.headers = {"X-Goog-Authenticated-User-Email": "accounts.google.com:reader@skytruth.org"}
+
+    def request(self, path, *, headers=None, enabled=True):
+        return handle_request("GET", path, self.headers if headers is None else headers,
+            object_store=self.preview, catalog_cache=CatalogJsonCache(loader=self.preview.read_catalog_json),
+            signer=FakeSigner(), bucket_name="skytruth-shared-datasets-1-preview",
+            published_context=self.context if enabled else None)
+
+    def test_opt_in_routes_require_authorized_identity_and_preserve_production_catalog(self):
+        self.assertEqual(self.request("/published/catalog.json", enabled=False).status, 404)
+        self.assertEqual(self.request("/published/catalog.json", headers={}).status, 403)
+        self.assertEqual(self.request("/published/catalog.json", headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:reader@example.org"}).status, 403)
+        self.assertEqual(json.loads(self.request("/published/catalog.json").body), catalog_payload())
+        self.assertEqual(self.request("/published/docs/assets/table-only.md").body, b"Published docs")
+        for path in ("/published/app.js", "/published/usage", "/published/_scratch/private.json", "/published/docs/assets/../../secret.md"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path).status, 404)
+
+    def test_published_signing_uses_its_own_catalog_and_exact_generations(self):
+        slug = "acled-europe-central-asia-aggregated-weekly-admin1"
+        query = f"/api/pmtiles/signed-url?slug={slug}&version=2026-05-01&generation=1003"
+        self.assertEqual(self.request(query).status, 404)
+        response = self.request("/published" + query)
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["gs_uri"], PRIVATE_PATH.replace("/latest/", "/releases/2026-05-01/"))
+        self.assertEqual(str(payload["generation"]), "1003")
+        self.assertEqual(self.request("/published" + query.replace("1003", "9999")).status, 409)
+        self.assertEqual(self.request("/published" + query + "&bucket=attacker").status, 400)
+        self.published.catalog["assets"][1]["canonical_path"] = PRIVATE_FGB_PATH.replace("skytruth-shared-datasets-1", "other-bucket")
+        self.assertEqual(self.request("/published" + query).status, 502)
+
+    def test_published_release_index_and_comparison_capability_routes(self):
+        index = self.request("/published/releases/wdpa-marine.json")
+        self.assertEqual(index.status, 200)
+        self.assertEqual(json.loads(index.body)["asset_slug"], "wdpa-marine")
+        self.assertEqual(self.request("/published/api/comparisons").status, 200)

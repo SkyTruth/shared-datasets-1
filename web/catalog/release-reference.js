@@ -1,3 +1,12 @@
+// UI selection identity includes the catalog source; artifact identity stays canonical.
+export function assetKey(asset) {
+  return asset.catalog_source === "published" ? `published:${asset.slug}` : asset.slug;
+}
+
+export function catalogApiUrl(asset, path) {
+  return `${asset.catalog_source === "published" ? "/published" : ""}${path}`;
+}
+
 // A release date labels a snapshot; only object generations identify its bytes.
 export function artifactGeneration(value) {
   const text = typeof value === "number" && Number.isSafeInteger(value) ? String(value) : value;

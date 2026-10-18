@@ -1014,3 +1014,96 @@ test('bounded inspection tries the pinned API before public sidecar streaming', 
   expect(lookupIndex).toBeGreaterThanOrEqual(0);
   expect(sidecarIndex).toBeGreaterThan(lookupIndex);
 });
+
+
+async function publishedFixture(page, transport, {invalid = false, empty = false} = {}) {
+  const published = JSON.parse(JSON.stringify(transport.catalog).replaceAll('example-bucket', 'skytruth-shared-datasets-1'));
+  published.bucket = 'skytruth-shared-datasets-1';
+  if (empty) published.assets = [];
+  const state = {invalid};
+  await page.route('**/published/**', async route => {
+    const url = new URL(route.request().url());
+    const json = value => route.fulfill({contentType:'application/json', body:JSON.stringify(value)});
+    if (url.pathname === '/published/catalog.json') return json(state.invalid ? {bucket:'wrong-bucket', assets:[]} : published);
+    const slug = /^\/published\/releases\/([a-z-]+)\.json$/.exec(url.pathname)?.[1];
+    if (slug) return json(JSON.parse(JSON.stringify(transport.indexes.get(slug)).replaceAll('example-bucket', 'skytruth-shared-datasets-1')));
+    if (url.pathname.startsWith('/published/docs/assets/')) return route.fulfill({contentType:'text/markdown', body:'# Published source documentation'});
+    if (['/published/api/pmtiles/signed-url', '/published/api/download-url'].includes(url.pathname)) {
+      const format = url.pathname.includes('/pmtiles/') ? 'pmtiles' : url.searchParams.get('format');
+      const file = transport.indexes.get(url.searchParams.get('slug')).releases.find(release => release.date === url.searchParams.get('version')).files.find(file => file.format === format);
+      expect(String(file.generation)).toBe(url.searchParams.get('generation'));
+      return json({gs_uri:file.path.replace('example-bucket', 'skytruth-shared-datasets-1'), resolved_release:url.searchParams.get('version'), generation:String(file.generation), expires_at:'2300-01-01T00:00:00Z',
+        [format === 'pmtiles' ? 'pmtiles_url' : 'download_url']: `https://tiles.skytruth.org/artifacts/${file.path.split('example-bucket/')[1]}?generation=${file.generation}`});
+    }
+    throw new Error(`Unexpected published request: ${url.href}`);
+  });
+  return state;
+}
+
+test('feature preview includes published datasets without merging duplicate slugs', async ({page, transport}, testInfo) => {
+  transport.catalog.feature_preview = true;
+  await publishedFixture(page, transport);
+  await page.goto(baseURL);
+  await expect(page).toHaveTitle('FEATURE PREVIEW · SkyTruth Datasets');
+  await expect(page.getByRole('heading', {name:'FEATURE PREVIEW', exact:true})).toBeVisible();
+  await expect(page.locator('#preview-notice')).toBeVisible();
+  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveCount(0);
+  await page.locator('#search-input').fill('smoke');
+  await page.getByLabel('Include published datasets').check();
+  await expect(page.locator('#published-status')).toContainText('Ctrl/⌘-click');
+  await expect(page.locator('#search-input')).toHaveValue('smoke');
+  const preview = page.locator('#asset-list [data-slug="smoke-public"]');
+  const published = page.locator('#asset-list [data-slug="published:smoke-public"]');
+  await expect(preview).toContainText('Preview');
+  await expect(published).toContainText('Published');
+  await published.click();
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await expect(page.locator('#detail-gs')).toContainText('gs://skytruth-shared-datasets-1/');
+  await page.locator('#detail-docs').click();
+  await expect(page.locator('#docs-body')).toContainText('Published source documentation');
+  await page.locator('#docs-close').click();
+  await preview.click({modifiers:['ControlOrMeta']});
+  await expect(preview).toHaveAttribute('aria-selected', 'true');
+  await expect(published).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#selection-legend')).toContainText('Preview');
+  await expect(page.locator('#selection-legend')).toContainText('Published');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#map-preview canvas')).toBeVisible();
+  const filterBox = await page.locator('.filters').boundingBox();
+  const listBox = await page.locator('#asset-list').boundingBox();
+  expect(listBox.y).toBeGreaterThanOrEqual(filterBox.y + filterBox.height);
+  await testInfo.attach('preview-published.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.getByLabel('Include published datasets').uncheck();
+  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveCount(0);
+  await expect(preview).toHaveAttribute('aria-selected', 'true');
+  await page.getByLabel('Include published datasets').check();
+  await published.click();
+  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
+  await page.locator('#asset-list [data-slug="published:smoke-private"]').click();
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#map-preview canvas')).toBeVisible();
+  await page.setViewportSize({width:390, height:844});
+  await expect(page.getByLabel('Include published datasets')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await testInfo.attach('preview-mobile.png', {body:await page.screenshot(), contentType:'image/png'});
+});
+
+test('empty preview can retry a failed published catalog and handle an empty catalog', async ({page, transport}) => {
+  const source = await publishedFixture(page, transport, {invalid:true});
+  transport.catalog.feature_preview = true;
+  transport.catalog.assets = [];
+  await page.goto(baseURL);
+  await page.getByLabel('Include published datasets').click();
+  await expect(page.locator('#published-status')).toContainText('unavailable');
+  await expect(page.getByLabel('Include published datasets')).not.toBeChecked();
+  source.invalid = false;
+  await page.getByLabel('Include published datasets').check();
+  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toBeVisible();
+  await page.getByLabel('Include published datasets').uncheck();
+  await expect(page.locator('#asset-list .asset-card')).toHaveCount(0);
+  await publishedFixture(page, transport, {empty:true});
+  await page.reload();
+  await page.getByLabel('Include published datasets').check();
+  await expect(page.locator('#published-status')).toContainText('Ctrl/⌘-click');
+  await expect(page.locator('#catalog-count')).toContainText('0 of 0 assets');
+});

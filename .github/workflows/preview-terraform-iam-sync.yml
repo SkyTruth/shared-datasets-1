@@ -91,3 +91,26 @@ jobs:
         wdpa_monthly_image=unused-by-preview-terraform-iam-sync
         sea_ice_daily_image=unused-by-preview-terraform-iam-sync
         eamlis_monthly_image=unused-by-preview-terraform-iam-sync
+
+  published-reader:
+    name: Allow preview reads of published datasets
+    needs: sync
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: preview-terraform-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: bucket-iam
+      sync_name: Preview published dataset reader
+      refusal_prefix: Refusing automatic preview published dataset reader sync
+      block_deletes: true
+      targets: |
+        google_storage_bucket_iam_member.feature_preview_published_reader
+      allowed_exact: |
+        google_storage_bucket_iam_member.feature_preview_published_reader
+      tf_vars: |
+        wdpa_monthly_image=unused-by-preview-terraform-iam-sync
+        sea_ice_daily_image=unused-by-preview-terraform-iam-sync
+        eamlis_monthly_image=unused-by-preview-terraform-iam-sync

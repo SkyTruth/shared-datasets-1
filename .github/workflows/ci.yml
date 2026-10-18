@@ -479,8 +479,8 @@ jobs:
     secrets: inherit
 
   pmtiles-cdn:
-    needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ always() && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -495,8 +495,9 @@ jobs:
     secrets: inherit
 
   dataset-usage:
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') }}
+    # Settle bucket CORS before the logging-only deployment plans the same bucket.
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
     permissions:
       contents: read
       actions: read

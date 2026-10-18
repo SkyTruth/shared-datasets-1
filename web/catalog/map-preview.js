@@ -584,7 +584,7 @@ function pmtilesCanUseSigner(asset) {
 }
 
 async function requestSignedPmtilesUrl(asset, signer) {
-  const url = new URL(signer.url, window.location.href);
+  const url = new URL(asset.catalog_source === "published" ? "/published/api/pmtiles/signed-url" : signer.url, window.location.href);
   url.searchParams.set("slug", asset.slug);
   if (asset.release_snapshot_key) {
     url.searchParams.set("version", asset.date);

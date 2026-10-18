@@ -46,7 +46,8 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
         self.assertIn('variable "shared_bucket_public_object_viewer_enabled"', variables_tf)
         self.assertIn('count = var.shared_bucket_public_object_viewer_enabled ? 1 : 0', shared_bucket_tf)
         self.assertIn('to   = google_storage_bucket_iam_member.shared_bucket_public_object_viewer[0]', shared_bucket_tf)
-        self.assertIn("origin          = local.pmtiles_browser_allowed_origins", shared_bucket_tf)
+        cors = shared_bucket_tf.split("cors {", 1)[1].split("}", 1)[0]
+        self.assertIn("local.pmtiles_browser_allowed_origins", cors)
         self.assertIn('shared_bucket_public_managed_folders', outputs_tf)
 
     def test_pmtiles_managed_folder_sync_role_is_narrow(self):

@@ -143,6 +143,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
 
         self.assertNotIn("push", trigger)
+        self.assertEqual(trigger["schedule"], [{"cron": "17 * * * *"}])
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
             ["Release index rebuild", "CI"],
@@ -156,6 +157,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertEqual(job["environment"], "shared-datasets-production")
         self.assertEqual(job["needs"], "select-repo-changes")
         self.assertIn("needs.select-repo-changes.outputs.should_deploy == 'true'", job["if"])
+        self.assertIn("github.event_name == 'schedule'", job["if"])
         selection = workflow["jobs"]["select-repo-changes"]
         self.assertEqual(selection["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read"})
         self.assertIn("github.event.workflow_run.conclusion == 'success'", selection["if"])
@@ -166,7 +168,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertEqual(job["concurrency"]["group"], "catalog-web-deploy")
         self.assertFalse(job["concurrency"]["cancel-in-progress"])
         self.assertEqual(steps["Check out repository"]["with"]["ref"],
-                         "${{ inputs.executor_sha || github.event.workflow_run.head_sha }}")
+                         "${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}")
         self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
         step_names = list(steps)
         self.assertLess(step_names.index("Verify successful mutation provenance"),

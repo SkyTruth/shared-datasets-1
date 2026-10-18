@@ -10,6 +10,12 @@ publication workflow owns the refresh instead, so there is no duplicate deploy.
 Automatic refreshes retain the protected publisher, serialized signed receipts,
 generation-preconditioned writes, live verification and no-cache metadata.
 
+The same protected workflow runs hourly at minute 17 to refresh release history
+after scheduled ingestion. It requires passing `ci-ready` for the scheduled
+main revision. The existing bundle digest skips publication when the same
+revision and release-index snapshot are already deployed; changed indexes can
+refresh the same revision. No ingestion IAM or dataset writes are added.
+
 After trusted PRs merge to `main`, the post-merge dataset mutation workflow
 runs first, including finalization of prepared translation bundles. When it
 succeeds, `.github/workflows/catalog-web-deploy.yml` downloads existing
@@ -29,9 +35,10 @@ successful `Approved dataset mutation` workflow so the IAP-protected viewer is
 rebuilt and reapplied through the production environment. Do not also add a
 `shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
 web deploy workflow will run from the same PR; that duplicates the promotion and
-can race the automatic deploy. The live catalog drift guard runs after that
-deploy workflow completes, using the same release-index hydration, so it does
-not race the object promotion and still detects stale release history.
+can race the automatic deploy. The publish job runs the live catalog drift
+guard using its exact release-index snapshot before recording success. The
+standalone guard retains PR consistency checks and manual live checks; skipped
+deployments do not launch a second live comparison against newer indexes.
 
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
 explicit. Manual catalog web deployments should stage files under

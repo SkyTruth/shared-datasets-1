@@ -1,4 +1,4 @@
-import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
+import {catalogApiUrl, selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
 
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
 const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Contents differ here", unchanged: "Unchanged geometry"};
@@ -9,7 +9,7 @@ async function loadMapIndex(session, onProgress) {
   const abort = new AbortController(), cancel = () => abort.abort();
   session.abort.signal.addEventListener("abort", cancel, {once: true});
   try { return await Promise.all(["baseline", "target"].map(async (side, index) => {
-    const response = await fetch(`/api/comparisons/${session.job}/map-index?side=${side}`, {credentials: "include", cache: "no-store", signal: abort.signal});
+    const response = await fetch(catalogApiUrl(session.refs.baseline, `/api/comparisons/${session.job}/map-index?side=${side}`), {credentials: "include", cache: "no-store", signal: abort.signal});
     if (!response.ok || !response.headers.get("content-type")?.startsWith("application/x-ndjson")) throw new Error("Map classification stream is unavailable. The viewer may still be deploying; retry the comparison shortly.");
     const reader = response.body.getReader(), decoder = new TextDecoder("utf-8", {fatal: true}), rows = new Map();
     let pending = "", header = null, finished = false, previous = "";
@@ -141,9 +141,9 @@ export function createComparisonController({loadMapModule = () => import("./map-
       : session.summary.identity.compatible ? "Colors describe each object's changes, independently of table pages. Unchanged objects are faint. Display detail varies with zoom."
       : "Geometry-only comparison: object identities cannot be matched. Yellow means contents differ at this geometry; individual metadata changes are unknown.";
   }
-  async function cancelJob(id) {
+  async function cancelJob(id, reference) {
     if (!id) return;
-    try { await fetch(`/api/comparisons/${id}/cancel`, {method: "POST", credentials: "include"}); }
+    try { await fetch(catalogApiUrl(reference, `/api/comparisons/${id}/cancel`), {method: "POST", credentials: "include"}); }
     catch { /* A disconnected browser cannot acknowledge cancellation; server TTL/budget still applies. */ }
   }
   function stop() {
@@ -156,7 +156,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       active.abort.abort(); active.mapAbort?.abort(); active.map?.dispose();
       const stopped = active;
       const started = stopped.startPromise || Promise.resolve({job_id: stopped.job});
-      cancellation = Promise.all([cancellation, started.then(result => cancelJob(result.job_id), () => {})]).then(() => {});
+      cancellation = Promise.all([cancellation, started.then(result => cancelJob(result.job_id, stopped.refs?.baseline), () => {})]).then(() => {});
       active = null;
     }
   }
@@ -186,7 +186,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
     return {baseline: selectReleaseReference(asset, ui.before.value, options), target: selectReleaseReference(asset, ui.after.value, options)};
   }
   async function request(url, session, init = {}) {
-    const response = await fetch(url, {credentials: "include", cache: "no-store", signal: session.abort.signal, ...init});
+    const response = await fetch(catalogApiUrl(session.refs.baseline, url), {credentials: "include", cache: "no-store", signal: session.abort.signal, ...init});
     if (response.status === 404 && !response.headers.get("content-type")?.includes("json")) throw new Error("Feature comparison is available in the authenticated catalog viewer. This static catalog supports visual release inspection and the local CLI.");
     let payload;
     try { payload = await response.json(); } catch { throw new Error("Comparison endpoint is unavailable. Open the authenticated catalog viewer or use the local CLI."); }
