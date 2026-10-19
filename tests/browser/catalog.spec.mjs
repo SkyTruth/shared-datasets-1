@@ -533,7 +533,10 @@ test('automatic comparison rejects delayed starts and closing cancels pending wo
   await expect(page.locator('#compare-progress-label')).toHaveText('Validating Before');
   await expect(bar).toHaveAttribute('value','38500');
   await expect(bar).toHaveAttribute('max','128786');
-  const rowBox = await page.locator('#version-path-row').boundingBox(), barBox = await bar.boundingBox();
+  const {rowBox, barBox} = await page.locator('#version-path-row').evaluate(row => ({
+    rowBox: row.getBoundingClientRect().toJSON(),
+    barBox: row.querySelector('#compare-progress-bar').getBoundingClientRect().toJSON(),
+  }));
   expect(barBox.width).toBeGreaterThan(rowBox.width - 35);
   expect(barBox.y + barBox.height).toBeLessThan(rowBox.y + rowBox.height);
   await test.info().attach('comparison-progress.png', {body:await progress.screenshot(),contentType:'image/png'});
