@@ -11,6 +11,7 @@
 | [World Polygons](world-polygons.md) | 110-boundaries | active | public | `fgb;pmtiles` | `latest/world-polygons.fgb` |
 | [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/iho-world-seas.fgb` |
 | [Marine Regions EEZs and High Seas](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/marine-regions-eez.fgb` |
+| [MPAtlas Marine Protected Area Zone Assessments](mpatlas-zone-assessments.md) | 130-protected-areas | active | private | `fgb;pmtiles` | `latest/mpatlas-zone-assessments.fgb` |
 | [WDPA Marine Protected and Conserved Areas](wdpa-marine.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-marine.fgb` |
 | [WDPA Terrestrial Protected and Conserved Areas](wdpa-terrestrial.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-terrestrial.fgb` |
 
