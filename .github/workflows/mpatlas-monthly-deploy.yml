@@ -1,0 +1,528 @@
+name: MPAtlas monthly deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+      cancel_running_canary:
+        description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
+        required: false
+        type: boolean
+        default: false
+      canary_run_date:
+        description: "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish."
+        required: false
+        type: string
+        default: ""
+
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  deployments: write
+  contents: read
+  id-token: write
+  attestations: write
+
+env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  IMAGE_NAME: mpatlas-monthly
+  JOB_NAME: mpatlas-monthly
+  ASSET_SLUG: mpatlas-zone-assessments
+  ASSET_ROOT: 100-geographic-reference/130-protected-areas/mpatlas-zone-assessments
+  BUCKET: skytruth-shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy:
+    name: Build image and apply mpatlas-monthly Terraform
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/mpatlas-monthly-deploy.yml@refs/heads/main" &&
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+            echo "Execution must use this workflow or CI from main." >&2
+            exit 1
+          fi
+
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Verify executor before candidate checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow mpatlas-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.executor_sha }}
+          fetch-depth: 0
+
+      - name: Verify tested main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow mpatlas-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Check prior deployment before rebuilding
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py check --target mpatlas-monthly --workflow mpatlas-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Authenticate to Google Cloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify live deployment permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target mpatlas-monthly
+
+      - name: Check runtime verification window
+        id: window
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          python scripts/deployment_revision.py window --target mpatlas-monthly \
+            --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+
+      - name: Verify Artifact Registry image permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: python scripts/deployment_permissions.py --target artifact-registry-images
+
+      - name: Configure Docker for Artifact Registry
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build mpatlas-monthly image
+        id: tested-image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          set -euo pipefail
+          python scripts/tested_image_authorization.py --workflow mpatlas-monthly-deploy.yml --target mpatlas-monthly \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/tested-mpatlas-monthly"
+
+      - name: Tag the exact tested mpatlas-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
+          docker tag "$TESTED_IMAGE_ID" "$image_tag"
+          echo "MPATLAS_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+
+      - name: Smoke-test native tools in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm "${MPATLAS_MONTHLY_IMAGE_TAG}" sh -c \
+            'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version && command -v tippecanoe-decode'
+
+      - name: Smoke-test job import closure in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm "${MPATLAS_MONTHLY_IMAGE_TAG}" python -c \
+            'import ingestion.mpatlas_monthly.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.vector_asset; print("mpatlas-monthly imports ok")'
+
+      - name: Verify run-bound signing capability without mutation
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: mpatlas-monthly-deploy.yml
+
+      - name: Push mpatlas-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
+        run: |
+          set -euo pipefail
+
+          docker push "${MPATLAS_MONTHLY_IMAGE_TAG}"
+          docker buildx imagetools inspect --raw "${MPATLAS_MONTHLY_IMAGE_TAG}" > "$RUNNER_TEMP/mpatlas-monthly-manifest.json"
+          python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_CONFIG"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/mpatlas-monthly-manifest.json"
+          image_digest="$(docker buildx imagetools inspect "${MPATLAS_MONTHLY_IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+          if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
+            image_digest="$(docker buildx imagetools inspect "${MPATLAS_MONTHLY_IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')"
+          fi
+          if [[ -z "${image_digest}" || "${image_digest}" != sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${MPATLAS_MONTHLY_IMAGE_TAG}" >&2
+            exit 1
+          fi
+          image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
+          echo "MPATLAS_MONTHLY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
+
+      - name: Set up Terraform
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: terraform -chdir=terraform/envs/prod init -input=false
+
+      - name: Terraform plan
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: |
+          set -euo pipefail
+
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
+            -input=false \
+            -out="${RUNNER_TEMP}/mpatlas-monthly.tfplan" \
+            -target=module.mpatlas_monthly_job.google_cloud_run_v2_job.this \
+            -target=google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker \
+            -target=module.mpatlas_monthly_scheduler.google_cloud_scheduler_job.this \
+            -target='google_iam_deny_policy.canonical_destructive_actions[0]' \
+            -var="mpatlas_monthly_image=${MPATLAS_MONTHLY_IMAGE}" \
+            -var="wdpa_monthly_image=unused-by-mpatlas-monthly-deploy" \
+            -var="sea_ice_daily_image=unused-by-mpatlas-monthly-deploy" \
+            -var="eamlis_monthly_image=unused-by-mpatlas-monthly-deploy"
+
+      - name: Export Terraform plan JSON
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/mpatlas-monthly.tfplan" > "${RUNNER_TEMP}/mpatlas-monthly.tfplan.json"
+
+      - name: Enforce mpatlas-monthly resource-change allowlist
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: |
+          set -euo pipefail
+
+          python scripts/terraform_plan_allowlist.py "${RUNNER_TEMP}/mpatlas-monthly.tfplan.json" \
+            --allowed-exact="$(printf '%s\n' 'module.mpatlas_monthly_job.google_cloud_run_v2_job.this' 'google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker' 'module.mpatlas_monthly_scheduler.google_cloud_scheduler_job.this' 'google_iam_deny_policy.canonical_destructive_actions[0]')" --block-deletes \
+            --job-image-target=mpatlas-monthly --expected-image="${MPATLAS_MONTHLY_IMAGE}" \
+            --refusal-prefix="Refusing mpatlas-monthly deploy"
+
+      - name: Verify complete saved-plan mutation permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: python scripts/deployment_permissions.py --target mpatlas-monthly --plan-json "$RUNNER_TEMP/mpatlas-monthly.tfplan.json"
+
+      - name: Claim tested deployment revision
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py start --target mpatlas-monthly --workflow mpatlas-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact "${MPATLAS_MONTHLY_IMAGE}" --plan-json "$RUNNER_TEMP/mpatlas-monthly.tfplan.json"
+
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.revision.outputs.receipt_path }}
+
+      - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/mpatlas-monthly.tfplan"
+
+      - name: Confirm deployed digest
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+
+          deployed_image="$(gcloud run jobs describe "${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          echo "Deployed image: ${deployed_image}"
+          if [[ "${deployed_image}" != "${MPATLAS_MONTHLY_IMAGE}" ]]; then
+            echo "Cloud Run job image does not match expected digest." >&2
+            exit 1
+          fi
+
+      - name: Resolve in-flight canary
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        id: inflight
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+        run: |
+          set -euo pipefail
+
+          # A merge that only touches workflow files still rebuilds the image and
+          # would start a second canary alongside one already publishing. That
+          # duplicate rebuilds the whole release before discovering it is
+          # redundant. Skip by default; cancel only when deliberately deploying
+          # a fix over a run executing known-bad code.
+          running="$(gcloud run jobs executions list \
+            --job="${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format='value(metadata.name,status.runningCount)' 2>/dev/null \
+            | awk '$2 != "" && $2 != "0" {print $1; exit}')"
+
+          if [[ -z "${running}" ]]; then
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${CANCEL_RUNNING_CANARY}" == "true" ]]; then
+            echo "Cancelling in-flight execution ${running} before the replacement canary."
+            gcloud run jobs executions cancel "${running}" \
+              --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --quiet
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "run_canary=false" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
+
+      - name: Execute mpatlas-monthly canary
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.inflight.outputs.run_canary == 'true' }}
+        env:
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          set -euo pipefail
+
+          execute_args=(
+            "${JOB_NAME}"
+            --region="${REGION}"
+            --project="${GOOGLE_CLOUD_PROJECT}"
+            --wait
+          )
+          execution_env="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
+          if [[ -n "${CANARY_RUN_DATE}" ]]; then
+            if [[ ! "${CANARY_RUN_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "canary_run_date must be YYYY-MM-DD, got: ${CANARY_RUN_DATE}" >&2
+              exit 1
+            fi
+            echo "Canary uses execution-level override RUN_DATE=${CANARY_RUN_DATE}"
+            execution_env+=",RUN_DATE=${CANARY_RUN_DATE}"
+          fi
+          execution="$(gcloud run jobs execute "${execute_args[@]}" --update-env-vars="${execution_env}" --format='value(metadata.name)')"
+          if [[ -z "$execution" ]]; then
+            echo "Canary returned no execution identity." >&2
+            exit 1
+          fi
+          echo "MPATLAS_CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync Python dependencies
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: uv sync --locked --all-groups
+
+      - name: Validate latest MPAtlas release contract
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+
+          uv run python - <<'PY'
+          import gzip
+          import json
+          import struct
+          import subprocess
+
+          from scripts.release_feature_model import (
+              read_metadata_sidecar_bytes,
+              validate_release_manifest,
+              validate_release_schema,
+              validate_sidecar_records,
+          )
+
+          bucket = "skytruth-shared-datasets-1"
+          asset_slug = "mpatlas-zone-assessments"
+          asset_root = "100-geographic-reference/130-protected-areas/mpatlas-zone-assessments"
+          index_uri = f"gs://{bucket}/_catalog/releases/{asset_slug}.json"
+          index = json.loads(subprocess.check_output(["gcloud", "storage", "cat", index_uri]))
+          release = index["latest_release"]["date"]
+          base = f"gs://{bucket}/{asset_root}/releases/{release}/{asset_slug}"
+
+          manifest = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".manifest.json"]))
+          validate_release_manifest(
+              manifest,
+              expected_asset_slug=asset_slug,
+              expected_release=release,
+              require_generations=True,
+          )
+
+          schema = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".schema.json"]))
+          validate_release_schema(schema, expected_asset_slug=asset_slug, expected_release=release)
+
+          metadata_bytes = subprocess.check_output(["gcloud", "storage", "cat", base + ".metadata.ndjson.gz"])
+          records = list(read_metadata_sidecar_bytes(metadata_bytes, label=base + ".metadata.ndjson.gz"))
+          sidecar = validate_sidecar_records(
+              records,
+              expected_asset_slug=asset_slug,
+              expected_release=release,
+          )
+          if not sidecar.valid:
+              raise RuntimeError("; ".join(sidecar.errors))
+
+          raw_header = subprocess.check_output(["gcloud", "storage", "cat", "--range=0-126", base + ".pmtiles"])
+          _root_offset, _root_length, metadata_offset, metadata_length = struct.unpack("<QQQQ", raw_header[8:40])
+          metadata_raw = subprocess.check_output([
+              "gcloud",
+              "storage",
+              "cat",
+              f"--range={metadata_offset}-{metadata_offset + metadata_length - 1}",
+              base + ".pmtiles",
+          ])
+          pmtiles_metadata = json.loads(gzip.decompress(metadata_raw).decode("utf-8"))
+          layers = [
+              {"id": layer.get("id"), "fields": sorted((layer.get("fields") or {}).keys())}
+              for layer in pmtiles_metadata.get("vector_layers") or []
+          ]
+          if not layers or any(layer["fields"] != ["feature_id"] for layer in layers):
+              raise RuntimeError(f"PMTiles metadata fields are not feature_id-only: {layers}")
+
+          print(json.dumps({
+              "latest_release": release,
+              "sidecar_count": sidecar.feature_count,
+              "pmtiles_layers": layers,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Run MPAtlas bucket hygiene audit
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+
+          uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
+            --bucket "${BUCKET}" \
+            --format json > "${RUNNER_TEMP}/bucket-hygiene.json"
+          uv run python - "${RUNNER_TEMP}/bucket-hygiene.json" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1]))
+          findings = payload.get("findings", [])
+          mpatlas_findings = [
+              finding for finding in findings
+              if "mpatlas-zone-assessments" in json.dumps(finding, sort_keys=True)
+              and "feature-metadata" in json.dumps(finding, sort_keys=True).lower()
+          ]
+          if mpatlas_findings:
+              print(json.dumps(mpatlas_findings, indent=2, sort_keys=True))
+              raise SystemExit("MPAtlas feature-metadata hygiene findings remain")
+          print("No mpatlas-zone-assessments feature-metadata hygiene findings remain.")
+          PY
+
+      - name: Record deployment outcome
+        id: deployment-outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase="${DEPLOYMENT_PHASE:-unknown}"
+          if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+          args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+          if [[ -n "${MPATLAS_CANARY_EXECUTION:-}" ]]; then args+=(--execution "${MPATLAS_CANARY_EXECUTION##*/}"); fi
+          python scripts/deployment_revision.py "${args[@]}"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

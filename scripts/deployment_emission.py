@@ -34,7 +34,7 @@ REHEARSAL_SIGNERS = {
     "deployment-receipt-rehearsal.yml", "prod-terraform-target-apply.yml",
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
     "wdpa-monthly-deploy.yml",
-    "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml", "publish-typescript-sdk.yml",
+    "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml", "publish-typescript-sdk.yml",
     "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
 }
 

@@ -33,6 +33,7 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
       production_images: ${{ steps.plan.outputs.production-images }}
+      mpatlas: ${{ steps.plan.outputs.mpatlas }}
       eamlis: ${{ steps.plan.outputs.eamlis }}
       wdpa: ${{ steps.plan.outputs.wdpa }}
       sea_ice: ${{ steps.plan.outputs.sea_ice }}
@@ -429,6 +430,22 @@ jobs:
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
+  mpatlas:
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
+    if: ${{ always() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/mpatlas-monthly-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
   eamlis:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
@@ -576,8 +593,8 @@ jobs:
     secrets: inherit
 
   cron-alert-policy:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
+    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    if: ${{ always() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
     permissions:
       contents: read
       actions: read

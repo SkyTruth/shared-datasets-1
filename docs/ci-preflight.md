@@ -59,8 +59,8 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests all five actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. Its evidence retains the four deployable
+tests all six actual Linux AMD64 deployment recipes on every host without mounting the Docker
+socket into a validation container. Its evidence retains the five deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these
@@ -118,7 +118,7 @@ selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry reco
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
 selection does not change deployment selection.
-The standard Python run permits only the five named native fixtures to skip;
+The standard Python run permits only the six named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.
 

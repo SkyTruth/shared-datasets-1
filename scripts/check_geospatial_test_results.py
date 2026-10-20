@@ -29,6 +29,10 @@ REQUIRED_TESTS = (
         "tests.test_wdpa_disk_processing",
         "test_normalized_store_matches_old_export_semantically",
     ),
+    (
+        "tests.test_mpatlas_monthly",
+        "test_mixed_geometry_bundle_has_source_ids_valid_tiles_and_stored_hashes",
+    ),
 )
 
 

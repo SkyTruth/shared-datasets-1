@@ -63,6 +63,7 @@ explicit targets and allowed resource changes.
 | `scratch-cleanup-iam-sync.yml` | Syncs pending-publish read/cleanup bindings and the explicit WDPA validation retirement resources after retirement IAM bootstrap; preserves the monthly worker's retained-bundle read access. |
 | `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then syncs the five declared ingestion, observer, identity-decision, Scheduler, and unapproved-writer alert policies. |
 | `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` | Apply only their own Cloud Run Job through `scripts/terraform_plan_allowlist.py`, including the expected immutable image check. |
+| `mpatlas-monthly-deploy.yml` | Applies only the MPAtlas job with its exact tested image, scheduler invoker binding, monthly scheduler and optional canonical deny-policy writer exception; blocks deletes/replacements. The ingestion IAM sync owns its identities and scoped storage/actAs grants. |
 | `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker, observer job/identity/IAM/scheduler, and canonical destructive-action deny policy; also validates image, retained bundle, and runtime limits. |
 | `pmtiles-cdn-sync.yml` | Applies managed-folder IAM bootstrap checked by `scripts/cdn_plan_readiness.py check-bootstrap`, then shared-bucket/CDN URL-map/public managed-folder changes under its inline allowlist. |
 
