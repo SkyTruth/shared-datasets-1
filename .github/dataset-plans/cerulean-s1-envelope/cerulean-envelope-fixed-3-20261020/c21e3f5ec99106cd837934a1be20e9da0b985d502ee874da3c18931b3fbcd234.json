@@ -119,7 +119,7 @@
         "cache_control": "no-cache, max-age=0, must-revalidate",
         "compatibility_waiver": null,
         "content_type": "text/csv",
-        "destination_generation": "1792521806517508",
+        "destination_generation": "1792528407964814",
         "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv",
         "source_generation": "1792527711162921",
         "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-fixed-3-20261020/metadata/shared-datasets-catalog.csv"
