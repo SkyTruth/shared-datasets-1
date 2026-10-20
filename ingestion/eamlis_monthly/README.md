@@ -49,21 +49,12 @@ applies when the source changes later that day. Such changes require a different
 unused `RUN_DATE`, normally the next scheduled run. Other existing statuses fail
 and require investigation rather than being treated as completed.
 
-For an unused date, the job reads ArcGIS layer metadata and source statistics,
-then builds a source fingerprint from:
-
-- service item ID
-- `editingInfo.dataLastEditDate`
-- `editingInfo.schemaLastEditDate`
-- filtered feature count
-- max `DATE_REVISED`
-- source field schema hash
-
-If that fingerprint matches the latest successful run record, the job checks the
-latest release metadata contract. A valid unchanged release writes a skipped run
-record and does not download the source. If the source changed, or if the latest
-successful release lacks the current metadata contract, the job downloads the
-filtered layer with paginated ArcGIS queries and rebuilds the release.
+For an unused date, the job downloads the selected ArcGIS rows and pins the
+translation CSV before comparing the complete content fingerprint with the last
+successful publication. Equality skips vector/sidecar generation and publication,
+writes an immutable skipped run and updates the release-index check-in. Edit
+metadata and summary statistics are diagnostic only. A missing metadata contract
+still requires a refresh. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
 
 The release feature identity is copied directly from the source `OBJECTID`
 field. Published `feature_id` values are plain alphanumeric strings such as

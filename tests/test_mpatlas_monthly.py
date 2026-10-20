@@ -37,10 +37,10 @@ def sidecar(features, release="2026-10-16"):
             release=release, id_field="zone_id", provenance={"source": job.SOURCE_URL})[1]
 
 
-def test_content_hash_tracks_geometry_attributes_and_identity_but_not_order_or_release():
+def test_fingerprint_tracks_geometry_attributes_and_identity_but_not_order_or_release():
     features = [feature(), feature(2)]
     before = sidecar(features)
-    assert job.content_hash(before) == job.content_hash(sidecar(list(reversed(features)), "2026-11-02"))
+    assert job.source_fingerprint(before).sha256 == job.source_fingerprint(sidecar(list(reversed(features)), "2026-11-02")).sha256
     for changed in ("geometry", "properties", "identity"):
         after = copy.deepcopy(features)
         if changed == "geometry":
@@ -49,8 +49,8 @@ def test_content_hash_tracks_geometry_attributes_and_identity_but_not_order_or_r
             after[0]["properties"]["zone_name"] = "Changed"
         else:
             after[0]["properties"]["zone_id"] = 42
-        assert job.content_hash(before) != job.content_hash(sidecar(after))
-    assert job.content_hash(before) != job.content_hash(before[:1])
+        assert job.source_fingerprint(before).sha256 != job.source_fingerprint(sidecar(after)).sha256
+    assert job.source_fingerprint(before).sha256 != job.source_fingerprint(before[:1]).sha256
 
 
 @pytest.mark.parametrize("bad", ["duplicate", "missing_id", "invalid_id", "reserved", "unsupported", "empty_geometry", "nested"])
@@ -93,7 +93,7 @@ def test_source_boundary_preserves_nested_properties_and_counts_exclusions(tmp_p
 def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path, kind):
     raw = b'{"type":"FeatureCollection","features":[]}'
     records = sidecar([feature()])
-    baseline = job.Baseline("2026-10-16", job.content_hash(records), hashlib.sha256(raw).hexdigest() if kind == "source" else "0" * 64, 1)
+    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256, hashlib.sha256(raw).hexdigest() if kind == "source" else "0" * 64, 1)
     publisher = mock.Mock(spec=job.GcsPublisher)
     publisher.load_json.return_value = None
     def download(_url, destination, **kwargs):
@@ -105,7 +105,8 @@ def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path,
          mock.patch.object(job.vector_pipeline, "publish_vector_bundle") as publish:
         result = job.ingest(publisher, DAY, tmp_path)
     assert result["status"] == "skipped"
-    assert result["content_hash"] == baseline.content_hash
+    assert result["source_fingerprint_hash"] == baseline.fingerprint_hash
+    assert result["reason"] == "source fingerprint unchanged"
     build.assert_not_called()
     publish.assert_not_called()
     publisher.write_run_record.assert_called_once()
@@ -173,3 +174,57 @@ def test_mixed_geometry_bundle_has_source_ids_valid_tiles_and_stored_hashes():
             properties_hash = properties.pop("properties_hash")
             assert fm.content_hashes(geometry=stored["geometry"], properties=properties) == expected[identity]
             assert (geometry_hash, properties_hash) == expected[identity]
+
+
+@pytest.mark.parametrize("marker", ["current", "older", "missing"])
+def test_byte_shortcut_is_bound_to_normalized_fingerprint_definition(tmp_path, marker):
+    records = sidecar([feature()])
+    metadata = tmp_path / "metadata.ndjson.gz"
+    fm.write_sidecar(records, metadata)
+    raw = metadata.read_bytes()
+    fingerprint = job.source_fingerprint(records).sha256
+    source = {"uri": job.SOURCE_URL, "sha256": "a" * 64}
+    if marker != "missing":
+        source["source_fingerprint_hash"] = fingerprint if marker == "current" else "b" * 64
+    manifest = {"release": "2026-10-16", "identity": {"strategy": "source_field", "source_fields": ["zone_id"]},
+                "source_inputs": [source], "validation": {"feature_count": len(records)}}
+    publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = mock.Mock()
+    publisher.bucket.name = "bucket"
+    publisher.bucket.blob.return_value.generation = 1
+    publisher.bucket.blob.return_value.download_as_bytes.side_effect = [json.dumps(manifest).encode(), raw]
+    with mock.patch.object(job.model, "validate_release_manifest", return_value={"metadata": {
+        "path": f"gs://bucket/{job.ASSET.release_object(dt.date(2026, 10, 16), '.metadata.ndjson.gz')}",
+        "generation": 2, "sha256": hashlib.sha256(raw).hexdigest(),
+    }}):
+        baseline = job.load_baseline(publisher)
+    assert baseline.fingerprint_hash == source.get("source_fingerprint_hash", fingerprint)
+    assert baseline.source_sha256 == ("a" * 64 if marker == "current" else None)
+
+
+def test_interrupted_skip_retries_only_checkin_without_losing_run_pointer(tmp_path):
+    from ingestion.common import release_index
+    from tests.test_eamlis_monthly import FakeBucket, FakeClient
+    bucket = FakeBucket()
+    publisher = job.GcsPublisher(FakeClient(bucket), bucket.name)
+    records = sidecar([feature()])
+    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256, "a" * 64, 1)
+    def download(_url, destination, **kwargs):
+        destination.write_text("downloaded source")
+    with mock.patch.object(job, "load_baseline", return_value=baseline) as load, \
+         mock.patch.object(job, "download_file", side_effect=download) as fetch, \
+         mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, {})) as prepare, \
+         mock.patch.object(job, "build_outputs") as build:
+        with mock.patch.object(release_index, "record_latest_run", side_effect=RuntimeError("lost index write")):
+            with pytest.raises(RuntimeError, match="lost index write"):
+                job.ingest(publisher, DAY, tmp_path)
+        result = job.ingest(publisher, DAY, tmp_path)
+    assert result["status"] == "skipped"
+    assert result["source_fingerprint_hash"] == baseline.fingerprint_hash
+    assert load.call_count == fetch.call_count == prepare.call_count == 1
+    build.assert_not_called()
+    run = bucket.blob(job.ASSET.run_record_object(DAY))
+    assert len(run.uploads) == 1
+    index = json.loads(bucket.blob(f"_catalog/releases/{job.ASSET.slug}.json").text)
+    assert index["latest_run"]["run_record_path"] == f"gs://{bucket.name}/{run.name}"
+    assert index["latest_release"] is None

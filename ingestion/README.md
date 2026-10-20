@@ -38,6 +38,9 @@ the owning job package.
 
 ## Default Publishing Semantics
 
+The [source fingerprint contract](../docs/source-fingerprints.md) defines each
+source's comparison inputs, check-ins and recovery boundaries.
+
 Cron jobs should publish only meaningful dataset changes. When the source or
 generated output is unchanged, write a skipped run record for observability and
 leave release and `latest/` dataset artifacts unchanged. Do not repeat this

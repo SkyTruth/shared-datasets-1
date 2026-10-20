@@ -43,6 +43,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(
             re.findall(r"^COPY (\S+) (\S+)$", recipe, re.MULTILINE),
             [
+                ("ingestion/wdpa_monthly/source_fingerprint.py", "/app/ingestion/wdpa_monthly/source_fingerprint.py"),
                 ("ingestion/wdpa_monthly/artifact_bundle.py", "/app/ingestion/wdpa_monthly/artifact_bundle.py"),
                 ("scripts/wdpa_processing_gate.py", "/app/scripts/wdpa_processing_gate.py"),
                 ("ingestion/wdpa_monthly/publication_only.py", "/app/ingestion/wdpa_monthly/publication_only.py"),

@@ -195,6 +195,22 @@ def sample_source_state(*, fingerprint_hash: str = "abc123", feature_count: int 
     )
 
 
+def fixture_download(*, source, dest, page_size):
+    features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [index, 40]},
+                 "properties": {"OBJECTID": index, "PA_NAME": f"Mine {index}"}}
+                for index in range(1, source.stats.feature_count + 1)]
+    dest.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    return eamlis.SourceExtract(dest, len(features), 0)
+
+
+def fixture_fingerprint(source):
+    with tempfile.TemporaryDirectory() as directory:
+        workdir = Path(directory)
+        extract = fixture_download(source=source, dest=workdir / "source.json", page_size=2)
+        translation, _ = eamlis.translation_input(GcsPublisher(FakeClient(FakeBucket()), "test-bucket"), workdir)
+        return eamlis.fingerprint_source(source, extract, translation)
+
+
 def fake_asset_output(
     tmp_path: Path,
     *,
@@ -282,7 +298,7 @@ class EamlisMonthlyTests(unittest.TestCase):
              mock.patch.object(eamlis.localization, "_materialize_locale_sidecar", wraps=eamlis.localization._materialize_locale_sidecar) as each_locale:
             output = fake_asset_output(Path(tmpdir))
             before = {path: path.read_bytes() for path in (output.metadata, output.schema, output.fgb, output.pmtiles)}
-            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
             generated.assert_called_once()
             self.assertEqual(generated.call_args.kwargs["locales"], ("es", "fr"))
             self.assertEqual([call.kwargs["locale"] for call in each_locale.call_args_list], ["es", "fr"])
@@ -310,7 +326,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(blob, "download_to_filename", wraps=blob.download_to_filename) as download:
             output = fake_asset_output(Path(tmpdir))
-            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
             self.assertEqual(download.call_args.kwargs["if_generation_match"], 9)
         self.assertEqual(record["localization"]["translations"]["locales"]["es"]["coverage"], 0.5)
         sidecar = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.es.ndjson.gz"))
@@ -332,7 +348,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 output = fake_asset_output(Path(tmpdir))
                 with mock.patch.object(blob, "download_to_filename", side_effect=problem, wraps=blob.download_to_filename):
                     with self.assertRaises((PreconditionFailed, eamlis.localization.FeatureMetadataLocalizationError)):
-                        eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+                        eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
                 self.assertFalse(any(item.uploads for item in bucket.blobs.values()))
 
     def test_request_json_retries_transient_transport_failure(self):
@@ -377,7 +393,7 @@ class EamlisMonthlyTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ArcGIS returned an error"):
                 eamlis.request_json("https://example.test/layer", {"f": "json"})
 
-    def test_source_fingerprint_includes_edit_dates_and_stats(self):
+    def test_source_probe_retains_edit_dates_and_stats_as_diagnostics(self):
         metadata = sample_metadata(data_last_edit_date=1234)
         fields = eamlis.normalized_fields(metadata)
         with (
@@ -398,7 +414,8 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(state.data_last_edit_date, 1234)
         self.assertEqual(state.stats.feature_count, 7)
         self.assertEqual(state.field_schema_hash, eamlis.stable_hash(fields))
-        self.assertEqual(state.fingerprint["max_date_revised"], 1777546800000)
+        self.assertEqual(state.stats.max_date_revised, 1777546800000)
+        self.assertEqual(state.fingerprint, {})
 
     def test_same_date_completed_run_returns_original_record_without_polling_or_rebuilding(self):
         for status in ("success", "skipped"):
@@ -423,9 +440,11 @@ class EamlisMonthlyTests(unittest.TestCase):
                     mock.patch.object(eamlis, "download_source_geojson") as download,
                     mock.patch.object(eamlis, "build_asset_output") as build,
                     mock.patch.object(GcsPublisher, "record_existing_successful_release", return_value=None) as index,
+                    mock.patch.object(GcsPublisher, "update_latest_run_index", return_value=None) as checkin,
                 ):
                     records = eamlis.run()
-                self.assertEqual(records, [record])
+                self.assertEqual(records, [record if status == "success" else {**record, "release_index": None}])
+                self.assertEqual(checkin.call_count, int(status == "skipped"))
                 fetch.assert_not_called()
                 download.assert_not_called()
                 build.assert_not_called()
@@ -483,6 +502,9 @@ class EamlisMonthlyTests(unittest.TestCase):
             }
         )
         source = sample_source_state(fingerprint_hash="same")
+        content = fixture_fingerprint(source)
+        previous.text = json.dumps({**json.loads(previous.text), "source_fingerprint": content.fingerprint,
+                                    "source_fingerprint_hash": content.fingerprint_hash})
 
         with (
             mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
@@ -490,13 +512,15 @@ class EamlisMonthlyTests(unittest.TestCase):
                 mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
                 mock.patch.object(eamlis, "fetch_source_state", return_value=source),
                 mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-                mock.patch.object(eamlis, "download_source_geojson") as download,
+                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download) as download,
+                mock.patch.object(eamlis, "build_asset_output") as build,
             ):
                 records = eamlis.run()
 
         self.assertEqual(records[0]["status"], "skipped")
         self.assertEqual(records[0]["reason"], "source fingerprint unchanged")
-        self.assertFalse(download.called)
+        self.assertTrue(download.called)
+        build.assert_not_called()
         run_blob = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
         self.assertEqual(run_blob.uploads[0][1], 0)
 
@@ -535,7 +559,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 mock.patch.object(eamlis, "require_binary", lambda _binary: None),
                 mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
                 mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-                mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
+                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download),
                 mock.patch.object(eamlis, "build_asset_output", return_value=output),
             ):
                 records = eamlis.run()
@@ -591,7 +615,7 @@ class EamlisMonthlyTests(unittest.TestCase):
             record = eamlis.publish_changed_asset(
                 publisher=publisher,
                 run_date=dt.date(2026, 5, 2),
-                source=sample_source_state(fingerprint_hash="new"),
+                source=fixture_fingerprint(sample_source_state(fingerprint_hash="new")),
                 output=output,
             )
 
@@ -624,7 +648,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(record["sha256"]["manifest"], manifest_sha)
         self.assertEqual(json.loads(run_blob.text)["sha256"]["manifest"], manifest_sha)
 
-    def test_output_hash_unchanged_writes_skipped_record_without_publish(self):
+    def test_changed_source_publishes_even_when_fgb_bytes_match(self):
         bucket = FakeBucket()
         previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
         previous.exists = True
@@ -665,17 +689,16 @@ class EamlisMonthlyTests(unittest.TestCase):
                 mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
                 mock.patch.object(eamlis, "fetch_source_state", return_value=source),
                 mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-                mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
+                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download),
                 mock.patch.object(eamlis, "build_asset_output", return_value=output),
             ):
                 records = eamlis.run()
 
-        self.assertEqual(records[0]["status"], "skipped")
-        self.assertEqual(records[0]["reason"], "generated FGB hash unchanged")
+        self.assertEqual(records[0]["status"], "success")
         release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
         release_pmtiles = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".pmtiles"))
-        self.assertFalse(release.uploads)
-        self.assertFalse(release_pmtiles.uploads)
+        self.assertTrue(release.uploads)
+        self.assertTrue(release_pmtiles.uploads)
 
     def test_parse_ogrinfo_summary_from_text_output(self):
         summary = eamlis.parse_ogrinfo_summary(
