@@ -2,9 +2,11 @@
 
 The four dataset-publishing jobs use `ingestion/common/source_fingerprint.py`.
 A fingerprint is a SHA-256 of canonical UTF-8 JSON containing `version: 1`, a
-source-specific `definition`, and all comparison `inputs`. Records store that
-payload as `source_fingerprint` and its digest as `source_fingerprint_hash`.
-Changing a definition requires a new definition name. A raw download hash, edit
+source-specific `definition`, and all comparison `inputs`. Runs compare only
+`source_fingerprint_hash`; normalized reads also retain the input payload as
+`source_fingerprint` for evidence. An identical-byte shortcut can carry forward
+the published normalized hash. Changing a definition requires a new definition
+name. A raw download hash, edit
 clock, release label, failed attempt or skipped check-in cannot establish source
 equality on its own.
 
@@ -123,11 +125,31 @@ remain authoritative. Changes to ZIP ordering, upstream month labels or build
 telemetry alone do not affect the comparison. Published field value types,
 localized values, editorial CSV fields and reviewed identity decisions do.
 
-## MPAtlas
+## MPAtlas: `mpatlas-content-v1`
 
-MPAtlas's final monthly-update implementation is an integration prerequisite.
-Its fingerprint integration and precise definition are completed after that
-branch is frozen, before validation of this PR.
+Inputs are the public v4 zone API URL and the multiset of published source
+`feature_id` (`zone_id`), stored geometry hash and stored properties hash. The
+source validation, null-geometry exclusion, GDAL MakeValid/multi-geometry
+normalization and canonical JSON text for `affiliated_reports`,
+`assessment_projects` and `classes` remain the monthly job's existing rules.
+Original attributes are reattached after geometry repair so GDAL cannot coerce
+timestamps or reinterpret JSON text. No retrieval or release dates enter the hash.
+
+The baseline is the existing generation-pinned published manifest and its
+hash-verified dated sidecar. Future manifests record `source_fingerprint_hash`;
+legacy manual releases derive the same hash from their verified sidecars. An
+identical source-byte SHA-256 can skip source normalization too, provided that
+published source evidence binds it to the current normalized fingerprint. A
+changed fingerprint definition disables that shortcut. Reordered or reformatted
+responses still normalize and compare equal without generating publishable
+artifacts. Both unchanged paths write the run/check-in only.
+
+Limitations: source geometry/properties hash normalization remains authoritative;
+coordinate and nested-array ordering are retained. Null-geometry rows are
+excluded from the published footprint. The current asset has no localization
+sidecars. Missing/corrupt baselines and partial dated publications retain their
+existing reviewed-repair boundary. Source timestamps that are actual published
+attributes remain meaningful; retrieval provenance does not.
 
 ## Check-ins, failures and recovery
 

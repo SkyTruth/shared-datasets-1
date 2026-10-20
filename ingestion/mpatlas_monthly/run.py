@@ -16,7 +16,7 @@ from typing import Any, Iterable, Mapping
 from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata as fm, vector_pipeline
+from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
@@ -27,7 +27,6 @@ from scripts import release_feature_model as model
 LOGGER = logging.getLogger("mpatlas_monthly")
 SOURCE_URL = "https://guide.mpatlas.org/api/public/v4/zone/geojson/"
 LAYER = "mpatlas_zone_assessments"
-CONTENT_HASH_VERSION = "mpatlas-canonical-features-v1"
 NESTED_FIELDS = frozenset({"affiliated_reports", "assessment_projects", "classes"})
 
 
@@ -43,7 +42,7 @@ ASSET = AssetSpec()
 @dataclass(frozen=True)
 class Baseline:
     release: str
-    content_hash: str
+    fingerprint_hash: str
     source_sha256: str | None
     row_count: int
 
@@ -60,10 +59,15 @@ class Outputs:
     schema_payload: dict[str, Any]
 
 
-def content_hash(records: Iterable[Mapping[str, Any]]) -> str:
-    """Compare stored geometry/properties, independent of release and row order."""
-    identities = sorted((r["feature_id"], r["geometry_hash"], r["properties_hash"]) for r in records)
-    return fm.sha256_hex(fm.canonical_json([CONTENT_HASH_VERSION, identities]))
+def source_fingerprint(records: Iterable[Mapping[str, Any]]) -> fingerprints.Fingerprint:
+    """Hash published identities and normalized content, without row/date order."""
+    return fingerprints.Fingerprint("mpatlas-content-v1", {
+        "source": SOURCE_URL,
+        "features": fingerprints.unordered_digest(
+            {key: row[key] for key in ("feature_id", "geometry_hash", "properties_hash")}
+            for row in records
+        ),
+    })
 
 
 def load_baseline(publisher: GcsPublisher) -> Baseline:
@@ -93,9 +97,15 @@ def load_baseline(publisher: GcsPublisher) -> Baseline:
     validation = model.validate_sidecar_records(records, expected_asset_slug=ASSET.slug, expected_release=release)
     if not validation.valid or validation.feature_count != manifest["validation"]["feature_count"]:
         raise RuntimeError(f"Invalid MPAtlas baseline metadata: {validation.errors}")
-    source_hashes = [item["sha256"] for item in manifest["source_inputs"]
-                     if item.get("uri") == SOURCE_URL and "sha256" in item]
-    return Baseline(release, content_hash(records), source_hashes[0] if source_hashes else None, len(records))
+    fingerprint = source_fingerprint(records)
+    sources = [item for item in manifest["source_inputs"] if item.get("uri") == SOURCE_URL]
+    stored_hashes = [item["source_fingerprint_hash"] for item in sources if "source_fingerprint_hash" in item]
+    # A byte shortcut also binds the normalized-hash definition. Legacy manual
+    # releases use their verified published sidecar for the first comparison.
+    source_hashes = [item["sha256"] for item in sources
+                     if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
+    return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
+                    source_hashes[0] if source_hashes else None, len(records))
 
 
 def prepare_source(source: Path, output: Path) -> dict[str, int]:
@@ -201,7 +211,8 @@ def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[st
         if existing["status"] == "success":
             publisher.record_existing_successful_release(ASSET, run_date)
         else:
-            publisher.update_latest_run_index(asset=ASSET, payload=existing)
+            publisher.update_latest_run_index(asset=ASSET, payload=existing,
+                run_record_info={"path": f"gs://{publisher.bucket.name}/{ASSET.run_record_object(run_date)}"})
         return existing
     publisher.assert_no_partial_release(ASSET, run_date)
     baseline = load_baseline(publisher)
@@ -212,16 +223,16 @@ def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[st
     source_hash = sha256_file(source)
     record = {"schema_version": 1, "asset_slug": ASSET.slug, "run_date": run_date.isoformat(),
               "release_date": run_date.isoformat(), "source": SOURCE_URL, "source_version": source_hash,
-              "source_sha256": source_hash, "content_hash_version": CONTENT_HASH_VERSION}
+              "source_sha256": source_hash}
     if source_hash == baseline.source_sha256:
-        record.update(status="skipped", reason="source SHA-256 unchanged", row_count=baseline.row_count,
-                      content_hash=baseline.content_hash)
+        record.update(status="skipped", reason="source fingerprint unchanged", row_count=baseline.row_count,
+                      source_fingerprint_hash=baseline.fingerprint_hash)
         return write_record(publisher, run_date, record)
     enriched, records, counts = prepare_metadata(source, workdir, run_date)
-    fingerprint = content_hash(records)
-    record.update(content_hash=fingerprint, source_stats=counts, row_count=len(records))
-    if fingerprint == baseline.content_hash:
-        record.update(status="skipped", reason="canonical feature content unchanged")
+    fingerprint = source_fingerprint(records)
+    record.update(**fingerprint.record_fields(), source_stats=counts, row_count=len(records))
+    if fingerprint.sha256 == baseline.fingerprint_hash:
+        record.update(status="skipped", reason="source fingerprint unchanged")
         return write_record(publisher, run_date, record)
     outputs = build_outputs(enriched, records, workdir, run_date)
     tools = toolchain()
@@ -229,9 +240,9 @@ def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[st
     bundle = vector_pipeline.publish_vector_bundle(
         publisher=publisher, asset=ASSET, run_date=run_date, outputs=outputs,
         object_metadata={"asset_slug": ASSET.slug, "run_date": run_date.isoformat(),
-                         "source_sha256": source_hash, "content_hash": fingerprint},
+                         "source_sha256": source_hash, "source_fingerprint_hash": fingerprint.sha256},
         source_inputs=[{"uri": SOURCE_URL, "sha256": source_hash, "size": source.stat().st_size,
-                        "tools": tools}],
+                        "source_fingerprint_hash": fingerprint.sha256, "tools": tools}],
         identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
     )
     record.update(status="success", release_path=f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
