@@ -285,7 +285,7 @@ jobs:
           set -euo pipefail
 
           python scripts/terraform_plan_allowlist.py "${RUNNER_TEMP}/mpatlas-monthly.tfplan.json" \
-            --allowed-exact="$(printf '%s\n' 'module.mpatlas_monthly_job.google_cloud_run_v2_job.this' 'google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker' 'module.mpatlas_monthly_scheduler.google_cloud_scheduler_job.this' 'google_iam_deny_policy.canonical_destructive_actions[0]')" --block-deletes \
+            --block-deletes \
             --job-image-target=mpatlas-monthly --expected-image="${MPATLAS_MONTHLY_IMAGE}" \
             --refusal-prefix="Refusing mpatlas-monthly deploy"
 
