@@ -28,7 +28,11 @@ def retained_fingerprint(paths, facts, source_fields, workdir: Path):
             key = row["identity_key"]
             if row["feature_id"] in identities:
                 raise ValueError("duplicate retained WDPA feature identity")
-            identities[row["feature_id"]] = key
+            identities[row["feature_id"]] = {
+                "identity_key": key,
+                "geometry_hash": row["geometry_hash"],
+                "properties_hash": row["properties_hash"],
+            }
             yield {
                 "geometry_hash": row["geometry_hash"],
                 "properties": row["properties"],
@@ -60,7 +64,7 @@ def retained_fingerprint(paths, facts, source_fields, workdir: Path):
                 # Orphans remain meaningful translation-maintenance evidence.
                 feature_id = row.pop("feature_id")
                 yield {
-                    "identity_key": identities.get(feature_id, ["orphan", feature_id]),
+                    "feature": identities.get(feature_id, {"orphan": feature_id}),
                     **row,
                 }
 

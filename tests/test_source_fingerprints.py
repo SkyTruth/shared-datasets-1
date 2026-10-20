@@ -232,6 +232,7 @@ def retained_paths(tmp_path):
             "identity_key": [str(i)],
             "release": "2026-10-01",
             "geometry_hash": "sha256:" + str(i) * 64,
+            "properties_hash": "sha256:" + "a" * 64,
             "provenance": {"retrieved": "today"},
             "properties": {"SITE_PID": str(i), "NAME": f"Park {i}"},
         }
@@ -435,3 +436,27 @@ def test_eamlis_partial_release_cannot_be_converted_to_a_skip(monkeypatch):
     with pytest.raises(RuntimeError, match="partial release"):
         eamlis.run()
     source.assert_not_called()
+
+
+def test_wdpa_translation_evidence_keeps_distinct_features_with_a_shared_source_key(
+    tmp_path,
+):
+    paths = retained_paths(tmp_path)
+    records = [
+        json.loads(line)
+        for line in gzip.decompress(paths["metadata"].read_bytes()).splitlines()
+    ]
+    for record in records:
+        record["identity_key"] = ["shared-site"]
+    paths["metadata"].write_bytes(
+        gzip.compress("".join(json.dumps(row) + "\n" for row in records).encode())
+    )
+    original = wdpa_fingerprint(paths, tmp_path)
+    path = paths["metadata_translations"]
+    path.write_text(
+        path.read_text()
+        .replace("Parque dos", "TEMP")
+        .replace("Parque,", "Parque dos,")
+        .replace("TEMP", "Parque")
+    )
+    assert original != wdpa_fingerprint(paths, tmp_path)

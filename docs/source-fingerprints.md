@@ -99,7 +99,8 @@ size, SHA-256, both realm predecessors and allocations before publication. It th
 reads the approved canonical/locale sidecars, schema and translation CSV. Each
 realm fingerprint includes canonical and localized geometry hashes, source
 properties and source identity keys; sorted source/schema field definitions;
-translation CSV rows joined from generated `feature_id` to source identity key;
+translation CSV rows joined from generated `feature_id` to source identity key
+and stored geometry/properties hashes;
 maintained translation fields/locales; and identity contract.
 Orphan translation rows retain their original key. Generated IDs, release dates,
 provenance/retrieval fields and sidecar compression/order do not affect equality.

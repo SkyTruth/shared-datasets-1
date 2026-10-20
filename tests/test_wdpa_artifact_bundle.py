@@ -85,7 +85,7 @@ def built(tmp_path, request, monkeypatch):
             path = directory / (asset.slug + "." + role)
             if role == "metadata" or role.startswith("metadata_") and role != "metadata_translations":
                 path.write_bytes(gzip.compress((json.dumps({"feature_id": "1", "identity_key": ["site-1"],
-                    "geometry_hash": "sha256:" + "a" * 64, "properties": {"SITE_PID": "site-1", "NAME": "Park"}}) + "\n").encode()))
+                    "geometry_hash": "sha256:" + "a" * 64, "properties_hash": "sha256:" + "b" * 64, "properties": {"SITE_PID": "site-1", "NAME": "Park"}}) + "\n").encode()))
             elif role == "schema":
                 path.write_text(json.dumps({"fields": [{"name": "SITE_PID", "type": "String"}]}))
             elif role == "metadata_translations":
