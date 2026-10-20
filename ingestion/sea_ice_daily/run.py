@@ -664,27 +664,6 @@ def publish_outputs(
 
 
 
-def load_existing_successful_release(
-    *,
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-    run_date: dt.date,
-) -> dict[str, Any] | None:
-    loaded = publisher.load_successful_run_record(asset, run_date)
-    if loaded is None:
-        return None
-    record, _run_record_info = loaded
-    issue = publisher.release_metadata_contract_issue(asset, record)
-    if issue:
-        raise RuntimeError(
-            f"{asset.slug} already has a successful run record for {run_date.isoformat()}, "
-            f"but the release metadata contract is invalid: {issue}. "
-            "Repair the release through a reviewed dataset publish plan before refreshing "
-            "the release index."
-        )
-    return record
-
-
 def metadata_for_source(
     *,
     asset: AssetSpec,
@@ -765,8 +744,9 @@ def run() -> dict[str, Any]:
 
         fingerprint = fingerprint_source(downloaded, source_tif, workdir)
         if fingerprint.matches(previous):
-            load_existing_successful_release(publisher=publisher, asset=ASSET,
-                run_date=dt.date.fromisoformat(previous["release_date"]))
+            issue = publisher.release_metadata_contract_issue(ASSET, previous)
+            if issue:
+                raise RuntimeError(f"{ASSET.slug} published metadata contract is invalid: {issue}; use a reviewed repair")
             record = add_source_request_warnings({
                 "schema_version": 1, "asset_slug": ASSET.slug,
                 "run_date": anchor_day.isoformat(), "release_date": previous["release_date"],
@@ -780,8 +760,7 @@ def run() -> dict[str, Any]:
             record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=record)
             return record
         # A changed or legacy input must never overwrite an immutable daily item.
-        existing_record = load_existing_successful_release(publisher=publisher, asset=ASSET, run_date=release_day)
-        if existing_record is not None:
+        if previous is not None and previous["release_date"] == release_day.isoformat():
             raise RuntimeError("IMS source differs from or lacks the published fingerprint for this date; "
                                "use a reviewed correction rather than replacing the daily release")
         publisher.assert_no_partial_release(ASSET, release_day)

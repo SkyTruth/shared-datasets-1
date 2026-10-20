@@ -174,9 +174,9 @@ class OwnedGeneratedPublisher(GcsPublisher):
         p.require(state["active"] is None, "publication is incomplete; resume its original execution")
         if state["current"]["receipt_uri"] == state["adoption_receipt"]:
             return None
-        loaded = self.load_successful_run_record(asset, dt.date.fromisoformat(state["current"]["release"]))
-        p.require(loaded is not None, "committed successful run is missing")
-        record, _info = loaded
+        receipt = self.store.read_json(state["current"]["receipt_uri"])
+        p.require(receipt is not None, "committed successful receipt is missing")
+        record = self.result(receipt.value)
         p.require(record.get("status") == "success", "committed publication run is not successful")
         return record
 
