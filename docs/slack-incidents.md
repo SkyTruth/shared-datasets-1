@@ -14,6 +14,13 @@ its completion also triggers the incident replay described below. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
 under the same workflow and incident identity.
 
+The hourly catalog input probe is read-only. An unchanged comparison skips the
+catalog deployment job. If only that probe fails (for example, an unavailable
+credential service) and authoritative same-attempt jobs prove the publisher was
+skipped, it remains a failed Actions check without opening or resolving a Slack
+incident. An allocated publisher failure still alerts. Historical catalog runs
+without this probe retain their original failure and recovery evidence.
+
 ## Recovery contract
 
 The scope includes the exact deployment target, or exact workflow and job when

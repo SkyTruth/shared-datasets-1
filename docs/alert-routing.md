@@ -132,7 +132,10 @@ workflow identity and exact current run attempt, then checks its actual jobs.
 Publication failures and failed deployment jobs after passing `ci-ready` are
 announced; ordinary PR and validation-only
 failures stay in GitHub. Failed terminal deployment verification and explicit
-read-only reconciliation also remain visible in Slack. Every subscribed source
+read-only reconciliation also remain visible in Slack. A scheduled catalog input
+probe stays in Actions when same-attempt job evidence proves the publisher was
+skipped and no other job failed. Actual catalog deployment failures still alert.
+Every subscribed source
 workflow is checked against its authoritative API identity; completion events
 superseded by a newer attempt become no-ops. Repository announcements are
 selected from every commit in the complete main-push range, using existing CI

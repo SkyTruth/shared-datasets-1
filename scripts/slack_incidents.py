@@ -172,6 +172,8 @@ def source_observations(api, event, targets):
     if run["conclusion"] not in alerts.FAILED_CONCLUSIONS | {"success"}:
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
+    if alerts.catalog_probe_only(run, jobs):
+        return []  # Neither a deployment failure nor evidence of recovery.
     if run["name"] == "CI":
         if run["event"] != "push":
             return []

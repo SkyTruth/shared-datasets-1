@@ -679,6 +679,22 @@ def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity(name,
         assert incidents.source_observations(api, event, {}) == []
 
 
+@pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled", "timed_out"])
+def test_idle_catalog_probe_neither_opens_nor_resolves_an_incident(conclusion):
+    api = mock.Mock()
+    run = {"id": 100, "run_attempt": 1, "name": "Catalog web deploy", "event": "schedule", "head_sha": SHA,
+           "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
+           "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}
+    event = {"workflow_run": run, "repository": {"full_name": incidents.REPOSITORY}}
+    api.pages.return_value = [
+        {"id": 1, "name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion, "completed_at": run["updated_at"]},
+        {"id": 2, "name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped", "completed_at": run["updated_at"]},
+    ]
+    with mock.patch.object(incidents.alerts, "verify_source_event", return_value=True) as verify:
+        assert incidents.source_observations(api, event, {}) == []
+    verify.assert_called_once_with(api, run)
+
+
 def test_batch_signatures_bind_exact_checkpoint_and_keep_production_single_subject_default():
     record = signed_record()
     status = {"id": 12, "state": "success", "description": "applied", "log_url": emissions.invocation(incidents.REPOSITORY, 11, 1)}

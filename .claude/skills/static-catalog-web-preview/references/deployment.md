@@ -10,11 +10,28 @@ publication workflow owns the refresh instead, so there is no duplicate deploy.
 Automatic refreshes retain the protected publisher, serialized signed receipts,
 generation-preconditioned writes, live verification and no-cache metadata.
 
-The same protected workflow runs hourly at minute 17 to refresh release history
-after scheduled ingestion. It requires passing `ci-ready` for the scheduled
-main revision. The existing bundle digest skips publication when the same
-revision and release-index snapshot are already deployed; changed indexes can
-refresh the same revision. No ingestion IAM or dataset writes are added.
+An hourly read-only probe at minute 17 compares a generation-pinned release-index
+snapshot and repo metadata with the published CSV and catalog JSON, using the
+same comparison as live publication acceptance. It ignores `generated_at` alone.
+Only changed catalog data selects the protected deployment job; idle probes skip
+its tests, signing, deployment records and publication. Repo changes and reviewed
+dataset mutations retain their existing event-driven refresh paths.
+
+The probe uses the existing protected publisher identity solely for GCS reads;
+its GitHub permissions allow only contents reads and OIDC authentication. It has
+no deployment or attestation write permissions and adds no IAM grants. Failed
+reads or malformed snapshots fail the probe without producing a selection.
+When this scheduled probe is the only attempted work and the publisher was
+skipped, its result stays in Actions and creates no Slack deployment incident.
+Failures of an allocated publisher job still alert. This does not resolve an
+existing incident or prove a successful deployment.
+
+Selected deployments still require passing `ci-ready` for the scheduled main
+revision. The existing bundle digest skips publication when the same revision
+and release-index snapshot are already deployed; changed indexes can refresh the
+same revision. Pending differences are checked again on the next hourly probe;
+this gate is not a retry budget or a replacement for failed-deployment recovery.
+No ingestion IAM or dataset writes are added.
 
 After trusted PRs merge to `main`, the post-merge dataset mutation workflow
 runs first, including finalization of prepared translation bundles. When it
