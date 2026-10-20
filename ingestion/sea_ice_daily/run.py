@@ -743,14 +743,22 @@ def run() -> dict[str, Any]:
         remove_if_exists(downloaded.gz_path)
 
         fingerprint = fingerprint_source(downloaded, source_tif, workdir)
-        if fingerprint.matches(previous):
+        # Completed records from the deployed publisher predate fingerprints.
+        # Keep their immutable daily item idempotent without inventing a baseline.
+        legacy_completed_item = (
+            previous is not None and "source_fingerprint_hash" not in previous
+            and previous["release_date"] == release_day.isoformat()
+            and previous.get("source_filename") == downloaded.source_filename
+        )
+        if fingerprint.matches(previous) or legacy_completed_item:
             issue = publisher.release_metadata_contract_issue(ASSET, previous)
             if issue:
                 raise RuntimeError(f"{ASSET.slug} published metadata contract is invalid: {issue}; use a reviewed repair")
             record = add_source_request_warnings({
                 "schema_version": 1, "asset_slug": ASSET.slug,
                 "run_date": anchor_day.isoformat(), "release_date": previous["release_date"],
-                "status": "skipped", "reason": "source fingerprint unchanged",
+                "status": "skipped",
+                "reason": "latest available source already published" if legacy_completed_item else "source fingerprint unchanged",
                 "source": downloaded.source_url, "source_url": downloaded.source_url,
                 "source_version": downloaded.source_filename, "source_filename": downloaded.source_filename,
                 "source_filename_date": downloaded.filename_date.isoformat(),
@@ -759,7 +767,7 @@ def run() -> dict[str, Any]:
             }, source_request_warnings)
             record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=record)
             return record
-        # A changed or legacy input must never overwrite an immutable daily item.
+        # A changed input must never overwrite an immutable daily item.
         if previous is not None and previous["release_date"] == release_day.isoformat():
             raise RuntimeError("IMS source differs from or lacks the published fingerprint for this date; "
                                "use a reviewed correction rather than replacing the daily release")

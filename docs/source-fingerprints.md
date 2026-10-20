@@ -75,10 +75,14 @@ The release date remains the documented valid date (filename date plus one day),
 and `ice_date` remains the filename date. Feature identity continues to exclude
 `ice_date` from its properties hash; fingerprinting does not change ID assignment.
 
-A changed or unverifiable input under an already committed filename/date fails
-for reviewed correction instead of overwriting that item. A legacy daily item
-without this fingerprint cannot prove equality; a new daily filename proceeds
-normally. No-source check-ins retain their existing availability behavior.
+A changed fingerprint under an already committed filename/date fails for reviewed
+correction instead of overwriting that item. Completed legacy daily items have no
+fingerprint: when both filename and release date match, the existing metadata
+contract check and completed-item check-in remain idempotent. This does not
+establish or advance a successful fingerprint. A new daily filename proceeds
+normally and its publication records the first fingerprint. This persisted-data
+bridge can be removed once all current production items carry fingerprints.
+No-source check-ins retain their existing availability behavior.
 
 Limitations: all raster classes count, including changes outside class 3. Such a
 change can conservatively produce a release with equivalent ice geometry. Source

@@ -460,3 +460,129 @@ def test_wdpa_translation_evidence_keeps_distinct_features_with_a_shared_source_
         .replace("TEMP", "Parque")
     )
     assert original != wdpa_fingerprint(paths, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "legacy_completed",
+        "legacy_new_day",
+        "current_changed",
+        "legacy_invalid_metadata",
+    ],
+)
+def test_sea_ice_persisted_completed_item_migration(tmp_path, monkeypatch, case):
+    from types import SimpleNamespace
+    from tests.test_owned_publication import DATE, outputs_fixture, publisher_fixture
+
+    asset = sea_ice.ASSET
+    monkeypatch.setattr(
+        "ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+        Mock(return_value=SimpleNamespace(valid=True, errors=())),
+    )
+    publisher, store = publisher_fixture(asset)
+    outputs = outputs_fixture(tmp_path, asset)
+    source_day = DATE - dt.timedelta(days=1)
+    old_source = sea_ice.AvailableSource(
+        source_day, "https://example.test/ims", sea_ice.ims_filename_for_day(source_day)
+    )
+    original = fp.Fingerprint("fixture", {"filename": old_source.source_filename})
+    readme = tmp_path / "README.md"
+    readme.write_text("# Sea ice\n")
+    # Capture the actual historical payload before serialization, never by
+    # rewriting a committed receipt. Legacy producers emitted no fingerprint.
+    sea_ice.publish_outputs(
+        publisher=publisher,
+        asset=asset,
+        outputs=outputs,
+        source=old_source,
+        asset_readme=readme,
+        fingerprint=original
+        if case == "current_changed"
+        else SimpleNamespace(record_fields=lambda: {}),
+    )
+    before = deepcopy(publisher.state(asset).value)
+    artifacts = {
+        uri: store.inspect(uri).identity()
+        for uri in store.objects
+        if uri.startswith(f"gs://bucket/{asset.root}/")
+        and any(part in uri for part in ("/releases/", "/latest/", "/runs/"))
+    }
+    publisher, _ = publisher_fixture(asset, execution="check-after-deploy", store=store)
+    monkeypatch.setattr(
+        publisher,
+        "blob_exists",
+        lambda name: store.head(f"gs://bucket/{name}") is not None,
+    )
+    source_day += dt.timedelta(days=case == "legacy_new_day")
+    source = sea_ice.AvailableSource(
+        source_day, "https://example.test/ims", sea_ice.ims_filename_for_day(source_day)
+    )
+    candidate = fp.Fingerprint(
+        "fixture",
+        {"filename": source.source_filename, "changed": case == "current_changed"},
+    )
+    monkeypatch.setenv("RUN_DATE", source.documented_valid_date.isoformat())
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(
+        sea_ice.GcsPublisher, "from_runtime", Mock(return_value=publisher)
+    )
+    monkeypatch.setattr(sea_ice.storage, "Client", Mock())
+    monkeypatch.setattr(sea_ice, "require_binary", Mock())
+    monkeypatch.setattr(
+        sea_ice,
+        "find_latest_available_source",
+        Mock(return_value=sea_ice.SourceLookupResult(source)),
+    )
+    monkeypatch.setattr(
+        sea_ice,
+        "download_source",
+        Mock(
+            return_value=sea_ice.DownloadedSource(
+                source_day,
+                source.source_url,
+                source.source_filename,
+                tmp_path / "source.tif.gz",
+            )
+        ),
+    )
+    monkeypatch.setattr(sea_ice, "gunzip_file", Mock())
+    monkeypatch.setattr(sea_ice, "fingerprint_source", Mock(return_value=candidate))
+    metadata_guard = Mock(
+        return_value="broken metadata" if case == "legacy_invalid_metadata" else None
+    )
+    monkeypatch.setattr(publisher, "release_metadata_contract_issue", metadata_guard)
+    monkeypatch.setattr(publisher, "load_generated_identity_baseline", Mock())
+    monkeypatch.setattr(
+        sea_ice.feature_metadata.release_feature_model,
+        "load_identity_resolution_decisions",
+        Mock(return_value=None),
+    )
+    build = Mock(side_effect=RuntimeError("artifact build selected"))
+    monkeypatch.setattr(sea_ice, "build_outputs", build)
+
+    if case == "legacy_completed":
+        record = sea_ice.run()
+        assert record["status"] == "skipped"
+        assert record["reason"] == "latest available source already published"
+        metadata_guard.assert_called_once()
+        index = store.read_json(
+            f"gs://bucket/_catalog/releases/{asset.slug}.json"
+        ).value
+        assert index["latest_release"]["date"] == DATE.isoformat()
+        assert index["latest_run"]["status"] == "skipped"
+    else:
+        error = {
+            "legacy_new_day": "artifact build selected",
+            "current_changed": "reviewed correction",
+            "legacy_invalid_metadata": "broken metadata",
+        }[case]
+        with pytest.raises(RuntimeError, match=error):
+            sea_ice.run()
+    assert build.call_count == (case == "legacy_new_day")
+    after = publisher.state(asset).value
+    assert after["current"] == before["current"]
+    assert after["reserved_next_feature_id"] == before["reserved_next_feature_id"]
+    assert {uri: store.inspect(uri).identity() for uri in artifacts} == artifacts
+    successful = publisher.latest_success_record(asset)
+    assert ("source_fingerprint_hash" in successful) == (case == "current_changed")
