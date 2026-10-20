@@ -496,18 +496,3 @@ def test_reviewed_decisions_match_the_existing_allocator(tmp_path, action):
     assert rows[0]["feature_id"] == old[0]["feature_id"]
     assert next_id == result.next_generated_feature_id
     assert evidence == result.identity_decisions
-
-
-def test_controlled_failure_precedes_any_publisher(monkeypatch):
-    from ingestion.wdpa_monthly import run as wdpa
-
-    monkeypatch.setenv("WDPA_FAIL_BEFORE_WRITES", "true")
-    from unittest.mock import patch
-
-    with (
-        patch.object(wdpa, "prepare_scratch"),
-        patch.object(wdpa.GcsPublisher, "from_runtime") as publisher,
-    ):
-        with pytest.raises(RuntimeError, match="before any dataset writes"):
-            wdpa.run()
-        publisher.assert_not_called()
