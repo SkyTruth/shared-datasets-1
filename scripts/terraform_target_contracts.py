@@ -129,10 +129,15 @@ def check_graph(root: Path, graph: dict[str, set[str]]) -> dict:
         retired = retired_by_job.get(key, [])
         if not isinstance(retired, list) or not all(isinstance(node, str) for node in retired) or len(retired) != len(set(retired)) or any(address(node) != node or node not in targets or node not in owned or node in graph for node in retired):
             raise ValueError(key + ': retired target must remain absent and explicitly owned by this workflow')
-        paths = closure(graph, targets - set(retired))
-        for node, path in paths.items():
-            if not DATA.match(node) and node not in permitted:
-                errors.append(key + ': undeclared managed prerequisite: ' + ' -> '.join(path))
+        paths = {}
+        # A shared ancestor must report every affected target. One combined BFS
+        # hides earlier refusal paths when a new target reaches the same node.
+        for target in sorted(targets - set(retired)):
+            reachable = closure(graph, {target})
+            paths.update(reachable)
+            for node, path in reachable.items():
+                if not DATA.match(node) and node not in permitted:
+                    errors.append(key + ': undeclared managed prerequisite: ' + ' -> '.join(path))
         results[key] = {'targets': sorted(targets), 'managed_prerequisites': sorted(node for node in paths if not DATA.match(node) and node not in owned)}
     if errors:
         raise ValueError('TERRAFORM_TARGET_OWNERSHIP:\n' + '\n'.join(errors))
