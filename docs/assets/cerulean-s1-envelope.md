@@ -20,12 +20,12 @@ source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
   confirmation.
-notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. The 2026-10-20 manual refresh uses maintainer-supplied
-  envelope.csv (SHA-256 91ea498fb4a2f994d4cabf964f2c6ac62d68a790b516e99ab0a822552042b9fe), preserves one feature with feature_id
-  1, updates its valid WGS84 MultiPolygon from 64 to 152 parts, and retains metadata-lookup PMTiles at zooms 0-6. The geometry
-  is preserved exactly in FGB. No source attributes or translations are present; source generation method and redistribution
-  terms remain unconfirmed. The reviewed proposal also carries forward the historical next-ID value 2 into explicit versioned
-  sequence state without allocating new IDs.
+notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. The 2026-10-20 same-day correction uses maintainer-supplied
+  envelope_fixed.csv (SHA-256 5a8637da1be0f2a9231dcb6864a1da5f297e2e6ac82facf33366895b2fc12e5a), preserves one feature with
+  feature_id 1, and replaces the earlier 152-part geometry with a valid 144-part WGS84 MultiPolygon containing 36,617 coordinate
+  positions. Geometry is preserved exactly in FGB; metadata-lookup PMTiles retain zooms 0-6. No source attributes or translations
+  are present; source generation method and redistribution terms remain unconfirmed. Existing generated-ID sequence state
+  remains at next-ID 2.
 bounds:
 - -179.3667585675504
 - -78.65518002892276
@@ -119,7 +119,7 @@ files:
 ## What this is
 
 This asset contains a SkyTruth internal derived Cerulean Sentinel-1 analysis
-envelope refreshed from the maintainer-supplied `envelope.csv` on 2026-10-20.
+envelope corrected from the maintainer-supplied `envelope_fixed.csv` on 2026-10-20.
 The source CSV has one `wkt` column and one valid WGS84 `MultiPolygon` feature;
 the original 2026-05-01 input was named `s1 footprint wkt.csv`.
 
@@ -163,7 +163,7 @@ display and metadata lookup only.
 ## Schema notes
 
 Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
-`MultiPolygon` with 152 polygon parts, 38,398 coordinate positions, and bounds
+`MultiPolygon` with 144 polygon parts, 36,617 coordinate positions, and bounds
 `(-179.366759, -78.655180) - (179.589310, 87.386157)`. The published FlatGeobuf has one feature in layer
 `cerulean_s1_envelope`.
 
@@ -247,7 +247,7 @@ the source has no human-readable metadata fields to localize.
 
 ### 2026-10-20 footprint refresh
 
-The proposed release replaces the envelope geometry with the maintainer-supplied
+The initial 2026-10-20 release replaced the envelope geometry with the maintainer-supplied
 `envelope.csv` (SHA-256
 `91ea498fb4a2f994d4cabf964f2c6ac62d68a790b516e99ab0a822552042b9fe`).
 The FGB preserves all source coordinates exactly: one valid WGS84 multipolygon,
@@ -256,12 +256,11 @@ The FGB preserves all source coordinates exactly: one valid WGS84 multipolygon,
 the `feature_id` lookup property. The three FGB identity columns and empty
 metadata schema are unchanged. No human-readable fields need translation.
 
-The release-scoped decision in
-`catalog/feature-identity-resolutions/cerulean-s1-envelope.json` proposes retaining
+The release-scoped decision reviewed in PR #275 retained
 `feature_id = 1`: this is the same singleton analysis envelope with a refreshed
 geometry. Its new geometry hash is
 `sha256:ead48b52064f1fc0213348dc9c81ae4a052cb11c2b74cf4d7167627593192477`;
-the empty-properties hash is unchanged. Approval of that decision is part of the
+the empty-properties hash was unchanged. That decision was accepted with the
 immutable publish-plan PR.
 
 The proposal also makes the existing identity history explicit under contract
@@ -296,6 +295,43 @@ The protected publisher fills destination generations into the manifest and run
 record after promotion, then rebuilds the release index. Historical releases
 remain available. The catalog deployment workflow refreshes the web catalog
 after the approved mutation.
+
+### 2026-10-20 corrected footprint
+
+The maintainer subsequently supplied `envelope_fixed.csv` and requested replacing
+the earlier same-day release. Source SHA-256:
+`5a8637da1be0f2a9231dcb6864a1da5f297e2e6ac82facf33366895b2fc12e5a`.
+
+This correction replaces all five artifacts in both `releases/2026-10-20/`
+and `latest/`, plus the matching run record, README and catalog metadata.
+Every replacement is pinned to its observed destination generation. Earlier
+dated releases remain unchanged. Consumers that cached the initial October 20
+release should fetch the corrected artifacts and manifest again; the release
+date alone does not distinguish these two revisions.
+
+The corrected source is one valid WGS84 MultiPolygon with 144 parts and 36,617
+coordinate positions. Its bounds are unchanged. FGB preserves its coordinates
+exactly, and PMTiles retains zooms 0-6 with only `feature_id`.
+There are no schema, feature-ID, source-term or access changes.
+
+The release-scoped identity resolution retains ID `1` for the same singleton
+envelope. Its corrected geometry hash is
+`sha256:29a8b1a0d166cb162547e1aee1dbab892c99de6fe887b0c0c0e60790c30f1869`;
+the empty-properties hash is unchanged. The baseline is the initial October 20
+manifest at generation `1792504542077545`, SHA-256
+`8c750ab1dc7932bd4767c469dcc2e65e097eb199a8393c8394b5d85c851b6e04`.
+Its verified versioned sequence state supplies next-ID `2`, which remains `2`
+after this correction. The earlier refresh decision remains in merged PR #275;
+the current resolution file describes this correction.
+
+The same pinned GDAL 3.6.2, Tippecanoe 2.52.0 and PMTiles 1.30.1 image was used.
+Archive verification, metadata inspection and representative tile decoding passed.
+Corrected artifact SHA-256 values before protected manifest finalization:
+
+- fgb: `28fc65e1ca8b302823528f57c829d3aa50060fdd67d2327dd0b082b76aedfc30`
+- pmtiles: `37dea6e1cf4c320967c11820179d02ec8d3e74953dbdacb0f36d044a6bf56bc9`
+- metadata: `02c55760b47f05816f9c7fdad2e3794fff6e730ab5235f5ea4e1c72e9bcd0808`
+- schema: `cdd8ceaf1de9288ed89468c64f9a43c0428e010986d740187dec727ac42864fc`
 
 ## Known caveats
 
