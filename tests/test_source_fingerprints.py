@@ -289,6 +289,15 @@ def test_wdpa_retained_content_excludes_packaging_order_release_and_retrieval(tm
         "notes,review_state,value,source_value_hash,locale,field,feature_id\n,,Parque dos,hash,es,NAME,102\n,,Parque,hash,es,NAME,101\n"
     )
     assert original == wdpa_fingerprint(paths, tmp_path)
+    assert original == retained_fingerprint(
+        paths,
+        {
+            "identity_contract": "generated-2026-v1",
+            "identity_decisions": {"ambiguities_detected": 99},
+        },
+        [{"name": "SITE_PID", "type": "String"}],
+        tmp_path,
+    )
 
 
 @pytest.mark.parametrize(

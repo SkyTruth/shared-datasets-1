@@ -100,7 +100,7 @@ reads the approved canonical/locale sidecars, schema and translation CSV. Each
 realm fingerprint includes canonical and localized geometry hashes, source
 properties and source identity keys; sorted source/schema field definitions;
 translation CSV rows joined from generated `feature_id` to source identity key;
-maintained translation fields/locales; identity contract and reviewed decisions.
+maintained translation fields/locales; and identity contract.
 Orphan translation rows retain their original key. Generated IDs, release dates,
 provenance/retrieval fields and sidecar compression/order do not affect equality.
 Canonical geometry hashes are the accepted producer's validated geometry evidence.
@@ -122,8 +122,9 @@ does not authorize or introduce one.
 
 Limitations: the accepted producer's geometry hash precision and normalization
 remain authoritative. Changes to ZIP ordering, upstream month labels or build
-telemetry alone do not affect the comparison. Published field value types,
-localized values, editorial CSV fields and reviewed identity decisions do.
+telemetry or per-run identity-decision summary counts do not affect the
+comparison. Published field value types, localized values and editorial CSV
+fields do. Owned publication still validates the reviewed identity decisions.
 
 ## MPAtlas: `mpatlas-content-v1`
 

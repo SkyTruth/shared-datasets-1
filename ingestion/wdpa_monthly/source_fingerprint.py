@@ -76,6 +76,5 @@ def retained_fingerprint(paths, facts, source_fields, workdir: Path):
             "translation_fields": sorted(FIELDS),
             "translation_locales": sorted(LOCALES),
             "identity_contract": facts["identity_contract"],
-            "identity_decisions": facts["identity_decisions"],
         },
     )
