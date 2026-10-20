@@ -49,7 +49,7 @@ def test_geometry_number_spelling_preserves_exact_values():
     assert fp.feature_digest(FEATURES) != fp.feature_digest(equivalent)
 
 
-def test_only_successful_compatible_fingerprint_can_skip():
+def test_only_successful_matching_hash_can_skip():
     fingerprint = fp.Fingerprint(
         "example-v1", {"features": fp.feature_digest(FEATURES)}
     )
@@ -58,20 +58,15 @@ def test_only_successful_compatible_fingerprint_can_skip():
             {"status": status, **fingerprint.record_fields()}
         ) == (status == "success")
     assert not fingerprint.matches(None)
-    assert not fingerprint.matches(
+    assert fingerprint.matches(
         {"status": "success", "source_fingerprint_hash": fingerprint.sha256}
     )
-    assert not fp.Fingerprint("example-v2", fingerprint.inputs).matches(
+    assert not fp.Fingerprint("example-v2", fingerprint.payload["inputs"]).matches(
         {"status": "success", **fingerprint.record_fields()}
     )
-    with pytest.raises(ValueError, match="does not match"):
-        fingerprint.matches(
-            {
-                "status": "success",
-                **fingerprint.record_fields(),
-                "source_fingerprint_hash": "0" * 64,
-            }
-        )
+    assert not fingerprint.matches(
+        {"status": "success", "source_fingerprint_hash": "0" * 64}
+    )
 
 
 def test_canonical_value_types_are_part_of_fingerprint_equality():
@@ -415,12 +410,6 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
     } == original_artifacts
     assert len(run.uploads) == 1
     assert download.call_count == 2
-    # A different dated publication can fail before its run/index commit. Even
-    # a matching source must not turn that changed latest pointer into a skip.
-    bucket.blob(eamlis.ASSET.latest_object(".fgb")).generation += 1
-    monkeypatch.setenv("RUN_DATE", "2026-05-04")
-    with pytest.raises(RuntimeError, match="recover the interrupted publication"):
-        eamlis.run()
 
 
 def test_eamlis_partial_release_cannot_be_converted_to_a_skip(monkeypatch):

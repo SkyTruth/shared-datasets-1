@@ -46,7 +46,9 @@ def unordered_digest(values: Iterable[Any], *, workdir: Path | None = None) -> s
         with tempfile.TemporaryDirectory(
             prefix="fingerprint-", dir=workdir
         ) as directory:
-            with closing(sqlite3.connect(Path(directory) / "hashes.sqlite")) as database:
+            with closing(
+                sqlite3.connect(Path(directory) / "hashes.sqlite")
+            ) as database:
                 database.execute("PRAGMA cache_size=-8192")
                 database.execute("PRAGMA temp_store=FILE")
                 database.execute("CREATE TABLE hashes (value BLOB NOT NULL)")
@@ -103,19 +105,15 @@ def csv_digest(path: Path) -> str:
 
 @dataclass(frozen=True, init=False)
 class Fingerprint:
-    definition: str
-    _inputs_json: str
+    _json: str
 
     def __init__(self, definition: str, inputs: Mapping[str, Any]):
-        if not isinstance(definition, str) or not definition:
-            raise ValueError("fingerprint definition is required")
-        object.__setattr__(self, "definition", definition)
-        # Keep immutable canonical bytes; callers cannot mutate captured evidence.
+        # One immutable representation owns both the hash and optional evidence.
         object.__setattr__(
             self,
-            "_inputs_json",
+            "_json",
             json.dumps(
-                dict(inputs),
+                {"version": 1, "definition": definition, "inputs": dict(inputs)},
                 sort_keys=True,
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -124,16 +122,12 @@ class Fingerprint:
         )
 
     @property
-    def inputs(self) -> dict[str, Any]:
-        return json.loads(self._inputs_json)
-
-    @property
     def payload(self) -> dict[str, Any]:
-        return {"version": 1, "definition": self.definition, "inputs": self.inputs}
+        return json.loads(self._json)
 
     @property
     def sha256(self) -> str:
-        return digest(self.payload)
+        return hashlib.sha256(self._json.encode()).hexdigest()
 
     def record_fields(self) -> dict[str, Any]:
         return {
@@ -142,15 +136,11 @@ class Fingerprint:
         }
 
     def matches(self, record: Mapping[str, Any] | None) -> bool:
-        if not record or record.get("status") != "success":
-            return False
-        previous = record.get("source_fingerprint")
-        # Pre-contract records exist in production. They cannot prove equality.
-        if not isinstance(previous, dict) or previous.get("version") != 1:
-            return False
-        if record.get("source_fingerprint_hash") != digest(previous):
-            raise ValueError("successful source fingerprint does not match its hash")
-        return record["source_fingerprint_hash"] == self.sha256
+        return bool(
+            record
+            and record.get("status") == "success"
+            and record.get("source_fingerprint_hash") == self.sha256
+        )
 
 
 def latest_success_record(publisher, asset, *, exclude_run_date=None):

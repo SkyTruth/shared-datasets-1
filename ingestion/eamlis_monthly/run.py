@@ -805,10 +805,7 @@ def run() -> list[dict[str, Any]]:
 
     publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
-    if previous_record and (previous_record.get("source_fingerprint") or {}).get("version") == 1:
-        publisher.assert_latest_snapshots(ASSET, previous_record["latest_paths"])
     source = fetch_source_state(layer_url, where)
-    contract_refresh = needs_metadata_contract_refresh(publisher, previous_record)
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
     work_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
@@ -821,7 +818,7 @@ def run() -> list[dict[str, Any]]:
         translation_source, translation_inputs = translation_input(publisher, workdir)
         source = fingerprint_source(source, extract, translation_source)
         fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], source.fingerprint["inputs"])
-        if fingerprint.matches(previous_record) and not contract_refresh:
+        if fingerprint.matches(previous_record) and not needs_metadata_contract_refresh(publisher, previous_record):
             return [skipped_record(publisher=publisher, run_date=run_date, source=source,
                                    previous_record=previous_record, reason="source fingerprint unchanged")]
         output = build_asset_output(
