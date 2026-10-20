@@ -20,12 +20,12 @@ source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
   confirmation.
-notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. The 2026-10-20 same-day correction uses maintainer-supplied
-  envelope_fixed.csv (SHA-256 5a8637da1be0f2a9231dcb6864a1da5f297e2e6ac82facf33366895b2fc12e5a), preserves one feature with
-  feature_id 1, and replaces the earlier 152-part geometry with a valid 144-part WGS84 MultiPolygon containing 36,617 coordinate
-  positions. Geometry is preserved exactly in FGB; metadata-lookup PMTiles retain zooms 0-6. No source attributes or translations
-  are present; source generation method and redistribution terms remain unconfirmed. Existing generated-ID sequence state
-  remains at next-ID 2.
+notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. The third 2026-10-20 source revision uses
+  maintainer-supplied envelope_fixed_3-1792527342211.csv (SHA-256 f7404b7f0c2923af0559707d2e1cd976631946792c9986f0b4fc2d95e9e3ab3b),
+  preserves one feature with feature_id 1, and replaces the earlier 144-part geometry with a valid 106-part WGS84 MultiPolygon
+  containing 35,114 coordinate positions. Geometry is preserved exactly in FGB; metadata-lookup PMTiles retain zooms 0-6.
+  No source attributes or translations are present; source generation method and redistribution terms remain unconfirmed.
+  Existing generated-ID sequence state remains at next-ID 2.
 bounds:
 - -179.3667585675504
 - -78.65518002892276
@@ -119,7 +119,7 @@ files:
 ## What this is
 
 This asset contains a SkyTruth internal derived Cerulean Sentinel-1 analysis
-envelope corrected from the maintainer-supplied `envelope_fixed.csv` on 2026-10-20.
+envelope corrected from the maintainer-supplied `envelope_fixed_3-1792527342211.csv` on 2026-10-20.
 The source CSV has one `wkt` column and one valid WGS84 `MultiPolygon` feature;
 the original 2026-05-01 input was named `s1 footprint wkt.csv`.
 
@@ -163,7 +163,7 @@ display and metadata lookup only.
 ## Schema notes
 
 Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
-`MultiPolygon` with 144 polygon parts, 36,617 coordinate positions, and bounds
+`MultiPolygon` with 106 polygon parts, 35,114 coordinate positions, and bounds
 `(-179.366759, -78.655180) - (179.589310, 87.386157)`. The published FlatGeobuf has one feature in layer
 `cerulean_s1_envelope`.
 
@@ -296,7 +296,7 @@ record after promotion, then rebuilds the release index. Historical releases
 remain available. The catalog deployment workflow refreshes the web catalog
 after the approved mutation.
 
-### 2026-10-20 corrected footprint
+### 2026-10-20 second source revision
 
 The maintainer subsequently supplied `envelope_fixed.csv` and requested replacing
 the earlier same-day release. Source SHA-256:
@@ -322,7 +322,7 @@ manifest at generation `1792504542077545`, SHA-256
 `8c750ab1dc7932bd4767c469dcc2e65e097eb199a8393c8394b5d85c851b6e04`.
 Its verified versioned sequence state supplies next-ID `2`, which remains `2`
 after this correction. The earlier refresh decision remains in merged PR #275;
-the current resolution file describes this correction.
+that correction was accepted in PR #276; its resolution remains in that merged PR.
 
 The same pinned GDAL 3.6.2, Tippecanoe 2.52.0 and PMTiles 1.30.1 image was used.
 Archive verification, metadata inspection and representative tile decoding passed.
@@ -331,6 +331,42 @@ Corrected artifact SHA-256 values before protected manifest finalization:
 - fgb: `28fc65e1ca8b302823528f57c829d3aa50060fdd67d2327dd0b082b76aedfc30`
 - pmtiles: `37dea6e1cf4c320967c11820179d02ec8d3e74953dbdacb0f36d044a6bf56bc9`
 - metadata: `02c55760b47f05816f9c7fdad2e3794fff6e730ab5235f5ea4e1c72e9bcd0808`
+- schema: `cdd8ceaf1de9288ed89468c64f9a43c0428e010986d740187dec727ac42864fc`
+
+### 2026-10-20 third source revision
+
+The maintainer supplied `envelope_fixed_3-1792527342211.csv`
+for a further same-day correction. Source SHA-256:
+`f7404b7f0c2923af0559707d2e1cd976631946792c9986f0b4fc2d95e9e3ab3b`.
+
+The proposed replacement contains one valid WGS84 MultiPolygon with 106 polygon
+parts and 35,114 coordinate positions, compared with 144 parts and 36,617 positions
+in the second revision. Bounds are unchanged. The FGB preserves the supplied
+coordinates exactly. PMTiles keeps zooms 0-6 and only the `feature_id` property.
+
+This proposal replaces all five artifacts in `releases/2026-10-20/` and their
+`latest/` copies, plus the matching run record, README and catalog CSV, using
+exact observed destination-generation preconditions. Earlier dated releases stay
+unchanged. Consumers that cached either earlier October 20 revision must refetch
+the corrected files and manifest; checksums and object generations distinguish
+the revisions.
+
+The current release-scoped identity resolution retains feature ID `1` for the
+same singleton envelope, with geometry hash
+`sha256:a32064cad0b0a28f9fa244c9ee55f5d3fb00014c5acd493a3a7c3df03408bf2f`.
+The empty-properties hash is unchanged. The verified predecessor manifest is
+generation `1792507337358326`, SHA-256
+`a9a1005f21a7339dd04286dd208055cc07f276fde06f6f7e77a9ab105d0566ae`; its versioned next-ID state remains
+`2` before and after this proposal. There are no schema, access, source-term,
+translation or feature-ID contract changes.
+
+The pinned GDAL 3.6.2, Tippecanoe 2.52.0 and PMTiles 1.30.1 toolchain was reused.
+PMTiles magic, archive verification, metadata inspection and representative tile
+decoding passed. Artifact SHA-256 values before protected manifest finalization:
+
+- fgb: `56d07ce4131f1bba29f422e161e96cd8cbbe3e07bb5706efb1c7ebdeaf4071f0`
+- pmtiles: `a95402e249fc4b381ab10f5a26a1e14bfb7cfd44661870be736aac9aa6f9a57f`
+- metadata: `1f12ad30fa77794ac8d6438fa50c73ec6f2923732b738780631d0de7d6de4d87`
 - schema: `cdd8ceaf1de9288ed89468c64f9a43c0428e010986d740187dec727ac42864fc`
 
 ## Known caveats

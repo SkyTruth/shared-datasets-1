@@ -10,17 +10,17 @@
         "1"
       ],
       "matching_properties_geometry_hashes": [
-        "sha256:ead48b52064f1fc0213348dc9c81ae4a052cb11c2b74cf4d7167627593192477"
+        "sha256:29a8b1a0d166cb162547e1aee1dbab892c99de6fe887b0c0c0e60790c30f1869"
       ],
-      "new_geometry_hash": "sha256:29a8b1a0d166cb162547e1aee1dbab892c99de6fe887b0c0c0e60790c30f1869",
+      "new_geometry_hash": "sha256:a32064cad0b0a28f9fa244c9ee55f5d3fb00014c5acd493a3a7c3df03408bf2f",
       "new_identity_key": [
-        "sha256:29a8b1a0d166cb162547e1aee1dbab892c99de6fe887b0c0c0e60790c30f1869",
+        "sha256:a32064cad0b0a28f9fa244c9ee55f5d3fb00014c5acd493a3a7c3df03408bf2f",
         "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
       ],
       "new_properties_hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-      "pr_reference": "cerulean-envelope-fixed-20261020: the PR containing this decision and its immutable publish plan",
+      "pr_reference": "cerulean-envelope-fixed-3-20261020: the PR containing this decision and its immutable publish plan",
       "previous_feature_id_for_key": null,
-      "rationale": "The maintainer supplied envelope_fixed.csv to correct the already published 2026-10-20 singleton Cerulean analysis envelope and explicitly requested update and merge. Both releases contain exactly one feature and no source attributes. This is the replacement geometry for that same envelope, so retain feature_id 1 across the refreshed footprint rather than allocate a new entity.",
+      "rationale": "The maintainer supplied envelope_fixed_3-1792527342211.csv to correct the already published 2026-10-20 singleton Cerulean analysis envelope and requested preparing the replacement for merge. Both releases contain exactly one feature and no source attributes. This is the replacement geometry for that same envelope, so retain feature_id 1 across the refreshed footprint rather than allocate a new entity.",
       "release": "2026-10-20",
       "reuse_feature_id": "1",
       "reviewer": "jonaraphael"
