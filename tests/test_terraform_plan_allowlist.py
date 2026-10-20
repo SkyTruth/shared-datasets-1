@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from scripts import terraform_plan_allowlist
-from workflow_helpers import load_workflow, workflow_steps_by_name
+from workflow_helpers import load_workflow, terraform_targets, workflow_steps_by_name
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,10 +37,16 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             ("replace", 1, "delete/create module."),
             ("delete", 1, "delete module."),
         )
-        for target, image_variable in (("eamlis-monthly", "EAMLIS_MONTHLY_IMAGE"), ("sea-ice-daily", "SEA_ICE_DAILY_IMAGE")):
+        for target, image_variable in (
+            ("eamlis-monthly", "EAMLIS_MONTHLY_IMAGE"),
+            ("sea-ice-daily", "SEA_ICE_DAILY_IMAGE"),
+            ("mpatlas-monthly", "MPATLAS_MONTHLY_IMAGE"),
+        ):
             workflow = load_workflow(REPO_ROOT / f".github/workflows/{target}-deploy.yml")
-            script = workflow_steps_by_name(workflow, "deploy")[f"Enforce {target} resource-change allowlist"]["run"]
-            for fixture, exit_code, message in cases:
+            steps = workflow_steps_by_name(workflow, "deploy")
+            script = steps[f"Enforce {target} resource-change allowlist"]["run"]
+            target_cases = cases + (("allowed-image-create", 0, ""),) if target == "mpatlas-monthly" else cases
+            for fixture, exit_code, message in target_cases:
                 with self.subTest(target=target, fixture=fixture), tempfile.TemporaryDirectory() as tmp:
                     directory = Path(tmp)
                     binary = directory / "bin"
@@ -49,10 +55,17 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
                     python = binary / "python"
                     python.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n')
                     python.chmod(0o755)
-                    text = (FIXTURES / f"job-image-{fixture}.json").read_text()
-                    if target == "sea-ice-daily":
-                        text = text.replace("eamlis_monthly_job", "sea_ice_daily_job").replace("eamlis-monthly", target)
-                    (directory / f"{target}.tfplan.json").write_text(text)
+                    fixture_name = "allowed-image-update" if fixture == "allowed-image-create" else fixture
+                    text = (FIXTURES / f"job-image-{fixture_name}.json").read_text()
+                    text = text.replace("eamlis_monthly_job", target.replace("-", "_") + "_job").replace("eamlis-monthly", target)
+                    plan = json.loads(text)
+                    if target == "mpatlas-monthly":
+                        if fixture == "allowed-image-create":
+                            plan["resource_changes"][0]["change"].update(actions=["create"], before=None)
+                        for address in sorted(terraform_targets(steps["Terraform plan"]["run"]) - {terraform_plan_allowlist.JOB_IMAGE_TARGETS[target]}):
+                            actions = ["update"] if address.startswith("google_iam_deny_policy.") else ["create"]
+                            plan["resource_changes"].append({"address": address, "change": {"actions": actions}})
+                    (directory / f"{target}.tfplan.json").write_text(json.dumps(plan))
                     result = subprocess.run(
                         ["bash", "-c", script], cwd=REPO_ROOT, capture_output=True, text=True,
                         env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
@@ -79,6 +92,39 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                 self.run_main(plan_with(), *args)
             self.assertEqual(error.exception.code, 2)
+
+    def test_mpatlas_image_scope_cannot_be_weakened_by_cli_arguments(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/mpatlas-monthly-deploy.yml")
+        scope = terraform_targets(workflow_steps_by_name(workflow, "deploy")["Terraform plan"]["run"])
+        valid = ["--job-image-target", "mpatlas-monthly", "--expected-image", EXPECTED_IMAGE, "--block-deletes"]
+        for args in (
+            valid[:-1],
+            [*valid, "--allowed-exact", "\n".join(sorted(scope | {"other.resource"}))],
+            [*valid, "--allowed-exact", terraform_plan_allowlist.JOB_IMAGE_TARGETS["mpatlas-monthly"]],
+            [*valid, "--allowed-patterns", ".*"],
+        ):
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                self.run_main(plan_with(), *args)
+            self.assertEqual(error.exception.code, 2)
+
+    def test_mpatlas_image_scope_refuses_companion_deletes_and_replacements(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/mpatlas-monthly-deploy.yml")
+        companions = terraform_targets(workflow_steps_by_name(workflow, "deploy")["Terraform plan"]["run"])
+        companions.remove(terraform_plan_allowlist.JOB_IMAGE_TARGETS["mpatlas-monthly"])
+        for address in sorted(companions):
+            for actions in (["delete"], ["delete", "create"], ["create", "delete"]):
+                with self.subTest(address=address, actions=actions):
+                    exit_code, output = self.run_main(
+                        plan_with((address, actions)), "--job-image-target", "mpatlas-monthly",
+                        "--expected-image", EXPECTED_IMAGE, "--block-deletes",
+                    )
+                    self.assertEqual(exit_code, 1)
+                    self.assertIn(address, output)
+
+    def test_generic_caller_still_requires_an_explicit_resource_scope(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.run_main(plan_with())
+        self.assertEqual(error.exception.code, 2)
 
     def test_image_target_ignores_empty_noop_and_read_plans(self):
         address = terraform_plan_allowlist.JOB_IMAGE_TARGETS["eamlis-monthly"]
