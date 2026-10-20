@@ -503,8 +503,15 @@ class EamlisMonthlyTests(unittest.TestCase):
         )
         source = sample_source_state(fingerprint_hash="same")
         content = fixture_fingerprint(source)
+        latest_paths = []
+        for suffix in eamlis.RELEASE_SUFFIXES:
+            blob = bucket.blob(eamlis.ASSET.latest_object(suffix))
+            blob.exists = True
+            if suffix == ".metadata-translations.csv":
+                blob.data = (",".join((*eamlis.localization.REQUIRED_TRANSLATION_COLUMNS, *eamlis.localization.OPTIONAL_TRANSLATION_COLUMNS)) + "\n").encode()
+            latest_paths.append({"path": f"gs://{bucket.name}/{blob.name}", "generation": blob.generation})
         previous.text = json.dumps({**json.loads(previous.text), "source_fingerprint": content.fingerprint,
-                                    "source_fingerprint_hash": content.fingerprint_hash})
+                                    "source_fingerprint_hash": content.fingerprint_hash, "latest_paths": latest_paths})
 
         with (
             mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),

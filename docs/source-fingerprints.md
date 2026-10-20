@@ -49,7 +49,10 @@ not skip authority. Identical statistics cannot hide geometry or attribute edits
 The old FGB-only skip was removed because unchanged FGB bytes cannot establish
 unchanged localization inputs. A missing/invalid metadata contract still requires
 a refresh. Existing partial dated artifacts fail before a new comparison; they
-cannot be hidden by an unchanged-source skip.
+cannot be hidden by an unchanged-source skip. For versioned successful records,
+the job also checks the captured generations of every `latest/` artifact before
+polling. A partial publication on another date cannot be hidden by either an
+unchanged or changed source. This is a snapshot consistency check, not a lock.
 
 Limitations: paginated ArcGIS requests are not an upstream transactional snapshot.
 Row counts and null geometry are checked, but same-count edits during pagination

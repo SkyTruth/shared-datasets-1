@@ -804,8 +804,10 @@ def run() -> list[dict[str, Any]]:
         return [existing_record]
 
     publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
-    source = fetch_source_state(layer_url, where)
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
+    if previous_record and (previous_record.get("source_fingerprint") or {}).get("version") == 1:
+        publisher.assert_latest_snapshots(ASSET, previous_record["latest_paths"])
+    source = fetch_source_state(layer_url, where)
     contract_refresh = needs_metadata_contract_refresh(publisher, previous_record)
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
     work_root.mkdir(parents=True, exist_ok=True)

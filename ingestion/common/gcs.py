@@ -68,6 +68,29 @@ class GcsPublisher:
             return None
         return json.loads(blob.download_as_text())
 
+    def assert_latest_snapshots(self, asset: ReleaseAsset, snapshots) -> None:
+        """A source comparison must not hide an interrupted unowned publish.
+
+        This is a snapshot check, not a publication lock. Generation-preconditioned
+        writes and the existing reviewed recovery boundary still apply.
+        """
+        expected = {f"gs://{self.bucket.name}/{asset.latest_object(suffix)}"
+                    for suffix in DEFAULT_RELEASE_SUFFIXES}
+        paths = {item["path"] for item in snapshots}
+        if not expected.issubset(paths):
+            raise RuntimeError("successful publication lacks complete latest snapshots")
+        prefix = f"gs://{self.bucket.name}/{asset.latest_object('')}"
+        for item in snapshots:
+            generation = item.get("generation")
+            if not item["path"].startswith(prefix) or type(generation) is not int or generation <= 0:
+                raise RuntimeError("successful publication has an invalid latest snapshot")
+            try:
+                blob = self._contract_blob(item["path"])
+            except NotFound as exc:
+                raise RuntimeError("latest artifacts are missing; recover the interrupted publication") from exc
+            if int(blob.generation) != generation:
+                raise RuntimeError("latest artifacts differ from the last successful publication; recover the interrupted publication")
+
     def load_generated_identity_baseline(
         self, asset: ReleaseAsset, *, contract_id: str, identity_index_path: Path | None = None,
     ) -> release_feature_model.GeneratedIdentityBaseline:

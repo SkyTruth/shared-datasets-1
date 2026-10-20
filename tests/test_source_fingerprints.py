@@ -415,6 +415,12 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
     } == original_artifacts
     assert len(run.uploads) == 1
     assert download.call_count == 2
+    # A different dated publication can fail before its run/index commit. Even
+    # a matching source must not turn that changed latest pointer into a skip.
+    bucket.blob(eamlis.ASSET.latest_object(".fgb")).generation += 1
+    monkeypatch.setenv("RUN_DATE", "2026-05-04")
+    with pytest.raises(RuntimeError, match="recover the interrupted publication"):
+        eamlis.run()
 
 
 def test_eamlis_partial_release_cannot_be_converted_to_a_skip(monkeypatch):

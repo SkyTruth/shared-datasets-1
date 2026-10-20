@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 import tempfile
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -45,13 +46,14 @@ def unordered_digest(values: Iterable[Any], *, workdir: Path | None = None) -> s
         with tempfile.TemporaryDirectory(
             prefix="fingerprint-", dir=workdir
         ) as directory:
-            with sqlite3.connect(Path(directory) / "hashes.sqlite") as database:
+            with closing(sqlite3.connect(Path(directory) / "hashes.sqlite")) as database:
                 database.execute("PRAGMA cache_size=-8192")
                 database.execute("PRAGMA temp_store=FILE")
                 database.execute("CREATE TABLE hashes (value BLOB NOT NULL)")
                 database.executemany(
                     "INSERT INTO hashes VALUES (?)", ((value,) for value in hashes)
                 )
+                database.commit()
                 for (value,) in database.execute(
                     "SELECT value FROM hashes ORDER BY value"
                 ):
@@ -86,7 +88,7 @@ def csv_digest(path: Path) -> str:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         fields = reader.fieldnames
-        if not fields or len(set(fields)) != len(fields):
+        if not fields or not all(fields) or len(set(fields)) != len(fields):
             raise ValueError("fingerprint CSV requires distinct named columns")
 
         def checked_rows():
