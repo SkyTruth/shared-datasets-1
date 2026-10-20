@@ -4,9 +4,13 @@ ARG PMTILES_VERSION=v1.30.1
 ARG TARGETOS
 ARG TARGETARCH
 
-RUN set -eux; \
+# Retain verified module downloads across failed builds. Go still checks sums;
+# target-specific compiler caches cannot mix AMD64 and ARM build products.
+RUN --mount=type=cache,id=mpatlas-go-modules,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,id=mpatlas-go-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
+    set -eux; \
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
-        go install github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+        go install -ldflags "-X main.version=${PMTILES_VERSION#v}" github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
     for candidate in \
         "/go/bin/${TARGETOS}_${TARGETARCH}/go-pmtiles" \
         "/go/bin/${TARGETOS}_${TARGETARCH}/pmtiles" \
@@ -16,12 +20,6 @@ RUN set -eux; \
     done; \
     echo "pmtiles binary not found" >&2; \
     exit 1
-
-# Keep dependency compilation cached while embedding the pinned source version.
-RUN set -eux; \
-    cd /go/pkg/mod/github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
-    GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
-        go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .
 
 FROM python:3.12.12-slim-bookworm
 

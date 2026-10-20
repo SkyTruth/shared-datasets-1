@@ -69,6 +69,9 @@ Entrypoint: `python -m ingestion.mpatlas_monthly.run`. Configuration:
 `RUN_DATE`, and optional `SHARED_DATASETS_WORKDIR` for temporary files. The
 production job uses 4 CPUs, 16 GiB RAM, a four-hour timeout and no task retries.
 The pinned container includes GDAL 3.6.2, Tippecanoe 2.52.0 and PMTiles 1.30.1.
+Its PMTiles build retains Go's checksum-verified module cache and a
+target-specific compiler cache, and embeds the CLI version in one compilation.
+Download failures still fail the build; no checksum or image checks are skipped.
 
 After review and merge, main CI routes through the existing IAM and registry
 prerequisites and cron-alert-policy sync, then
