@@ -65,7 +65,7 @@ def publish(publisher, asset, outputs, date=DATE):
     source_date = date - dt.timedelta(days=1)
     readme = outputs.fgb.parent / "asset_README.md"
     readme.write_text("# IMS Sea-Ice Extent\nReviewed new-contract documentation.\n")
-    return sea_ice.publish_outputs(publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
+    return sea_ice.publish_outputs(fingerprint=sea_ice.fingerprints.Fingerprint("fixture", {}), publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
                                    source=sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date)))
 
 
@@ -267,6 +267,38 @@ class OwnedPublicationTests(unittest.TestCase):
             index = store.read_json(f"gs://bucket/_catalog/releases/{asset.slug}.json").value
             self.assertEqual(index["latest_release"]["date"], DATE.isoformat())
             self.assertEqual(index["latest_run"]["date"], "2026-10-02")
+
+    def test_fingerprint_skip_resumes_after_each_durable_write(self):
+        asset = sea_ice.ASSET
+        payload = {"schema_version": 1, "asset_slug": asset.slug, "status": "skipped",
+                   "release_date": DATE.isoformat(), "run_date": "2026-10-02",
+                   "reason": "source fingerprint unchanged",
+                   **sea_ice.fingerprints.Fingerprint("fixture", {}).record_fields()}
+        with publication_temp_directory() as temporary:
+            publisher, store = publisher_fixture(asset)
+            published = publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+            before = store.read_json(publisher.context(asset).state_uri).value
+            next_publisher, _ = publisher_fixture(asset, execution="skip-job", store=store)
+            store.events.clear()
+            next_publisher.update_latest_run_index(asset=asset, payload=payload)
+            writes = len(store.events)
+        for crash_after in range(1, writes + 1):
+            with self.subTest(crash_after=crash_after), publication_temp_directory() as temporary:
+                publisher, store = publisher_fixture(asset)
+                published = publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+                before = store.read_json(publisher.context(asset).state_uri).value
+                next_publisher, _ = publisher_fixture(asset, execution="skip-job", store=store)
+                store.events.clear()
+                store.fail_after = crash_after
+                with self.assertRaises(LostResponse):
+                    next_publisher.update_latest_run_index(asset=asset, payload=payload)
+                store.fail_after = None
+                self.assertEqual(next_publisher.resume(asset), payload)
+                state = store.read_json(publisher.context(asset).state_uri).value
+                self.assertEqual(state["current"], before["current"])
+                self.assertEqual(state["reserved_next_feature_id"], before["reserved_next_feature_id"])
+                self.assertIsNone(state["active"])
+                self.assertEqual(next_publisher.latest_success_record(asset), published)
 
     def test_legacy_success_never_skips_first_new_contract_release(self):
         publisher, store = publisher_fixture(sea_ice.ASSET)

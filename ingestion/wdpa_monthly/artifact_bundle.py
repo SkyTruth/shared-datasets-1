@@ -15,6 +15,7 @@ from google.cloud import storage
 
 from ingestion.common import publication as p
 from ingestion.wdpa_monthly.translations import LOCALES
+from ingestion.wdpa_monthly.source_fingerprint import retained_fingerprint
 from scripts import release_feature_model as model
 
 BUCKET = "skytruth-shared-datasets-1"
@@ -371,33 +372,52 @@ def promote(client, publisher, ref, workdir):
     profiler = PhaseProfiler(
         workdir, versions=report["native_versions"], scratch_root=workdir.parent
     )
-    all_paths = {}
+    all_paths, fingerprints, unchanged = {}, {}, {}
     with profiler.phase("promotion:download"):
         for asset in wdpa.ASSETS:
             if resumed[asset.slug] is not None or committed[asset.slug]:
                 continue
             paths = {}
-            for role, item in bundle["assets"][asset.slug]["artifacts"].items():
+            staged = bundle["assets"][asset.slug]
+            for role, item in staged["artifacts"].items():
+                if role in {"fgb", "pmtiles"}:
+                    continue
                 path = workdir / asset.slug / item["uri"].rsplit("/", 1)[1]
                 download(client, item, path, execution=report["cloud_execution"])
                 paths[role] = path
+            fingerprint = retained_fingerprint(paths, staged["outputs"], staged["source_fields"], workdir)
+            fingerprints[asset.slug] = fingerprint
+            previous = publisher.latest_success_record(asset)
+            if fingerprint.matches(previous):
+                unchanged[asset.slug] = previous
+            else:
+                for role in ("fgb", "pmtiles"):
+                    item = staged["artifacts"][role]
+                    path = workdir / asset.slug / item["uri"].rsplit("/", 1)[1]
+                    download(client, item, path, execution=report["cloud_execution"])
+                    paths[role] = path
             all_paths[asset.slug] = paths
     records = []
     for asset in wdpa.ASSETS:
         if resumed[asset.slug] is not None:
             records.append(resumed[asset.slug])
             continue
-        if committed[asset.slug]:
-            records.append(
-                {
-                    "asset_slug": asset.slug,
-                    "status": "skipped",
-                    "reason": "monthly source already published",
-                    "release_index": publisher.record_existing_successful_release(
-                        asset, run_date
-                    ),
-                }
-            )
+        if committed[asset.slug] or asset.slug in unchanged:
+            previous = committed[asset.slug][0] if committed[asset.slug] else unchanged[asset.slug]
+            record = {
+                "schema_version": 1, "asset_slug": asset.slug,
+                "run_date": os.environ.get("RUN_DATE") or wdpa.dt.datetime.now(wdpa.dt.UTC).date().isoformat(),
+                "target_release_date": run_date.isoformat(), "release_date": previous["release_date"],
+                "status": "skipped", "source": previous["source"],
+                "source_version": previous["source_version"],
+                "reason": "reviewed bundle already published" if committed[asset.slug] else "source fingerprint unchanged",
+            }
+            if asset.slug in fingerprints:
+                record.update(fingerprints[asset.slug].record_fields())
+            elif "source_fingerprint" in previous:
+                record.update({key: previous[key] for key in ("source_fingerprint", "source_fingerprint_hash")})
+            record["release_index"] = publisher.update_latest_run_index(asset=asset, payload=record)
+            records.append(record)
             continue
         staged = bundle["assets"][asset.slug]
         directory = workdir / asset.slug
@@ -428,6 +448,7 @@ def promote(client, publisher, ref, workdir):
                     source_fields=tuple(
                         wdpa.FieldSpec(**field) for field in staged["source_fields"]
                     ),
+                    fingerprint=fingerprints[asset.slug],
                 )
             )
         for path in paths.values():

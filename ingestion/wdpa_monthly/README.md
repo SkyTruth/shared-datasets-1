@@ -35,7 +35,10 @@ Optional `RUN_DATE=YYYY-MM-DD` controls the release date. Without an override,
 the worker uses the first day of the current UTC month. The accepted bundle must
 match that month; a missing or wrong-month bundle fails before publication.
 Scheduler `wdpa-monthly` invokes it at 09:00 UTC on days 1–10. Repeated completed
-publications verify both receipts and return skipped without artifact downloads.
+publications verify both receipts and update the owned skipped check-in without
+artifact downloads. Unpublished approved candidates compare normalized retained
+sidecar/schema/translation content with the last committed publication before
+downloading FGB/PMTiles. See the [WDPA fingerprint and limits](../../docs/source-fingerprints.md#wdpa-wdpa-retained-content-v1).
 
 Both assets require installed `generated-2026-v1` publication state. The publisher
 reserves IDs and claims ownership before exposing artifacts. Runtime identity

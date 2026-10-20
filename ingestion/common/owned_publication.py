@@ -168,6 +168,18 @@ class OwnedGeneratedPublisher(GcsPublisher):
         record = self.result(receipt.value)
         return record, record["run_record"]
 
+    def latest_success_record(self, asset):
+        """Use durable committed state, never an attempted or skipped run."""
+        state = self.state(asset).value
+        p.require(state["active"] is None, "publication is incomplete; resume its original execution")
+        if state["current"]["receipt_uri"] == state["adoption_receipt"]:
+            return None
+        loaded = self.load_successful_run_record(asset, dt.date.fromisoformat(state["current"]["release"]))
+        p.require(loaded is not None, "committed successful run is missing")
+        record, _info = loaded
+        p.require(record.get("status") == "success", "committed publication run is not successful")
+        return record
+
     def committed_artifacts(self, asset, *, suffixes):
         """Read the committed manifest, including reviewed translation edits."""
         state = self.state(asset).value

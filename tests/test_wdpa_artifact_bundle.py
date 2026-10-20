@@ -1,6 +1,8 @@
 import copy
 from dataclasses import asdict
 import hashlib
+import gzip
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -81,7 +83,15 @@ def built(tmp_path, request, monkeypatch):
             *(f"metadata_{locale}" for locale in bundle.LOCALES),
         ):
             path = directory / (asset.slug + "." + role)
-            path.write_bytes((asset.slug + ":" + role).encode())
+            if role == "metadata" or role.startswith("metadata_") and role != "metadata_translations":
+                path.write_bytes(gzip.compress((json.dumps({"feature_id": "1", "identity_key": ["site-1"],
+                    "geometry_hash": "sha256:" + "a" * 64, "properties": {"SITE_PID": "site-1", "NAME": "Park"}}) + "\n").encode()))
+            elif role == "schema":
+                path.write_text(json.dumps({"fields": [{"name": "SITE_PID", "type": "String"}]}))
+            elif role == "metadata_translations":
+                path.write_text("feature_id,field,locale,source_value_hash,value,review_state,notes\n1,NAME,es,hash,Parque,,\n")
+            else:
+                path.write_bytes((asset.slug + ":" + role).encode())
             paths[role] = path
         snapshot = model.GeneratedIdentitySnapshot(
             f"gs://{bundle.BUCKET}/{asset.root}/latest/{asset.slug}.manifest.json",
@@ -130,6 +140,7 @@ def publisher_for(report):
     publisher = Mock(spec=wdpa.GcsPublisher)
     publisher.resume.return_value = None
     publisher.load_successful_run_record.return_value = None
+    publisher.latest_success_record.return_value = None
     publisher.store = Mock()
     publisher.store.read_json.return_value = None
 
@@ -232,7 +243,7 @@ def test_completed_build_retry_skips_without_artifact_downloads_or_publication(
     else:
         result = bundle.promote(store, publisher, ref, tmp_path / "retry")
         assert [record["status"] for record in result] == ["skipped", "skipped"]
-        assert publisher.record_existing_successful_release.call_count == 2
+        assert publisher.update_latest_run_index.call_count == 2
     published.assert_not_called()
     assert len(store.calls) == 1  # Only the small retained bundle descriptor.
 
@@ -512,6 +523,36 @@ def test_committed_marine_is_preserved_and_only_retained_terrestrial_is_publishe
         result = bundle.promote(store, publisher, ref, tmp_path / "promotion")
         assert published == ["wdpa-terrestrial"]
         assert result[0]["status"] == "skipped"
-        publisher.record_existing_successful_release.assert_called_once_with(
-            wdpa.ASSETS[0], wdpa.parse_run_date(report["run_date"])
-        )
+        publisher.update_latest_run_index.assert_called_once()
+        assert publisher.update_latest_run_index.call_args.kwargs["asset"] == wdpa.ASSETS[0]
+
+
+def test_equal_reviewed_content_skips_large_artifacts_and_updates_checkins(built, tmp_path, monkeypatch):
+    from ingestion.wdpa_monthly.source_fingerprint import retained_fingerprint
+    store, ref, report = built
+    previous = {}
+    for asset in wdpa.ASSETS:
+        staged = report["staged_assets"][asset.slug]
+        paths = {}
+        for role, item in staged["artifacts"].items():
+            if role in {"fgb", "pmtiles"}:
+                continue
+            path = tmp_path / "comparison" / asset.slug / role
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(store.data[item["uri"].split("/", 3)[3]][1])
+            paths[role] = path
+        fingerprint = retained_fingerprint(paths, staged["outputs"], staged["source_fields"], tmp_path)
+        previous[asset.slug] = {"status": "success", "release_date": "2026-09-30", "source": "upstream",
+                                "source_version": "Sep2026", **fingerprint.record_fields()}
+    publisher = publisher_for(report)
+    publisher.latest_success_record.side_effect = lambda asset: previous[asset.slug]
+    published = Mock(side_effect=AssertionError("unchanged content must not publish"))
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+    records = bundle.promote(store, publisher, ref, tmp_path / "unchanged")
+    assert [record["reason"] for record in records] == ["source fingerprint unchanged"] * 2
+    assert {record["release_date"] for record in records} == {"2026-09-30"}
+    assert publisher.update_latest_run_index.call_count == 2
+    large_names = {item["uri"].split("/", 3)[3] for asset in report["staged_assets"].values()
+                   for role, item in asset["artifacts"].items() if role in {"fgb", "pmtiles"}}
+    assert not (large_names & set(store.calls))
+    published.assert_not_called()
