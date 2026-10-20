@@ -33,6 +33,7 @@ WORKFLOW_PATHS = {
     # Historical runs retain their old display name during replay and reruns.
     "Deployment terminal verification": "deployment-verification.yml",
     "Deployment read-only reconciliation": "deployment-recovery.yml",
+    "MPAtlas monthly deploy": "mpatlas-monthly-deploy.yml",
     "EAMLIS monthly deploy": "eamlis-monthly-deploy.yml",
     "WDPA monthly deploy": "wdpa-monthly-deploy.yml",
     "Sea ice daily deploy": "sea-ice-daily-deploy.yml",

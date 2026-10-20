@@ -26,6 +26,7 @@ SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
+    "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
     "eamlis-monthly": "eamlis-monthly-deploy.yml",
     "sea-ice-daily": "sea-ice-daily-deploy.yml",
     "typescript-sdk": "publish-typescript-sdk.yml",
@@ -198,7 +199,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
+        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             prior_artifact = record_payload(latest)["artifact"]
@@ -378,9 +379,18 @@ def verification_window(executions, *, paused=False, canary_date="", allow_cance
 
 
 def runtime_window(args):
-    require(args.target in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}, "invalid runtime verification target")
+    require(args.target in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}, "invalid runtime verification target")
+    # First installation has no job/execution collection yet. A successful
+    # regional inventory proves absence; permission/network errors still fail.
+    if args.target == "mpatlas-monthly":
+        jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
+                                                   "--project=shared-datasets-1", "--format=json"]))
+        require(isinstance(jobs, list), "invalid Cloud Run job inventory")
+        installed = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
+    else:
+        installed = True
     executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
-                                                    "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
+                                                    "--region=us-central1", "--project=shared-datasets-1", "--format=json"])) if installed else []
     paused = False
     if args.target == "wdpa-monthly":
         state = subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", args.target, "--location=us-central1",
@@ -427,7 +437,7 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
+    require(payload.get("target") in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")

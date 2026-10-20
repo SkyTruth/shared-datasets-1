@@ -21,6 +21,7 @@ import sys
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
 JOB_IMAGE_TARGETS = {
+    "mpatlas-monthly": "module.mpatlas_monthly_job.google_cloud_run_v2_job.this",
     "eamlis-monthly": "module.eamlis_monthly_job.google_cloud_run_v2_job.this",
     "sea-ice-daily": "module.sea_ice_daily_job.google_cloud_run_v2_job.this",
 }
@@ -51,7 +52,7 @@ def blocked_changes(
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
         if job_image is not None and address == job_image[0]:
-            if actions != ["update"]:
+            if actions != ["update"] and not (address == JOB_IMAGE_TARGETS["mpatlas-monthly"] and actions == ["create"]):
                 blocked.append(f"{'/'.join(actions)} {address}")
                 continue
             after = resource.get("change", {}).get("after", {})

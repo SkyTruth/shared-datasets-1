@@ -50,6 +50,7 @@ locals {
 
   scheduled_ingestion_writer_principals = [
     "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.wdpa_job_service_account.email}",
+    "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.mpatlas_job_service_account.email}",
     "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.eamlis_job_service_account.email}",
     "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.sea_ice_job_service_account.email}",
   ]
@@ -59,6 +60,7 @@ locals {
   canonical_write_allowed_principal_emails = [
     module.shared_datasets_publisher_service_account.email,
     module.wdpa_job_service_account.email,
+    module.mpatlas_job_service_account.email,
     module.eamlis_job_service_account.email,
     module.sea_ice_job_service_account.email,
   ]

@@ -7,7 +7,7 @@ subcategory: 130-protected-areas
 status: active
 access_tier: private
 owner: SkyTruth
-update_cadence: manual
+update_cadence: monthly
 canonical_format: fgb
 canonical_file: latest/mpatlas-zone-assessments.fgb
 available_formats:
@@ -36,7 +36,8 @@ admission:
   source_license_citation_status: Official MPAtlas API and attribution verified; maintainer confirmed existing SkyTruth permission
     covers shared distribution on 2026-10-16. Access remains private; public access has not been authorized.
   steward: Jonathan Raphael (@jonaraphael), SkyTruth
-  update_expectations: Manual snapshots from the current MPAtlas API; refresh on curator request.
+  update_expectations: Monthly API check on day 2 at 11:00 UTC; publish only changed source feature content, with skipped-run
+    check-ins otherwise.
   estimated_published_size_gb: '0.4254'
   alternatives_considered: Direct API access requires each consumer to fetch and normalize a mutable 286 MiB GeoJSON. WDPA
     has broader boundary coverage but does not substitute for MPAtlas zone assessments. Project-local storage remains an option
@@ -166,7 +167,7 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
-- **Update cadence:** manual
+- **Update cadence:** monthly
 - **Canonical file:** `latest/mpatlas-zone-assessments.fgb`
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** Marine Conservation Institute, MPAtlas public API v4: https://guide.mpatlas.org/api/public/v4/zone/geojson/
@@ -176,7 +177,7 @@ files:
 
 ## What this is
 
-A dated snapshot of the [MPAtlas public zone geometry API](https://guide.mpatlas.org/api/public/v4/zone/geojson/), retrieved on 2026-10-16. MPAtlas, maintained by Marine Conservation Institute and partners, adds science-based assessments of marine protected areas and zones. It is not a complete inventory of all global marine protected areas. See the [official download description](https://marine-conservation.org/mpatlas/download/) and [methods](https://mpatlas.org/methods/).
+A versioned snapshot of the [MPAtlas public zone geometry API](https://guide.mpatlas.org/api/public/v4/zone/geojson/), initially retrieved on 2026-10-16. The [monthly refresh job](../../ingestion/mpatlas_monthly/README.md) checks on day 2 at 11:00 UTC and publishes only changed feature content. Current release dates, counts and hashes are recorded in the bucket release index and run records; the profiles below describe the initial snapshot. MPAtlas, maintained by Marine Conservation Institute and partners, adds science-based assessments of marine protected areas and zones. It is not a complete inventory of all global marine protected areas. See the [official download description](https://marine-conservation.org/mpatlas/download/) and [methods](https://mpatlas.org/methods/).
 
 ## When to use it
 

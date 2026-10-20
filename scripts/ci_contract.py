@@ -23,7 +23,7 @@ SUITES = (
     "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
 DEPLOYMENTS = (
-    "eamlis", "wdpa", "sea_ice", "ingestion_iam",
+    "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam",
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
@@ -36,6 +36,7 @@ NATIVE_TESTS = (
     "tests/test_wdpa_disk_processing.py",
     "tests/test_sea_ice_daily.py",
     "tests/test_eamlis_monthly.py",
+    "tests/test_mpatlas_monthly.py",
 )
 CONTRACT_FILES = (
     "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
@@ -131,7 +132,7 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
                 return list(SUITES), f"shared script dependency: {path}"
             selected.update(NARROW_SCRIPTS[path])
         elif path.startswith("tests/"):
-            if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "translation")):
+            if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "mpatlas", "translation")):
                 selected.update({"geospatial-integration", "production-images"})
             elif any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
                 selected.update({"sdk-node22", "sdk-node24", "browser"})
@@ -178,7 +179,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
     """Explicit release dependencies; unknown changes broaden tests, not mutations."""
     selected = set()
     iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
-    ingestion = {"eamlis", "sea_ice", "wdpa"}
+    ingestion = {"mpatlas", "eamlis", "sea_ice", "wdpa"}
     for path in paths or []:
         if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
@@ -200,6 +201,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
+        if (path.startswith("ingestion/mpatlas_monthly/") and path != "ingestion/mpatlas_monthly/README.md") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
+            selected.update({"mpatlas", "cron_alert_policy"})
         if (path.startswith("ingestion/eamlis_monthly/") and path != "ingestion/eamlis_monthly/README.md") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
         }:

@@ -3,6 +3,18 @@
 Load only the section for the job being deployed or controlled. Runtime,
 container recipes and processing limits remain in `ingestion/<job>/README.md`.
 
+## mpatlas-monthly deployment
+
+Follow [the MPAtlas job contract](../../../../ingestion/mpatlas_monthly/README.md).
+Reviewed main changes deploy through `mpatlas-monthly-deploy.yml` after tested
+image, ingestion IAM, registry and cron-monitoring prerequisites. The workflow
+creates/updates its job, scheduler invoker, monthly scheduler and optional
+canonical deny-policy writer exception, consumes
+the retained CI image, runs a waited canary and validates the latest release.
+The job compares raw source SHA-256, then canonical feature hashes against the
+existing published metadata, and publishes only changed content. Verify skipped
+check-ins leave the prior release intact. Do not use a local production apply.
+
 ## eamlis-monthly deployment
 
 Production deploys run through `.github/workflows/eamlis-monthly-deploy.yml`

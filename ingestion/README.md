@@ -5,6 +5,9 @@ This directory contains production scheduled ingestion jobs, the
 The usage collector writes private telemetry only; the publishing semantics below
 apply to jobs that produce dataset releases.
 
+The [MPAtlas monthly refresh](mpatlas_monthly/README.md) checks the public zone
+API on the second day of each month and publishes only changed feature content.
+
 ## Layout
 
 Each production cron job gets its own package:
