@@ -11,7 +11,7 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Execution | Failure reporting |
 | --- | --- |
 | PR CI, build checks, manual GitHub checks | GitHub |
-| Synchronous EAMLIS/sea-ice deployment canary or WDPA upload preflight | GitHub |
+| Synchronous EAMLIS/sea-ice/MPAtlas deployment canary or WDPA upload preflight | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
 | Five-minute WDPA execution observer or its Scheduler dispatch | Monitoring Slack only after persistent loss of successful completions |
 | Detached WDPA worker canary | Monitoring Slack |

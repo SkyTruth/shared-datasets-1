@@ -24,15 +24,15 @@ from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
 
-DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
+DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
+    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
-    "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+    "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
     "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
 
@@ -303,11 +303,11 @@ def check(root, targets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", "mpatlas", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
+        targets = {"mpatlas", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

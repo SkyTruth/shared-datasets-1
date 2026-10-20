@@ -50,6 +50,19 @@ def test_transitive_managed_ancestor_must_have_an_explicit_owner(policy):
         contracts.check_graph(root, graph)
 
 
+def test_shared_bad_dependency_reports_every_target_path(policy):
+    root, _, workflow = policy
+    other = 'google_storage_bucket_iam_member.mpatlas'
+    for key in ('targets', 'allowed_exact'):
+        workflow['jobs']['sync']['with'][key] += '\n' + other
+    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    graph = {OWNER: {ROLE, SHARED}, other: {SHARED}, ROLE: set(), SHARED: {RAW}, RAW: set()}
+    with pytest.raises(ValueError) as failure:
+        contracts.check_graph(root, graph)
+    for target in (OWNER, other):
+        assert target + ' -> ' + SHARED + ' -> ' + RAW in str(failure.value)
+
+
 def test_readonly_data_node_cannot_hide_a_new_managed_dependency(policy):
     root, _, _ = policy
     data = 'data.google_storage_bucket.input'

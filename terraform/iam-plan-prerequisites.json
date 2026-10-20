@@ -31,7 +31,10 @@
       "module.shared_datasets_publisher_service_account.google_service_account.this",
       "module.wdpa_job_service_account.google_service_account.this",
       "module.wdpa_observer_service_account.google_service_account.this",
-      "terraform_data.cron_alert_channel_configured"
+      "terraform_data.cron_alert_channel_configured",
+      "module.mpatlas_job_service_account.google_service_account.this",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_project_iam_member.github_actions_dataset_usage_deployer"
     ],
     "dataset-usage-deploy.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/bootstrap": [],
@@ -47,7 +50,9 @@
       "google_storage_bucket.shared_bucket",
       "module.eamlis_job_service_account.google_service_account.this",
       "module.shared_datasets_publisher_service_account.google_service_account.this",
-      "module.wdpa_job_service_account.google_service_account.this"
+      "module.wdpa_job_service_account.google_service_account.this",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_project_iam_member.github_actions_dataset_usage_deployer"
     ],
     "scratch-cleanup-iam-sync.yml/sync": [
       "google_project_service.required",

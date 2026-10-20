@@ -127,6 +127,11 @@ class TargetApplyCallerTests(unittest.TestCase):
                 'google_storage_bucket_iam_member.translation_debt_writer["wdpa"]',
                 'google_storage_bucket_iam_member.translation_debt_writer["eamlis"]',
                 "google_storage_bucket_iam_member.publisher_translation_debt_writer",
+                "module.mpatlas_job_service_account.google_service_account.this",
+                "module.mpatlas_scheduler_service_account.google_service_account.this",
+                "google_storage_bucket_iam_member.mpatlas_job_object_user",
+                'google_service_account_iam_member.mpatlas_deployer_act_as["job"]',
+                'google_service_account_iam_member.mpatlas_deployer_act_as["scheduler"]',
             },
             expected_tf_vars={
                 "wdpa_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync",

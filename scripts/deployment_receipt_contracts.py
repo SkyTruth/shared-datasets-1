@@ -7,7 +7,7 @@ import yaml
 
 ACTION = "./.github/actions/deployment-receipt"
 WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
+    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
     "deployment-verification.yml", "deployment-recovery.yml",

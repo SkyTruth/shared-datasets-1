@@ -17,7 +17,7 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
     assert ALWAYS <= set(select_suites(paths)[0])
 
 
-@pytest.mark.parametrize("job", ["eamlis_monthly", "sea_ice_daily", "wdpa_monthly"])
+@pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly"])
 def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
     path = f"ingestion/{job}/README.md"
     assert select_deployments([path]) == []
@@ -48,14 +48,14 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
-    assert set(select_deployments(["ingestion/common/publication.py"])) == {"eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
+    assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
     assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam", "dataset_usage"}
 
 
 @pytest.mark.parametrize("path,targets", [
-    ("scripts/pmtiles_zoom.py", {"eamlis", "wdpa", "sea_ice"}),
-    ("scripts/slack_notify.py", {"eamlis", "wdpa", "sea_ice"}),
+    ("scripts/pmtiles_zoom.py", {"mpatlas", "eamlis", "wdpa", "sea_ice"}),
+    ("scripts/slack_notify.py", {"mpatlas", "eamlis", "wdpa", "sea_ice"}),
     ("scripts/catalog_csv.py", {"eamlis", "wdpa", "dataset_usage"}),
     ("scripts/feature_metadata_translation_reuse.py", {"eamlis", "wdpa"}),
     ("catalog/feature-identity-resolutions/wdpa.json", {"wdpa", "sea_ice"}),

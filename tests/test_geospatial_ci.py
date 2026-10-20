@@ -32,6 +32,7 @@ NATIVE_TOOL_TESTS = {
     "tests/test_wdpa_disk_processing.py",
     "tests/test_sea_ice_daily.py",
     "tests/test_eamlis_monthly.py",
+    "tests/test_mpatlas_monthly.py",
 }
 
 
