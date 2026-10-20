@@ -18,6 +18,10 @@
         </header>
 
         <section class="filters" aria-label="Catalog filters">
+          <a id="staff-login" class="staff-login" href="https://catalog-viewer-vmust7rama-uc.a.run.app/">
+            <strong>SkyTruth staff</strong>
+            <span>Log in for restricted datasets →</span>
+          </a>
           <p id="preview-notice" hidden class="preview-notice">Test environment. Preview datasets are experimental. Published datasets are available for comparison.</p>
           <div id="published-control" hidden>
             <label class="published-toggle"><input id="include-published" type="checkbox" /> Include published datasets</label>
@@ -80,6 +84,13 @@
             <p id="detail-description" class="detail-description"></p>
             <div id="selection-legend" class="selection-legend" hidden></div>
           </header>
+
+          <section id="restricted-access" class="restricted-access" aria-labelledby="restricted-access-title" hidden>
+            <p class="eyebrow">SkyTruth access required</p>
+            <h3 id="restricted-access-title">Log in to see this data</h3>
+            <p>This dataset is listed for discovery. Log in with your @skytruth.org account to preview and download it.</p>
+            <a id="restricted-login" class="login-button" href="https://catalog-viewer-vmust7rama-uc.a.run.app/">Log in to see this data <span aria-hidden="true">→</span></a>
+          </section>
 
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
@@ -357,6 +368,7 @@
         <span class="asset-card-side">
           <span class="asset-date"></span>
           <span class="asset-formats"></span>
+          <span class="asset-access" hidden>Log in required</span>
         </span>
       </button>
     </template>

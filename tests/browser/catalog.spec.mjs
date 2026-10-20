@@ -38,7 +38,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, publicHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -48,6 +48,13 @@ const test = base.extend({
       const url = new URL(request.url());
       requests.push({ url: url.href, method: request.method(), range: request.headers().range || null, cookie: (await request.allHeaders()).cookie || null });
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      if (state.publicHosting && url.origin === 'https://tiles.skytruth.org' && url.pathname.startsWith('/_catalog/')) {
+        if (url.pathname === '/_catalog/web/catalog.json') return json(catalog);
+        const slug = /^\/_catalog\/releases\/([a-z-]+)\.json$/.exec(url.pathname)?.[1];
+        if (slug && indexes.has(slug)) return json(indexes.get(slug));
+        if (url.pathname === '/_catalog/wdpa-monthly-execution.json') return json(state.execution);
+        if (url.pathname.startsWith('/_catalog/web/')) return route.fulfill({path: resolve(siteDir, url.pathname.slice('/_catalog/web/'.length) || 'index.html')});
+      }
       if (url.origin === baseURL && url.pathname === '/catalog.json') return json(catalog);
       if (url.origin === baseURL && url.pathname === '/session') return json({authorized: true});
       const lookup = /^\/v1\/assets\/([a-z-]+)\/releases\/([0-9-]+):lookup$/.exec(url.pathname);
@@ -988,7 +995,8 @@ test('direct storage hosting keeps public maps usable and refuses an implicit re
   await clickPoint(page, false, testInfo);
   await expectMetadata(page, false);
   await page.locator('#asset-list [data-slug="smoke-private"]').click();
-  await expect(page.locator('#map-status')).toContainText('Map unavailable');
+  await expect(page.locator('#restricted-access')).toBeVisible();
+  await expect(page.locator('#map-section')).toBeHidden();
   await expect(page.locator('#map-preview canvas')).toHaveCount(0);
   await expect(page.locator('#feature-inspector')).toBeHidden();
   expect(transport.requests.filter(entry => entry.url.includes('storage.googleapis.com/api/'))).toEqual([]);
@@ -1109,4 +1117,61 @@ test('empty preview can retry a failed published catalog and handle an empty cat
   await page.getByLabel('Include published datasets').check();
   await expect(page.locator('#published-status')).toContainText('Ctrl/⌘-click');
   await expect(page.locator('#catalog-count')).toContainText('0 of 0 assets');
+});
+
+test('signed-out catalog lists every tier and gates restricted data with a prominent login action', async ({page, transport}, testInfo) => {
+  transport.publicHosting = true;
+  await page.goto('https://tiles.skytruth.org/_catalog/web/index.html?asset=smoke-private');
+  await expect(page.locator('#asset-list .asset-card')).toHaveCount(transport.catalog.assets.length);
+  await expect(page.locator('#staff-login')).toBeVisible();
+  for (const tier of ['private', 'internal']) {
+    const card = page.locator(`#asset-list [data-slug="smoke-${tier}"]`);
+    await expect(card).toContainText('Log in required');
+    await card.click();
+    await expect(page.getByRole('link', {name: 'Log in to see this data', exact: true})).toBeVisible();
+    await expect(page.locator('#restricted-access')).toContainText('@skytruth.org');
+    for (const selector of ['#map-section', '#download-fgb', '#version-path-row', '#use-section', '.path-section', '.meta-grid', '.source-section', '#detail-docs']) {
+      await expect(page.locator(selector)).toBeHidden();
+    }
+  }
+  await testInfo.attach('restricted-desktop.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.locator('#asset-list [data-slug="smoke-public"]').click({modifiers:['ControlOrMeta']});
+  await expect(page.locator('#restricted-access')).toBeVisible();
+  const loginUrl = new URL(await page.locator('#restricted-login').getAttribute('href'));
+  expect(loginUrl.searchParams.getAll('asset')).toEqual(['smoke-internal', 'smoke-public']);
+  expect(await page.locator('#staff-login').getAttribute('href')).toBe(loginUrl.href);
+  await clickPoint(page, false, testInfo);
+  await expectMetadata(page, false);
+  expect(transport.requests.filter(({url}) => /\/(?:api|v1)\//.test(new URL(url).pathname) || /\/smoke-(?:private|internal)\//.test(new URL(url).pathname))).toEqual([]);
+  await page.locator('#asset-list [data-slug="smoke-private"]').click();
+  await page.setViewportSize({width:390, height:844});
+  const action = page.getByRole('link', {name:'Log in to see this data', exact:true});
+  await action.scrollIntoViewIfNeeded();
+  await expect(action).toBeInViewport();
+  const box = await action.boundingBox();
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeLessThanOrEqual(390);
+  await testInfo.attach('restricted-mobile.png', {body:await page.screenshot(), contentType:'image/png'});
+});
+
+test('staff login carries selected datasets, releases and locale into the authenticated viewer', async ({page, context, transport}, testInfo) => {
+  transport.publicHosting = true;
+  await page.goto('https://tiles.skytruth.org/_catalog/web/index.html?asset=smoke-private&version.smoke-private=2026-01-01&locale=es');
+  await expect(page.locator('#detail-title')).toHaveText('Smoke private');
+  const login = page.getByRole('link', {name:'Log in to see this data', exact:true});
+  const url = new URL(await login.getAttribute('href'));
+  expect(url.origin).toBe('https://catalog-viewer-vmust7rama-uc.a.run.app');
+  expect(url.searchParams.getAll('asset')).toEqual(['smoke-private']);
+  expect(url.searchParams.get('version.smoke-private')).toBe('2026-01-01');
+  expect(url.searchParams.get('locale')).toBe('es');
+  await context.route(`${url.origin}/**`, route => route.fulfill({status:302, headers:{location:baseURL + new URL(route.request().url()).search}}));
+  await login.click();
+  await expect(page.locator('#restricted-access')).toBeHidden();
+  await expect(page.locator('#staff-login')).toBeHidden();
+  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
+  await clickPoint(page, true, testInfo);
+  await expect(page.locator('#download-fgb')).toBeVisible();
+  await page.locator('#asset-list [data-slug="smoke-internal"]').click({modifiers:['ControlOrMeta']});
+  await expect(page.locator('#detail-title')).toHaveText('2 datasets selected');
+  await expect(page.locator('#restricted-access')).toBeHidden();
 });
