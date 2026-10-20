@@ -149,7 +149,7 @@ let mountCount=0, cancelCount=0;
 const modulePromise=new Promise(resolve=>{finishImport=resolve;});
 const noOp=()=>{};
 const node={hidden:false,textContent:'',replaceChildren:noOp};
-const renderContext=vm.createContext({window:{location:{hostname:'catalog-viewer-vmust7rama-uc.a.run.app',protocol:'https:'}},comparisonController:{isOpen:()=>false},state:{mapRequestSerial:0,featureLookupSerial:0,selectedSlugs:['example-layer']},old,
+const renderContext=vm.createContext({comparisonController:{isOpen:()=>false},state:{mapRequestSerial:0,featureLookupSerial:0,selectedSlugs:['example-layer']},old,
  document:{querySelector:()=>node}, elements:{mapSection:{},mapStatus:{},pmtilesRow:{},pmtiles:{},},
  loadMapModule:()=>modulePromise, setZoomSelectionEnabled:noOp,clearFeatureInspector:noOp,clearColorLegend:noOp,
  resetMetadataLanguageControl:noOp,renderMetadataSidecarPath:noOp,resetColorizeControl:noOp,resetLayerControl:noOp,
@@ -157,7 +157,7 @@ const renderContext=vm.createContext({window:{location:{hostname:'catalog-viewer
  prepareColorizeControl:noOp,selectedMetadataLanguageAsset:()=>old,prepareMetadataLanguageControl:noOp,
  updateLayerOptions:noOp,updateColorizeFields:noOp,clearUnavailableColorField:noOp,renderColorLegend:noOp,
  handleFeatureSelect:noOp,loadFeatureMetadataColorValues:noOp,mapUnavailableMessage:e=>String(e)});
-vm.runInContext(['isRestrictedAccessTier','catalogViewerApiAvailable','datasetRequiresLogin','renderPmtiles'].map(n=>extract(app,n)).join('\n'),renderContext);
+vm.runInContext(extract(app,'renderPmtiles'),renderContext);
 const pending=vm.runInContext('renderPmtiles([old])',renderContext);
 await vm.runInContext('renderPmtiles([{release_error:"Missing release"}])',renderContext);
 finishImport({renderMapPreview:()=>{mountCount++;},cancelMapPreview:()=>{cancelCount++;}});
