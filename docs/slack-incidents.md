@@ -69,6 +69,28 @@ Publisher authorization and immutable plan rechecks remain owned by the existing
 publisher. The notification registry never grants deployment or publication
 authority.
 
+### A completed publication with a failed PR receipt
+
+When promotion, metadata finalization and index rebuild succeeded but the live
+breaking-change PR comment failed with GitHub's integration-permission 403, do
+not rerun the mutation. `Approved dataset mutation` has an owner-only,
+protected receipt recovery: supply the original `pr_number`,
+`receipt_recovery_run_id` and `receipt_recovery_attempt` on tested `main`.
+Leave `authorization_rehearsal` false. The ordinary mutation jobs are excluded.
+
+Recovery rechecks the original immutable authorization artifact, exact-head
+acceptance, completed publication steps and failed comment command. It rejects
+incomplete publications, other failures and the webhook's failed-delivery
+diagnostic. It restores only that comment's exact deduplication marker, or
+reuses an existing trusted receipt. It has no GCP authentication or Slack send
+and leaves retained staging objects for the normal scratch cleanup process.
+
+The observer requires the repair step to have succeeded. Its green parent
+update covers only the original PR's apply run and attempt named by the recovery
+job; it cannot clear another failed attempt or feature-ID reset. Verify the
+original Slack parent after completion. A successful workflow wrapper alone is
+insufficient.
+
 ## Persistence and delivery
 
 Notification checkpoints use GitHub deployment records with task

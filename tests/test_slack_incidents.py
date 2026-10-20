@@ -125,11 +125,50 @@ def test_publication_uses_original_pr_identity_and_exact_phase():
     first = incidents.scope_for_job("Publish PR #208 / Apply approved PR mutation plans (PR #208)", targets, "ci.yml")
     recovery = incidents.scope_for_job("Apply approved PR mutation plans (PR #208)", targets, "publish-dataset.yml")
     assert first == recovery
+    assert first == incidents.scope_for_job("Complete publication receipt (PR #208; run 100; attempt 1)", targets, "publish-dataset.yml")
     assert first[0] != incidents.scope_for_job("Publish PR #209 / Apply approved PR mutation plans (PR #209)", targets, "ci.yml")[0]
     assert first[0] != incidents.scope_for_job("Publish PR #208 / Install reviewed feature-ID reset", targets, "ci.yml")[0]
     with pytest.raises(incidents.IncidentError, match="ambiguous PR"):
         incidents.scope_for_job("Publish PR #208 / Apply approved PR mutation plans (PR #209)", targets, "ci.yml")
     assert incidents.scope_for_job("Publish PR #208 / refresh-catalog / Build and publish catalog web", targets, "ci.yml")[0] == "deployment:catalog-web"
+
+
+@pytest.mark.parametrize("extra", [False, True])
+def test_receipt_repair_resolves_only_its_exact_apply_attempt_and_updates_original_parent(extra):
+    first = observation(scope="publication:pr-208:apply", kind="publication", label="Dataset PR #208 (apply)",
+                        job_name="Publish PR #208 / Apply approved PR mutation plans (PR #208)")
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [first], success=lambda *_: None), slack)
+    if extra:
+        retry = {**first, "run_id": 102, "time": "2026-10-06T09:00:00Z"}
+        incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: None), slack)
+    repaired = {**first, "run_id": 103, "job_id": 900, "sha": "b" * 40,
+                "time": "2026-10-06T10:00:00Z", "conclusion": "success",
+                "job_name": "Complete publication receipt (PR #208; run 100; attempt 1)"}
+    records = incidents.prepare(ledger, IDENTITY, [repaired], ancestor=lambda *_: True, success=lambda *_: None)
+    before = len(slack.calls)
+    incidents.deliver(ledger, records, slack)
+    current = ledger.states[first["scope"]]["incident"]
+    if extra:
+        assert current["resolution"] is None and len(slack.calls) == before
+    else:
+        assert current["resolution"] == repaired
+        assert slack.calls[-1][0] == "update" and "Resolved" in slack.calls[-1][1]["text"]
+        assert len(slack.calls) == before + 1
+
+
+@pytest.mark.parametrize("outcome", ["success", "skipped", "failure", None])
+def test_receipt_wrapper_success_requires_the_actual_repair_step(outcome):
+    run = {"id": 103, "run_attempt": 1, "name": "Approved dataset mutation", "event": "workflow_dispatch",
+           "head_sha": SHA, "conclusion": "success", "updated_at": "2026-10-06T10:00:00Z"}
+    job = {"id": 900, "name": "Complete publication receipt (PR #208; run 100; attempt 1)",
+           "status": "completed", "conclusion": "success", "completed_at": run["updated_at"],
+           "steps": [{"name": incidents.REPAIR_STEP, "status": "completed", "conclusion": outcome}] if outcome else []}
+    api = mock.Mock()
+    api.pages.return_value = [job]
+    with mock.patch.object(incidents.alerts, "verify_source_event", return_value=True):
+        observations = incidents.source_observations(api, {"workflow_run": run}, incidents.job_targets())
+    assert any(item["scope"] == "publication:pr-208:apply" for item in observations) == (outcome == "success")
 
 
 def test_retry_keeps_id_and_history_recovery_keeps_failures_and_new_failure_opens_episode():

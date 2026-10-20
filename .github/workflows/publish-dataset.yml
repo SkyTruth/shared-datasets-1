@@ -19,14 +19,22 @@ on:
         description: Verify authorization in the protected environment without credentials or mutation
         type: boolean
         default: false
+      receipt_recovery_run_id:
+        description: "Original failed run for receipt-only recovery; never replays data or Slack"
+        required: false
+        type: string
+      receipt_recovery_attempt:
+        description: Exact original failed run attempt
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: read
   deployments: write
   id-token: write
   attestations: write
-  issues: write
-  pull-requests: read
+  pull-requests: write
   actions: read
 
 env:
@@ -48,7 +56,7 @@ jobs:
       pull-requests: read
     if: >-
       ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          (github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.pr_number != '') }}
+          (github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.pr_number != '' && inputs.receipt_recovery_run_id == '') }}
     outputs:
       has_publish_plan: ${{ steps.capture.outputs.has_publish_plan }}
       has_delete_plan: ${{ steps.capture.outputs.has_delete_plan }}
@@ -371,7 +379,7 @@ jobs:
 
   authorization-rehearsal:
     needs: reviewed_pr_plans
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.authorization_rehearsal }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.authorization_rehearsal && inputs.receipt_recovery_run_id == '' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     permissions:
@@ -392,6 +400,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
         run: python scripts/dataset_mutation_authorization.py verify --directory authorization --expected-sha256 "$EXPECTED_SHA256"
+
+  complete-publication-receipt:
+    name: "Complete publication receipt (PR #${{ inputs.pr_number }}; run ${{ inputs.receipt_recovery_run_id }}; attempt ${{ inputs.receipt_recovery_attempt }})"
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.receipt_recovery_run_id != '' && !inputs.authorization_rehearsal }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    concurrency:
+      group: approved-dataset-mutation
+      queue: max
+      cancel-in-progress: false
+    env:
+      SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Repair verified publication receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SOURCE_RUN_ID: ${{ inputs.receipt_recovery_run_id }}
+          SOURCE_ATTEMPT: ${{ inputs.receipt_recovery_attempt }}
+        run: >-
+          python scripts/publication_receipt_recovery.py
+          --pr-number "$PR_NUMBER"
+          --source-run-id "$SOURCE_RUN_ID"
+          --source-attempt "$SOURCE_ATTEMPT"
 
   refresh-catalog:
     needs: [reviewed_pr_plans, apply-approved-pr-plans]
