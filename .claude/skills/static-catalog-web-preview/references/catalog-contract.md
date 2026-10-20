@@ -21,20 +21,7 @@ reads are a temporary proof-of-concept bypass while bucket public access is
 being removed. Public browser access should use `tiles.skytruth.org/_catalog/`.
 
 The authenticated internal entry point is the IAP-protected Cloud Run `run.app`
-URL exposed by the Terraform `catalog_viewer_uri` output. The production staff
-entry point is `https://catalog-viewer-vmust7rama-uc.a.run.app/`; keep the
-`STAFF_CATALOG_URL` constant and HTML sign-in links aligned if it changes.
-
-The public catalog lists every access tier. Private/internal cards show
-`Log in required`; selecting one shows a prominent `Log in to see this data`
-action instead of maps, feature data, downloads, documentation, paths, code,
-or comparison controls. Mixed selections render public layers only and keep
-the sign-in action visible for restricted selections. The persistent staff
-link and dataset action open the IAP-protected viewer with repeated `asset`
-parameters, per-asset `version.{asset-key}` parameters, and the selected
-`locale`. The viewer restores that selection after sign-in. These presentation
-rules also apply on direct GCS static hosting. IAP and backend authorization
-continue to enforce restricted access; catalog visibility does not grant access.
+URL exposed by the Terraform `catalog_viewer_uri` output.
 
 The feature-branch preview environment has a separate IAP-protected catalog
 viewer backed by `gs://skytruth-shared-datasets-1-preview/`; see

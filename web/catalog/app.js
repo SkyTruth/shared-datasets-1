@@ -55,9 +55,6 @@ function createToastElement() {
 
 const elements = {
   count: document.querySelector("#catalog-count"),
-  staffLogin: document.querySelector("#staff-login"),
-  accessPrompt: document.querySelector("#restricted-access"),
-  accessLogin: document.querySelector("#restricted-login"),
   includePublished: document.querySelector("#include-published"),
   publishedStatus: document.querySelector("#published-status"),
   list: document.querySelector("#asset-list"),
@@ -172,39 +169,11 @@ const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
 const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
-const STAFF_CATALOG_URL = "https://catalog-viewer-vmust7rama-uc.a.run.app/";
 const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 24 * 1024 * 1024;
 const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
 const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 100;
 const FEATURE_METADATA_LINE_ID_RE = /"feature_id"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)/;
 const FEATURE_METADATA_ID_VALUE_RE = /^[A-Za-z0-9]{1,64}$/;
-
-function datasetRequiresLogin(asset) {
-  return isRestrictedAccessTier(asset.access_tier) && !catalogViewerApiAvailable();
-}
-
-function restoreLinkedSelection() {
-  const params = new URLSearchParams(window.location.search);
-  state.selectedSlugs = [...new Set(params.getAll("asset"))].filter(key => state.assets.some(asset => assetKey(asset) === key));
-  state.selectedSlug = state.selectedSlugs.at(-1) || null;
-  for (const key of state.selectedSlugs) {
-    const version = params.get(`version.${key}`);
-    if (version === "latest" || RELEASE_DATE_RE.test(version || "")) state.versionBySlug[key] = version;
-  }
-}
-
-function renderAccessPrompt(assets) {
-  const url = new URL(STAFF_CATALOG_URL);
-  for (const asset of assets) {
-    const key = assetKey(asset);
-    url.searchParams.append("asset", key);
-    url.searchParams.set(`version.${key}`, selectedVersionValue(asset));
-  }
-  if (state.metadataLocale) url.searchParams.set("locale", state.metadataLocale);
-  elements.staffLogin.href = url.href;
-  elements.accessLogin.href = url.href;
-  elements.accessPrompt.hidden = !assets.some(datasetRequiresLogin);
-}
 
 function activeMetadataLocale() {
   const params = new URLSearchParams(window.location.search);
@@ -218,7 +187,6 @@ function normalizeMetadataLocale(value) {
 
 async function init() {
   try {
-    elements.staffLogin.hidden = catalogViewerApiAvailable();
     state.metadataLocale = activeMetadataLocale();
     const response = await fetch(cacheBustedUrl("./catalog.json", Date.now()), { cache: "no-store" });
     if (!response.ok) {
@@ -242,7 +210,6 @@ async function init() {
     elements.basemap.value = state.basemap;
     populateFilters();
     wireEvents();
-    restoreLinkedSelection();
     applyFilters();
   } catch (error) {
     renderFatalError(error);
@@ -665,7 +632,6 @@ function renderAssetCard(asset, selectedSet) {
   node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
   node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
   node.querySelector(".asset-date").textContent = asset.latest_release?.date || asset.last_updated || "No release";
-  node.querySelector(".asset-access").hidden = !datasetRequiresLogin(asset);
   const formats = node.querySelector(".asset-formats");
   for (const format of asset.available_formats) {
     const chip = document.createElement("span");
@@ -717,7 +683,6 @@ function markSelected() {
 
 function renderSelection() {
   const assets = selectedAssets();
-  renderAccessPrompt(assets);
   document.querySelector("#use-section").hidden = assets.length !== 1;
   if (!assets.length) {
     clearDetail();
@@ -737,27 +702,20 @@ function selectedAssets() {
 }
 
 function renderDetail(asset) {
-  const locked = datasetRequiresLogin(asset);
-  comparisonController.setAsset(locked ? null : asset, selectedVersionValue(asset), {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+  comparisonController.setAsset(asset, selectedVersionValue(asset), {bucket: asset.catalog_bucket || state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
   elements.empty.hidden = true;
   elements.detail.hidden = false;
   elements.detail.classList.remove("multi-detail");
-  elements.docs.hidden = locked;
-  elements.metaGrid.hidden = locked;
-  elements.pathSection.hidden = locked;
-  elements.sourceSection.hidden = locked;
+  elements.docs.hidden = false;
+  elements.metaGrid.hidden = false;
+  elements.pathSection.hidden = false;
+  elements.sourceSection.hidden = false;
   renderSelectionLegend([]);
   elements.taxonomy.textContent = `${asset.category} / ${asset.subcategory}`;
   elements.title.textContent = asset.title;
   elements.slug.hidden = false;
   elements.slug.textContent = asset.slug || "";
   elements.description.textContent = asset.description || asset.notes || "No description is available yet.";
-  if (locked) {
-    resetFgbDownload();
-    renderVersionSelector({versions: []});
-    document.querySelector("#use-section").hidden = true;
-    return renderPmtiles([]);
-  }
   renderDocsLink(asset);
   elements.updated.textContent = asset.latest_release?.date || asset.last_updated || "Unknown";
   renderLastRun(asset);
@@ -796,7 +754,7 @@ function renderDocsLink(asset) {
 function renderMultiDetail(assets) {
   comparisonController.setAsset(null);
   const references = selectedReferences(assets);
-  const mapAssets = references.filter((asset) => asset.pmtiles_url && !datasetRequiresLogin(asset));
+  const mapAssets = references.filter((asset) => asset.pmtiles_url);
   elements.empty.hidden = true;
   elements.detail.hidden = false;
   elements.detail.classList.add("multi-detail");
@@ -936,9 +894,9 @@ function renderSelectionLegend(assets) {
     const label = document.createElement("span");
     label.textContent = asset.title;
     item.append(swatch, label);
-    if (datasetRequiresLogin(asset) || !reference.pmtiles_url) {
+    if (!reference.pmtiles_url) {
       const note = document.createElement("em");
-      note.textContent = datasetRequiresLogin(asset) ? "Log in required" : "No map";
+      note.textContent = "No map";
       item.append(note);
     }
     elements.selectionLegend.append(item);
@@ -1221,7 +1179,7 @@ function renderSourceUrl(asset) {
 
 function renderFgbDownload(asset, reference = selectedReference(asset)) {
   resetFgbDownload();
-  if (datasetRequiresLogin(asset) || !isFgbDownloadableReference(asset, reference)) {
+  if (!isFgbDownloadableReference(asset, reference)) {
     return;
   }
 
@@ -1358,7 +1316,7 @@ async function renderPmtiles(assets) {
   if (comparisonController.isOpen()) return;
   const requestSerial = ++state.mapRequestSerial;
   state.mapModule?.cancelMapPreview();
-  const references = (Array.isArray(assets) ? assets : [assets]).filter(asset => !datasetRequiresLogin(asset));
+  const references = Array.isArray(assets) ? assets : [assets];
   const failure = references.find((asset) => asset?.release_error);
   if (failure) {
     state.featureLookupSerial += 1;
@@ -2045,7 +2003,7 @@ function featureMetadataSchemaCanLoad(asset) {
 
 function catalogViewerApiAvailable() {
   const host = window.location.hostname;
-  if (!host || host === "tiles.skytruth.org" || host === "storage.googleapis.com" || host.endsWith(".storage.googleapis.com") || window.location.protocol === "file:") {
+  if (!host || host === "tiles.skytruth.org" || window.location.protocol === "file:") {
     return false;
   }
   return true;
@@ -2970,7 +2928,6 @@ function clearDetail() {
   comparisonController.setAsset(null);
   state.selectedSlug = null;
   state.selectedSlugs = [];
-  renderAccessPrompt([]);
   elements.detail.hidden = true;
   elements.empty.hidden = false;
   resetFgbDownload();
@@ -3028,8 +2985,7 @@ function useLanguage(language) {
 }
 function renderUseSection(reference) {
   const section = document.querySelector('#use-section'), error = document.querySelector('#use-error');
-  section.hidden = comparisonController.isOpen() || datasetRequiresLogin(reference); error.hidden = true;
-  if (section.hidden) return;
+  section.hidden = comparisonController.isOpen(); error.hidden = true;
   document.querySelector('#use-copy-code').disabled = false;
   try {
     const snapshot = captureWorkspace([reference], {bucket: reference.catalog_bucket || state.catalog.bucket, locale: state.metadataLocale || null});
