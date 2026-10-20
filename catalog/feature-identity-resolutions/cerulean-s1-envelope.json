@@ -1,0 +1,30 @@
+{
+  "asset_slug": "cerulean-s1-envelope",
+  "decisions": [
+    {
+      "action": "reuse_previous_feature_id",
+      "ambiguity_type": "same_properties_changed_geometry",
+      "matching_geometry_feature_ids": [],
+      "matching_geometry_properties_hashes": [],
+      "matching_properties_feature_ids": [
+        "1"
+      ],
+      "matching_properties_geometry_hashes": [
+        "sha256:56a7d9027b6f8d84265cb0be1fb22ef0f7d9b564590f4c7cba98b34dee57c939"
+      ],
+      "new_geometry_hash": "sha256:ead48b52064f1fc0213348dc9c81ae4a052cb11c2b74cf4d7167627593192477",
+      "new_identity_key": [
+        "sha256:ead48b52064f1fc0213348dc9c81ae4a052cb11c2b74cf4d7167627593192477",
+        "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      ],
+      "new_properties_hash": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "pr_reference": "cerulean-envelope-refresh-20261020: the PR containing this decision and its immutable publish plan",
+      "previous_feature_id_for_key": null,
+      "rationale": "The maintainer supplied envelope.csv to update the existing singleton Cerulean analysis envelope. Both releases contain exactly one feature and no source attributes. This is the replacement geometry for that same envelope, so retain feature_id 1 across the refreshed footprint rather than allocate a new entity.",
+      "release": "2026-10-20",
+      "reuse_feature_id": "1",
+      "reviewer": "jonaraphael"
+    }
+  ],
+  "schema_version": 1
+}
