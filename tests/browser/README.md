@@ -123,7 +123,7 @@ independently from mutable index pointers to exercise replacement/retention.
 The three `usage.spec.mjs` scenarios also exercise the private usage endpoint's
 authentication/missing-summary behavior, report sorting/filters and safe DOM
 rendering, and independent stale-worker detection. The complete browser contract
-requires all twenty-eight scenarios, with no skips or retries. Colorizer coverage checks
+requires all thirty-four scenarios, with no skips or retries. Colorizer coverage checks
 that a category with 8,001 metadata IDs hides other categories, reports complete
 dataset counts, and toggles without moving the camera. Tile-backed color fields
 report loaded tile counts and filter both rendering and feature inspection.
@@ -148,3 +148,10 @@ assertion, rather than setup or the full-suite count gate:
 ```sh
 CATALOG_BROWSER_NEGATIVE_CONTROL=identifier-gradient npx --no-install playwright test --grep 'sidecar colorization'
 ```
+
+Signed-out discovery coverage serves the generated bundle at the public catalog
+origin, checks that every access tier stays listed, and verifies that restricted
+selections request no data or signing endpoints. It covers mixed public/restricted
+selection, a prominent mobile login action, and a simulated IAP redirect into the
+authenticated viewer preserving selected datasets, releases, and locale. Direct
+GCS hosting uses the same restricted-data prompt.
