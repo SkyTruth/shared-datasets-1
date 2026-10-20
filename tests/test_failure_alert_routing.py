@@ -121,16 +121,64 @@ def source_api(run, **updates):
     return api
 
 
+@pytest.mark.parametrize("conclusion", ["success", "failure", "timed_out", "cancelled"])
+def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusion):
+    payload = event(name="Catalog web deploy")
+    jobs = [
+        {"name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion},
+        {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
+    ]
+    assert alerts.alert_for_run(payload, jobs=jobs) is None
+    # Actual publisher failures and historical jobs without the activity gate
+    # still alert. The exception never applies to an explicit action's failure.
+    jobs[1]["conclusion"] = "failure"
+    assert alerts.alert_for_run(payload, jobs=jobs) is not None
+    assert alerts.alert_for_run(payload, jobs=jobs[1:]) is not None
+    jobs[1]["conclusion"] = "skipped"
+    assert alerts.alert_for_run(event(name="Catalog web deploy", event="workflow_run"), jobs=jobs) is not None
+
+
+def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_path, monkeypatch):
+    payload = event(name="Catalog web deploy", head_sha="a" * 40, run_attempt=1)
+    api = source_api(payload["workflow_run"])
+    api.pages.return_value = [
+        {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"},
+        {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
+    ]
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(payload))
+    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
+        alerts.main()
+    notify.assert_not_called()
+    api.pages.assert_called_once_with(
+        "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
+    api = source_api(payload["workflow_run"], run_attempt=2)
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
+        alerts.main()
+    notify.assert_not_called()
+    api.pages.assert_not_called()
+
+
+def test_catalog_probe_does_not_hide_missing_ambiguous_or_other_failed_jobs():
+    payload = event(name="Catalog web deploy")
+    probe = {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"}
+    publisher = {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"}
+    other = {"name": "another job", "status": "completed", "conclusion": "failure"}
+    for jobs in ([], [probe], [publisher], [probe, probe, publisher], [probe, publisher, publisher], [probe, publisher, other]):
+        assert alerts.alert_for_run(payload, jobs=jobs) is not None
+
+
 def test_ci_alert_checks_source_identity_and_suppresses_obsolete_attempts():
     run = event(name="CI", event="push", head_sha="a" * 40, run_attempt=1)["workflow_run"]
     api = source_api(run, run_attempt=2, status="in_progress", conclusion=None)
-    assert alerts.ci_jobs_for_event(api, run) == []
+    assert alerts.jobs_for_event(api, run) is None
     api.pages.assert_not_called()
     api = source_api(run, path=".github/workflows/untrusted.yml")
     with pytest.raises(ValueError, match="trusted main source"):
-        alerts.ci_jobs_for_event(api, run)
+        alerts.jobs_for_event(api, run)
     api = source_api(run)
-    alerts.ci_jobs_for_event(api, run)
+    alerts.jobs_for_event(api, run)
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
 

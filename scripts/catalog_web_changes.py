@@ -23,6 +23,7 @@ CATALOG_INPUTS = {
     "scripts/catalog_site.py", "scripts/catalog_csv.py", "scripts/catalog_web_publish.py",
     "scripts/collect_release_indexes.py", "scripts/catalog_drift_guard.py",
     "scripts/catalog_web_changes.py", ".github/workflows/catalog-web-deploy.yml",
+    "scripts/catalog_refresh_check.py",
 }
 
 

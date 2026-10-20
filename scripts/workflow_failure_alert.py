@@ -54,6 +54,18 @@ def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
                  or (ready and job["name"] not in VALIDATION_JOBS))]
 
 
+def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
+    """Recognize an idle scheduled probe from authoritative same-attempt jobs."""
+    if run["name"] != "Catalog web deploy" or run["event"] != "schedule":
+        return False
+    probes = [job for job in jobs if job["name"] == "Check for catalog input changes"]
+    publishers = [job for job in jobs if job["name"] == "Build and publish catalog web"]
+    return (len(probes) == len(publishers) == 1
+            and probes[0]["status"] == "completed"
+            and publishers[0]["status"] == "completed" and publishers[0]["conclusion"] == "skipped"
+            and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
+
+
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
     run = event["workflow_run"]
     # Maintenance and automatic follow-ups are unattended. CI's main-push
@@ -72,6 +84,8 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     run_id = run["id"]
     if type(run_id) is not int or run_id <= 0:
         raise ValueError("workflow run ID must be a positive integer")
+    if catalog_probe_only(run, jobs or []):
+        return None
     if run["name"] == "CI":
         # CI now owns reusable publication/catalog jobs. A validation failure
         # alone still belongs in GitHub; inspect only this exact run attempt.
@@ -122,9 +136,9 @@ def verify_source_event(api: GitHub, run: dict) -> bool:
     return True
 
 
-def ci_jobs_for_event(api: GitHub, run: dict) -> list[dict]:
+def jobs_for_event(api: GitHub, run: dict) -> list[dict] | None:
     if not verify_source_event(api, run):
-        return []
+        return None
     return api.pages(
         f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100",
         field="jobs",
@@ -140,14 +154,15 @@ def main() -> None:
     run = event["workflow_run"]
     jobs = None
     alert = alert_for_run(event)
-    # CI needs job evidence before its pure routing decision can produce an alert.
-    eligible_ci = (run["name"] == "CI" and run["event"] == "push"
+    # Both CI publication and scheduled catalog activity need exact job evidence.
+    needs_jobs = ((run["name"] == "CI" and run["event"] == "push"
+                   or run["name"] == "Catalog web deploy" and run["event"] == "schedule")
                    and run["conclusion"] in FAILED_CONCLUSIONS and run["status"] == "completed"
                    and run["head_branch"] == "main" and run["head_repository"]["full_name"] == REPOSITORY
                    and event["repository"]["full_name"] == REPOSITORY)
-    if eligible_ci:
-        jobs = ci_jobs_for_event(GitHub(), run)
-        alert = alert_for_run(event, jobs=jobs)
+    if needs_jobs:
+        jobs = jobs_for_event(GitHub(), run)
+        alert = None if jobs is None else alert_for_run(event, jobs=jobs)
     elif alert is not None and not verify_source_event(GitHub(), run):
         alert = None
     if alert is None:
