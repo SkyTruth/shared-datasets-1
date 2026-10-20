@@ -1,0 +1,131 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "cerulean-s1-envelope",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/octet-stream",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/releases/2026-10-20/cerulean-s1-envelope.fgb",
+        "source_generation": "1792502199142029",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.fgb"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/vnd.pmtiles",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/releases/2026-10-20/cerulean-s1-envelope.pmtiles",
+        "source_generation": "1792502204430770",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.pmtiles"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/releases/2026-10-20/cerulean-s1-envelope.metadata.ndjson.gz",
+        "source_generation": "1792502213102149",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.metadata.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/releases/2026-10-20/cerulean-s1-envelope.schema.json",
+        "source_generation": "1792502217116644",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.schema.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/releases/2026-10-20/cerulean-s1-envelope.manifest.json",
+        "source_generation": "1792502299514733",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/octet-stream",
+        "destination_generation": "1781102547954422",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/latest/cerulean-s1-envelope.fgb",
+        "source_generation": "1792502199142029",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.fgb"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/vnd.pmtiles",
+        "destination_generation": "1781102553037265",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/latest/cerulean-s1-envelope.pmtiles",
+        "source_generation": "1792502204430770",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.pmtiles"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781102555714957",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/latest/cerulean-s1-envelope.metadata.ndjson.gz",
+        "source_generation": "1792502213102149",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.metadata.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781102558389225",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/latest/cerulean-s1-envelope.schema.json",
+        "source_generation": "1792502217116644",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.schema.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781102573691578",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/latest/cerulean-s1-envelope.manifest.json",
+        "source_generation": "1792502299514733",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/artifacts/cerulean-s1-envelope.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/markdown",
+        "destination_generation": "1781102566501861",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/README.md",
+        "source_generation": "1792502307388642",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/metadata/README.md"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1792460606861668",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv",
+        "source_generation": "1792502311912876",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/metadata/shared-datasets-catalog.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/runs/2026-10-20.json",
+        "source_generation": "1792502366488700",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/cerulean-s1-envelope/cerulean-envelope-refresh-20261020/metadata/run-record.json"
+      }
+    ],
+    "proposal_id": "cerulean-envelope-refresh-20261020",
+    "release_index_asset_slugs": [
+      "cerulean-s1-envelope"
+    ]
+  }
+}

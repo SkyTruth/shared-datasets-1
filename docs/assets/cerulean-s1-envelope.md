@@ -20,19 +20,17 @@ source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
   confirmation.
-notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage. Release 2026-05-01 is the initial
-  upload (source features 1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11). Release 2026-05-04
-  is a canonical-file repair and PMTiles rebuild with zooms 0-6, no simplification, and a synthetic source_layer property
-  (pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d). A 2026-06-05 v1 metadata-contract release
-  was documented here but never promoted; no sidecar, schema, manifest, or releases/2026-06-05/ objects exist in the bucket
-  and the hashes previously recorded for it are retracted. The 2026-06-10 corrective schema-contract release publishes the
-  asset's first promoted metadata contract directly under release feature identity v2, built from the unchanged latest FGB
-  generation 1777669295802653, with generated monotonic decimal feature_id assigned from the geometry_hash+properties_hash
-  identity key, geometry_hash and properties_hash columns, schema_version 2 metadata/schema/manifest artifacts, and metadata-lookup
-  PMTiles rebuilt at maxzoom 6 with only feature_id. Hashes for the 2026-06-10 candidates are fgb d658c6ee78c9c81510baf3b479f471c936f494bfc4ee06f83c57e30eec3ccf33;
-  pmtiles 014d5bed6a28e15dade63d5b64fc620e479f380d3be8e7876b95d9e3994737c2; metadata ad1631c356a2bb71edeb75233185520fc678da683a20985b85610cd8ea95936b;
-  schema 7901582ecaadf2d260646be9e46a8694be6e423c9c494e163e64f5b643f01185; manifest a4995e460e781cb915db747c5140f8d6cda6c923b398048d38aad0efaee9626f.
-  Canonical FGB preserves the source WKT geometry as an envelope only
+notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. The 2026-10-20 manual refresh uses maintainer-supplied
+  envelope.csv (SHA-256 91ea498fb4a2f994d4cabf964f2c6ac62d68a790b516e99ab0a822552042b9fe), preserves one feature with feature_id
+  1, updates its valid WGS84 MultiPolygon from 64 to 152 parts, and retains metadata-lookup PMTiles at zooms 0-6. The geometry
+  is preserved exactly in FGB. No source attributes or translations are present; source generation method and redistribution
+  terms remain unconfirmed. The reviewed proposal also carries forward the historical next-ID value 2 into explicit versioned
+  sequence state without allocating new IDs.
+bounds:
+- -179.3667585675504
+- -78.65518002892276
+- 179.58931010615714
+- 87.38615680469654
 row_count: 1
 data_profile:
   field_count: 3
@@ -46,6 +44,7 @@ feature_identity:
   assignment_key:
   - geometry_hash
   - properties_hash
+  contract_id: cerulean-s1-envelope-v2
 feature_metadata:
   storage: metadata_sidecar_v1
   feature_id_column: feature_id
@@ -120,8 +119,9 @@ files:
 ## What this is
 
 This asset contains a SkyTruth internal derived Cerulean Sentinel-1 analysis
-envelope from the local source file `s1 footprint wkt.csv`. The source CSV has
-one `wkt` column and one valid WGS84 `MultiPolygon` feature.
+envelope refreshed from the maintainer-supplied `envelope.csv` on 2026-10-20.
+The source CSV has one `wkt` column and one valid WGS84 `MultiPolygon` feature;
+the original 2026-05-01 input was named `s1 footprint wkt.csv`.
 
 This is an envelope or coverage mask used for Cerulean context, not a complete
 Sentinel-1 scene-footprint catalog. The canonical FlatGeobuf preserves the
@@ -163,8 +163,8 @@ display and metadata lookup only.
 ## Schema notes
 
 Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
-`MultiPolygon` with 64 polygon parts and bounds `(-179.366759, -79.420040) -
-(179.536787, 89.565949)`. The published FlatGeobuf has one feature in layer
+`MultiPolygon` with 152 polygon parts, 38,398 coordinate positions, and bounds
+`(-179.366759, -78.655180) - (179.589310, 87.386157)`. The published FlatGeobuf has one feature in layer
 `cerulean_s1_envelope`.
 
 The source CSV is not published as a canonical format because shared-datasets
@@ -199,11 +199,11 @@ PMTiles feature properties are intentionally limited to `feature_id`.
 | `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
 
 The PMTiles display tiles publish only `feature_id`; full feature
-metadata is served from the metadata sidecar and feature metadata index.
+metadata is read from the metadata sidecar.
 
 ## Update notes
 
-Manually converted from `/Users/jonathanraphael/Downloads/s1 footprint wkt.csv`
+Initially converted from the maintainer-supplied `s1 footprint wkt.csv`
 on 2026-05-01 using `scripts/vector_asset.py`. The asset name emphasizes that
 the geometry is an envelope and should not be interpreted as complete
 Sentinel-1 footprint coverage.
@@ -243,6 +243,59 @@ the source has no human-readable metadata fields to localize.
 - PMTiles maxzoom: 6
 - PMTiles zoom 0 decoded feature properties: `feature_id`
 - PMTiles build path: WGS84 GeoJSONSeq to Tippecanoe MBTiles to PMTiles
+
+
+### 2026-10-20 footprint refresh
+
+The proposed release replaces the envelope geometry with the maintainer-supplied
+`envelope.csv` (SHA-256
+`91ea498fb4a2f994d4cabf964f2c6ac62d68a790b516e99ab0a822552042b9fe`).
+The FGB preserves all source coordinates exactly: one valid WGS84 multipolygon,
+152 polygon parts, and 38,398 coordinate positions. The previous release had
+64 polygon parts. PMTiles retains the coarse zoom 0-6 display contract and only
+the `feature_id` lookup property. The three FGB identity columns and empty
+metadata schema are unchanged. No human-readable fields need translation.
+
+The release-scoped decision in
+`catalog/feature-identity-resolutions/cerulean-s1-envelope.json` proposes retaining
+`feature_id = 1`: this is the same singleton analysis envelope with a refreshed
+geometry. Its new geometry hash is
+`sha256:ead48b52064f1fc0213348dc9c81ae4a052cb11c2b74cf4d7167627593192477`;
+the empty-properties hash is unchanged. Approval of that decision is part of the
+immutable publish-plan PR.
+
+The proposal also makes the existing identity history explicit under contract
+`cerulean-s1-envelope-v2`, with `sequence_state_version = 1` and next-ID values
+`2` before and after the release. No ID is allocated or reset. Historical
+allocation evidence is the first identity release (2026-06-10), whose dated
+manifest generation `1781102572950707` and latest manifest generation
+`1781102573691578` have the same SHA-256
+`caf97328984f88a7b13ce9ed937560f46cf427c4ffa74afe984e4beaf2c39ac3`,
+record `previous_release = null`, and persist next-ID `2`. The corresponding
+dated/latest sidecar generations `1781102539621733` and `1781102555714957`
+share SHA-256 `ad1631c356a2bb71edeb75233185520fc678da683a20985b85610cd8ea95936b`
+and contain only ID `1`. The earlier May releases predate generated feature
+identity. The version-inclusive bucket snapshot contained no other identity
+manifest or sidecar generations. These exact historical bytes, rather than a
+maximum of current feature IDs, supply the reviewed sequence migration evidence.
+
+Build tools come from `.github/docker/geospatial-ci.Dockerfile`: GDAL 3.6.2,
+Tippecanoe 2.52.0, and PMTiles 1.30.1. The Linux ARM64 image is
+`sha256:2fbca4622084dd74ebf92b3492f42cc08ce67efa27ddc0fdb6491974e8e39fa9`.
+PMTiles magic bytes, `pmtiles verify`, `pmtiles show`, and a zoom-0 tile decode
+passed; the decoded layer is `cerulean_s1_envelope` with only `feature_id`.
+
+Artifact SHA-256 values before protected metadata finalization:
+
+- fgb: `7716bf2f5d5675e76960f46719f250b7b1cf72535a12cc6ceb8f1d3381210f5d`
+- pmtiles: `d054013f1d2687fb773c391c901a55a3aaec049e2d9b961ae5012dd503d888cb`
+- metadata: `936f3848aa6706085e339516843c1def0867ffddae1da4b4625c15ec42bcf997`
+- schema: `cdd8ceaf1de9288ed89468c64f9a43c0428e010986d740187dec727ac42864fc`
+
+The protected publisher fills destination generations into the manifest and run
+record after promotion, then rebuilds the release index. Historical releases
+remain available. The catalog deployment workflow refreshes the web catalog
+after the approved mutation.
 
 ## Known caveats
 
