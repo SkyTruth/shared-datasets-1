@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import csv
-import hashlib
 import json
 import logging
 import os
@@ -12,7 +11,7 @@ import re
 import tempfile
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -20,7 +19,8 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
 from ingestion.common import feature_metadata
-from ingestion.common import release_index
+from ingestion.common import source_fingerprint as fingerprints
+from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
 from ingestion.common import vector_pipeline
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
@@ -145,11 +145,6 @@ def request_json(url: str, params: dict[str, Any] | None = None) -> dict[str, An
     return payload
 
 
-def stable_hash(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def normalized_fields(metadata: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     fields = []
     for field in metadata.get("fields", []):
@@ -164,7 +159,7 @@ def normalized_fields(metadata: dict[str, Any]) -> tuple[dict[str, Any], ...]:
                 "nullable": field.get("nullable"),
             }
         )
-    return tuple(fields)
+    return tuple(sorted(fields, key=lambda field: str(field["name"])))
 
 
 def field_names(fields: Iterable[dict[str, Any]]) -> list[str]:
@@ -231,16 +226,6 @@ def fetch_source_state(layer_url: str, where: str) -> SourceState:
         raise RuntimeError(f"e-AMLIS source filter produced no rows: {where}")
 
     editing_info = metadata.get("editingInfo") or {}
-    fingerprint = {
-        "layer_url": layer_url,
-        "where": where,
-        "service_item_id": metadata.get("serviceItemId"),
-        "data_last_edit_date": editing_info.get("dataLastEditDate"),
-        "schema_last_edit_date": editing_info.get("schemaLastEditDate"),
-        "field_schema_hash": schema_hash,
-        "feature_count": stats.feature_count,
-        "max_date_revised": stats.max_date_revised,
-    }
     return SourceState(
         layer_url=layer_url,
         where=where,
@@ -250,8 +235,8 @@ def fetch_source_state(layer_url: str, where: str) -> SourceState:
         fields=fields,
         field_schema_hash=schema_hash,
         stats=stats,
-        fingerprint_hash=stable_hash(fingerprint),
-        fingerprint=fingerprint,
+        fingerprint_hash="",
+        fingerprint={},
     )
 
 
@@ -534,41 +519,6 @@ def build_asset_output(
     )
 
 
-def latest_success_record(
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-    *,
-    exclude_run_date: dt.date | None = None,
-) -> dict[str, Any] | None:
-    index = publisher.load_json(release_index.release_index_object(asset.slug)) or {}
-    latest_release = index.get("latest_release")
-    if not isinstance(latest_release, dict):
-        return None
-
-    latest_run = index.get("latest_run")
-    run_record_path = latest_release.get("run_record_path")
-    if not run_record_path and isinstance(latest_run, dict) and latest_run.get("date") == latest_release.get("date"):
-        run_record_path = latest_run.get("run_record_path")
-    if not run_record_path:
-        return None
-
-    try:
-        bucket_name, object_name = release_index.split_gs_uri(str(run_record_path))
-    except release_index.ReleaseIndexError:
-        return None
-    if bucket_name != publisher.bucket.name:
-        return None
-
-    excluded_name = asset.run_record_object(exclude_run_date) if exclude_run_date else None
-    if excluded_name and object_name == excluded_name:
-        return None
-
-    record = publisher.load_json(object_name)
-    if record and record.get("status") == "success":
-        return record
-    return None
-
-
 def load_current_run_record(
     publisher: GcsPublisher,
     asset: AssetSpec,
@@ -659,18 +609,9 @@ def skipped_record(
     return record
 
 
-def publish_changed_asset(
-    *,
-    publisher: GcsPublisher,
-    run_date: dt.date,
-    source: SourceState,
-    output: AssetOutput,
-) -> dict[str, Any]:
-    metadata = metadata_for_source(run_date=run_date, source=source)
-    # Prepare the whole language bundle before the first canonical write. A
-    # missing source CSV is initial translation debt, not a failed dataset build.
-    translation_source = output.metadata.parent / f"{ASSET.slug}.metadata-translations.csv"
-    source_inputs = [{"uri": source.layer_url, "where": source.where}]
+def translation_input(publisher: GcsPublisher, workdir: Path):
+    translation_source = workdir / f"{ASSET.slug}.metadata-translations.csv"
+    source_inputs = []
     blob = publisher.bucket.blob(ASSET.latest_object(".metadata-translations.csv"))
     try:
         blob.reload()
@@ -682,12 +623,46 @@ def publish_changed_asset(
         blob.download_to_filename(str(translation_source), if_generation_match=generation)
         source_inputs.append({"uri": f"gs://{publisher.bucket.name}/{blob.name}", "generation": generation,
                               "sha256": sha256_file(translation_source)})
+    return translation_source, source_inputs
+
+
+def fingerprint_source(source: SourceState, extract: SourceExtract, translation_source: Path) -> SourceState:
+    fingerprint = fingerprints.Fingerprint("eamlis-content-v1", {
+        "layer_url": source.layer_url, "where": source.where,
+        "service_item_id": source.service_item_id,
+        "fields": sorted(source.fields, key=lambda field: str(field["name"])),
+        "features": fingerprints.feature_digest(feature_metadata.iter_geojson_features(extract.geojson)),
+        "translation_source": fingerprints.csv_digest(translation_source),
+        "translation_fields": sorted(TRANSLATION_FIELDS), "translation_locales": sorted(TRANSLATION_LOCALES),
+    })
+    return replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
+
+
+def publish_changed_asset(
+    *,
+    publisher: GcsPublisher,
+    run_date: dt.date,
+    source: SourceState,
+    output: AssetOutput,
+    translation_source: Path | None = None,
+    translation_inputs: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    # Prepare the whole language bundle before the first canonical write. A
+    # missing source CSV is initial translation debt, not a failed dataset build.
+    if translation_source is None:
+        translation_source, translation_inputs = translation_input(publisher, output.metadata.parent)
+    source_inputs = [{"uri": source.layer_url, "where": source.where}, *translation_inputs]
     reconciliation = translation_reuse.reconcile_translation_source(
         canonical_sidecar=output.metadata, translation_source=translation_source,
         fields=TRANSLATION_FIELDS, locales=TRANSLATION_LOCALES,
         asset_slug=ASSET.slug, release=run_date.isoformat(),
     )
     LOGGER.info("translation reconciliation: %s", reconciliation)
+    fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], {
+        **source.fingerprint["inputs"], "translation_source": fingerprints.csv_digest(translation_source),
+    })
+    source = replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
+    metadata = metadata_for_source(run_date=run_date, source=source)
     reports = localization.materialize_locale_sidecars(
         canonical_sidecar=output.metadata, translation_source=translation_source,
         output_dir=output.metadata.parent, locales=TRANSLATION_LOCALES,
@@ -820,38 +795,32 @@ def run() -> list[dict[str, Any]]:
             )
             if release_index_info:
                 existing_record["release_index"] = release_index_info
+        else:
+            existing_record = dict(existing_record)
+            blob = publisher.bucket.blob(ASSET.run_record_object(run_date))
+            blob.reload()
+            info = {"path": f"gs://{publisher.bucket.name}/{blob.name}", "generation": int(blob.generation), "size": int(blob.size or 0)}
+            existing_record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=existing_record, run_record_info=info)
         return [existing_record]
 
-    source = fetch_source_state(layer_url, where)
-    previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
-    contract_refresh = needs_metadata_contract_refresh(publisher, previous_record)
-    if previous_record and previous_record.get("source_fingerprint_hash") == source.fingerprint_hash:
-        if contract_refresh:
-            LOGGER.info(
-                "%s source fingerprint unchanged, but previous release lacks metadata contract; publishing refresh",
-                ASSET.slug,
-            )
-        else:
-            LOGGER.info("%s source fingerprint unchanged; skipping", ASSET.slug)
-            return [
-                skipped_record(
-                    publisher=publisher,
-                    run_date=run_date,
-                    source=source,
-                    previous_record=previous_record,
-                    reason="source fingerprint unchanged",
-                )
-            ]
-
     publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
-
-    with tempfile.TemporaryDirectory(prefix="eamlis-monthly-") as tmp:
+    previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
+    source = fetch_source_state(layer_url, where)
+    work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
+    work_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
         workdir = Path(tmp)
         extract = download_source_geojson(
             source=source,
             dest=workdir / f"{ASSET.slug}.geojson",
             page_size=page_size,
         )
+        translation_source, translation_inputs = translation_input(publisher, workdir)
+        source = fingerprint_source(source, extract, translation_source)
+        fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], source.fingerprint["inputs"])
+        if fingerprint.matches(previous_record) and not needs_metadata_contract_refresh(publisher, previous_record):
+            return [skipped_record(publisher=publisher, run_date=run_date, source=source,
+                                   previous_record=previous_record, reason="source fingerprint unchanged")]
         output = build_asset_output(
             source=source,
             extract=extract,
@@ -863,23 +832,13 @@ def run() -> list[dict[str, Any]]:
             # a source-field contract refresh.
             previous_records=None,
         )
-        previous_sha = ((previous_record or {}).get("sha256") or {}).get("fgb")
-        if previous_sha and previous_sha == output.sha256["fgb"] and not contract_refresh:
-            LOGGER.info("%s output hash unchanged; skipping", ASSET.slug)
-            return [
-                skipped_record(
-                    publisher=publisher,
-                    run_date=run_date,
-                    source=source,
-                    previous_record=previous_record,
-                    reason="generated FGB hash unchanged",
-                )
-            ]
         record = publish_changed_asset(
             publisher=publisher,
             run_date=run_date,
             source=source,
             output=output,
+            translation_source=translation_source,
+            translation_inputs=translation_inputs,
         )
         remove_if_exists(output.fgb)
         remove_if_exists(output.pmtiles)

@@ -18,13 +18,15 @@ metadata sidecar. A missing or corrupt baseline fails before any publication;
 this refresh job does not initialize a dataset or repair its publication state.
 
 1. Download the complete API response and compute SHA-256. If it matches the
-   source SHA-256 in the published manifest, skip conversion and publication.
+   source SHA-256 in the published manifest and its normalized fingerprint uses
+   the current definition, skip conversion and publication.
 2. Otherwise validate source IDs and properties, exclude null geometries, repair
    geometry with GDAL MakeValid, and promote Polygon/Point to MultiPolygon/MultiPoint.
    Serialize the existing three JSON-valued fields as canonical JSON text.
-3. Compute `mpatlas-canonical-features-v1`: SHA-256 of canonical JSON containing
-   the version and the sorted `(feature_id, geometry_hash, properties_hash)`
-   tuples. Compare against the published sidecar's same fingerprint. This ignores
+3. Compute the common versioned `mpatlas-content-v1` fingerprint from the source
+   URL and the multiset of `(feature_id, geometry_hash, properties_hash)` records.
+   Compare with the last publication's fingerprint. For legacy manual releases,
+   derive it from the verified published sidecar. This ignores
    response whitespace, object-key order, feature order, retrieval provenance and
    release dates. Coordinate ordering and array ordering remain meaningful.
 4. On a match, write only `runs/YYYY-MM-DD.json` and the release-index check-in.
@@ -41,6 +43,9 @@ it does not require an earlier monthly-job run record. Same-day completed runs
 are idempotent. `RUN_DATE` overrides must be newer than the latest release.
 An incomplete same-date release blocks publication and requires reviewed repair;
 do not delete objects or choose another date merely to evade the failed release.
+
+The [shared fingerprint contract](../../docs/source-fingerprints.md#mpatlas-mpatlas-content-v1)
+defines persisted hash fields and source-specific limitations.
 
 ## Artifact contract
 

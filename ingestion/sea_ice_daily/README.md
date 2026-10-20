@@ -105,3 +105,13 @@ date. Set `canary_run_date` to the preceding filename date; for example, the
 September 29 raster produces the September 30 new-contract release. Keep
 the schedule paused until that publication and its native artifact checks finish;
 resuming through the protected workflow requires a completed publication receipt.
+
+## Source equality
+
+The [IMS fingerprint](../../docs/source-fingerprints.md#ims-sea-ice-ims-raster-v1)
+includes the complete filename and normalized raster content. The job downloads
+and decodes the source before comparison; an unchanged check skips polygonization
+and publication and records an owned release-index check-in. A new filename
+always creates a daily item even with identical geometry. Corrected content under
+an already published date requires reviewed repair. Release/feature identity and
+the documented filename-to-valid-date offset are unchanged.

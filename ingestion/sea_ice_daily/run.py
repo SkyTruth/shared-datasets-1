@@ -16,7 +16,7 @@ from typing import Any, Mapping, Sequence
 
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, vector_pipeline
+from ingestion.common import feature_metadata, vector_pipeline, source_fingerprint as fingerprints
 from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.common.http import (
@@ -276,6 +276,26 @@ def gunzip_file(source_path: Path, destination: Path) -> None:
         shutil.copyfileobj(src, dst)
     if destination.stat().st_size == 0:
         raise RuntimeError(f"Expanded zero-byte GeoTIFF: {destination}")
+
+
+def fingerprint_source(source: DownloadedSource, source_tif: Path, workdir: Path) -> fingerprints.Fingerprint:
+    """Hash decoded samples in fixed band order, not gzip/TIFF packaging."""
+    info = run_command(["gdalinfo", "-json", str(source_tif)], capture_json=True)
+    samples = workdir / "fingerprint-samples.bin"
+    run_command(["gdal_translate", "-q", "-of", "ENVI", "-co", "INTERLEAVE=BSQ",
+                 str(source_tif), str(samples)])
+    fingerprint = fingerprints.Fingerprint("ims-raster-v1", {
+        "source_url": source.source_url, "source_filename": source.source_filename,
+        "size": info["size"], "geoTransform": info["geoTransform"],
+        "coordinateSystem": info["coordinateSystem"],
+        "bands": [{key: band.get(key) for key in ("type", "noDataValue", "colorInterpretation")}
+                  for band in info["bands"]],
+        "samples_sha256": sha256_file(samples), "ice_class": ICE_CLASS_VALUE,
+    })
+    remove_if_exists(samples)
+    remove_if_exists(samples.with_suffix(".hdr"))
+    remove_if_exists(Path(str(samples) + ".aux.xml"))
+    return fingerprint
 
 
 def build_ice_mask_raster(source_tif: Path, mask_tif: Path) -> None:
@@ -590,6 +610,7 @@ def publish_outputs(
     outputs: AssetOutputs,
     source: DownloadedSource | AvailableSource,
     asset_readme: Path,
+    fingerprint: fingerprints.Fingerprint,
     source_request_warnings: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     run_date = source.documented_valid_date
@@ -608,6 +629,7 @@ def publish_outputs(
             "source_filename_date": source.filename_date.isoformat(),
             "documented_valid_date": source.documented_valid_date.isoformat(),
             "source_version": source.source_filename,
+            **fingerprint.record_fields(),
             "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
             "row_count": outputs.row_count,
             "notes": (
@@ -642,27 +664,6 @@ def publish_outputs(
 
 
 
-def load_existing_successful_release(
-    *,
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-    run_date: dt.date,
-) -> dict[str, Any] | None:
-    loaded = publisher.load_successful_run_record(asset, run_date)
-    if loaded is None:
-        return None
-    record, _run_record_info = loaded
-    issue = publisher.release_metadata_contract_issue(asset, record)
-    if issue:
-        raise RuntimeError(
-            f"{asset.slug} already has a successful run record for {run_date.isoformat()}, "
-            f"but the release metadata contract is invalid: {issue}. "
-            "Repair the release through a reviewed dataset publish plan before refreshing "
-            "the release index."
-        )
-    return record
-
-
 def metadata_for_source(
     *,
     asset: AssetSpec,
@@ -681,6 +682,8 @@ def metadata_for_source(
 def run() -> dict[str, Any]:
     configure_logging()
     for binary in (
+        "gdalinfo",
+        "gdal_translate",
         "gdal_calc.py",
         "gdal_polygonize.py",
         "ogr2ogr",
@@ -707,6 +710,7 @@ def run() -> dict[str, Any]:
     resumed = publisher.resume(ASSET)
     if resumed is not None:
         return resumed
+    previous = publisher.latest_success_record(ASSET)
     lookup = find_latest_available_source(
         source_template=source_template,
         anchor_day=anchor_day,
@@ -729,54 +733,45 @@ def run() -> dict[str, Any]:
 
     available_source = lookup.source
     release_day = available_source.documented_valid_date
-    existing_record = load_existing_successful_release(
-        publisher=publisher,
-        asset=ASSET,
-        run_date=release_day,
-    )
-    if existing_record is not None:
-        LOGGER.info(
-            "%s already has a successful run record for %s",
-            ASSET.slug,
-            release_day,
-        )
-        successful_release_index = publisher.record_existing_successful_release(
-            ASSET,
-            release_day,
-        )
-        record = add_source_request_warnings(
-            {
-                "schema_version": 1,
-                "asset_slug": ASSET.slug,
-                "run_date": anchor_day.isoformat(),
-                "release_date": release_day.isoformat(),
-                "status": "skipped",
-                "reason": "latest available source already published",
-                "source": available_source.source_url,
-                "source_url": available_source.source_url,
-                "source_filename": available_source.source_filename,
-                "source_filename_date": available_source.filename_date.isoformat(),
-                "documented_valid_date": available_source.documented_valid_date.isoformat(),
-                "source_version": available_source.source_filename,
-            },
-            source_request_warnings,
-        )
-        if successful_release_index:
-            record["successful_release_index"] = successful_release_index
-        record["release_index"] = publisher.update_latest_run_index(
-            asset=ASSET,
-            payload=record,
-        )
-        return record
-    publisher.assert_no_partial_release(ASSET, release_day)
-
-    with tempfile.TemporaryDirectory(prefix="sea-ice-daily-") as tmp:
+    work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
+    work_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="daily-", dir=work_root) as tmp:
         workdir = Path(tmp)
         downloaded = download_source(available_source, workdir)
         source_tif = workdir / downloaded.gz_path.with_suffix("").name
         gunzip_file(downloaded.gz_path, source_tif)
         remove_if_exists(downloaded.gz_path)
 
+        fingerprint = fingerprint_source(downloaded, source_tif, workdir)
+        # Completed records from the deployed publisher predate fingerprints.
+        # Keep their immutable daily item idempotent without inventing a baseline.
+        legacy_completed_item = (
+            previous is not None and "source_fingerprint_hash" not in previous
+            and previous["release_date"] == release_day.isoformat()
+            and previous.get("source_filename") == downloaded.source_filename
+        )
+        if fingerprint.matches(previous) or legacy_completed_item:
+            issue = publisher.release_metadata_contract_issue(ASSET, previous)
+            if issue:
+                raise RuntimeError(f"{ASSET.slug} published metadata contract is invalid: {issue}; use a reviewed repair")
+            record = add_source_request_warnings({
+                "schema_version": 1, "asset_slug": ASSET.slug,
+                "run_date": anchor_day.isoformat(), "release_date": previous["release_date"],
+                "status": "skipped",
+                "reason": "latest available source already published" if legacy_completed_item else "source fingerprint unchanged",
+                "source": downloaded.source_url, "source_url": downloaded.source_url,
+                "source_version": downloaded.source_filename, "source_filename": downloaded.source_filename,
+                "source_filename_date": downloaded.filename_date.isoformat(),
+                "documented_valid_date": downloaded.documented_valid_date.isoformat(),
+                **fingerprint.record_fields(),
+            }, source_request_warnings)
+            record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=record)
+            return record
+        # A changed input must never overwrite an immutable daily item.
+        if previous is not None and previous["release_date"] == release_day.isoformat():
+            raise RuntimeError("IMS source differs from or lacks the published fingerprint for this date; "
+                               "use a reviewed correction rather than replacing the daily release")
+        publisher.assert_no_partial_release(ASSET, release_day)
         outputs = build_outputs(
             source_tif=source_tif,
             source_date=downloaded.filename_date,
@@ -792,6 +787,7 @@ def run() -> dict[str, Any]:
             asset=ASSET,
             outputs=outputs,
             source=downloaded,
+            fingerprint=fingerprint,
             asset_readme=Path("/app/asset_README.md"),
             source_request_warnings=source_request_warnings,
         )

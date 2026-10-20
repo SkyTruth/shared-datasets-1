@@ -114,6 +114,8 @@ def source_lookup_publisher(client, bucket_name, **kwargs):
     """Source-selection fixture; durable publication is tested independently."""
     publisher = GcsPublisher(client, bucket_name, **kwargs)
     publisher.resume = mock.Mock(return_value=None)
+    publisher.latest_success_record = mock.Mock(side_effect=lambda asset: next((json.loads(blob.text) for blob in publisher.bucket.blobs.values()
+        if blob.name.startswith(asset.runs_prefix) and blob.text and json.loads(blob.text).get("status") == "success"), None))
     publisher.load_generated_identity_baseline = mock.Mock(return_value=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
     return publisher
 
@@ -246,6 +248,7 @@ class SeaIceDailyTests(unittest.TestCase):
             readme.write_text("# Sea ice\n")
             sea_ice.publish_outputs(
                 publisher=publisher, asset=sea_ice.ASSET, outputs=outputs, source=source, asset_readme=readme,
+                fingerprint=sea_ice.fingerprints.Fingerprint("ims-raster-v1", {"fixture": True}),
             )
         call = publisher.publish_generated.call_args.kwargs
         self.assertEqual(call["run_date"], dt.date(2026, 9, 30))
@@ -384,6 +387,8 @@ ice_date: String (0.0)
                 "status": "success",
                 "run_date": release_date.isoformat(),
                 "source_version": sea_ice.ims_filename_for_day(source_date),
+                "release_date": release_date.isoformat(),
+                **sea_ice.fingerprints.Fingerprint("fixture", {}).record_fields(),
                 "release_paths": [],
                 "latest_paths": [],
             }
@@ -423,11 +428,10 @@ ice_date: String (0.0)
             mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
             mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
             mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-            mock.patch.object(
-                sea_ice,
-                "download_source",
-                side_effect=AssertionError("published source should not download"),
-            ),
+            mock.patch.object(sea_ice, "download_source", return_value=sea_ice.DownloadedSource(
+                source_date, "https://example.test/source", sea_ice.ims_filename_for_day(source_date), Path("source.gz"))),
+            mock.patch.object(sea_ice, "gunzip_file"),
+            mock.patch.object(sea_ice, "fingerprint_source", return_value=sea_ice.fingerprints.Fingerprint("fixture", {})),
         ):
             record = sea_ice.run()
 
@@ -532,6 +536,18 @@ class SeaIceDailyIntegrationTests(unittest.TestCase):
                     str(source_tif),
                 ]
             )
+
+            source_date = dt.date(2026, 4, 28)
+            source = sea_ice.DownloadedSource(source_date, "https://example.test/ims",
+                sea_ice.ims_filename_for_day(source_date), tmp_path / "source.tif.gz")
+            fingerprint = sea_ice.fingerprint_source(source, source_tif, tmp_path)
+            repacked = tmp_path / "repacked.tif"
+            sea_ice.run_command(["gdal_translate", "-q", "-co", "COMPRESS=LZW", str(source_tif), str(repacked)])
+            self.assertEqual(fingerprint, sea_ice.fingerprint_source(source, repacked, tmp_path))
+            tomorrow = source_date + dt.timedelta(days=1)
+            new_source = sea_ice.DownloadedSource(tomorrow, source.source_url,
+                sea_ice.ims_filename_for_day(tomorrow), source.gz_path)
+            self.assertNotEqual(fingerprint, sea_ice.fingerprint_source(new_source, source_tif, tmp_path))
 
             outputs = sea_ice.build_outputs(
                 baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
