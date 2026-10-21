@@ -264,7 +264,7 @@ def test_abandoned_cloud_supervision_escalates_and_wrong_image_clarification_is_
     request = {"command": "claim", "binding": {**incidents.binding_for(ledger.states[scope]["incident"]["failures"][0]).to_dict(), "revision": "sha256:" + "f" * 64},
                "responsible_human": "jonaraphael", "conversation_ref": "codex://threads/origin", "current_action": "Guessed revision.", "question_ref": None, "handoff_ref": None}
     ledger.run["created_at"] = at(2)
-    with pytest.raises(incidents.IncidentError, match="exact signed deployment"):
+    with pytest.raises(incidents.IncidentError, match="exact signed execution or canonical source"):
         incidents.supervise(ledger, IDENTITY, request, now=at(2))
     records, _ = ingest(ledger, shadow=False, now=at(11))
     assert len(records) == 1 and ledger.states[scope]["escalation_at"] == at(10)

@@ -183,11 +183,12 @@ def test_failed_prepare_retains_exact_partial_delivery_plan_without_a_cycle_prop
     monkeypatch.setattr(worker.incidents, "replay_observations", Mock(return_value=[]))
     record = {"id": 77, "payload": {"execution_run_id": 50, "execution_run_attempt": 1}}
 
-    def fail_after_claim(actual_ledger, identity, proposal, *, shadow, now, on_saved, github_api, github_observations, recovery_verifier, clock):
+    def fail_after_claim(actual_ledger, identity, proposal, *, shadow, now, on_saved, github_api, github_observations, recovery_verifier, clock, translation_reader):
         assert actual_ledger is ledger and identity == {"bot": "B1"} and proposal is candidate
         assert shadow is True and now == candidate["last_cycle"]["completed_at"]
         assert github_api is ledger.api and callable(recovery_verifier)
         assert github_observations == []
+        assert callable(translation_reader)
         on_saved(record)
         raise RuntimeError("next claim persistence failed")
 
@@ -213,7 +214,7 @@ def test_failure_before_collection_cannot_reuse_a_prior_local_proposal_or_plan(c
 
 def transport_state(*, parent="claimed", view=None, permalink="", scope="cloud:job:test"):
     post = {"state": parent, "ts": "123.456" if parent == "delivered" else None}
-    return {"scope": scope, "incident": {"id": "SD-TEST", "failures": [{"source": "cloud"}],
+    return {"scope": scope, "recoveries": {}, "incident": {"id": "SD-TEST", "resolution": None, "failures": [{"source": "cloud"}],
             "posts": {"parent": post}, "parent_view_sha256": view, "permalink": permalink}}
 
 
@@ -309,7 +310,64 @@ def test_partial_prepare_delivery_requires_same_verified_activation(cycle, monke
     else:
         slack = Mock()
         worker.deliver_messages(ledger, cycles, slack)
-        deliver.assert_called_once_with(ledger, [record], slack)
+        assert deliver.call_args.args == (ledger, [record], slack)
+        assert callable(deliver.call_args.kwargs["recovery_verifier"])
+
+
+@pytest.mark.parametrize("event,enabled", [("workflow_run", "true"), ("schedule", "false")])
+def test_observer_dependent_green_waits_for_authenticated_schedule_while_github_delivers(cycle, monkeypatch, event, enabled):
+    _, ledger, cycles = cycle
+    ledger.run["event"] = event
+    monkeypatch.setenv("SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED", enabled)
+    green = {"source": "cloud", "proof": {"fact": {"kind": "translation_manifest"}}}
+    state = transport_state(parent="delivered")
+    state["incident"]["resolution"] = green
+    state["recoveries"] = {state["scope"]: green}
+    github = transport_state(scope="job:github")
+    github["incident"]["failures"] = [{"source": "github"}]
+    records = [transport_record(10, state), transport_record(11, github)]
+    records_for(ledger, records)
+    (ledger.directory / "prepared.json").write_text(json.dumps(records))
+    deliver, credentials = Mock(), Mock(side_effect=AssertionError("No observer auth in this worker"))
+    monkeypatch.setattr(worker.incidents, "deliver", deliver)
+    monkeypatch.setattr(worker, "reader", credentials)
+    worker.deliver_messages(ledger, cycles, Mock())
+    credentials.assert_not_called()
+    assert deliver.call_args.args[1] == [records[1]]
+
+
+def test_delivery_auth_capability_uses_the_exact_protected_workflow_condition():
+    import yaml
+    workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows/unattended-workflow-alert.yml").read_text())
+    steps = next(job["steps"] for job in workflow["jobs"].values() if "steps" in job
+                 and any(step.get("id") == "deliver" for step in job["steps"]))
+    auth = next(step for step in steps if step.get("name") == "Authenticate read-only cloud observer")
+    delivery = next(step for step in steps if step.get("id") == "deliver")
+    assert auth["if"] == "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}"
+    assert delivery["env"]["SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED"] == "${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}"
+
+
+@pytest.mark.parametrize("command", ["finalize", "heartbeat"])
+def test_new_debt_cannot_advance_a_green_checkpoint_or_emit_heartbeat(cycle, command):
+    from test_translation_incident_recovery import ingest, maintenance, proof
+    from test_slack_incident_policy import PersistedLedger
+    from test_cloud_incident_adapter import proposal, at
+    from test_slack_incidents import IDENTITY
+    value, ledger, cycles = cycle
+    local = PersistedLedger()
+    worker.incidents.prepare_cloud(local, IDENTITY, proposal(maintenance()), shadow=True, now=at(10))
+    _, evaluation, _ = ingest(local, proof(), shadow=True)
+    ledger.load.return_value = local.states
+    value["bundle"]["evaluation"]["observations"] = evaluation["observations"]
+    (ledger.directory / worker.PROPOSAL).write_text(json.dumps(value))
+    source = SimpleNamespace(translation_manifest=Mock(return_value=proof(generation=21, debt=2, created=at(2))), heartbeat=Mock())
+    with pytest.raises(worker.incidents.IncidentError, match="current canonical"):
+        if command == "finalize":
+            worker.finalize_cycle(ledger, cycles, cloud_reader=source)
+        else:
+            worker.verify_heartbeat(ledger, cycles, source)
+    cycles.save.assert_not_called()
+    source.heartbeat.assert_not_called()
 
 
 def test_changed_activation_blocks_delivery_even_when_claim_is_signed(cycle, monkeypatch):

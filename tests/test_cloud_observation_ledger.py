@@ -300,6 +300,11 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
     "scripts/gcp_read_retry.py",
     "ingestion/wdpa_monthly/Dockerfile",
     "ingestion/wdpa_monthly/Dockerfile.promotion",
+    "scripts/translation_recovery.py",
+    "scripts/release_feature_model.py",
+    "scripts/catalog_csv.py",
+    "scripts/feature_metadata_localization.py",
+    "scripts/translation_local_io.py",
 ])
 def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
     assert relative in cycles.CONTRACT_FILES

@@ -183,17 +183,46 @@ shared pool from conferring observer impersonation through a generic repository
 binding.
 
 The observer receives view-local `roles/logging.viewAccessor`, execution get/list,
-operational receipt get, and time-series create. It receives no project-wide log
-viewer, dataset write/list, execution start, secret-read, or infrastructure
-mutation permissions. Receipt IAM is restricted to registered asset `runs/`
-prefixes and JSON receipt objects, with an explicit object resource type and a
-separate prefix/suffix conjunction for every registered asset. The client accepts
-only exact translation notices or dated run receipts. Run recovery reads the
+operational receipt/manifest get, and time-series create. It receives no project-wide
+log viewer, dataset write/list, execution start, secret-read, or infrastructure
+mutation permissions. Receipt IAM is restricted to registered asset `runs/` JSON
+objects. Separate conditional bindings of the same `storage.objects.get` role
+permit only filenames ending in `/{asset_slug}.manifest.json` inside that asset's
+canonical `releases/` prefix. Every branch retains the explicit object resource
+type and its own prefix/suffix conjunction; dataset row files and metadata
+sidecars do not match. The client accepts only exact translation notices, dated
+run receipts, or known dated canonical manifest URIs. It never enumerates the
+bucket. Run recovery reads the
 generation-pinned receipt with bounded bytes and validates its asset, release
 and successful publication state; a healthy execution alone proves no recovery.
 Cloud Storage's `objects.get` permission permits the contents of those scoped
-operational receipts. Google IAM does not constrain time-series create to
+operational receipts and manifest metadata documents. Google IAM does not constrain time-series create to
 one metric; the observer client emits only the fixed heartbeat metric.
+
+The 25 registered assets occupy five receipt and five manifest IAM bindings.
+Each condition has at most six asset branches, using at most 12 logical
+operators; ten bindings remain below the limit of 20 different conditions for
+one principal and role. These are [fixed IAM
+limits](https://docs.cloud.google.com/iam/quotas). Exact indexed targets remain
+in the protected setup allowlist, with deletion blocked. Catalog growth beyond
+the reviewed five chunks fails the release contract and requires an explicit
+scope update instead of silently omitting an asset or broadening its boundary.
+
+For an unresolved translation episode, the scheduled reconciler reads only its
+already known canonical manifest URI: current object metadata followed by the
+exact observed generation's bounded document bytes. A newer generation proving
+a complete maintained-locale inventory with valid counts and every locale below
+the existing one-percent maintenance threshold can resolve that translation episode.
+Final verification re-reads current metadata and refuses stale generations.
+This proves translation recovery only; delivery receipts do not establish locale
+coverage, dataset publication recovery, or permission to resend a notification.
+
+An existing signed owner of the exact same manifest issue can cover its verified
+canonical observation without changing the responsible human, originating chat,
+activity, clarification wait, or original deadline. Observation alone never creates
+ownership. An authenticated supervision request may also name an already retained
+canonical binding: its revision is the manifest's actual SHA256 and its PR is
+unset. It cannot invent a PR association or grant deployment or retry authority.
 
 The protected cron policy workflow runs bootstrap, exact allowlisted observation
 setup, then policy sync. Setup blocks deletion/replacement and probes the exact

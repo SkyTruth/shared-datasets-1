@@ -154,6 +154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+          SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED: ${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}
         run: uv run --no-sync python scripts/operational_reconcile.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"
       - name: Attest confirmed deliveries even after a later send fails
         id: attest-outcomes

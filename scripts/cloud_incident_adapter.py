@@ -15,9 +15,10 @@ import yaml
 
 from ingestion.common.operational_events import validate as validate_event
 from scripts import cloud_operational_observations as cloud, deployment_revision as deployments, operational_policy as policy
+from scripts import translation_recovery as translations
 
 SCHEMA = "shared-datasets-cloud-incident-proof-v1"
-SOURCE = re.compile(r"cloud(?:log|exec):[0-9a-f]{64}")
+SOURCE = re.compile(r"(?:cloud(?:log|exec)|gcsmanifest):[0-9a-f]{64}")
 SCOPE = re.compile(r"[a-z][a-z0-9:._-]{0,150}")
 EXECUTION_FIELDS = {"name", "uid", "revision", "coverage_gaps", "terminal", "success", "completion_time", "create_time", "start_time", "images"}
 
@@ -42,6 +43,9 @@ def seconds(value):
 
 
 def link(fact):
+    if fact["kind"] == "translation_manifest":
+        proof = fact["manifest"]
+        return "https://console.cloud.google.com/storage/browser/_details/" + proof["uri"].removeprefix("gs://") + "?" + urlencode({"generation": proof["generation"]})
     execution = fact.get("execution")
     if execution:
         name = execution["name"].rsplit("/", 1)[-1]
@@ -51,6 +55,13 @@ def link(fact):
 
 
 def validate_fact(value):
+    if isinstance(value, dict) and value.get("kind") == "translation_manifest":
+        require(set(value) == {"source_id", "observed_at", "resource_type", "kind", "manifest"}
+                and value["resource_type"] == "gcs_object", "invalid canonical translation source")
+        proof = translations.validate(value["manifest"])
+        require(value["source_id"] == "gcsmanifest:" + cloud.digest({"uri": proof["uri"], "generation": proof["generation"]})
+                and value["observed_at"] == proof["created_at"], "translation source differs from exact canonical generation")
+        return value
     base = {"source_id", "observed_at", "resource_type", "job", "evidence", "kind"}
     require(isinstance(value, dict) and value.get("kind") in {"runtime", "execution", "execution_request", "scheduler_dispatch"}, "invalid source variant")
     kind = value["kind"]
@@ -123,6 +134,8 @@ def validate_fact(value):
 
 
 def domain(fact):
+    if fact["kind"] == "translation_manifest":
+        return "translation"
     if fact["kind"] != "runtime":
         return None
     event = fact["fact"]
@@ -145,6 +158,8 @@ def source_scope(fact):
 
 
 def domain_subject(fact):
+    if fact["kind"] == "translation_manifest":
+        return {key: fact["manifest"][key] for key in ("asset_slug", "release")}
     subject = fact.get("fact", {}).get("subject", {})
     if set(subject) >= {"asset_slug", "release"}:
         return {key: subject[key] for key in ("asset_slug", "release")}
@@ -158,6 +173,8 @@ def domain_subject(fact):
 
 
 def revision(fact):
+    if fact["kind"] == "translation_manifest":
+        return "sha256:" + fact["manifest"]["sha256"]
     execution = fact.get("execution")
     if execution and execution["revision"] and execution["uid"]:
         return execution["revision"]
@@ -165,6 +182,9 @@ def revision(fact):
 
 
 def provenance_gap(fact, correlation=None):
+    if fact["kind"] == "translation_manifest":
+        validate_fact(fact)
+        return False
     return (fact["job"] not in registered_jobs() or not cloud.DIGEST.fullmatch(revision(fact))
             or bool(fact.get("execution", {}).get("coverage_gaps")) or domain(fact) is not None and domain_subject(fact) is None
             or fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact.get("execution", {}).get("terminal") is not False
@@ -202,9 +222,9 @@ def normalize(fact, *, correlation=None, promote=False):
     if not gap and fact["kind"] == "execution" and not fact["execution"]["terminal"]:
         return None
     family = domain(fact)
-    if not gap and family == "translation" and (event["status"] == "delivered" or event["details"].get("legacy_delivery_state") == "delivered"):
+    if not gap and family == "translation" and fact["kind"] == "runtime" and (event["status"] == "delivered" or event["details"].get("legacy_delivery_state") == "delivered"):
         return None
-    success = recoverable(fact) or observational_success(fact, correlation)
+    success = recoverable(fact) or observational_success(fact, correlation) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"])
     if not gap and not family and not success and (
             fact["kind"] == "runtime" and event["status"] in {"success", "skipped"} and not success
             or fact["kind"] == "execution" and fact["execution"]["success"]):
@@ -212,7 +232,7 @@ def normalize(fact, *, correlation=None, promote=False):
     scope = source_scope(fact)
     kind = "job"
     subject = domain_subject(fact)
-    label = f"{fact['job']}" + (f" · {family} · {subject['asset_slug']} {subject['release']}" if family and subject else f" · {family} provenance" if family else "")
+    label = ("Translation maintenance" if fact["kind"] == "translation_manifest" else fact["job"]) + (f" · {family} · {subject['asset_slug']} {subject['release']}" if family and subject else f" · {family} provenance" if family else "")
     if correlation is not None:
         validate_correlation(correlation)
         require(correlation["artifact"] in fact["execution"]["images"], "correlated artifact differs from execution")
@@ -258,16 +278,17 @@ def validate_observation(value):
     require(value["source_id"] == fact["source_id"] and value["revision"] == revision(fact)
             and value["time"] == seconds(fact["observed_at"]), "cloud observation differs from canonical proof")
     correlated = proof["correlation"] is not None
+    require(fact["kind"] != "translation_manifest" or not correlated, "canonical translation evidence cannot claim an execution")
     if correlated:
         correlation = validate_correlation(proof["correlation"])
         require(correlation["artifact"] in fact["execution"]["images"]
                 and correlation["execution"] == fact["execution"]["name"], "correlation differs from source")
-    expected_scope = "deployment:" + fact["job"] if value["kind"] == "deployment" else source_scope(fact)
+    expected_scope = "deployment:" + fact["job"] if value["kind"] == "deployment" and fact["kind"] != "translation_manifest" else source_scope(fact)
     identity_recovery = (recoverable(fact) and value["kind"] == "job" and value["scope"] == "cloud:identity:" + cloud.digest({
         "asset": fact["fact"]["subject"]["asset_slug"], "release": fact["fact"]["subject"]["release"]}))
     require((value["scope"] == expected_scope or identity_recovery) and (value["kind"] != "deployment" or correlated
             and proof["correlation"].get("kind") != "auxiliary_artifact" and domain(fact) is None), "cloud scope lacks exact provenance")
-    require(value["conclusion"] == ("success" if recoverable(fact) or observational_success(fact, proof["correlation"]) else "failure"),
+    require(value["conclusion"] == ("success" if recoverable(fact) or observational_success(fact, proof["correlation"]) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"]) else "failure"),
             "cloud outcome differs from canonical proof")
     operational(value)
     return value
@@ -301,6 +322,11 @@ def operational(value):
         data = "The observation read failed before status-document writes; canonical data is outside this observer's authority."
         impact = "WDPA execution visibility is delayed; this does not establish a dataset failure or recovery."
         action = "Inspect observer read credentials/configuration if scheduled safe read recovery does not succeed."
+    elif fact["kind"] == "translation_manifest":
+        reason, phase, mutation = ("healthy" if value["conclusion"] == "success" else "translation_maintenance_required"), "notification", "not_required"
+        data = "Only translation coverage for this exact canonical asset/release manifest is verified; dataset publication and notice delivery remain separate."
+        impact = "Translation debt is below the maintenance threshold for every configured locale." if value["conclusion"] == "success" else "The exact canonical manifest still requires translation maintenance."
+        action = "None for this verified translation coverage." if value["conclusion"] == "success" else "Repair translation coverage for the named asset/release; do not replay publication or notification delivery."
     elif value["conclusion"] == "success":
         reason, mutation = "healthy", "completed"
         data = "Canonical asset/release publication is verified by an exact-generation successful run record."
@@ -328,6 +354,8 @@ def alias(value):
     if value["kind"] == "deployment":
         return f"github:{correlation['run_id']}:{correlation['attempt']}"
     fact = value["proof"]["fact"]
+    if fact["kind"] == "translation_manifest":
+        return "cloud:" + cloud.digest({"manifest": fact["manifest"]["uri"], "generation": fact["manifest"]["generation"]})
     return "cloud:" + cloud.digest({"resource": fact["resource_type"], "job": fact["job"], "execution": fact.get("execution", {}).get("name") or fact["source_id"]})
 
 
@@ -336,6 +364,20 @@ def covers(failure, evidence):
     if failure["scope"] != evidence["scope"]:
         return False
     old, new = failure["proof"]["fact"], evidence["proof"]["fact"]
+    if new["kind"] == "translation_manifest":
+        if (domain(old) != "translation" or provenance_gap(old, failure["proof"]["correlation"])
+                or not translations.complete(new["manifest"]) or domain_subject(old) != domain_subject(new)):
+            return False
+        if old["kind"] == "translation_manifest":
+            uri, generation = old["manifest"]["uri"], old["manifest"]["generation"]
+        else:
+            event = old.get("fact", {})
+            # Coverage does not settle an uncertain legacy notification send.
+            if event.get("status") != "required":
+                return False
+            uri, generation = event["subject"].get("manifest_uri"), event["details"].get("manifest_generation")
+        proof = new["manifest"]
+        return translations.covers(proof, uri, generation, old["observed_at"])
     if observational_success(new, evidence["proof"]["correlation"]):
         prior = failure["proof"]["correlation"]
         return bool(prior is not None and prior.get("kind") == "auxiliary_artifact" and old["job"] == new["job"]
@@ -364,7 +406,8 @@ def covers(failure, evidence):
 def legacy_delivery_covers(observation, report):
     """Suppress only a duplicate new bot broadcast, never assert recovery/ACK."""
     fact = observation["proof"]["fact"]
-    if (domain(fact) != "translation" or domain(report) != "translation" or provenance_gap(fact) or provenance_gap(report)
+    if (fact["kind"] != "runtime" or report["kind"] != "runtime"
+            or domain(fact) != "translation" or domain(report) != "translation" or provenance_gap(fact) or provenance_gap(report)
             or fact["job"] != report["job"] or revision(fact) != revision(report)
             or domain_subject(fact) != domain_subject(report)):
         return False

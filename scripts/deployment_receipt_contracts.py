@@ -125,7 +125,8 @@ fi'''
     }
     command_environments = {
         "prepare": environment,
-        "deliver": {key: value for key, value in environment.items() if not key.endswith(("_SINCE", "_ENABLED"))},
+        "deliver": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_SLACK_BOT_TOKEN",
+                    "SHARED_DATASETS_SLACK_CHANNEL_ID", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
         "verify": {"GH_TOKEN": environment["GH_TOKEN"]},
         "finalize-cycle": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
         "verify-heartbeat": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},

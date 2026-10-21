@@ -1,7 +1,24 @@
 locals {
   operational_observer_log_buckets = toset(["_Default", "_Required"])
   operational_heartbeat_metric     = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
-  operational_observer_log_filter  = <<-EOT
+  # IAM permits at most 12 logical operators per conditional role binding.
+  # Each prefix/suffix branch consumes two including the outer Object guard.
+  # Six assets per group keeps both read surfaces within that fixed quota.
+  operational_observer_asset_groups = { for index, group in chunklist([
+    for row in local.shared_catalog_rows : {
+      slug = row.asset_slug
+      root = split("/releases/", split("/latest/", replace(row.canonical_path, "gs://${var.bucket_name}/", ""))[0])[0]
+    } if startswith(row.canonical_path, "gs://${var.bucket_name}/") && (strcontains(row.canonical_path, "/latest/") || strcontains(row.canonical_path, "/releases/"))
+  ], 6) : tostring(index) => group }
+  operational_observer_receipt_conditions = { for index, group in local.operational_observer_asset_groups : index => join(" && ", [
+    "resource.type == 'storage.googleapis.com/Object'",
+    "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/runs/') && resource.name.endsWith('.json'))"])})",
+  ]) }
+  operational_observer_manifest_conditions = { for index, group in local.operational_observer_asset_groups : index => join(" && ", [
+    "resource.type == 'storage.googleapis.com/Object'",
+    "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json'))"])})",
+  ]) }
+  operational_observer_log_filter = <<-EOT
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 (
@@ -106,21 +123,31 @@ resource "google_project_iam_custom_role" "operational_observer_receipts" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalReceiptReader"
   title       = "Shared Datasets Operational Receipt Reader"
-  description = "Read registered asset run receipts; no listing or dataset artifact access."
+  description = "Read registered asset run receipts and canonical release manifests; no listing or dataset row artifact access."
   permissions = ["storage.objects.get"]
 }
 
 resource "google_storage_bucket_iam_member" "operational_observer_receipts" {
-  bucket = var.bucket_name
-  role   = google_project_iam_custom_role.operational_observer_receipts.name
-  member = module.operational_observer_service_account.member
+  for_each = local.operational_observer_receipt_conditions
+  bucket   = var.bucket_name
+  role     = google_project_iam_custom_role.operational_observer_receipts.name
+  member   = module.operational_observer_service_account.member
   condition {
-    title       = "registered-asset-operational-receipts-only"
+    title       = "registered-asset-operational-receipts-${each.key}"
     description = "Read JSON receipt objects only inside each catalog-registered asset's runs directory."
-    expression = join(" && ", [
-      "resource.type == 'storage.googleapis.com/Object'",
-      "(${join(" || ", [for row in local.shared_catalog_rows : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${dirname(dirname(replace(row.canonical_path, "gs://${var.bucket_name}/", "")))}/runs/') && resource.name.endsWith('.json'))" if startswith(row.canonical_path, "gs://${var.bucket_name}/")])})",
-    ])
+    expression  = each.value
+  }
+}
+
+resource "google_storage_bucket_iam_member" "operational_observer_manifests" {
+  for_each = local.operational_observer_manifest_conditions
+  bucket   = var.bucket_name
+  role     = google_project_iam_custom_role.operational_observer_receipts.name
+  member   = module.operational_observer_service_account.member
+  condition {
+    title       = "registered-asset-release-manifests-${each.key}"
+    description = "Read only each registered asset's canonical release manifest, excluding dataset row bytes and sidecars."
+    expression  = each.value
   }
 }
 

@@ -74,7 +74,7 @@ class ObserverBoundaryTests(unittest.TestCase):
             "google_project_iam_custom_role.operational_observer_reader",
             "google_project_iam_member.operational_observer_reader",
             "google_project_iam_custom_role.operational_observer_receipts",
-            "google_storage_bucket_iam_member.operational_observer_receipts",
+            *(f'google_storage_bucket_iam_member.operational_observer_{surface}["{index}"]' for surface in ("receipts", "manifests") for index in range(5)),
             "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
         }
         assert_target_apply_caller(self, ROOT / ".github/workflows/cron-alert-policy-sync.yml", expected_name="Cron alert policy sync", job_name="observations", push_paths=None,
@@ -82,6 +82,33 @@ class ObserverBoundaryTests(unittest.TestCase):
             sync_name="Operational observation setup", refusal_prefix="Refusing automatic operational observation setup", expected_targets=targets, expected_block_deletes=True,
             blocked_resources={"google_storage_bucket.shared_bucket", "google_cloud_run_v2_job.this"})
         self.assertIn("cron_alert_policy", ci_contract.select_deployments(["terraform/envs/prod/operational_observer.tf"]))
+
+    def test_storage_read_scope_is_exact_paired_manifest_and_receipt_chunks(self):
+        text = TERRAFORM.read_text()
+        caller = yaml.safe_load((ROOT / ".github/workflows/cron-alert-policy-sync.yml").read_text())["jobs"]["observations"]["with"]
+        self.assertEqual(release_contracts.operational_storage_contract(ROOT, text, caller), [])
+        for original, changed in (("/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json')", "/releases/')"),
+                                  ("/runs/') && resource.name.endsWith('.json')", "/runs/')"),
+                                  ("resource.type == 'storage.googleapis.com/Object'", "true"),
+                                  ("], 6) : tostring(index)", "], 7) : tostring(index)"),
+                                  ("root = split", "root = dirname")):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(original, changed)
+                self.assertIn(original, text)
+                self.assertTrue(release_contracts.operational_storage_contract(ROOT, text.replace(original, changed), caller))
+        incomplete = {**caller, "targets": caller["targets"].replace('        ', '').replace('google_storage_bucket_iam_member.operational_observer_manifests["4"]', '')}
+        self.assertTrue(any("every exact" in item for item in release_contracts.operational_storage_contract(ROOT, text, incomplete)))
+
+    def test_saved_manifest_binding_requires_only_existing_bucket_policy_authority(self):
+        value = {"bucket": "skytruth-shared-datasets-1", "role": "projects/shared-datasets-1/roles/sharedDatasetsOperationalReceiptReader",
+                 "member": "serviceAccount:shared-datasets-alert-observer@shared-datasets-1.iam.gserviceaccount.com",
+                 "condition": [{"title": "registered-asset-release-manifests-0", "expression": "resource.type == 'storage.googleapis.com/Object'"}]}
+        actual = dict(plan_checks(plan(row("google_storage_bucket_iam_member", ["create"], value,
+                                          address='google_storage_bucket_iam_member.operational_observer_manifests["0"]')), project_number="123456789"))
+        self.assertEqual(len(actual), 1)
+        url, required = next(iter(actual.items()))
+        self.assertTrue(url.startswith("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?"))
+        self.assertEqual(set(required), {"storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy"})
 
     def test_exact_new_resource_permission_probes_reject_foreign_boundaries(self):
         view = {"parent": f"projects/{PROJECT}", "location": "global", "bucket": "_Default", "name": "shared-datasets-operations"}

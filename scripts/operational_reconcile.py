@@ -172,7 +172,7 @@ def public_delivery_counts(ledger, states, *, shadow=False):
     return counts
 
 
-def deliver_messages(ledger, cycles, slack):
+def deliver_messages(ledger, cycles, slack, *, cloud_reader=None):
     """A partial prepare may deliver only its signed, currently authorized claims."""
     from scripts.cloud_observation_ledger import positive, strict_json
     records = strict_json((ledger.directory / "prepared.json").read_bytes())
@@ -190,6 +190,15 @@ def deliver_messages(ledger, cycles, slack):
         incidents.require({key: item for key, item in current.items() if key != "updated_at"}
                           == {key: item for key, item in record.items() if key != "updated_at"}, "prepared claim changed")
         state = ledger.verify(current)
+        observer_authenticated = (ledger.run.get("event") == "schedule"
+                                  and os.environ.get("SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED") == "true")
+        if (not observer_authenticated and cloud_reader is None and state["incident"]
+                and state["incident"]["resolution"] is not None and any(
+                    item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "translation_manifest"
+                    for item in state["recoveries"].values())):
+            # Only scheduled workers receive the observation identity. Keep the
+            # signed green pending for that worker, without failing unrelated CI.
+            continue
         if state["incident"] and any(item.get("source") == "cloud" for item in state["incident"]["failures"]):
             cloud_context = cloud_context or read_context(ledger, cycles)
             parent = state["incident"]["posts"].get("parent")
@@ -197,7 +206,11 @@ def deliver_messages(ledger, cycles, slack):
                               or parent and parent["state"] == "delivered" or github_escalation(state),
                               "cloud delivery requires verified unified activation or independent GitHub escalation")
         current_records.append(current)
-    incidents.deliver(ledger, current_records, slack)
+    def reverify(observation):
+        nonlocal cloud_reader
+        cloud_reader = cloud_reader or reader()
+        return incidents.reverify_saved_cloud_success(cloud_reader, observation, github_api=ledger.api, clock=utc_now)
+    incidents.deliver(ledger, current_records, slack, recovery_verifier=reverify)
 
 
 def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
@@ -222,8 +235,9 @@ def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
     prepared, evaluation = incidents.prepare_cloud(
         ledger, identity, proposal, shadow=selected["mode"] == "shadow", now=proposal["last_cycle"]["completed_at"], on_saved=retain,
         github_api=ledger.api, github_observations=github_observations, clock=clock,
+        translation_reader=lambda uri: cloud_reader.translation_manifest(uri),
         recovery_verifier=lambda observation: incidents.reverify_saved_cloud_success(
-            cloud_reader, observation, github_api=ledger.api))
+            cloud_reader, observation, github_api=ledger.api, clock=clock or utc_now))
     plan.write_text(json.dumps(prepared, sort_keys=True) + "\n")
     # Shadow has no cloud public delivery capability. GitHub episodes can still
     # escalate in the same worker; those are outside cloud cutover evidence.
@@ -238,10 +252,29 @@ def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
     return value
 
 
-def finalize_cycle(ledger, cycles, *, clock=None):
+def reverify_translation_recoveries(ledger, states, source_ids, cloud_reader=None, *, clock=None):
+    """No later debt generation may authorize a stale green or heartbeat."""
+    seen = set()
+    for state in states.values():
+        incident = state["incident"]
+        if incident is None or incident["resolution"] is None:
+            continue
+        for observation in state["recoveries"].values():
+            if observation.get("source") != "cloud" or observation["proof"]["fact"]["kind"] != "translation_manifest":
+                continue
+            source = observation["source_id"]
+            if source in seen or source not in source_ids:
+                continue
+            seen.add(source)
+            cloud_reader = cloud_reader or reader()
+            incidents.reverify_saved_cloud_success(cloud_reader, observation, github_api=ledger.api, clock=clock or utc_now)
+
+
+def finalize_cycle(ledger, cycles, *, clock=None, cloud_reader=None):
     """Called only after delivery/outcome attestation succeeded or was empty."""
     value = read_proposal(ledger, cycles)
     states = verified_states(ledger)
+    reverify_translation_recoveries(ledger, states, {item["source_id"] for item in value["bundle"]["evaluation"].get("observations", [])}, cloud_reader, clock=clock)
     previous = cycles.load()
     incidents.require((previous["manifest_id"] if previous else None) == value["previous_cycle_id"],
                       "cloud predecessor changed during reconciliation")
@@ -262,6 +295,7 @@ def finalize_cycle(ledger, cycles, *, clock=None):
 def verify_heartbeat(ledger, cycles, cloud_reader, *, clock=None):
     value = read_proposal(ledger, cycles)
     states = verified_states(ledger)
+    reverify_translation_recoveries(ledger, states, {item["source_id"] for item in value["bundle"]["evaluation"].get("observations", [])}, cloud_reader, clock=clock)
     incidents.require(public_delivery_counts(ledger, states, shadow=value["mode"] == "shadow")
                       == {key: value["bundle"]["evaluation"].get(key) for key in TRANSPORT_FIELDS},
                       "cloud transport count differs from verified outcomes")
