@@ -28,9 +28,12 @@ The gate reads every referenced signed manifest and part, verifies main ancestry
 and requires at least 24 hours of history after the verified audit setup applied
 timestamp, with corresponding observed heartbeat samples after creation or last
 mutation of the current absence policy. Live Run or all-services DATA_WRITE audit
-capture must also remain enabled without exemptions. The final shadow sample must be at most
-ten minutes old. First seed and verify the heartbeat after installing the absence
-policy; Monitoring cannot establish absence coverage before an initial sample.
+capture must also remain enabled without exemptions. The gate also verifies a
+fresh signed rolling 24-hour shadow window under the same reviewed protocol,
+policy and main ancestry. A fixed review snapshot cannot
+establish current pipeline health; the latest cycle must be at most ten minutes
+old, and an incomplete or failed latest cycle cannot fall back to older success.
+First seed and verify the heartbeat after installing the absence policy; Monitoring cannot establish absence coverage before an initial sample.
 Freshness is checked again after signature enumeration. The worker retains the
 verified IDs/timestamps with hashes of the exact executor, saved plan, config and
 target scope, then rechecks those bindings and the current clock immediately
@@ -59,8 +62,13 @@ every nonterminal execution must use that exact current image and explicit
 `SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE=unified`. An older image, native
 execution, partial enumeration, failed latest attempt or uncertain receipt
 prevents cutover. If policy sync runs before those deploys finish, it safely
-refuses; the integration owner re-dispatches it with the same exact tested main identity after terminal
-deployment verification. Never resolve sequencing with a local apply.
+refuses; the integration owner re-dispatches it with the same exact tested main
+identity after terminal deployment verification. MPAtlas CI deliberately depends
+on policy-sync success; for this staging transition, dispatch the existing protected
+`mpatlas-monthly-deploy.yml` with the exact tested main revision and its successful
+`ci-ready` run/attempt, verify deployment and drain, then dispatch
+`cron-alert-policy-sync.yml` with that same identity. Preserve the normal CI
+prerequisite. Never resolve sequencing with a local apply.
 
 A config merge alone cannot activate cloud delivery. The notification worker
 retains shadow mode until it verifies the latest signed successful protected
