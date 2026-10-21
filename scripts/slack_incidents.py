@@ -24,12 +24,15 @@ import yaml
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
+from scripts import operational_policy as policy
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
 
-SCHEMA = "shared-datasets-slack-incident-v2"
+SCHEMA = "shared-datasets-slack-incident-v3"
+PREVIOUS_SCHEMA = "shared-datasets-slack-incident-v2"
 LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
+SCHEMAS = {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
 ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
@@ -65,6 +68,78 @@ def escape(value):
 def observation_key(value):
     proof = value["proof"]
     return f"{value['run_id']}:{value['attempt']}:{value['job_id']}:{proof['status_id'] if proof else 0}"
+
+
+def binding_for(observation):
+    scope = observation["scope"]
+    publication = re.fullmatch(r"publication:pr-([1-9][0-9]*):(?:apply|reset)", scope)
+    return policy.OperationBinding(scope, scope.removeprefix("deployment:"), observation["sha"],
+                                   int(publication[1]) if publication else None)
+
+
+def operational_fact(observation, value=None):
+    """Normalize verified evidence without inferring failure text or safety.
+
+    An unclassified failed deployment has an uncertain mutation frontier. An
+    explicit adapter may supply narrower verified facts; a job name or red CI
+    conclusion alone cannot authorize replay or a transient suppression.
+    """
+    binding = binding_for(observation)
+    source_id = "github:" + observation_key(observation)
+    if value is None:
+        failed = observation["conclusion"] != "success"
+        mutation = observation["kind"] in {"deployment", "publication"}
+        value = {**binding.to_dict(), "source_id": source_id, "observed_at": observation["time"],
+                 "phase": "verification" if mutation else "validation",
+                 "reason": "unknown" if failed else "healthy",
+                 "mutation_status": "uncertain" if failed and mutation else "not_required",
+                 "recovery": "none",
+                 "required_action": "Inspect the exact source evidence and establish the mutation outcome before recovery."
+                    if mutation else "Inspect the exact failed source and repair its authorization, configuration or implementation.",
+                 "impact": "Impact is unknown; the failed source has not established consumer impact.",
+                 "published_data_state": "Unknown; inspect authoritative publication/deployment evidence before replay."
+                    if mutation else "This observation does not establish a published-data change.",
+                 "evidence": [run_link(observation)]}
+    fact = policy.OperationalObservation.from_dict(value)
+    require(all(getattr(fact.binding, key) == getattr(binding, key) for key in ("operation_id", "target", "revision"))
+            and (binding.pr_number is None or fact.pr_number == binding.pr_number)
+            and fact.source_id == source_id and fact.observed_at == observation["time"],
+            "operational classification differs from its verified source")
+    return fact
+
+
+def episode_decisions(state, *, now=None):
+    now = now or policy.timestamp(datetime.now(timezone.utc))
+    incident = state["incident"]
+    if incident is None or incident["resolution"] is not None:
+        return []
+    parent = incident["posts"].get("parent")
+    decisions = []
+    for observation in required_failures(state):
+        if observation["scope"] in state["recoveries"]:
+            continue
+        fact = operational_fact(observation, state["operational"].get(observation_key(observation)))
+        owner = state["supervision"].get(fact.operation_id)
+        # A signed owner for a different revision or PR has no suppression
+        # authority over this exact failed source.
+        if owner is not None and not policy.covers_binding(owner, fact.binding):
+            owner = None
+        decision = policy.decide(fact, first_failure_at=state["first_failure_at"], now=now,
+                                 supervision=owner, ownership_verified=owner is not None,
+                                 public_parent_exists=bool(parent and parent["state"] == "delivered"))
+        decisions.append((fact, decision))
+    return decisions
+
+
+def latch_escalation(state, now):
+    if state["escalation_at"] is not None:
+        return
+    eligible = [decision for _, decision in episode_decisions(state, now=now)
+                if decision.disposition == policy.Disposition.ESCALATE]
+    if eligible:
+        first = min(eligible, key=lambda decision: instant(decision.eligible_at))
+        state["escalation_at"] = max(state["first_failure_at"], first.eligible_at)
+        state["escalation_reason"] = first.reason
 
 
 def validate_observation(value):
@@ -231,7 +306,7 @@ def step_verified(job, name):
 def migrate_sdk_candidate(api, state):
     """Reclassify only a signed open episode proven to precede publication."""
     incident = state["incident"]
-    if state["scope"] != "deployment:typescript-sdk" or incident["resolution"] is not None:
+    if state["scope"] != "deployment:typescript-sdk" or incident is None or incident["resolution"] is not None:
         return state
     observations = incident["failures"] + state["deferred"]
     if not any(item["job_name"] == "candidate" for item in observations):
@@ -257,6 +332,7 @@ def migrate_sdk_candidate(api, state):
     migrated.update(scope=scope, kind=kind, label=label, healthy=None)
     for item in migrated["incident"]["failures"] + migrated["deferred"]:
         item.update(scope=scope, kind=kind, label=label)
+    migrated.update(operation_id=scope, aliases=[scope], operational={}, recoveries={}, watermarks={}, supervision={})
     # The original signed bytes retain the old deployment watermark as audit
     # history; it cannot describe health of the newly distinct read-only job.
     return validate_state(migrated)
@@ -339,13 +415,51 @@ def verify_saved_success(api, observation):
 
 def new_state(observation, identity):
     return {"scope": observation["scope"], "kind": observation["kind"], "label": observation["label"],
-            "identity": identity, "healthy": None, "incident": None, "deferred": []}
+            "identity": identity, "healthy": None, "incident": None, "deferred": [],
+            "operation_id": observation["scope"], "first_failure_at": None, "stable_since": None,
+            "escalation_at": None, "escalation_reason": None,
+            "aliases": [observation["scope"]], "source_aliases": [], "operational": {},
+            "recoveries": {}, "watermarks": {}, "supervision": {}}
 
 
-def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
+def source_alias(observation):
+    return f"github:{observation['run_id']}:{observation['attempt']}"
+
+
+def required_failures(state):
+    """Specific same-attempt evidence supersedes a generic workflow failure.
+
+    A public episode can cover several targets, but each target retains its own
+    recovery requirement. Workflow completion cannot stand in for those proofs.
+    """
+    failures = state["incident"]["failures"]
+    specific = {source_alias(item) for item in failures if item["kind"] != "workflow"}
+    return [item for item in failures if item["kind"] != "workflow" or source_alias(item) not in specific]
+
+
+def covers_failure(failure, evidence, ancestor):
+    if failure["scope"] != evidence["scope"] or not ancestor(failure["sha"], evidence["sha"]):
+        return False
+    if instant(evidence["time"]) <= instant(failure["time"]) and (
+            failure["kind"] != "deployment" or failure["sha"] == evidence["sha"]):
+        return False
+    receipt = PUBLICATION_RECEIPT_JOB.fullmatch(evidence["job_name"])
+    if receipt and (failure["run_id"] != int(receipt[2]) or failure["attempt"] != int(receipt[3])
+            or failure["job_name"] not in {f"Apply approved PR mutation plans (PR #{receipt[1]})",
+                f"Publish PR #{receipt[1]} / Apply approved PR mutation plans (PR #{receipt[1]})"}):
+        return False
+    return failure["kind"] != "job" or evidence["job_name"] == failure["job_name"]
+
+
+def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, correlate=False):
     validate_observation(observation)
     state = copy.deepcopy(state or new_state(observation, identity))
-    require(state["scope"] == observation["scope"] and state["kind"] == observation["kind"], "observation scope changed")
+    if observation["scope"] not in state["aliases"]:
+        require(correlate, "observation scope changed")
+        state["aliases"].append(observation["scope"])
+        state["aliases"].sort()
+    if observation["scope"] == state["scope"]:
+        require(observation["kind"] == state["kind"], "observation kind changed")
     require(state["identity"] == identity, "incident belongs to another Slack bot, workspace or channel")
     incident = state["incident"]
     if observation["conclusion"] == "success":
@@ -353,72 +467,140 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
         if incident is None:
             return state
         if incident["resolution"] is not None:
-            healthy = state["healthy"]
-            if instant(observation["time"]) > instant(healthy["time"]) and ancestor(healthy["sha"], observation["sha"]):
-                state["healthy"] = observation
+            covered = [item for item in required_failures(state) if item["scope"] == observation["scope"]]
+            healthy = state["watermarks"].get(observation["scope"])
+            if healthy is not None and instant(observation["time"]) <= instant(healthy["time"]):
+                return state
+            if covered and all(covers_failure(item, observation, ancestor) for item in covered) and (
+                    healthy is None or (instant(observation["time"]) > instant(healthy["time"])
+                                        and ancestor(healthy["sha"], observation["sha"]))):
+                state["watermarks"][observation["scope"]] = observation
+                state["recoveries"][observation["scope"]] = observation
+                state["healthy"] = max(state["watermarks"].values(), key=lambda item: instant(item["time"]))
             return state
-        failures = incident["failures"]
-        receipt = PUBLICATION_RECEIPT_JOB.fullmatch(observation["job_name"])
-        if receipt and any(item["run_id"] != int(receipt[2]) or item["attempt"] != int(receipt[3])
-                           or item["job_name"] not in {f"Apply approved PR mutation plans (PR #{receipt[1]})",
-                               f"Publish PR #{receipt[1]} / Apply approved PR mutation plans (PR #{receipt[1]})"} for item in failures):
-            return state  # A receipt repairs only the exact original apply attempt.
-        if not all(ancestor(item["sha"], observation["sha"]) for item in failures):
+        failures = required_failures(state)
+        covered = [item for item in failures if item["scope"] == observation["scope"]]
+        if not covered or not all(covers_failure(item, observation, ancestor) for item in covered):
             return state
-        if any(instant(observation["time"]) <= instant(item["time"])
-               and (state["kind"] != "deployment" or item["sha"] == observation["sha"]) for item in failures):
-            return state
-        # Workflow scope already binds the trusted file path; its display name
-        # may change between the original failure and recovery.
-        if state["kind"] == "job":
-            require(observation["job_name"] == failures[0]["job_name"], "successful job does not cover the incident")
-        incident["resolution"] = observation
-        state["healthy"] = observation
+        state["recoveries"][observation["scope"]] = observation
+        state["watermarks"][observation["scope"]] = observation
+        if all(item["scope"] in state["recoveries"] and covers_failure(
+                item, state["recoveries"][item["scope"]], ancestor) for item in failures):
+            resolution = max(state["recoveries"].values(), key=lambda item: instant(item["time"]))
+            incident["resolution"] = resolution
+            state["healthy"] = resolution
+            state["stable_since"] = resolution["time"]
         return state
-    if state["healthy"]:
-        healthy = state["healthy"]
-        if instant(observation["time"]) <= instant(healthy["time"]):
-            return state
-        if observation["sha"] != healthy["sha"] and ancestor(observation["sha"], healthy["sha"]):
+    if incident is not None and observation in incident["failures"]:
+        return state
+    if observation["scope"] in state["watermarks"]:
+        healthy = state["watermarks"][observation["scope"]]
+        if observation["sha"] == healthy["sha"]:
+            if instant(observation["time"]) <= instant(healthy["time"]):
+                return state
+        elif ancestor(observation["sha"], healthy["sha"]):
             return state  # A superseded execution can finish after recovery.
-    if incident is None or incident["resolution"] is not None:
+    stable = (incident is not None and incident["resolution"] is not None
+              and instant(observation["time"]) < instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds))
+    if incident is None or (incident["resolution"] is not None and not stable):
         digest = hashlib.sha256((state["scope"] + ":" + observation_key(observation)).encode()).hexdigest()[:12].upper()
         state["incident"] = {"id": "SD-" + digest, "failures": [observation], "resolution": None, "posts": {}, "permalink": "", "parent_view_sha256": None}
+        state["first_failure_at"] = observation["time"]
+        state["escalation_at"], state["escalation_reason"] = None, None
+        state["recoveries"] = {}
+        state["operational"] = {}
+        state["source_aliases"] = [source_alias(observation)]
+        if incident is not None:
+            # Stable recovery ends the old ownership episode. Its immutable
+            # signed checkpoints retain that responsibility and deadline;
+            # stale ownership cannot change a new issue's recovery budget.
+            state["supervision"] = {key: owner for key, owner in state["supervision"].items()
+                                    if owner["first_failure_at"] is None}
+        state["aliases"] = sorted({state["scope"], observation["scope"], *state["supervision"], *state["watermarks"]})
     elif observation_key(observation) not in {observation_key(item) for item in incident["failures"]}:
         incident["failures"].append(observation)
         incident["failures"].sort(key=lambda item: (instant(item["time"]), observation_key(item)))
+        incident["resolution"] = None
+        state["first_failure_at"] = min(item["time"] for item in incident["failures"])
+    state["stable_since"] = None
+    state["recoveries"].pop(observation["scope"], None)
+    state["source_aliases"] = sorted(set(state["source_aliases"]) | {source_alias(observation)})
+    state["operational"].setdefault(observation_key(observation), operational_fact(observation).to_dict())
     return state
 
 
-def validate_state(state, *, legacy=False):
-    require(isinstance(state, dict) and set(state) == {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}, "invalid incident state schema")
+def validate_state(state, *, legacy=False, schema=SCHEMA):
+    if legacy:
+        schema = LEGACY_SCHEMA
+    require(schema in SCHEMAS, "unknown incident state schema")
+    fields = {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}
+    if schema == SCHEMA:
+        fields |= {"operation_id", "first_failure_at", "stable_since", "aliases", "source_aliases",
+                   "operational", "recoveries", "watermarks", "supervision", "escalation_at", "escalation_reason"}
+    require(isinstance(state, dict) and set(state) == fields, "invalid incident state schema")
+    aliases = state["aliases"] if schema == SCHEMA else [state["scope"]]
+    require(isinstance(aliases, list) and aliases and state["scope"] in aliases
+            and len(aliases) == len(set(aliases))
+            and all(isinstance(scope, str) and re.fullmatch(r"[a-z][a-z0-9:._-]{0,150}", scope) for scope in aliases),
+            "invalid incident aliases")
     identity = state["identity"]
     require(isinstance(identity, dict) and set(identity) == {"channel", "team", "user"}
             and CHANNEL.fullmatch(identity["channel"]) and re.fullmatch(r"T[A-Z0-9]+", identity["team"])
             and re.fullmatch(r"U[A-Z0-9]+", identity["user"]), "invalid incident Slack identity")
     if state["healthy"] is not None:
         validate_observation(state["healthy"])
-        require(state["healthy"]["scope"] == state["scope"] and state["healthy"]["conclusion"] == "success", "invalid healthy watermark")
+        require(state["healthy"]["scope"] in aliases and state["healthy"]["conclusion"] == "success", "invalid healthy watermark")
     require(isinstance(state["deferred"], list), "invalid deferred observation queue")
     deferred_events = set()
     for item in state["deferred"]:
         validate_observation(item)
-        require(item["scope"] == state["scope"] and observation_key(item) not in deferred_events, "incompatible/duplicate deferred observation")
+        require(item["scope"] in aliases and observation_key(item) not in deferred_events, "incompatible/duplicate deferred observation")
         deferred_events.add(observation_key(item))
     incident = state["incident"]
+    if schema == SCHEMA:
+        require(state["operation_id"] == state["scope"], "operation identity differs from canonical scope")
+        require(isinstance(state["source_aliases"], list) and len(state["source_aliases"]) == len(set(state["source_aliases"]))
+                and all(isinstance(value, str) and re.fullmatch(r"github:[1-9][0-9]*:[1-9][0-9]*", value)
+                        for value in state["source_aliases"]), "invalid source aliases")
+        require(isinstance(state["operational"], dict) and isinstance(state["recoveries"], dict)
+                and isinstance(state["watermarks"], dict), "invalid operational evidence")
+        require(isinstance(state["supervision"], dict), "invalid accountable supervision map")
+        for operation_id, owner in state["supervision"].items():
+            policy.validate_supervision(owner, first_failure_at=state["first_failure_at"])
+            require(operation_id == owner["operation_id"] and operation_id in aliases, "supervision differs from source scope")
+        if state["first_failure_at"] is not None:
+            instant(state["first_failure_at"])
+        if state["stable_since"] is not None:
+            instant(state["stable_since"])
+        require((state["escalation_at"] is None) == (state["escalation_reason"] is None), "incomplete escalation eligibility")
+        if state["escalation_at"] is not None:
+            require(state["first_failure_at"] is not None
+                    and instant(state["escalation_at"]) >= instant(state["first_failure_at"])
+                    and isinstance(state["escalation_reason"], str) and re.fullmatch(r"[a-z_]{1,100}", state["escalation_reason"]),
+                    "invalid escalation eligibility")
+        for scope, evidence in list(state["watermarks"].items()) + list(state["recoveries"].items()):
+            validate_observation(evidence)
+            require(scope in aliases and evidence["scope"] == scope and evidence["conclusion"] == "success",
+                    "invalid target recovery proof")
+        if incident is None:
+            require(bool(state["supervision"]) and state["first_failure_at"] is None
+                    and state["stable_since"] is None and not state["operational"] and not state["recoveries"] and not state["watermarks"]
+                    and not state["source_aliases"] and not state["deferred"] and state["healthy"] is None,
+                    "a prospective registration cannot claim a failure or recovery")
+            return state
     fields = {"id", "failures", "resolution", "posts", "permalink"}
-    require(isinstance(incident, dict) and set(incident) == (fields if legacy else fields | {"parent_view_sha256"}), "invalid incident episode")
+    require(isinstance(incident, dict) and set(incident) == (fields if schema == LEGACY_SCHEMA else fields | {"parent_view_sha256"}), "invalid incident episode")
     require(re.fullmatch(r"SD-[0-9A-F]{12}", incident["id"]), "invalid incident ID")
     require(isinstance(incident["failures"], list) and incident["failures"], "incident must retain original failures")
     seen = set()
     for item in incident["failures"]:
         validate_observation(item)
-        require(item["scope"] == state["scope"] and item["kind"] == state["kind"]
+        require(item["scope"] in aliases and (schema == SCHEMA or item["kind"] == state["kind"])
                 and item["conclusion"] in alerts.FAILED_CONCLUSIONS and observation_key(item) not in seen, "incompatible/duplicate incident failure")
         seen.add(observation_key(item))
     if incident["resolution"] is not None:
         validate_observation(incident["resolution"])
-        require(incident["resolution"]["scope"] == state["scope"] and incident["resolution"]["conclusion"] == "success"
+        require(incident["resolution"]["scope"] in aliases and incident["resolution"]["conclusion"] == "success"
                 and state["healthy"] is not None and instant(state["healthy"]["time"]) >= instant(incident["resolution"]["time"]), "invalid incident recovery")
     require(isinstance(incident["posts"], dict), "invalid Slack outbox")
     allowed = set(failure_posts(state))
@@ -437,12 +619,22 @@ def validate_state(state, *, legacy=False):
         parent = incident["posts"].get("parent")
         require(parent and parent["state"] == "delivered" and re.fullmatch(
             r"https://[a-z0-9-]+\.slack\.com/archives/" + identity["channel"] + "/p" + parent["ts"].replace(".", ""), link), "permalink does not identify the parent")
-    if not legacy:
+    if schema != LEGACY_SCHEMA:
         view = incident["parent_view_sha256"]
         require(view is None or (isinstance(view, str) and re.fullmatch(r"[0-9a-f]{64}", view)), "invalid parent view acknowledgement")
         if view is not None:
             parent = incident["posts"].get("parent")
             require(parent and parent["state"] == "delivered", "parent view requires an acknowledged original message")
+    if schema == SCHEMA:
+        require(state["first_failure_at"] == min(item["time"] for item in incident["failures"]), "original failure clock changed")
+        require((incident["resolution"] is None) == (state["stable_since"] is None), "invalid stable recovery clock")
+        if incident["resolution"] is not None:
+            require(state["stable_since"] == incident["resolution"]["time"], "stable recovery clock was renewed")
+        require(set(state["operational"]) <= seen, "classification has no retained source observation")
+        for item in incident["failures"]:
+            if observation_key(item) in state["operational"]:
+                operational_fact(item, state["operational"][observation_key(item)])
+        require(set(state["source_aliases"]) == {source_alias(item) for item in incident["failures"]}, "source alias lacks exact retained failure evidence")
     return state
 
 
@@ -451,6 +643,17 @@ def migrate_verified_state(state, schema):
     state = copy.deepcopy(state)
     if schema == LEGACY_SCHEMA:
         state["incident"]["parent_view_sha256"] = None
+    if schema != SCHEMA:
+        incident = state["incident"]
+        state.update(operation_id=state["scope"],
+                     first_failure_at=min(item["time"] for item in incident["failures"]),
+                     stable_since=incident["resolution"]["time"] if incident["resolution"] else None,
+                     aliases=[state["scope"]],
+                     escalation_at=min(item["time"] for item in incident["failures"]) if incident["posts"].get("parent") else None,
+                     escalation_reason="historical_public_delivery" if incident["posts"].get("parent") else None,
+                     source_aliases=sorted({source_alias(item) for item in incident["failures"]}),
+                     operational={}, recoveries={state["scope"]: incident["resolution"]} if incident["resolution"] else {},
+                     watermarks={state["scope"]: state["healthy"]} if state["healthy"] else {}, supervision={})
     return validate_state(state)
 
 
@@ -459,19 +662,26 @@ def failure_posts(state):
     return {"parent": None, **{"attempt:" + observation_key(item): item for item in state["incident"]["failures"][1:]}}
 
 
-def desired_posts(state):
+def desired_posts(state, *, now=None):
     incident = state["incident"]
+    if incident is None:
+        return {}
     parent = incident["posts"].get("parent")
     if incident["resolution"] is not None:
         # Existing failed-attempt claims still need owner reconciliation, but
         # corrected failures cannot authorize any new message or retry reply.
         return {"parent": None} if parent and parent["state"] == "delivered" else {}
-    # The initial failure is already recorded in the parent. Subsequent attempts
-    # remain threaded. Already-corrected failures are not newly announced.
-    return failure_posts(state)
+    if state["escalation_at"] is not None:
+        return {"parent": None}
+    # Historical attempt claims remain auditable and require reconciliation;
+    # new attempts only change the original parent's count and evidence.
+    decisions = episode_decisions(state, now=now)
+    return {"parent": None} if any(decision.disposition == policy.Disposition.ESCALATE for _, decision in decisions) else {}
 
 
 def pending_posts(state):
+    if state["incident"] is None:
+        return {}
     posts = state["incident"]["posts"]
     return {key: posts[key] for key in failure_posts(state) if key in posts and posts[key]["state"] == "claimed"}
 
@@ -480,28 +690,66 @@ def run_link(observation):
     return emissions.invocation(REPOSITORY, observation["run_id"], observation["attempt"])
 
 
-def render(state, *, reply=None):
+def render(state):
     incident = state["incident"]
     first, latest = incident["failures"][0], incident["failures"][-1]
     resolution = incident["resolution"]
-    if reply:
-        require(reply["conclusion"] in alerts.FAILED_CONCLUSIONS, "only failures may create incident replies")
-        title = f"Another failed attempt · {incident['id']}"
-        body = f"{escape(reply['job_name'])}: {reply['conclusion']}.\n<{run_link(reply)}|Attempt {reply['attempt']}> · `{reply['sha'][:12]}` · {reply['time']}"
-        status = "error"
-    else:
-        status = "success" if resolution else "error"
-        title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
-        body = f"*Original failure:* {escape(first['job_name'])} ({first['conclusion']})\n<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n*Failed attempts:* {len(incident['failures'])}"
-        if latest != first:
-            body += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
-        if resolution:
-            body += f"\n*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
-            if resolution["proof"]:
-                body += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
+    status = "success" if resolution else "error"
+    title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
+    attempts = len({source_alias(item) for item in incident["failures"]})
+    evidence = (f"*Original failure:* {escape(first['job_name'])[:400]} ({first['conclusion']})\n"
+                f"<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n"
+                f"*Failed attempts:* {attempts} · {len(incident['failures'])} source observations")
+    if latest != first:
+        evidence += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
+    unresolved = {}
+    for item in required_failures(state):
+        if item["scope"] not in state["recoveries"]:
+            unresolved[item["scope"]] = item
+    paragraphs = []
+    for scope, item in sorted(unresolved.items())[:32]:
+        fact = operational_fact(item, state["operational"].get(observation_key(item)))
+        owner = state["supervision"].get(fact.operation_id)
+        responsible = (owner["responsible_human"] if owner is not None and policy.covers_binding(owner, fact.binding)
+                       else "Unassigned; repository maintainer action required.")
+        paragraphs.append(f"*Target:* {escape(scope)}\n"
+            f"*Impact:* {escape(fact.impact)[:250]}\n"
+            f"*Published-data state:* {escape(fact.published_data_state)[:250]}\n"
+            f"*Responsible owner:* {escape(responsible)}\n"
+            f"*Required action:* {escape(fact.required_action)[:350]}\n"
+            f"*Evidence:* <{run_link(item)}|Exact source attempt>")
+    if len(unresolved) > 32:
+        paragraphs.append(f"{len(unresolved) - 32} additional unresolved targets require inspection in the complete workflow evidence below.")
+    if not unresolved:
+        paragraphs.append("*Impact:* Required target outcomes have recovery proof.\n"
+            "*Published-data state:* See the authoritative recovery evidence below.\n"
+            "*Responsible owner:* Recovery verified by the trusted observer.\n"
+            "*Required action:* None for this resolved episode.")
+    paragraphs.append("*Recovery attempted:* Source observations do not specify completed recovery attempts. Inspect the linked evidence before retrying.")
+    if state["escalation_at"] is not None and resolution is None:
+        paragraphs.append(f"*Escalation eligible:* {state['escalation_at']} · {escape(state['escalation_reason'])}")
+    paragraphs.append("*Evidence:*\n" + evidence)
+    if resolution:
+        recovery = f"*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
+        if resolution["proof"]:
+            recovery += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
+        paragraphs.append(recovery)
+    body = "\n\n".join(paragraphs)
     payload = build_slack_payload(title=title, body=body, status=status, emoji="✅" if status == "success" else "🔴")
+    # Preserve every displayed target action rather than letting the generic
+    # webhook helper truncate the entire incident at its first 3,000 characters.
+    sections, section = [], ""
+    for paragraph in paragraphs:
+        if len(section) + len(paragraph) + 2 > 2900:
+            sections.append(section)
+            section = ""
+        section += ("\n\n" if section else "") + paragraph
+    if section:
+        sections.append(section)
+    payload["blocks"] = payload["blocks"][:1] + [
+        {"type": "section", "text": {"type": "mrkdwn", "text": section}} for section in sections]
     # Labels may originate in job names; escape the notification fallback too.
-    payload["text"] = escape(title) + "\n" + body
+    payload["text"] = (escape(title) + "\n" + body)[:39000]
     payload["metadata"] = {"event_type": "shared_datasets_incident", "event_payload": {"incident_id": incident["id"], "scope": state["scope"]}}
     return payload
 
@@ -512,6 +760,8 @@ def parent_view_sha256(state):
 
 def pending_recovery_update(state):
     incident = state["incident"]
+    if incident is None:
+        return False
     parent = incident["posts"].get("parent")
     return (incident["resolution"] is not None and parent and parent["state"] == "delivered"
             and incident["parent_view_sha256"] != parent_view_sha256(state))
@@ -519,6 +769,8 @@ def pending_recovery_update(state):
 
 def needs_parent_delivery(state):
     incident = state["incident"]
+    if incident is None:
+        return False
     parent = incident["posts"].get("parent")
     return parent and parent["state"] == "delivered" and (not incident["permalink"]
             or incident["parent_view_sha256"] != parent_view_sha256(state))
@@ -527,6 +779,8 @@ def needs_parent_delivery(state):
 def admits_blocked_observations(state):
     """A known open parent can recover without replaying its uncertain replies."""
     incident = state["incident"]
+    if incident is None:
+        return False
     parent = incident["posts"].get("parent")
     return incident["resolution"] is None and parent and parent["state"] == "delivered"
 
@@ -540,7 +794,7 @@ def worker_context(api, environment=os.environ):
     workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
     require(run.get("id") == run_id and run.get("run_attempt") == attempt and run.get("path") == WORKFLOW
             and run.get("workflow_id") == workflow.get("id") and workflow.get("path") == WORKFLOW
-            and run.get("head_branch") == "main" and run.get("event") in {"workflow_run", "workflow_dispatch"}
+            and run.get("head_branch") == "main" and run.get("event") in {"workflow_run", "workflow_dispatch", "schedule"}
             and deployments.SHA.fullmatch(str(run.get("head_sha", "")))
             and all(run.get(key, {}).get("id") == repo.get("id") and run.get(key, {}).get("full_name") == REPOSITORY for key in ("repository", "head_repository")), "invalid incident worker provenance")
     return run
@@ -555,11 +809,11 @@ class Ledger:
         if isinstance(payload, str):
             payload = json.loads(payload)
         require(isinstance(payload, dict) and set(payload) == {"schema", "state", "execution_run_id", "execution_run_attempt"}
-                and payload["schema"] in {SCHEMA, LEGACY_SCHEMA} and record.get("task") == "slack-incident"
+                and payload["schema"] in SCHEMAS and record.get("task") == "slack-incident"
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
                 and record.get("ref") == record.get("sha") and deployments.SHA.fullmatch(str(record.get("sha", "")))
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
-        state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
+        state = validate_state(payload["state"], schema=payload["schema"])
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
@@ -570,15 +824,45 @@ class Ledger:
     def load(self):
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
         latest = {}
+        versions = {}
+        seen_ids = {}
         for record in records:
+            require(record["id"] not in seen_ids or seen_ids[record["id"]] == record,
+                    "notification checkpoint ID has inconsistent historical bytes")
+            seen_ids[record["id"]] = record
             payload = record["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}, "unknown notification ledger schema")
+            require(isinstance(payload, dict) and payload.get("schema") in SCHEMAS, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
+            versions.setdefault(scope, []).append((record, payload["schema"]))
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
         states = {scope: self.verify(record) for scope, record in latest.items()}
+        for scope, rows in versions.items():
+            latest_schema = next(schema for record, schema in rows if record["id"] == latest[scope]["id"])
+            if latest_schema != SCHEMA:
+                for record, schema in rows:
+                    if schema == SCHEMA:
+                        self.verify(record)
+                        require(False, "older notification worker superseded a signed v3 checkpoint; drain workers and reconcile exact history")
+        for scope, state in list(states.items()):
+            for alias in state["aliases"]:
+                if alias == scope or alias not in states:
+                    continue
+                prospective = states[alias]
+                require(prospective["incident"] is None and latest[scope]["id"] > latest[alias]["id"],
+                        "signed episode alias conflicts with an existing incident or newer registration")
+                for operation_id, owner in prospective["supervision"].items():
+                    current = state["supervision"].get(operation_id)
+                    require(current is not None and all(current[key] == owner[key] for key in
+                            ("responsible_human", "conversation_ref", "operation_id", "target"))
+                            and instant(current["updated_at"]) >= instant(owner["updated_at"]),
+                            "episode alias discarded prospective owner provenance")
+                    if owner["deadline"] is not None:
+                        require(current["deadline"] is not None and instant(current["deadline"]) <= instant(owner["deadline"]),
+                                "episode alias restarted the supervision clock")
+                del states[alias]
         old_scope = "deployment:typescript-sdk"
         if old_scope not in states:
             return states
@@ -621,7 +905,7 @@ class Ledger:
         record = self.api.post(f"repos/{REPOSITORY}/deployments", {
             "ref": self.run["head_sha"], "task": "slack-incident", "environment": ENVIRONMENT,
             "auto_merge": False, "required_contexts": [], "production_environment": False,
-            "transient_environment": False, "description": state["incident"]["id"] + " notification checkpoint", "payload": payload,
+            "transient_environment": False, "description": (state["incident"]["id"] if state["incident"] else state["operation_id"])[:70] + " notification checkpoint", "payload": payload,
         })
         require(positive(record.get("id")) and record.get("payload") == payload, "ledger write was not acknowledged exactly")
         status = self.api.post(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses", {
@@ -653,10 +937,10 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     payload = record["payload"]
     if isinstance(payload, str):
         payload = json.loads(payload)
-    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}
+    require(isinstance(payload, dict) and payload.get("schema") in SCHEMAS
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
-    state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
-    require(state["incident"]["id"] == incident_id and state["identity"] == identity
+    state = validate_state(payload["state"], schema=payload["schema"])
+    require(state["incident"] is not None and state["incident"]["id"] == incident_id and state["identity"] == identity
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
     latest = ledger.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
@@ -664,21 +948,76 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     require(same_scope and max(item["id"] for item in same_scope) == record["id"], "checkpoint is no longer the latest incident state")
     # Recovery truth is independently rechecked even when the owner confirms
     # notification delivery bookkeeping from an interrupted writer.
+    state = migrate_verified_state(state, payload["schema"])
     resolution = state["incident"]["resolution"]
-    if resolution and state["kind"] == "deployment":
-        verify_saved_success(ledger.api, resolution)
-        healthy = state["healthy"]
-        if healthy != resolution:
-            verify_saved_success(ledger.api, healthy)
-        require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in state["incident"]["failures"])
-                and deployments.git_ancestor(resolution["sha"], healthy["sha"]), "checkpoint recovery has incompatible revision ancestry")
-    ledger.save(migrate_verified_state(state, payload["schema"]), "claims")
+    evidence = ([resolution] if resolution else []) + list(state["recoveries"].values()) + list(state["watermarks"].values())
+    for item in {observation_key(item): item for item in evidence if item["kind"] == "deployment"}.values():
+        verify_saved_success(ledger.api, item)
+    if resolution:
+        require(all(item["scope"] in state["recoveries"] and covers_failure(
+            item, state["recoveries"][item["scope"]], deployments.git_ancestor) for item in required_failures(state)),
+            "checkpoint recovery has incompatible revision ancestry or missing target proof")
+    ledger.save(state, "claims")
     return []
 
 
-def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success, on_saved=lambda _: None):
-    states = ledger.load()
-    original = copy.deepcopy(states)
+def locate_scope(states, observation):
+    matches = [scope for scope, state in states.items() if observation["scope"] in state["aliases"]]
+    require(len(matches) <= 1, "source scope has conflicting signed episode aliases")
+    # A workflow fallback and later exact job evidence from the same attempt
+    # describe one episode. Different known targets do not merge merely because
+    # they share a CI run; the coarse workflow observation is the bridge.
+    candidates = [scope for scope, state in states.items() if state["incident"] is not None
+                  and source_alias(observation) in state["source_aliases"]
+                  and (observation["kind"] == "workflow" or any(
+                      item["kind"] == "workflow" and source_alias(item) == source_alias(observation)
+                      for item in state["incident"]["failures"]))]
+    require(len(candidates) <= 1, "source attempt has conflicting public episode candidates")
+    if matches:
+        match = matches[0]
+        if candidates and candidates[0] != match and states[match]["incident"] is None:
+            canonical = states[candidates[0]]
+            for operation_id, owner in states[match]["supervision"].items():
+                require(operation_id not in canonical["supervision"], "correlated prospective owners conflict")
+                canonical["supervision"][operation_id] = owner
+            canonical["aliases"] = sorted(set(canonical["aliases"]) | set(states[match]["aliases"]))
+            del states[match]
+            return candidates[0]
+        return match
+    return candidates[0] if candidates else observation["scope"]
+
+
+def bind_episode_owners(state, now):
+    if state["incident"] is None or state["incident"]["resolution"] is not None:
+        return
+    for operation_id, owner in list(state["supervision"].items()):
+        binding = policy.OperationBinding.from_dict({key: owner[key] for key in policy.OperationBinding.__dataclass_fields__})
+        for item in required_failures(state):
+            key = observation_key(item)
+            fact = operational_fact(item, state["operational"].get(key))
+            if (item["kind"] == "deployment" and fact.operation_id == operation_id
+                    and fact.revision == binding.revision and fact.pr_number is None and binding.pr_number is not None):
+                # supervise verified this exact merged PR/executor relation;
+                # the signed registration can enrich absent source metadata.
+                enriched = fact.to_dict()
+                enriched["pr_number"] = binding.pr_number
+                state["operational"][key] = operational_fact(item, enriched).to_dict()
+        if not any(policy.covers_binding(owner, operational_fact(item, state["operational"].get(observation_key(item))).binding)
+                   for item in required_failures(state)):
+            continue
+        if owner["first_failure_at"] is not None and instant(owner["first_failure_at"]) <= instant(state["first_failure_at"]):
+            continue
+        state["supervision"][operation_id] = policy.bind_supervision(
+            owner, binding, first_failure_at=state["first_failure_at"], now=now)
+
+
+def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success,
+            on_saved=lambda _: None, now=None, operational=None, initial_states=None, original_states=None):
+    now = now or policy.timestamp(datetime.now(timezone.utc))
+    policy.instant(now)
+    states = ledger.load() if initial_states is None else initial_states
+    original = copy.deepcopy(states if original_states is None else original_states)
+    operational = operational or {}
     blocked = {scope for scope, state in states.items() if pending_posts(state)}
     replay = list(observations)
     for scope, state in states.items():
@@ -688,29 +1027,45 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             state["deferred"] = []
     for observation in sorted(replay, key=lambda item: (instant(item["time"]), observation_key(item))):
         validate_observation(observation)
-        scope = observation["scope"]
+        scope = locate_scope(states, observation)
         if ((scope in blocked and not admits_blocked_observations(states[scope]))
                 or (scope in states and pending_recovery_update(states[scope]))):
             state = states[scope]
+            if observation["scope"] not in state["aliases"]:
+                state["aliases"].append(observation["scope"])
+                state["aliases"].sort()
             known = state["incident"]["failures"] + state["deferred"]
             if state["incident"]["resolution"]:
                 known.append(state["incident"]["resolution"])
             if observation_key(observation) not in {observation_key(item) for item in known}:
                 state["deferred"].append(observation)
             continue
-        if observation["conclusion"] == "success" and observation["scope"] not in states:
+        if observation["conclusion"] == "success" and scope not in states:
             continue
-        states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
+        states[scope] = fold(states.get(scope), observation, identity, ancestor=ancestor, correlate=scope != observation["scope"])
+        if observation["conclusion"] != "success":
+            key = observation_key(observation)
+            if key in operational and key in {observation_key(item) for item in states[scope]["incident"]["failures"]}:
+                states[scope]["operational"][key] = operational_fact(observation, operational[key]).to_dict()
     for scope, state in list(states.items()):
-        if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
-            evidence = success(ledger.api, scope)
-            if evidence:
-                states[scope] = fold(state, evidence, identity, ancestor=ancestor)
+        if (scope not in blocked or admits_blocked_observations(state)) and state["incident"] is not None:
+            targets = {item["scope"] for item in required_failures(state) if item["kind"] == "deployment"}
+            for target in sorted(targets):
+                evidence = success(ledger.api, target)
+                if evidence:
+                    state = fold(state, evidence, identity, ancestor=ancestor, correlate=target != scope)
+            states[scope] = state
+        bind_episode_owners(state, now)
+        latch_escalation(state, now)
     prepared = []
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
         existing = original.get(scope)
         incident = state["incident"]
+        if incident is None:
+            if state != existing:
+                ledger.save(state, "claims")
+            continue
         if scope in blocked:
             message = f"{incident['id']} has an unconfirmed Slack post; owner reconciliation is required. {len(state['deferred'])} observation(s) retained."
             print(message, file=sys.stderr)
@@ -724,7 +1079,7 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
                     prepared.append(record)
                     on_saved(record)
             continue
-        for key in desired_posts(state):
+        for key in desired_posts(state, now=now):
             if key not in incident["posts"]:
                 incident["posts"][key] = {"state": "claimed", "ts": None}
         needs_delivery = needs_parent_delivery(state)
@@ -736,6 +1091,68 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
     return prepared
 
 
+def supervise(ledger, identity, request, *, now=None):
+    """Apply authenticated main-only supervision without transferring authority."""
+    request = policy.validate_supervision_request(request)
+    now = now or policy.timestamp(datetime.now(timezone.utc))
+    run = ledger.run
+    require(run.get("event") == "workflow_dispatch" and run.get("path") == WORKFLOW
+            and run.get("head_branch") == "main", "supervision requires an authenticated main dispatch")
+    require(run.get("run_attempt") == 1, "supervision renewal requires a new dispatch, never a rerun")
+    activity_at = run.get("created_at")
+    require(policy.instant(activity_at) <= policy.instant(now), "supervision dispatch activity is from the future")
+    authority = {"actor": run.get("actor", {}).get("login"), "repository": REPOSITORY,
+                 "workflow": WORKFLOW, "ref": "refs/heads/main", "executor_sha": run.get("head_sha"),
+                 "run_id": run.get("id"), "attempt": run.get("run_attempt")}
+    policy.validate_authority(authority, responsible_human=request["responsible_human"])
+    binding = policy.OperationBinding.from_dict(request["binding"])
+    scope = binding.operation_id
+    if scope.startswith("deployment:"):
+        require(binding.target == scope.removeprefix("deployment:")
+                and binding.target in deployments.TARGET_WORKFLOWS | deployments.TERRAFORM_WORKFLOWS,
+                "supervision target is not a registered deployment")
+        kind = "deployment"
+        if binding.pr_number is not None:
+            pr = ledger.api.get(f"repos/{REPOSITORY}/pulls/{binding.pr_number}")
+            require(pr.get("merged") is True and pr.get("merge_commit_sha") == binding.revision
+                    and pr.get("base", {}).get("ref") == "main"
+                    and pr.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY,
+                    "supervision PR does not identify the exact merged deployment revision")
+    elif scope.startswith("workflow:"):
+        require(binding.target == scope and scope.removeprefix("workflow:") in alerts.WORKFLOW_PATHS.values(),
+                "supervision workflow is not registered")
+        kind = "workflow"
+    elif (publication := re.fullmatch(r"publication:pr-([1-9][0-9]*):(?:apply|reset)", scope)):
+        require(binding.target == scope and binding.pr_number == int(publication[1]), "supervision publication PR differs")
+        kind = "publication"
+    else:
+        require(scope.startswith("job:") and binding.target == scope, "invalid exact job supervision scope")
+        kind = "job"
+    states = ledger.load()
+    original = copy.deepcopy(states)
+    matches = [state for state in states.values() if scope in state["aliases"]]
+    require(len(matches) <= 1, "supervision scope has ambiguous signed aliases")
+    if matches:
+        state = matches[0]
+        require(state["identity"] == identity, "supervision Slack identity changed")
+    else:
+        require(kind != "job", "new unregistered jobs cannot be concealed by guessed scopes")
+        state = new_state({"scope": scope, "kind": kind, "label": binding.target}, identity)
+        states[scope] = state
+    previous = state["supervision"].get(scope)
+    latch_escalation(state, now)
+    if state["incident"] is not None and state["incident"]["resolution"] is not None and (
+            instant(now) >= instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds)):
+        previous = None  # Its signed historical checkpoint remains audit evidence.
+    owner = policy.transition_supervision(previous, request["command"], binding, now=activity_at, authority=authority,
+        responsible_human=request["responsible_human"], conversation_ref=request["conversation_ref"],
+        current_action=request["current_action"], question_ref=request["question_ref"], handoff_ref=request["handoff_ref"],
+        verified_bindings=[operational_fact(item, state["operational"].get(observation_key(item))).binding
+                           for item in state["incident"]["failures"]] if state["incident"] is not None else [])
+    state["supervision"][scope] = owner
+    return prepare(ledger, identity, [], now=now, initial_states=states, original_states=original)
+
+
 def deliver(ledger, records, slack):
     identity = slack.identity()
     for record in records:
@@ -743,17 +1160,13 @@ def deliver(ledger, records, slack):
         require(state["identity"] == identity, "Slack bot, workspace or channel changed since claim")
         incident = state["incident"]
         posts = desired_posts(state)
-        for key, observation in posts.items():
+        for key in posts:
+            require(key == "parent", "only the original incident parent may be sent")
             post = incident["posts"][key]
             if post["state"] == "delivered":
                 continue
-            if key == "parent":
-                ts = slack.post(render(state))
-                incident["parent_view_sha256"] = parent_view_sha256(state)
-            else:
-                parent = incident["posts"]["parent"]
-                require(parent["state"] == "delivered", "thread requires an acknowledged parent")
-                ts = slack.post(render(state, reply=observation), thread_ts=parent["ts"])
+            ts = slack.post(render(state))
+            incident["parent_view_sha256"] = parent_view_sha256(state)
             post.update(state="delivered", ts=ts)
             ledger.save(state, "outcomes")
         parent = incident["posts"].get("parent")
@@ -776,7 +1189,7 @@ def deliver(ledger, records, slack):
 def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=deployments.git_ancestor, success=terminal_success):
     require(ledger.run["event"] == "workflow_dispatch" and ledger.run.get("actor", {}).get("login") == "jonaraphael", "delivery reconciliation requires the repository owner on trusted main")
     states = ledger.load()
-    matches = [state for state in states.values() if state["incident"]["id"] == incident_id]
+    matches = [state for state in states.values() if state["incident"] is not None and state["incident"]["id"] == incident_id]
     require(len(matches) == 1, "incident ID is missing or ambiguous")
     state = matches[0]
     require(state["identity"] == identity, "Slack identity changed")
@@ -839,11 +1252,25 @@ def main():
         plan_path.write_text("[]\n")
         if run["event"] == "workflow_dispatch":
             inputs = event["inputs"]
-            if inputs["delivery_result"] == "seal-checkpoint":
+            action = inputs.get("action") or "reconcile-delivery"
+            require(action in {"reconcile-delivery", "supervision"}, "unknown notification dispatch action")
+            if action == "supervision":
+                require(not any(inputs.get(key) for key in ("incident_id", "operation", "message_ts"))
+                        and inputs.get("delivery_result", "none") in {"", "none"}, "supervision cannot also reconcile delivery")
+                require(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", inputs.get("supervision_request_id", "")), "supervision requires its exact CLI request identity")
+                records = supervise(ledger, identity, json.loads(inputs["supervision_request"]))
+            elif inputs["delivery_result"] == "seal-checkpoint":
+                require(not inputs.get("supervision_request") and not inputs.get("supervision_request_id"), "delivery reconciliation cannot contain supervision")
                 require(not inputs.get("message_ts"), "checkpoint sealing does not acknowledge a Slack message")
                 records = seal_checkpoint(ledger, identity, inputs["incident_id"], inputs["operation"])
             else:
+                require(not inputs.get("supervision_request") and not inputs.get("supervision_request_id"), "delivery reconciliation cannot contain supervision")
                 records = reconcile(ledger, identity, inputs["incident_id"], inputs["operation"], inputs["delivery_result"], inputs.get("message_ts", ""))
+        elif run["event"] == "schedule":
+            # Reconsider clocks even when no new source completion arrives.
+            # The cloud shadow collector joins this same complete cycle in the
+            # next rollout stage; pending ownership must already be bounded.
+            records = prepare(ledger, identity, [])
         else:
             targets = job_targets()
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")

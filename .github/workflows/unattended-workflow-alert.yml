@@ -1,6 +1,9 @@
 name: Workflow health and Slack reconciliation
+run-name: ${{ inputs.action == 'supervision' && format('Supervision {0}', inputs.supervision_request_id) || 'Workflow health and Slack reconciliation' }}
 
 on:
+  schedule:
+    - cron: '3-59/5 * * * *'
   workflow_run:
     workflows:
       - Bucket hygiene audit
@@ -28,19 +31,31 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      action:
+        description: Reconcile uncertain delivery, or register/check in accountable supervision
+        type: choice
+        options: [reconcile-delivery, supervision]
+        default: reconcile-delivery
+      supervision_request:
+        description: Exact JSON request from scripts/slack_supervision.py; no authority or clocks accepted
+        type: string
+      supervision_request_id:
+        description: Unique CLI request ID used to verify this exact signed workflow run
+        type: string
       incident_id:
         description: Exact incident ID with unconfirmed Slack delivery
-        required: true
+        required: false
         type: string
       operation:
         description: Exact first claimed operation, or checkpoint:ID:SHA256 for reviewed checkpoint sealing
-        required: true
+        required: false
         type: string
       delivery_result:
         description: Owner confirmation after inspecting the incident in Slack
-        required: true
+        required: false
         type: choice
-        options: [delivered, not-delivered, seal-checkpoint]
+        options: [none, delivered, not-delivered, seal-checkpoint]
+        default: none
       message_ts:
         description: Exact message timestamp when confirming delivered; empty otherwise
         required: false
@@ -51,36 +66,6 @@ permissions:
   actions: read
 
 jobs:
-  notify:
-    if: >-
-      vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
-      github.event.workflow_run.status == 'completed' &&
-      contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      (
-        github.event.workflow_run.event == 'schedule' ||
-        github.event.workflow_run.event == 'workflow_run' ||
-        (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI') ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
-      )
-    runs-on: ubuntu-latest
-    steps:
-      # workflow_run is privileged: use trusted main code, never the source
-      # run's checkout, caches, or artifacts. Event text is parsed as data.
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Notify unattended failures
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
-        run: python scripts/workflow_failure_alert.py --event-path "$GITHUB_EVENT_PATH"
-
   incidents:
     name: Reconcile Slack incident status
     if: >-
@@ -88,6 +73,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (
         github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'schedule' ||
         (
           github.event.workflow_run.status == 'completed' &&
           contains(fromJSON('["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&

@@ -130,8 +130,9 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
             return {"id": 123, "run_attempt": 1, "path": ".github/workflows/ci.yml",
                     "event": "push", "head_sha": "f" * 40 if defect == "wrong-source-sha" else plan["tested_sha"],
                     "repository": {"full_name": REPOSITORY}}
-        source_jobs = [{"id": 1, "name": "geospatial-changes", "status": "completed", "conclusion": "success"}]
-        source_jobs.extend({"id": index + 2, "name": proof.job_name(suite), "status": "completed",
+        source_identity = {"run_id": 123, "run_attempt": 1, "head_sha": plan["tested_sha"]}
+        source_jobs = [{**source_identity, "id": 1, "name": "geospatial-changes", "status": "completed", "conclusion": "success"}]
+        source_jobs.extend({**source_identity, "id": index + 2, "name": proof.job_name(suite), "status": "completed",
                             "conclusion": defect.removeprefix("producer-") if suite == "tests" and defect in {
                                 "producer-failure", "producer-cancelled", "producer-skipped",
                             } else "success"} for index, suite in enumerate(SUITES))

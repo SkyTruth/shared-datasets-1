@@ -83,21 +83,23 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     subscriptions = workflow_triggers(workflow)["workflow_run"]["workflows"]
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
-        if "schedule" in workflow_triggers(candidate):
+        if "schedule" in workflow_triggers(candidate) and path.name != "unattended-workflow-alert.yml":
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
     assert "CI" in subscriptions
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
-    worker_filter = workflow["jobs"]["notify"]["if"]
+    assert set(workflow["jobs"]) == {"incidents"}
+    worker_filter = workflow["jobs"]["incidents"]["if"]
     assert "github.event.workflow_run.status == 'completed'" in worker_filter
     assert "contains(fromJSON(" in worker_filter
     conclusions = json.loads(worker_filter.split("fromJSON('", 1)[1].split("')", 1)[0])
-    assert set(conclusions) == alerts.FAILED_CONCLUSIONS
+    assert set(conclusions) == alerts.FAILED_CONCLUSIONS | {"success"}
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in worker_filter
-    steps = workflow["jobs"]["notify"]["steps"]
+    assert "github.event_name == 'schedule'" in worker_filter
+    steps = workflow["jobs"]["incidents"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"] == {"ref": "main", "persist-credentials": False}
+    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
 
 
