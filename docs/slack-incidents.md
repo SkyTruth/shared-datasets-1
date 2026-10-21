@@ -23,7 +23,7 @@ under the same workflow and incident identity.
 
 The hourly catalog input probe is read-only. An unchanged comparison skips the
 catalog deployment job. Only a successful idle probe stays quiet. Recognized safe
-read outages receive bounded source-worker recovery; exhausted outages and
+read outages receive bounded thirty-minute source-worker recovery; exhausted outages and
 permanent or unknown failures become actionable. Probe recovery covers only its
 exact read-only job, and a skipped publisher never proves deployment recovery.
 An allocated publisher failure still alerts. Historical catalog runs

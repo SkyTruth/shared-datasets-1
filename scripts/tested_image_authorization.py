@@ -13,6 +13,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import sdk_release_authorization as proof
+from scripts.github_api_read import download as download_artifact
 from scripts.deployment_revision import DeploymentError, GitHub as DeploymentGitHub, TARGET_WORKFLOWS, require, verify_context
 from scripts.tested_image_bundle import ImageError, MAX_IMAGE, MAX_JSON, TARGETS, hash_file, load_image, read_json, validate_manifest
 
@@ -22,21 +23,7 @@ MAX_ARTIFACT = len(TARGETS) * MAX_IMAGE + 100 * 1024 ** 2
 class GitHub(proof.GitHub):
     def archive_to(self, repository, artifact_id, path):
         # Avoid retaining the multi-image ZIP or its expanded members in memory.
-        with Path(path).open("xb") as stream:
-            command = ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"]
-            with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
-                try:
-                    size = 0
-                    for chunk in iter(lambda: process.stdout.read(1024 ** 2), b""):
-                        size += len(chunk)
-                        require(size <= MAX_ARTIFACT, "retained-image download exceeds limit")
-                        stream.write(chunk)
-                    if process.wait() != 0:
-                        raise subprocess.CalledProcessError(process.returncode, command)
-                finally:
-                    if process.poll() is None:
-                        process.kill()
-                        process.wait()
+        download_artifact(f"repos/{repository}/actions/artifacts/{artifact_id}/zip", Path(path), max_bytes=MAX_ARTIFACT)
 
 
 def selected_image(api, repository, run_id, artifacts, reference, path, target, sha, plan, suite_attempt):

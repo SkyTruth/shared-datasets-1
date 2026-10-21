@@ -195,7 +195,9 @@ def job_targets(root=ROOT):
                     require(sync in deployments.TERRAFORM_SYNCS, "unregistered Terraform synchronization name")
                     target = "terraform-" + hashlib.sha256(sync.encode()).hexdigest()[:16]
                 walk(leaf, path + " / ", target or inherited, supplied, source)
-            elif inherited and (filename, key) != (SDK_WORKFLOW, "candidate"):
+            elif inherited and (filename, key) not in {
+                (SDK_WORKFLOW, "candidate"), ("catalog-web-deploy.yml", "check-inputs"),
+            }:
                 targets[(source, path)] = inherited
 
     walk("ci.yml")
@@ -254,7 +256,9 @@ def source_observations(api, event, targets):
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
     if alerts.catalog_probe_only(run, jobs):
-        return []  # Neither a deployment failure nor evidence of recovery.
+        # A complete read-only probe can resolve only its own observation
+        # failure. It supplies no proof that a catalog deployment recovered.
+        return [from_job(run, next(job for job in jobs if job["name"] == "Check for catalog input changes"), targets)]
     if run["name"] == "CI":
         if run["event"] != "push":
             return []

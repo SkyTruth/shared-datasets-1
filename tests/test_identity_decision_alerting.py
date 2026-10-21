@@ -200,6 +200,8 @@ class AlertPolicyTests(unittest.TestCase):
             "google_monitoring_alert_policy.release_awaiting_identity_decision",
             "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",
             "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",
+            "google_monitoring_alert_policy.dataset_object_deleted",
+            "google_monitoring_alert_policy.dataset_schema_changed",
         }
         assert_target_apply_caller(
             self,

@@ -74,7 +74,7 @@ class GitHub:
         return rows
 
     def archive(self, repository: str, artifact_id: int) -> bytes:
-        return subprocess.check_output(["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"])
+        return read(f"repos/{repository}/actions/artifacts/{artifact_id}/zip")
 
 
 def repo_matches(payload: Any, repository: dict[str, Any]) -> bool:

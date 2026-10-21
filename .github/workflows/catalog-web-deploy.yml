@@ -53,7 +53,7 @@ jobs:
     name: Check for catalog input changes
     if: ${{ github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     environment: shared-datasets-production
     env:
       SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "0"
@@ -191,9 +191,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
-        run: python scripts/deployment_source.py --bootstrap --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA"
+        run: |
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then args+=(--defer-pending); fi
+          python scripts/deployment_source.py --bootstrap --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA" "${args[@]}"
 
       - name: Check out repository
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.executor_sha || github.event.workflow_run.head_sha || github.sha }}
@@ -201,6 +205,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify exact passing CI revision
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -237,11 +242,12 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json, os, subprocess
+          from scripts.github_api_read import read
           event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
           expected = event['workflow_run']
           repository = os.environ['GITHUB_REPOSITORY']
-          run = json.loads(subprocess.check_output(['gh', 'api', f"repos/{repository}/actions/runs/{expected['id']}"], text=True))
-          workflow = json.loads(subprocess.check_output(['gh', 'api', f"repos/{repository}/actions/workflows/{run['workflow_id']}"], text=True))
+          run = json.loads(read(f"repos/{repository}/actions/runs/{expected['id']}"))
+          workflow = json.loads(read(f"repos/{repository}/actions/workflows/{run['workflow_id']}"))
           if (run['status'] != 'completed' or run['conclusion'] != 'success'
                   or run['event'] != 'workflow_dispatch' or run['head_branch'] != 'main'
                   or run['head_repository']['full_name'] != repository
@@ -253,23 +259,28 @@ jobs:
           PY
 
       - name: Set up Python
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Sync dependencies
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: uv sync --frozen
 
       - name: Check generated catalog docs
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: uv run python scripts/catalog_docs.py check
 
       - name: Run focused catalog tests
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: |
           uv run pytest \
             tests/test_catalog_site.py \
@@ -278,11 +289,13 @@ jobs:
             tests/test_catalog_web_workflows.py
 
       - name: Check browser JavaScript syntax
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: |
           node --check web/catalog/app.js
           node --check web/catalog/map-preview.js
 
       - name: Validate publisher auth configuration
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         env:
           GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
         run: |
@@ -294,17 +307,20 @@ jobs:
           fi
 
       - name: Authenticate to Google Cloud
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
 
       - name: Collect release indexes
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: |
           uv run python scripts/collect_release_indexes.py --bucket "$SHARED_DATASETS_BUCKET" \
-            --destination "${RUNNER_TEMP}/release-indexes"
+            --destination "${RUNNER_TEMP}/release-indexes" --unattended
 
       - name: Build catalog web bundle
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         run: |
           uv run python scripts/catalog_site.py \
             --release-index-dir "${RUNNER_TEMP}/release-indexes" \
@@ -313,12 +329,14 @@ jobs:
             --out "${RUNNER_TEMP}/catalog-web"
 
       - name: Verify run-bound signing capability without mutation
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         uses: ./.github/actions/deployment-receipt
         with:
           mode: rehearsal
           signer-workflow: catalog-web-deploy.yml
 
       - name: Record serialized catalog deployment attempt
+        if: ${{ steps.bootstrap.outputs.ready == 'true' }}
         id: deployment
         env:
           GH_TOKEN: ${{ github.token }}
