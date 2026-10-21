@@ -1,0 +1,27 @@
+{
+  "schema": "shared-datasets-alert-routing-v1",
+  "transient_recovery_seconds": 1800,
+  "supervision_seconds": 7200,
+  "check_in_seconds": 600,
+  "stable_recovery_seconds": 1800,
+  "reasons": {
+    "healthy": "record_only",
+    "unchanged": "record_only",
+    "superseded": "record_only",
+    "source_not_ready": "record_only",
+    "transient_transport": "safe_recovery",
+    "prerequisite_pending": "safe_recovery",
+    "artifact_visibility_pending": "safe_recovery",
+    "deterministic_defect": "owner_action",
+    "permission_denied": "owner_action",
+    "missing_configuration": "owner_action",
+    "identity_decision_required": "owner_action",
+    "translation_maintenance_required": "owner_action",
+    "publication_receipt_failed": "owner_action",
+    "artifact_provenance_unverified": "owner_action",
+    "unknown": "owner_action",
+    "security_risk": "independent_security",
+    "data_integrity_risk": "independent_security",
+    "unapproved_mutation": "independent_security"
+  }
+}

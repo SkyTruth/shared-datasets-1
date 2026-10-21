@@ -1,15 +1,21 @@
 # Slack incident lifecycle
 
 Operational failures have one searchable incident ID (`SD-` plus twelve hex
-characters). The first failure creates an **Open** parent message. Additional
-failed attempts go in its thread, with **Also send to channel** always disabled.
+characters). An actionable escalation creates one **Open** parent message.
+Recognized safe transient recovery stays private for thirty minutes; an active,
+authenticated owner can retain a safe issue within the fixed supervision limit
+below. Failed attempts stay in GitHub evidence and update the parent's count and
+latest evidence without automatic thread replies or broadcasts.
 Verified recovery edits the original parent to green **Resolved**, retaining the
 original failure and recovery evidence. It creates no reply or new channel
-message. Healthy runs stay quiet. Synthetic delivery is restricted to a separately
-configured test channel; it never deliberately fails a production execution.
+message. Healthy runs and failures recovered before escalation stay quiet. Retain
+an episode through thirty minutes of stable recovery so brief flapping reuses its
+parent. Synthetic tests must use offline transports or a separate test channel.
 
 The `Workflow health and Slack reconciliation` workflow runs on both successful
-and failed workflow completions. Its presence in Actions does not mean a failure
+and failed workflow completions, and reconsiders pending episodes every five
+minutes. Schedule delivery can be delayed or dropped; a deadline establishes
+eligibility, not a guaranteed message timestamp. Its presence in Actions does not mean a failure
 occurred or a Slack message was sent. `Deployment completion check` runs hourly;
 its completion also triggers the incident replay described below. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
@@ -17,10 +23,60 @@ under the same workflow and incident identity.
 
 The hourly catalog input probe is read-only. An unchanged comparison skips the
 catalog deployment job. Only a successful idle probe stays quiet. Recognized safe
-read outages receive the worker's bounded 30-minute recovery budget; exhausted
-outages and permanent or unknown failures reach the incident engine. A skipped
-publisher cannot establish recovery. An allocated publisher failure still alerts. Historical catalog runs
+read outages receive bounded thirty-minute source-worker recovery; exhausted outages and
+permanent or unknown failures become actionable. Probe recovery covers only its
+exact read-only job, and a skipped publisher never proves deployment recovery.
+An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
+
+## Policy and accountable supervision
+
+`catalog/alert-routing.json` is the versioned policy registry;
+`scripts/operational_policy.py` makes pure decisions from verified facts and an
+explicit clock. Supported failure reasons are enums. Free-text similarity never
+decides suppression. Unknown impact and published-data state are stated plainly.
+The public parent includes impact, data state, responsible owner, required action,
+recovery already attempted and evidence.
+
+An agent acts for its responsible human in the originating chat. Register before
+overseeing deployment, then explicitly check in; registration alone cannot hold
+an issue privately. For example, after identifying the exact tested revision:
+
+```bash
+uv run python scripts/slack_supervision.py claim --target catalog-web \
+  --revision "$TESTED_MAIN_SHA" --pr "$ORIGINAL_PR" --human "$RESPONSIBLE_HUMAN" \
+  --conversation "$ORIGINATING_CHAT_URL" --current-action "Checking deployment prerequisites"
+uv run python scripts/slack_supervision.py check-in --target catalog-web \
+  --revision "$TESTED_MAIN_SHA" --pr "$ORIGINAL_PR" --human "$RESPONSIBLE_HUMAN" \
+  --conversation "$ORIGINATING_CHAT_URL" --current-action "Verifying the exact terminal receipt"
+```
+
+The CLI sends JSON through stdin to the existing workflow on `main`. It waits
+for its unique request run and successful signed-checkpoint verification; a
+skipped worker or unrelated green run does not prove registration. `--dry-run`
+is offline; `--no-wait` requests only and requires later exact-run verification.
+The workflow derives authority from its authenticated actor and run, never CLI
+inputs. The human must match that actor. Supplied deployment PRs must match the
+authoritative merged revision. Exact existing workflow/job/publication scopes can
+use `--operation-id`; guessed job scopes cannot establish prospective ownership.
+
+Check in at least every ten minutes with the current action. The first verified
+failure binds a fixed two-hour deadline. New commits, claims, repeated failures
+and changed repair PRs cannot restart it. A stale check-in, explicit release or
+expired deadline makes the unresolved episode eligible for escalation once.
+
+Ask clarification in the originating chat, then use `clarification` with
+`--question-ref "$ORIGINATING_CHAT_URL#MESSAGE_ID"` and the same binding. This
+pauses check-ins until the original deadline; it never proves recovery. Before
+stopping unresolved work, record clarification, `release`, or `supersede` with
+an explicit handoff reference. There is no automatic cross-chat message, agent
+creation or transfer of deployment authority.
+
+Security and demonstrated integrity risks bypass holds through independent
+Monitoring. Uncertain mutation outcomes freeze replay and require authoritative
+inspection. The notification engine starts no production recovery. Source
+workers retain their operation-specific read, publication, receipt and apply
+safety rules, including lock-acquisition-only Terraform retry before writes.
 
 ## Recovery contract
 
@@ -187,22 +243,23 @@ Configure these repository settings before activation:
 | `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED` | Actions variable | `true`, set last |
 
 Use the normal secret-setting interface; never commit, log or place the token in
-a command argument. The incoming webhook secret remains in place for disabled
-mode and other existing notifications. Enabled mode fails visibly on missing or
+a command argument. Curated announcement entrypoints retain their separate
+reviewed delivery contract. There is no workflow-failure webhook fallback.
+Enabled mode fails visibly on missing or
 invalid configuration rather than silently choosing another transport.
 
-Observe the next real failure/recovery sequence: one parent, thread-only retry
-if another attempt fails, that same parent edited green, matching SHA/artifact,
+Observe the next real escalation/recovery sequence: one parent, updated failure
+evidence without automatic retry replies, that same parent edited green, matching SHA/artifact,
 and incident permalink in the notification run summary. Tests exercise the
 actual HTTP request construction offline, including negative controls for
 broadcasts, duplicate posts and false recovery. Do not create synthetic channel
 messages or deliberately fail a deployment to validate notification delivery.
 
-Disabling incident mode returns future failures to the existing webhook. Existing
+Disabling incident mode pauses operational delivery. Existing
 incident messages and checkpoints remain available; changing bot/channel/workspace
 identity while retaining a registry requires an explicit migration.
 
-For the v1-to-v2 rollout, pause admission by disabling
+For the signed v3 rollout, pause admission by disabling
 `unattended-workflow-alert.yml` immediately before the approved merge. Completely
 enumerate its existing nonterminal runs and let them finish without cancelling
 an active send. Merge only after they have drained, verify the new main revision,
@@ -212,8 +269,12 @@ workflow revision; a newer merge cannot upgrade them. Keep the pause within
 main events. A longer pause requires the reviewed missing-interval replay
 described above. Changing the incident-mode variable alone does not prevent
 old workflow admissions and is insufficient for this schema transition.
-Do not rerun old v1 notification workers after v2 checkpoints have been written;
+Do not rerun old v1/v2 notification workers after v3 checkpoints have been written;
 use the current main worker's owner reconciliation for uncertain delivery.
+Verified v1/v2 parents, history and uncertain claims survive migration. Old
+webhook/Monitoring messages remain audit references; they are not editable bot
+parents and ambiguous legacy sends must not be resent. Complete cloud cutover
+only after the separately reviewed observer rollout and 24-hour shadow evidence.
 
 ## Reconcile an uncertain send
 
@@ -257,6 +318,10 @@ healthy deployment does not invalidate the original recovery history.
 - `scripts/slack_incident_api.py` owns fixed routing and strict Slack responses.
 - `scripts/slack_incidents.py` owns correlation, transitions, signed checkpoints
   and delivery reconciliation.
+- `catalog/alert-routing.json` and `scripts/operational_policy.py` own explicit
+  classifications, bounded recovery and supervision clocks.
+- `scripts/slack_supervision.py` requests authenticated transitions and verifies
+  the exact workflow run completed signed-checkpoint verification.
 - `unattended-workflow-alert.yml` owns trusted main execution, serialization,
   claim signing and delivery signing.
 - `scripts/deployment_receipt_contracts.py` admits only this main notification
@@ -268,18 +333,19 @@ healthy deployment does not invalidate the original recovery history.
   method-specific HTTP request contracts and permalink-only resumption after
   acknowledged delivery.
 - `tests/test_slack_incident_api.py` exercises a complete real-client request
-  sequence offline: parent, permalink, thread-only failure and green parent
+  sequence offline: parent, permalink and green parent
   update. No production channel test is needed.
 
-Invariant enforced: real open incidents may create messages; verified recovery
-only updates their original parent. Exact scope/revision evidence and signed
-claims remain required. Boundary changed: fixed thread routing and a versioned,
-signed acknowledgement of the parent view. Code removed: the live synthetic
-workflow, script and tests, recovery reply generation and broadcast option.
-Internal handling removed: recovery posts no longer participate in the active
-outbox. Fallbacks added: none. Fallbacks rejected: broadcast replies, new green
-messages, blind reposts and inferred recovery. Deletion candidates left in place:
-historical v1 snapshots and recovery posts retain persisted audit evidence; the
-existing webhook supports disabled mode and established ingestion notifications.
+Invariant enforced: only eligible actionable episodes create public parents;
+verified target-specific recovery only updates their original parent. Exact
+scope/revision evidence, fixed ownership clocks and signed claims remain required.
+Boundary changed: signed v3 state and authenticated main-only supervision.
+Code removed: legacy workflow webhook bypass and automatic failed-attempt replies.
+Internal handling removed: per-attempt posts no longer enter the active outbox.
+Fallbacks added: explicit signed migration for verified historical state only.
+Fallbacks rejected: broadcast replies, new green messages, blind reposts, clock
+resets and inferred recovery. Deletion candidates left in place: historical v1/v2
+snapshots and uncertain reply claims remain persisted audit evidence; curated
+announcement and existing runtime routes await the gated cloud cutover.
 Remaining uncertainty: actual delivery depends on Slack availability and bot
 configuration; ambiguous non-idempotent sends still require owner inspection.
