@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-import time
+from time import sleep
 
 
 HTTP_ERROR = re.compile(rb"gh: [^\r\n]+ \(HTTP ([0-9]{3})\)")
@@ -44,4 +44,4 @@ def read(path: str, *, paginate: bool = False) -> bytes:
                 print(diagnostic + "; giving up", file=sys.stderr)
                 raise
             print(diagnostic + f"; retrying in {delay}s", file=sys.stderr)
-            time.sleep(delay)
+            sleep(delay)

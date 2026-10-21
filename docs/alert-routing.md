@@ -73,21 +73,10 @@ the production observer to test an outage notification.
 
 WDPA's ten-minute worker watch retains Cloud Monitoring coverage.
 Do not suppress it based solely on its creator, branch, or workflow trigger.
-Routine deployments no longer require deliberate failure probes. The explicit
-`cron-alert-delivery-test.yml` retains both existing fail-before-write modes and
-refuses to start while the selected job has an active execution. Its `start`
-action verifies the terminal failure, exact execution override and controlled
-pre-write log marker; it records Monitoring delivery as **pending**. A failed
-count alone cannot satisfy the negative control: OOM, IAM or image failures
-must still fail verification.
-
-After seeing the matching Monitoring Slack message, dispatch `verify-delivery`
-with the same job, exact execution name and message permalink. That action
-rechecks the execution and negative control, then records explicit delivery
-confirmation. The permalink is maintainer confirmation of the matching message,
-not an automated read of Slack. The two runs retain their evidence separately;
-a successful `start` run alone does not establish alert delivery. The probe
-execution is never retried automatically, and log ingestion polling is read-only.
+Alert failure handling is tested offline. The live failure-injection workflow
+and runtime override have been removed. Verify production coverage through live
+policy filters and notification-channel configuration. Use genuine incident
+delivery evidence when available; otherwise report delivery as unverified.
 
 The unapproved-writer policy exempts the WDPA observer only for the exact
 `_catalog/wdpa-monthly-execution.json` object. It grants no permissions and does

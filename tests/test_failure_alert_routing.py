@@ -332,7 +332,7 @@ def test_observer_health_counts_successes_and_keeps_missing_data_unhealthy():
     assert 'notification_rate_limit' not in health
 
 
-def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
+def test_live_alert_probe_is_removed_and_wdpa_runs_keep_async_coverage():
     for filename,step_name in [
         ("wdpa-monthly-deploy.yml", "Execute wdpa-monthly canary"),
     ]:
@@ -342,10 +342,4 @@ def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
         assert "WDPA_FAIL_BEFORE" not in str(steps)
         assert "--async" in steps[step_name]["run"]
         assert MARKER not in steps[step_name]["run"]
-    probe = load_workflow(WORKFLOWS / "cron-alert-delivery-test.yml")
-    assert set(workflow_triggers(probe)) == {"workflow_dispatch"}
-    assert probe["jobs"]["probe"]["environment"] == "shared-datasets-production"
-    run = workflow_steps_by_name(probe, "probe")["Run a controlled failure without dataset writes"]["run"]
-    assert MARKER not in run
-    assert "WDPA_FAIL_BEFORE_WRITES=true" in run
-    assert run.index("completionTime") < run.index("gcloud run jobs execute")
+    assert not (WORKFLOWS / "cron-alert-delivery-test.yml").exists()
