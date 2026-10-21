@@ -23,6 +23,19 @@ reviewed cutover. In particular, an existing translation claim does not prove
 delivery and must never cause an automatic resend. Publication remains complete
 when its later notification or receipt fails.
 
+The auxiliary WDPA execution observer is an explicit resource edge of the
+protected WDPA deployment target and shares its immutable image. Signed image
+provenance does not require WDPA's multi-hour data verification to finish and
+never establishes dataset or deployment recovery. Its 120-second worker uses a
+shared 60-second, three-attempt read budget, buffers complete execution pages,
+and emits typed failures only before status writes. A later verified observer
+execution resolves only observer health, including after a legitimate image
+repair. Status-write failures are never reclassified as pre-write read failures
+or replayed. The signed cycle retains proven terminal metadata beyond the lagged
+log cutoff as a watch buffer; only unresolved observations within coverage block
+its completeness heartbeat. Unknown images, jobs and unproven buffers remain
+visible provenance gaps.
+
 ## Collection and persistence contract
 
 `scripts/cloud_operational_observations.py` scans the two filtered views on the
@@ -220,3 +233,52 @@ and rejects missing Run DATA_WRITE capture, Run exemptions or relevant
 Synthetic tests use offline transports or an explicitly isolated destination.
 Independent security and pipeline-health delivery remain available throughout
 cutover and rollback. No routine shadow outcome is posted to the shared channel.
+
+The reviewed document records an existing signed shadow day, with exact cycle
+IDs and manifest hashes. Those review references do not expire while the PR is
+reviewed and tested. At apply time the gate completely enumerates the cycle
+inventory, verifies its actual latest signed record, and follows at most 400
+predecessors to prove a fresh rolling 24-hour window under the same reviewed
+collector and policy hashes and main ancestry. Every cycle in that current
+window needs complete observation and provenance, continuous coverage, zero
+cloud public deliveries, and an observed heartbeat after the audit setup and
+current absence-policy installation. A failed, unsigned, stale or incompatible
+latest record cannot be replaced by the historical reviewed day. The runner's
+proof records both the reviewed tail and the current verified window IDs/hash;
+heartbeat inventory and eligibility time are read after signature enumeration,
+so a cycle completing during verification is compared with the actual clock.
+It rechecks wall-clock freshness immediately before applying the saved plan.
+
+`runtime_deployments` names four signed deployment source anchors with exact
+reviewed runtime hashes. An anchor may come from native-mode bridge staging.
+The gate resolves the latest signed successful attempt for each authoritative
+current job image, requires its source to descend from that anchor on tested
+main ancestry with the same runtime producer/bridge hash, and requires its
+source configuration to select unified mode with the same cutover reference.
+It checks the current job and every active execution page for that immutable
+image and unified environment. The proof retains anchor/current deployment IDs,
+latest status IDs, source revisions and image digests. A failed or unsigned
+newer deployment attempt blocks the gate instead of reviving an older success.
+
+After the reviewed unified configuration merges, stage all four protected job
+deployments while native Monitoring delivery remains installed. The first policy
+sync may correctly refuse until these deployments and old-image drain finish.
+CI's MPAtlas deployment depends on policy sync, so the owning agent must dispatch
+`mpatlas-monthly-deploy.yml` on main with the exact tested `executor_sha`,
+`source_run_id` and `source_run_attempt` for passing `ci-ready` evidence, then
+wait for its terminal receipt. Re-dispatch `cron-alert-policy-sync.yml` with those
+same inputs once all four current receipts and the fresh shadow window verify.
+This uses the existing protected dispatch path and preserves the CI dependency.
+Configuration alone leaves the observer in shadow until the signed successful
+policy apply exists; no native channel is removed on a refused gate.
+
+Runtime webhook secret retirement is a later reviewed change after that signed
+policy activation. Its immutable document binds the original cutover hash and
+may name fresh runtime source anchors; current compatible receipts and live
+drain are resolved again. It cannot be combined with initial channel removal.
+A subsequent policy sync with no channel or secret-access removal retains the
+original signed activation, fresh heartbeat and live routing/view/audit checks,
+without requiring historical runtime image pins. Routine compatible redeploys
+therefore do not block policy maintenance or later secret retirement. No step
+replays publication, adopts a legacy webhook parent, or resends an uncertain
+notification.

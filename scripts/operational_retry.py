@@ -23,6 +23,9 @@ class RetryProfile:
 
 
 SHORT = RetryProfile("short", (0, 5, 20), None)
+# The five-minute execution observer has a 120-second worker timeout. Its
+# complete read snapshot leaves the remaining minute for status persistence.
+OBSERVER_READ = RetryProfile("observer_read", (0, 5, 20), 60)
 UNATTENDED = RetryProfile("unattended", (0, 5, 20, 60, 180, 420, 900, 1740), 1800)
 T = TypeVar("T")
 
@@ -40,7 +43,7 @@ class RetryBudget:
     """
 
     def __init__(self, profile: RetryProfile = SHORT):
-        if profile not in (SHORT, UNATTENDED):
+        if profile not in (SHORT, OBSERVER_READ, UNATTENDED):
             raise ValueError("unsupported safe-read retry profile")
         self.profile = profile
         self.started = monotonic()
@@ -60,7 +63,7 @@ class RetryBudget:
 
     def run(self, action: Callable[[], T], *, classify: Callable[[Exception], str | None], label: str) -> T:
         while True:
-            self.remaining_seconds()  # Nested helpers cannot start a ninth read after exhaustion.
+            self.remaining_seconds()  # Nested helpers cannot start another read after exhaustion.
             try:
                 return action()
             except Exception as error:

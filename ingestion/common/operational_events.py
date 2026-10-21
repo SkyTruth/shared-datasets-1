@@ -47,8 +47,12 @@ def validate(event):
     require(isinstance(event["details"], dict), "invalid detail object")
     # Producers emit counts, hashes and receipt references, never source text,
     # secret values, guessed ownership, or guessed repository revisions.
-    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status", "run_record_uri", "run_record_generation", "legacy_delivery_state"}, "unsupported detail field")
+    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status", "run_record_uri", "run_record_generation", "legacy_delivery_state", "failure_reason"}, "unsupported detail field")
     detail = event["details"]
+    if "failure_reason" in detail:
+        require(event["kind"] == "job_outcome" and event["status"] == "failed"
+                and detail["failure_reason"] in {"transient_transport", "permission_denied", "missing_configuration", "unknown"}
+                and detail.get("mutation_status") == "not_started", "typed read failure must precede writes")
     if "legacy_delivery_state" in detail:
         require(event["kind"] == "translation_maintenance" and event["status"] == "already_claimed"
                 and detail["legacy_delivery_state"] in {"claimed", "delivered", "delivery_unknown"}, "invalid legacy delivery report")

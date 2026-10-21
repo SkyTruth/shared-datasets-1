@@ -10,10 +10,13 @@ import re
 
 import google.auth
 from google.auth.transport.requests import AuthorizedSession
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import NotFound, PreconditionFailed, from_http_status, GoogleAPICallError
 from google.cloud import storage
 
 from ingestion.common.runtime import configure_logging
+from ingestion.common.operational_events import emit
+from scripts import gcp_read_retry
+from scripts.operational_retry import OBSERVER_READ, operation, request_timeout, run_read
 
 STATUS_OBJECT = "_catalog/wdpa-monthly-execution.json"
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -109,22 +112,56 @@ def observe(executions, *, job_name, observed_at):
 
 
 def list_executions(session, job_name):
-    token = None
+    token, seen = None, set()
     while True:
         params = {"pageSize": 100}
         if token:
             params["pageToken"] = token
+        timeout = request_timeout(15)
         response = session.get(
             f"https://run.googleapis.com/v2/{job_name}/executions",
             params=params,
-            timeout=30,
+            timeout=timeout,
+            max_allowed_time=timeout,
         )
-        response.raise_for_status()
+        if response.status_code != 200:
+            raise from_http_status(response.status_code, "WDPA execution observation read failed")
         payload = response.json()
-        yield from payload.get("executions", [])
+        if not isinstance(payload, dict) or not isinstance(payload.get("executions", []), list):
+            raise ValueError("WDPA observation enumeration is incomplete")
+        executions = payload.get("executions", [])
+        if any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+               or not re.fullmatch(re.escape(job_name) + r"/executions/[a-z][a-z0-9-]{0,62}", row["name"]) for row in executions):
+            raise ValueError("WDPA observation enumerated a foreign execution")
+        yield from executions
         token = payload.get("nextPageToken")
+        if token is not None and (not isinstance(token, str) or token in seen):
+            raise ValueError("WDPA observation pagination is incomplete or repeated")
         if not token:
             return
+        seen.add(token)
+
+
+def read_snapshot(job_name):
+    """Discard partial pages/credentials before each safe bounded retry."""
+    def snapshot():
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        with AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=15) as session:
+            executions = list(list_executions(session, job_name))
+            request_timeout(15)  # Exhausted work cannot return a writable snapshot.
+            return credentials, executions
+    with operation(profile=OBSERVER_READ):
+        return run_read(snapshot, classify=gcp_read_retry.classify, label="WDPA observer execution snapshot")
+
+
+def read_failure_reason(error):
+    if gcp_read_retry.classify(error) is not None:
+        return "transient_transport"
+    if isinstance(error, GoogleAPICallError) and error.code in {401, 403}:
+        return "permission_denied"
+    if isinstance(error, KeyError):
+        return "missing_configuration"
+    return "unknown"
 
 
 def write_observation(bucket, observation):
@@ -185,25 +222,25 @@ def write_observation(bucket, observation):
 
 def run():
     configure_logging()
-    project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    region = os.environ["WDPA_JOB_REGION"]
-    job_name = f"projects/{project}/locations/{region}/jobs/wdpa-monthly"
-    credentials, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    with AuthorizedSession(credentials) as session:
-        # Date the observation before requesting pages: an overlapping older
-        # request cannot overwrite a newer completed observation.
+    try:
+        project = os.environ["GOOGLE_CLOUD_PROJECT"]
+        region = os.environ["WDPA_JOB_REGION"]
+        bucket_name = os.environ["SHARED_DATASETS_BUCKET"]
+        job_name = f"projects/{project}/locations/{region}/jobs/wdpa-monthly"
+        # The original timestamp prevents a retried older snapshot overwriting
+        # an overlapping observation that finished more recently.
         observed_at = dt.datetime.now(dt.UTC).isoformat()
-        observation = observe(
-            list_executions(session, job_name),
-            job_name=job_name,
-            observed_at=observed_at,
-        )
+        credentials, executions = read_snapshot(job_name)
+        observation = observe(executions, job_name=job_name, observed_at=observed_at)
+    except Exception as error:
+        emit("job_outcome", "failed", details={"failure_reason": read_failure_reason(error),
+             "mutation_status": "not_started", "published_data_state": "unknown"})
+        raise
     bucket = storage.Client(project=project, credentials=credentials).bucket(
-        os.environ["SHARED_DATASETS_BUCKET"]
+        bucket_name
     )
     write_observation(bucket, observation)
+    emit("job_outcome", "success", details={"mutation_status": "completed", "published_data_state": "unknown"})
     logging.getLogger(__name__).info(
         "WDPA execution observation: %s", json.dumps(observation, sort_keys=True)
     )

@@ -292,6 +292,31 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
         cycles.contract_hash(ledger.root)
 
 
+@pytest.mark.parametrize("relative", [
+    "ingestion/common/legacy_runtime_notifications.py",
+    "scripts/slack_notify.py",
+    "ingestion/wdpa_monthly/execution_observer.py",
+    "terraform/envs/prod/wdpa_execution_observer.tf",
+    "scripts/gcp_read_retry.py",
+    "ingestion/wdpa_monthly/Dockerfile",
+    "ingestion/wdpa_monthly/Dockerfile.promotion",
+])
+def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
+    assert relative in cycles.CONTRACT_FILES
+    path = ledger.root / relative
+    original = path.read_bytes()
+    before = cycles.contract_hash(ledger.root)
+    path.write_bytes(original + b"\n# Changed public-delivery behavior requires fresh shadow evidence.\n")
+    assert cycles.contract_hash(ledger.root) != before
+    path.write_bytes(original)
+    assert cycles.contract_hash(ledger.root) == before
+
+
+def test_shadow_contract_covers_every_runtime_source_required_by_cutover():
+    from scripts import operational_cutover
+    assert set(operational_cutover.RUNTIME_FILES) <= set(cycles.CONTRACT_FILES)
+
+
 def test_contract_hash_follows_registered_reusable_workflow_graph_and_refuses_missing_children(ledger):
     caller = ledger.root / ".github/workflows/ci.yml"
     caller.write_text("jobs:\n  source:\n    uses: ./.github/workflows/source-proof.yml\n")

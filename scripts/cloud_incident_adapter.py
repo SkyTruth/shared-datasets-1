@@ -27,8 +27,9 @@ def registered_jobs():
     # Reuse the deployment target graph and its explicit job resource binding.
     # A new runtime job cannot gain suppression from looking like an old name.
     root = Path(__file__).resolve().parents[1] / ".github/workflows"
-    return frozenset(name for name, workflow in deployments.TARGET_WORKFLOWS.items()
-                     if yaml.safe_load((root / workflow).read_text()).get("env", {}).get("JOB_NAME") == name)
+    return frozenset({name for name, workflow in deployments.TARGET_WORKFLOWS.items()
+                      if yaml.safe_load((root / workflow).read_text()).get("env", {}).get("JOB_NAME") == name}
+                     | set(deployments.AUXILIARY_CLOUD_JOBS))
 
 
 def require(condition, message):
@@ -163,9 +164,19 @@ def revision(fact):
     return "cloudlog-source:" + fact["source_id"].split(":", 1)[1]
 
 
-def provenance_gap(fact):
+def provenance_gap(fact, correlation=None):
     return (fact["job"] not in registered_jobs() or not cloud.DIGEST.fullmatch(revision(fact))
-            or bool(fact.get("execution", {}).get("coverage_gaps")) or domain(fact) is not None and domain_subject(fact) is None)
+            or bool(fact.get("execution", {}).get("coverage_gaps")) or domain(fact) is not None and domain_subject(fact) is None
+            or fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact.get("execution", {}).get("terminal") is not False
+               and (correlation is None or correlation.get("kind") != "auxiliary_artifact"))
+
+
+def observational_success(fact, correlation):
+    execution = fact.get("execution", {})
+    return bool(correlation is not None and correlation.get("kind") == "auxiliary_artifact"
+                and not provenance_gap(fact, correlation) and execution.get("terminal") and execution.get("success")
+                and (fact["kind"] == "execution" or fact["kind"] == "runtime" and fact["fact"]["kind"] == "job_outcome"
+                     and fact["fact"]["status"] in {"success", "skipped"}))
 
 
 def recoverable(fact):
@@ -185,15 +196,16 @@ def recoverable(fact):
 def normalize(fact, *, correlation=None, promote=False):
     validate_fact(fact)
     event = fact.get("fact", {})
+    gap = provenance_gap(fact, correlation)
     # These are audit facts. They must not produce a red parent merely because
     # a healthy worker has no publication receipt, or falsely close a failure.
-    if not provenance_gap(fact) and fact["kind"] == "execution" and not fact["execution"]["terminal"]:
+    if not gap and fact["kind"] == "execution" and not fact["execution"]["terminal"]:
         return None
     family = domain(fact)
-    if not provenance_gap(fact) and family == "translation" and (event["status"] == "delivered" or event["details"].get("legacy_delivery_state") == "delivered"):
+    if not gap and family == "translation" and (event["status"] == "delivered" or event["details"].get("legacy_delivery_state") == "delivered"):
         return None
-    success = recoverable(fact)
-    if not provenance_gap(fact) and not family and (
+    success = recoverable(fact) or observational_success(fact, correlation)
+    if not gap and not family and not success and (
             fact["kind"] == "runtime" and event["status"] in {"success", "skipped"} and not success
             or fact["kind"] == "execution" and fact["execution"]["success"]):
         return None
@@ -205,7 +217,7 @@ def normalize(fact, *, correlation=None, promote=False):
         validate_correlation(correlation)
         require(correlation["artifact"] in fact["execution"]["images"], "correlated artifact differs from execution")
         require(correlation["execution"] == fact["execution"]["name"], "correlated execution differs")
-        if promote and family is None:
+        if promote and family is None and correlation.get("kind") != "auxiliary_artifact":
             scope, kind, label = "deployment:" + fact["job"], "deployment", fact["job"]
     return validate_observation({"source": "cloud", "scope": scope, "kind": kind, "label": label,
         "source_id": fact["source_id"], "revision": revision(fact), "time": seconds(fact["observed_at"]),
@@ -214,6 +226,18 @@ def normalize(fact, *, correlation=None, promote=False):
 
 
 def validate_correlation(value):
+    if isinstance(value, dict) and value.get("kind") == "auxiliary_artifact":
+        require(set(value) == {"kind", "record_id", "status_id", "revision", "artifact", "execution", "deployment_target", "resource"},
+                "invalid auxiliary artifact proof schema")
+        matches = [contract for job, contract in deployments.AUXILIARY_CLOUD_JOBS.items()
+                   if value["deployment_target"] == contract["deployment_target"] and value["resource"] == contract["resource"]
+                   and isinstance(value["execution"], str) and re.fullmatch(
+                       re.escape(f"projects/{cloud.PROJECT}/locations/{cloud.REGION}/jobs/{job}/executions/") + r"[a-z][a-z0-9-]{0,62}", value["execution"])]
+        require(len(matches) == 1 and all(type(value[key]) is int and value[key] > 0 for key in ("record_id", "status_id"))
+                and isinstance(value["revision"], str) and policy.SHA.fullmatch(value["revision"])
+                and isinstance(value["artifact"], str) and re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", value["artifact"]),
+                "auxiliary artifact differs from registered deployment resource")
+        return value
     require(isinstance(value, dict) and set(value) == {"record_id", "status_id", "revision", "artifact", "run_id", "attempt", "job_id", "job_name", "workflow", "execution"}, "invalid deployment correlation proof")
     require(all(type(value[key]) is int and value[key] > 0 for key in ("record_id", "status_id", "run_id", "attempt", "job_id"))
             and isinstance(value["revision"], str) and policy.SHA.fullmatch(value["revision"])
@@ -241,8 +265,10 @@ def validate_observation(value):
     expected_scope = "deployment:" + fact["job"] if value["kind"] == "deployment" else source_scope(fact)
     identity_recovery = (recoverable(fact) and value["kind"] == "job" and value["scope"] == "cloud:identity:" + cloud.digest({
         "asset": fact["fact"]["subject"]["asset_slug"], "release": fact["fact"]["subject"]["release"]}))
-    require((value["scope"] == expected_scope or identity_recovery) and (value["kind"] != "deployment" or correlated and domain(fact) is None), "cloud scope lacks exact provenance")
-    require(value["conclusion"] == ("success" if recoverable(fact) else "failure"), "cloud outcome differs from canonical proof")
+    require((value["scope"] == expected_scope or identity_recovery) and (value["kind"] != "deployment" or correlated
+            and proof["correlation"].get("kind") != "auxiliary_artifact" and domain(fact) is None), "cloud scope lacks exact provenance")
+    require(value["conclusion"] == ("success" if recoverable(fact) or observational_success(fact, proof["correlation"]) else "failure"),
+            "cloud outcome differs from canonical proof")
     operational(value)
     return value
 
@@ -261,9 +287,20 @@ def operational(value):
     action = "Inspect the exact execution and canonical run records; establish prior writes before authorizing recovery."
     data = "Unknown; an execution outcome alone does not verify canonical data."
     impact = "Impact is unknown; inspect authoritative execution and publication evidence."
-    if provenance_gap(fact):
+    auxiliary = value["proof"]["correlation"] is not None and value["proof"]["correlation"].get("kind") == "auxiliary_artifact"
+    if provenance_gap(fact, value["proof"]["correlation"]):
         reason = "artifact_provenance_unverified"
         action = "Resolve the execution image/UID or dispatch provenance gap; inspect writes before any replay."
+    elif auxiliary and value["conclusion"] == "success":
+        reason, mutation = "healthy", "not_required"
+        data = "Only execution-observation health is verified; canonical dataset and deployment outcomes remain separate."
+        impact = "The read-only execution observer completed successfully."
+        action = "No action for observer health; retain any independent data or deployment incident."
+    elif auxiliary and event.get("kind") == "job_outcome" and event.get("status") == "failed" and event.get("details", {}).get("failure_reason"):
+        reason, phase, mutation = event["details"]["failure_reason"], "read", "not_started"
+        data = "The observation read failed before status-document writes; canonical data is outside this observer's authority."
+        impact = "WDPA execution visibility is delayed; this does not establish a dataset failure or recovery."
+        action = "Inspect observer read credentials/configuration if scheduled safe read recovery does not succeed."
     elif value["conclusion"] == "success":
         reason, mutation = "healthy", "completed"
         data = "Canonical asset/release publication is verified by an exact-generation successful run record."
@@ -281,7 +318,8 @@ def operational(value):
     elif fact["kind"] == "execution_request" and fact["reason"] == "permission_denied":
         reason = "artifact_provenance_unverified"  # No execution/artifact can be established.
     return policy.OperationalObservation.from_dict({**binding(value).to_dict(), "source_id": fact["source_id"], "observed_at": value["time"],
-        "phase": phase, "reason": reason, "mutation_status": mutation, "recovery": "none", "required_action": action,
+        "phase": phase, "reason": reason, "mutation_status": mutation,
+        "recovery": "read_only_retry" if auxiliary and reason == "transient_transport" else "none", "required_action": action,
         "impact": impact, "published_data_state": data, "evidence": [link(fact)]})
 
 
@@ -295,9 +333,19 @@ def alias(value):
 
 def covers(failure, evidence):
     """Exact target and immutable receipts; never infer Git ancestry from images."""
-    if failure["scope"] != evidence["scope"] or not recoverable(evidence["proof"]["fact"]):
+    if failure["scope"] != evidence["scope"]:
         return False
     old, new = failure["proof"]["fact"], evidence["proof"]["fact"]
+    if observational_success(new, evidence["proof"]["correlation"]):
+        prior = failure["proof"]["correlation"]
+        return bool(prior is not None and prior.get("kind") == "auxiliary_artifact" and old["job"] == new["job"]
+                    and prior["resource"] == evidence["proof"]["correlation"]["resource"]
+                    and new["execution"].get("create_time") is not None
+                    and cloud.instant(new["execution"]["create_time"]) > cloud.instant(old["observed_at"])
+                    and cloud.instant(new["execution"]["completion_time"]) > cloud.instant(old["observed_at"])
+                    )
+    if not recoverable(new):
+        return False
     if (cloud.instant(new["observed_at"]) <= cloud.instant(old["observed_at"])
             or cloud.instant(new["run_receipt"]["created_at"]) <= cloud.instant(old["observed_at"])):
         return False

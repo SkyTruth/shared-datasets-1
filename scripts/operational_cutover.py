@@ -37,8 +37,10 @@ FRESHNESS = timedelta(minutes=10)
 SHA = re.compile(r"[0-9a-f]{40}")
 HASH = re.compile(r"[0-9a-f]{64}")
 JOBS = ("wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "mpatlas-monthly")
-RUNTIME_FILES = ("ingestion/common/legacy_runtime_notifications.py", "ingestion/common/translation_notices.py",
-                 "ingestion/common/feature_metadata.py", "ingestion/common/operational_events.py", "scripts/slack_notify.py")
+RUNTIME_FILES = ("ingestion/common/runtime.py", "ingestion/common/legacy_runtime_notifications.py", "ingestion/common/translation_notices.py",
+                 "ingestion/common/feature_metadata.py", "ingestion/common/operational_events.py", "ingestion/wdpa_monthly/execution_observer.py",
+                 "scripts/operational_retry.py", "scripts/gcp_read_retry.py", "scripts/slack_notify.py",
+                 "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/Dockerfile.promotion")
 RUNTIME_SECRET = "shared-datasets-slack-webhook-url"
 PROOF_SCHEMA = "shared-datasets-operational-cutover-verification-v1"
 AUDIT_ADDRESS = "google_project_iam_audit_config.operational_run_data_write"
@@ -129,40 +131,79 @@ def baseline_plan(plan):
     return result
 
 
-def validate_shadow(evidence, *, load_cycle, contract_hash, policy_hash, policy_ids, policy_changed_at, heartbeat_points, now, revision_allowed):
+def validate_shadow(evidence, *, load_cycle, load_latest, contract_hash, policy_hash, policy_ids, policy_changed_at, heartbeat_points, now, revision_allowed, clock=None, heartbeat_reader=None):
     require(isinstance(evidence, dict) and set(evidence) == {"schema", "collector_contract_sha256", "policy_sha256", "policy_ids", "cycles", "runtime_deployments", "audit_setup_deployment_id"}
             and evidence["schema"] == SCHEMA and evidence["collector_contract_sha256"] == contract_hash and evidence["policy_sha256"] == policy_hash,
             "evidence differs from the tested collector or policy contract")
     require(evidence["policy_ids"] == policy_ids, "evidence targets different live policies")
     references = evidence["cycles"]
     require(isinstance(references, list) and 2 <= len(references) <= 400, "require a bounded continuous shadow cycle history")
-    cycles = []
-    for reference in references:
-        require(isinstance(reference, dict) and set(reference) == {"deployment_id", "manifest_sha256"} and type(reference["deployment_id"]) is int and reference["deployment_id"] > 0
-                and isinstance(reference["manifest_sha256"], str) and HASH.fullmatch(reference["manifest_sha256"]), "invalid signed cycle reference")
-        cycle = load_cycle(reference["deployment_id"])  # Verifies exact statuses, Sigstore signer and every part.
+    cached, allowed_revisions = {}, {}
+    def read(identifier):
+        if identifier not in cached:
+            cached[identifier] = load_cycle(identifier)
+        require(cached[identifier]["manifest_id"] == identifier, "signed cycle identity changed")
+        return cached[identifier]
+
+    def inspect(cycle):
         manifest, checkpoint, evaluation = cycle["manifest"], cycle["checkpoint"], cycle["evaluation"]
-        require(cycle["manifest_id"] == reference["deployment_id"] and sha256(canonical(manifest)) == reference["manifest_sha256"], "signed cycle differs from immutable review reference")
         require(manifest["mode"] == "shadow" and manifest["collector_contract_sha256"] == contract_hash and manifest["policy_sha256"] == policy_hash,
                 "cycle used another collection or classification contract")
-        require(SHA.fullmatch(manifest["source_sha"]) and revision_allowed(manifest["source_sha"]), "cycle does not originate from verified main ancestry")
+        revision = manifest["source_sha"]
+        require(SHA.fullmatch(revision), "cycle does not originate from verified main ancestry")
+        if revision not in allowed_revisions:
+            allowed_revisions[revision] = revision_allowed(revision)
+        require(allowed_revisions[revision], "cycle does not originate from verified main ancestry")
         require(evaluation.get("complete") is True and evaluation.get("provenance_complete") is True and type(evaluation.get("public_delivery_count")) is int and evaluation["public_delivery_count"] == 0,
                 "shadow cycle is incomplete, has provenance gaps or delivered publicly")
         coverage = checkpoint["last_cycle"]
-        require(coverage["views"] == list(collector.VIEWS) and coverage["coverage_gaps"] == [] and not checkpoint["pending"], "shadow observation coverage is incomplete")
+        require(coverage["views"] == list(collector.VIEWS) and coverage["coverage_gaps"] == [] and not collector.unresolved_pending(checkpoint, evaluation), "shadow observation coverage is incomplete")
         completed = collector.instant(manifest["completed_at"])
         require(completed == collector.instant(coverage["completed_at"]) and collector.instant(manifest["covered_through"]) == collector.instant(checkpoint["covered_through"]), "cycle coverage timestamps disagree")
-        require(policy_changed_at <= completed <= now, "heartbeat sample predates the current absence policy or lies in the future")
-        require(completed in heartbeat_points, "verified cycle has no observed post-policy heartbeat sample")
-        if cycles:
-            previous, previous_at = cycles[-1]
-            require(manifest["previous_cycle_id"] == previous["manifest_id"] and timedelta(0) < completed - previous_at <= MAX_CYCLE_GAP,
+        return completed
+
+    def history(cycles):
+        for previous, current in zip(cycles, cycles[1:]):
+            require(current["manifest"]["previous_cycle_id"] == previous["manifest_id"]
+                    and timedelta(0) < inspect(current) - inspect(previous) <= MAX_CYCLE_GAP,
                     "shadow history has a missing, repeated or delayed reconciliation cycle")
-            require(collector.instant(checkpoint["last_cycle"]["start"]) <= collector.instant(previous["checkpoint"]["covered_through"]), "shadow history leaves an observation gap")
-        cycles.append((cycle, completed))
-    require(cycles[-1][1] - cycles[0][1] >= MIN_SHADOW, "require at least 24 hours of successful shadow reconciliation")
-    require(now - cycles[-1][1] <= FRESHNESS, "shadow evidence is stale")
-    return {"first_cycle_id": cycles[0][0]["manifest_id"], "last_cycle_id": cycles[-1][0]["manifest_id"], "last_cycle_completed_at": collector.timestamp(cycles[-1][1]), "hours": (cycles[-1][1] - cycles[0][1]).total_seconds() / 3600}
+            require(collector.instant(current["checkpoint"]["last_cycle"]["start"]) <= collector.instant(previous["checkpoint"]["covered_through"]), "shadow history leaves an observation gap")
+        require(inspect(cycles[-1]) - inspect(cycles[0]) >= MIN_SHADOW, "require at least 24 hours of successful shadow reconciliation")
+
+    reviewed = []
+    for reference in references:
+        require(isinstance(reference, dict) and set(reference) == {"deployment_id", "manifest_sha256"} and type(reference["deployment_id"]) is int and reference["deployment_id"] > 0
+                and isinstance(reference["manifest_sha256"], str) and HASH.fullmatch(reference["manifest_sha256"]), "invalid signed cycle reference")
+        cycle = read(reference["deployment_id"])  # Verifies exact statuses, Sigstore signer and every part.
+        require(sha256(canonical(cycle["manifest"])) == reference["manifest_sha256"], "signed cycle differs from immutable review reference")
+        reviewed.append(cycle)
+    history(reviewed)
+    require(all(inspect(cycle) <= now for cycle in reviewed), "reviewed shadow cycle lies in the future")
+    # Review names an existing historical day, never future deployment IDs.
+    # Independently prove a fresh rolling day using the actual latest record;
+    # an unsigned/failed latest record cannot be replaced by a prior success.
+    latest = load_latest()
+    require(latest is not None and latest["manifest_id"] >= reviewed[-1]["manifest_id"], "latest signed shadow inventory is missing or rewound")
+    cycles = [latest]
+    while inspect(latest) - inspect(cycles[-1]) < MIN_SHADOW:
+        identifier = cycles[-1]["manifest"]["previous_cycle_id"]
+        require(len(cycles) < 400 and type(identifier) is int and 0 < identifier < cycles[-1]["manifest_id"], "fresh shadow window has incomplete or unbounded predecessor history")
+        cycles.append(read(identifier))
+    cycles.reverse()
+    history(cycles)
+    # New cycles can finish during signature verification. Observe their
+    # heartbeat against a fresh clock only after the complete window is read.
+    eligible_at = clock() if clock else now
+    points = heartbeat_reader(now=eligible_at) if heartbeat_reader else heartbeat_points
+    for cycle in cycles:
+        completed = inspect(cycle)
+        require(policy_changed_at <= completed <= eligible_at, "heartbeat sample predates the current absence policy or audit setup, or cycle lies in the future")
+        require(completed in points, "verified cycle has no observed post-policy heartbeat sample")
+    completed = inspect(latest)
+    require(eligible_at - completed <= FRESHNESS, "shadow evidence is stale")
+    return {"reviewed_last_cycle_id": reviewed[-1]["manifest_id"], "first_cycle_id": cycles[0]["manifest_id"], "last_cycle_id": latest["manifest_id"],
+            "last_cycle_manifest_sha256": sha256(canonical(latest["manifest"])), "last_cycle_completed_at": collector.timestamp(completed), "heartbeat_at": collector.timestamp(completed),
+            "hours": (completed - inspect(cycles[0])).total_seconds() / 3600}
 
 
 def recheck_freshness(result, *, now):
@@ -245,20 +286,50 @@ def runtime_contract(root, revision):
     return sha256(canonical({path: sha256(subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=root)) for path in RUNTIME_FILES}))
 
 
-def validate_drain(references, *, live, load_deployment, runtime_hash, revision_allowed):
-    """No retained/active old image may send a notice after native routes clear."""
+def unified_runtime_source(root, revision, cutover_reference):
+    source = config(strict_json(subprocess.check_output(["git", "show", f"{revision}:{CONFIG}"], cwd=root)))
+    return source["mode"] == "unified" and source["cutover_evidence"] == cutover_reference
+
+
+def current_runtime_deployment(api, repository, job, image):
+    """The latest exact signed attempt must explain the authoritative image."""
+    from scripts import deployment_revision as deployments
+    require(job in JOBS, "unregistered runtime deployment target")
+    rows = api.pages(f"repos/{repository}/deployments?environment=production-{job}&per_page=100")
+    require(isinstance(rows, list) and rows and all(isinstance(row, dict) and type(row.get("id")) is int and row["id"] > 0 for row in rows)
+            and len({row["id"] for row in rows}) == len(rows), "incomplete or ambiguous runtime deployment inventory")
+    record = max(rows, key=lambda row: row["id"])
+    payload = deployments.verify_record(api, repository, record)
+    statuses = deployments.verified_statuses(api, repository, record)
+    require(payload["target"] == job and payload["artifact"] == image and statuses
+            and statuses[0].get("state") == "success" and statuses[0].get("description") in {"applied", "verified"},
+            "latest signed runtime attempt does not verify the current image; no earlier success may replace it")
+    return {"record": record, "payload": payload, "status_id": statuses[0]["id"]}
+
+
+def validate_drain(references, *, live, load_deployment, resolve_current, runtime_hash, revision_allowed, ancestor, unified_source):
+    """Reviewed source anchors permit later exact, compatible deployed images."""
     require(isinstance(references, dict) and set(references) == set(JOBS), "require an exact signed deployment for every runtime bridge job")
-    images = {}
+    proof = {}
     for job, reference in references.items():
         require(isinstance(reference, dict) and set(reference) == {"deployment_id", "runtime_sha256"} and type(reference["deployment_id"]) is int
                 and reference["deployment_id"] > 0 and HASH.fullmatch(str(reference["runtime_sha256"])), "invalid drain deployment reference")
         record, payload = load_deployment(reference["deployment_id"])
-        require(payload["target"] == job and revision_allowed(record["sha"]) and runtime_hash(record["sha"]) == reference["runtime_sha256"], "runtime deployment does not contain the exact reviewed bridge contract")
-        image = payload["artifact"]
+        require(record.get("id") == reference["deployment_id"] and payload["target"] == job
+                and revision_allowed(record["sha"]) and runtime_hash(record["sha"]) == reference["runtime_sha256"], "runtime source anchor does not contain the exact reviewed bridge contract")
         current = live.job(job)
         name = f"projects/{collector.PROJECT}/locations/{collector.REGION}/jobs/{job}"
         require(current.get("name") == name and current.get("reconciling") is not True, "job configuration is unverified or still reconciling")
         containers = current.get("template", {}).get("template", {}).get("containers", [])
+        require(isinstance(containers, list) and len(containers) == 1, "runtime container metadata is incomplete")
+        image = containers[0].get("image")
+        require(isinstance(image, str) and re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", image), "current runtime image is not immutable")
+        deployed = resolve_current(job, image)
+        actual, artifact = deployed["record"], deployed["payload"]
+        require(type(actual.get("id")) is int and actual["id"] >= record["id"] and type(deployed.get("status_id")) is int and deployed["status_id"] > 0
+                and artifact["target"] == job and artifact["artifact"] == image
+                and revision_allowed(actual["sha"]) and ancestor(record["sha"], actual["sha"])
+                and runtime_hash(actual["sha"]) == reference["runtime_sha256"] and unified_source(actual["sha"]), "current runtime image differs from the reviewed source anchor or supported unified main ancestry")
         require_unified_container(containers, image)
         identities = set()
         for execution in live.executions(job):
@@ -268,8 +339,9 @@ def validate_drain(references, *, live, load_deployment, runtime_hash, revision_
             identities.add(identity)
             if not execution.get("completionTime"):
                 require_unified_container(execution.get("template", {}).get("containers", []), image)
-        images[job] = image
-    return images
+        proof[job] = {"anchor_deployment_id": record["id"], "deployment_id": actual["id"], "status_id": deployed["status_id"],
+                      "source_sha": actual["sha"], "runtime_sha256": reference["runtime_sha256"], "image": image}
+    return proof
 
 
 def require_unified_container(containers, image):
@@ -301,12 +373,13 @@ def audit_setup_receipt(api, repository, identifier, root, executor_sha):
     return {"deployment_id": record["id"], "status_id": statuses[0]["id"], "completed_at": statuses[0]["created_at"]}
 
 
-def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, load_cycle=None, load_deployment=None, load_setup=None, contract_hash=None, policy_hash=None, revision_allowed=None, runtime_hash=None, scope=(), prior_activation=None, clock=None):
+def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, load_cycle=None, load_latest=None, load_deployment=None, resolve_current=None, load_setup=None, contract_hash=None, policy_hash=None, revision_allowed=None, runtime_hash=None, ancestor=None, unified_source=None, scope=(), prior_activation=None, clock=None):
     rollout = config(rollout)
     removals = route_changes(plan)
     require(not removals or rollout["mode"] == "unified", "native mode cannot remove an operational Slack route")
     retirements = secret_removals(plan)
     require(not retirements or rollout["retire_runtime_webhook_access"], "runtime webhook removal requires reviewed retirement configuration")
+    require(not (removals and retirements), "runtime secret retirement requires an already-applied operational cutover")
     policy_sync = bool(set(scope) & OPERATIONAL_POLICIES) and rollout["mode"] == "unified"
     if not removals and not retirements and not policy_sync:
         return {"mode": rollout["mode"], "route_removals": [], "runtime_secret_removals": [], "cutover_authorized": False}
@@ -331,27 +404,35 @@ def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, 
     require(all(isinstance(name, str) and re.fullmatch(f"projects/{collector.PROJECT}/alertPolicies/[0-9]+", name) for name in ids.values()), "all exact live policy IDs must be established before cutover")
     health = next(policy for policy in policies if policy["name"] == ids[HEALTH])
     changed = max(audit_enabled_at, collector.instant(health["creationRecord"]["mutateTime"]), collector.instant(health.get("mutationRecord", health["creationRecord"])["mutateTime"]))
-    heartbeats = live.heartbeat_points(now=now)
     if removals:
-        result = validate_shadow(evidence, load_cycle=load_cycle, contract_hash=contract_hash, policy_hash=policy_hash, policy_ids=ids,
-                                 policy_changed_at=changed, heartbeat_points=heartbeats, now=now, revision_allowed=revision_allowed)
+        result = validate_shadow(evidence, load_cycle=load_cycle, load_latest=load_latest, contract_hash=contract_hash, policy_hash=policy_hash, policy_ids=ids,
+                                 policy_changed_at=changed, heartbeat_points=None, now=now, revision_allowed=revision_allowed, clock=clock, heartbeat_reader=live.heartbeat_points)
     else:
         # Once the gate has applied, its signed protected receipt retains the
         # reviewed shadow proof. Requiring fresh *shadow* cycles thereafter
         # would make later retirement impossible while the worker is unified.
         require(isinstance(prior_activation, dict) and prior_activation.get("mode") == "unified", "no-op cutover or later retirement requires the verified original policy apply")
-        require(any(changed <= point <= now and now - point <= FRESHNESS for point in heartbeats), "unified pipeline has no fresh post-policy heartbeat")
+        eligible_at = clock() if clock else now
+        heartbeats = live.heartbeat_points(now=eligible_at)
+        require(any(changed <= point <= eligible_at and eligible_at - point <= FRESHNESS for point in heartbeats), "unified pipeline has no fresh post-policy heartbeat")
         require(evidence.get("policy_ids") == ids, "original cutover evidence targets different live policies")
-        result = {"original_policy_deployment_id": prior_activation["policy_deployment_id"]}
-    images = validate_drain(evidence["runtime_deployments"], live=live, load_deployment=load_deployment, runtime_hash=runtime_hash, revision_allowed=revision_allowed)
+        result = {"original_policy_deployment_id": prior_activation["policy_deployment_id"], "heartbeat_at": collector.timestamp(max(point for point in heartbeats if point <= eligible_at))}
+    references = evidence["runtime_deployments"]
     if retirements:
         retirement = immutable_file(root, executor_sha, rollout["retirement_evidence"])
         require(isinstance(retirement, dict) and set(retirement) == {"schema", "cutover_sha256", "runtime_deployments"}
-                and retirement["schema"] == "shared-datasets-runtime-webhook-retirement-v1" and retirement["cutover_sha256"] == rollout["cutover_evidence"]["sha256"]
-                and retirement["runtime_deployments"] == evidence["runtime_deployments"], "retirement differs from the verified cutover and drained deployments")
-    result = {"mode": "unified", "route_removals": sorted(removals), "runtime_secret_removals": sorted(retirements), "drained_images": images, "filtered_view_proof": view_proof,
+                and retirement["schema"] == "shared-datasets-runtime-webhook-retirement-v1" and retirement["cutover_sha256"] == rollout["cutover_evidence"]["sha256"],
+                "retirement differs from the verified original cutover")
+        references = retirement["runtime_deployments"]
+    # No-op policy sync cannot grant removal authority. Keep its live audit,
+    # heartbeat and original activation checks, without pinning every future
+    # routine deployment to a historical runtime image or source contract.
+    drain = validate_drain(references, live=live, load_deployment=load_deployment, resolve_current=resolve_current, runtime_hash=runtime_hash,
+                           revision_allowed=revision_allowed, ancestor=ancestor, unified_source=unified_source) if removals or retirements else {}
+    result = {"mode": "unified", "route_removals": sorted(removals), "runtime_secret_removals": sorted(retirements),
+              "drained_images": {job: row["image"] for job, row in drain.items()}, "runtime_deployment_proof": drain, "filtered_view_proof": view_proof,
               "audit_capture_proof": {**audit_proof, **setup},
-              "heartbeat_at": collector.timestamp(max(point for point in heartbeats if point <= now)), "cutover_authorized": True, **result}
+              "cutover_authorized": True, **result}
     # Signature enumeration and cloud reads may take long enough to age the
     # original proof. Check a fresh wall clock after all those operations.
     recheck_freshness(result, now=clock() if clock else now)
@@ -404,8 +485,10 @@ def main(argv=None):
             value = runtime_contract(ROOT, revision)
             require(value == expected_runtime, "runtime image uses another bridge protocol")
             return value
-        kwargs = {"live": LiveEvidence(AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=30)), "load_cycle": verifier.verify_cycle_id,
+        kwargs = {"live": LiveEvidence(AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=30)), "load_cycle": verifier.verify_cycle_id, "load_latest": verifier.load,
                   "load_deployment": load_deployment, "load_setup": load_setup, "runtime_hash": runtime_hash, "contract_hash": ledger.contract_hash(ROOT), "policy_hash": ledger.policy_hash(ROOT), "revision_allowed": lambda sha: deployments.git_ancestor(sha, args.executor_sha)}
+        kwargs.update(resolve_current=lambda job, image: current_runtime_deployment(api, repository, job, image), ancestor=deployments.git_ancestor,
+                      unified_source=lambda sha: unified_runtime_source(ROOT, sha, rollout["cutover_evidence"]))
         if rollout["mode"] == "unified" and not route_changes(plan):
             kwargs["prior_activation"] = activation(api, repository, ROOT, args.executor_sha)
     result = verify_plan(plan, rollout, now=datetime.now(timezone.utc), executor_sha=args.executor_sha, scope=scope, clock=lambda: datetime.now(timezone.utc), **kwargs)

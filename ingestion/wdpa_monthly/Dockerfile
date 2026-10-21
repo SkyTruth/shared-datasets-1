@@ -65,6 +65,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 COPY ingestion ./ingestion
 COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
 COPY scripts/catalog_csv.py ./scripts/catalog_csv.py
+COPY scripts/operational_retry.py ./scripts/operational_retry.py
+COPY scripts/gcp_read_retry.py ./scripts/gcp_read_retry.py
 COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
 COPY scripts/feature_metadata_translation_reuse.py ./scripts/feature_metadata_translation_reuse.py
 COPY scripts/translation_local_io.py ./scripts/translation_local_io.py

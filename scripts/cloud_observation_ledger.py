@@ -55,7 +55,11 @@ CONTRACT_FILES = tuple(sorted({
     "scripts/cloud_observation_ledger.py", "scripts/deployment_receipt_contracts.py",
     "scripts/deployment_emission.py", "scripts/deployment_revision.py", "scripts/slack_incident_api.py", "scripts/workflow_failure_alert.py",
     "scripts/operational_retry.py",
-    "ingestion/common/runtime.py", "ingestion/common/feature_metadata.py", "ingestion/common/translation_notices.py", WORKFLOW,
+    "scripts/gcp_read_retry.py", "ingestion/wdpa_monthly/execution_observer.py",
+    "terraform/envs/prod/wdpa_execution_observer.tf",
+    "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/Dockerfile.promotion",
+    "ingestion/common/runtime.py", "ingestion/common/feature_metadata.py", "ingestion/common/translation_notices.py",
+    "ingestion/common/legacy_runtime_notifications.py", "scripts/slack_notify.py", WORKFLOW,
     *('.github/workflows/' + path for path in set(deployments.TARGET_WORKFLOWS.values())
       | set(deployments.TERRAFORM_WORKFLOWS.values()) | set(alerts.WORKFLOW_PATHS.values()) | {"ci.yml"}),
 }))
