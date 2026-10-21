@@ -20,6 +20,7 @@ from urllib.parse import quote_plus, urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
 from scripts import logging_setup_permissions as logging_setup
+from scripts import setup_grant_proof, wif_setup_permissions as wif_setup
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -72,16 +73,18 @@ def read_json(url, token, *, data=None, method="GET", content_type="application/
         # an incomplete body that might contain a truncated credential value.
         body = error.read(16 * 1024 + 1)
         diagnostic = 'response body unavailable, unstructured or over 16 KiB'
+        status = None
         if len(body) <= 16 * 1024:
             try:
                 vendor = json.loads(body)
             except (ValueError, UnicodeDecodeError):
                 vendor = None
             if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
+                status = vendor['error'].get('status')
                 safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
                 encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
                 diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]').replace(quote_plus(token), '[REDACTED]')[:4096]
-        raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
+        raise setup_grant_proof.ProbeHTTPError(f'permission probe HTTP {error.code}: {url}; {diagnostic}', code=error.code, status=status) from error
     if not isinstance(payload, dict):
         raise RuntimeError("invalid permission probe JSON response")
     return payload
@@ -90,6 +93,8 @@ def read_json(url, token, *, data=None, method="GET", content_type="application/
 def request(url, permissions, token):
     if url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS}:
         return logging_setup.verify_parent(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
+    if url == wif_setup.PROVIDER_URL:
+        return wif_setup.verify_provider(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
     storage = "storage.googleapis.com" in url
     raw = None if storage else json.dumps({"permissions": list(permissions)}).encode()
     payload = read_json(url, token, data=raw, method="GET" if storage else "POST")
@@ -115,7 +120,8 @@ def checks(target):
         pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
         return checks("iam-bootstrap") + checks("bucket-iam") + [
             (project_url, OPERATIONAL_METRIC_SETUP_PERMISSIONS + ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "serviceusage.services.list")),
-            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules", "iam.workloadIdentityPoolProviders.create", "iam.workloadIdentityPoolProviders.get")),
+            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules")),
+            (wif_setup.PROVIDER_URL, (wif_setup.GET,)),
             *[(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS) for bucket in logging_setup.BUCKETS],
             *[(logging_setup.bucket_url(bucket) + "/views/_AllLogs:testIamPermissions", logging_setup.VIEW_PERMISSIONS) for bucket in logging_setup.BUCKETS],
         ]
@@ -188,7 +194,7 @@ def main():
         required = plan_checks(plan, project_number=project_number, target=args.target)
     else:
         required = checks(args.target)
-    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS} for url, _ in required)
+    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS} | {wif_setup.PROVIDER_URL} for url, _ in required)
     if logging_parent:
         # Minted by the same protected WIF auth step with identity metadata
         # scope; an email-less gcloud token cannot prove the actual principal.

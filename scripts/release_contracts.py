@@ -25,6 +25,7 @@ from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
 from scripts import logging_setup_permissions as logging_setup
+from scripts import wif_setup_permissions as wif_setup
 
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -214,6 +215,7 @@ def iam_contract(root):
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
     operational = (root / "terraform/envs/prod/operational_observer.tf").read_text()
     for role, expected in (("operational_log_view_manager", set(OPERATIONAL_LOG_SETUP_PERMISSIONS)), ("operational_metric_descriptor_manager", set(OPERATIONAL_METRIC_SETUP_PERMISSIONS)),
+                           ("operational_provider_creator", {wif_setup.CREATE}), ("operational_provider_reader", {wif_setup.GET}),
                            ("operational_observer_reader", {"run.executions.get", "run.executions.list", "monitoring.timeSeries.create"}), ("operational_observer_receipts", {"storage.objects.get"})):
         if role_permissions(operational, role) != expected:
             errors.append(f"{role}: operational authority must match its exact permission contract")
@@ -235,6 +237,20 @@ def iam_contract(root):
     if (bucket_scope is None or set(re.findall(r'"([^"]+)"', bucket_scope[1])) != set(logging_setup.BUCKETS)
             or binding is None or re.sub(r"\s+", "", binding[1]) != re.sub(r"\s+", "", expected_binding)):
         errors.append("Logging installed-grant proof requires the exact reviewed two-bucket Terraform binding")
+    for kind, role_name, condition in (("creator", wif_setup.CREATOR_ROLE, wif_setup.condition()), ("reader", wif_setup.READER_ROLE, None)):
+        label = "operational_provider_" + kind
+        role = re.search(r'resource "google_project_iam_custom_role" "' + label + r'"\s*\{(.*?)\n\}', operational, re.S)
+        binding = re.search(r'resource "google_project_iam_member" "github_actions_' + label + r'"\s*\{(.*?)\n\}', operational, re.S)
+        expected_binding = 'project = var.project_id\nrole = google_project_iam_custom_role.' + label + '.name\nmember = "serviceAccount:${var.github_actions_terraform_service_account_email}"'
+        if condition is not None:
+            expected_binding += '\ncondition {\n' + '\n'.join(key + ' = "' + value + '"' for key, value in condition.items()) + '\n}'
+        if (role is None or not re.search(r'role_id\s*=\s*"' + role_name.rsplit('/', 1)[1] + '"', role[1])
+                or binding is None or re.sub(r'\s+', '', binding[1]) != re.sub(r'\s+', '', expected_binding)):
+            errors.append("operational provider " + kind + " requires the exact protected principal, role and fixed expiry contract")
+        bootstrap = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["bootstrap"]["with"]
+        for field in ("targets", "allowed_exact"):
+            if not {"google_project_iam_custom_role." + label, "google_project_iam_member.github_actions_" + label} <= set(bootstrap.get(field, "").split()):
+                errors.append("operational provider " + kind + " has no exact protected bootstrap " + field)
     observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
     errors += operational_storage_contract(root, operational, observations["with"])
     if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:

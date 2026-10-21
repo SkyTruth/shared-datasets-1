@@ -12,6 +12,7 @@ import re
 from urllib.parse import quote, urlencode
 
 from scripts import logging_setup_permissions as logging_setup
+from scripts import wif_setup_permissions as wif_setup
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -278,7 +279,9 @@ def plan_checks(plan, *, project_number, target=None):
             elif kind == "google_iam_workload_identity_pool_provider":
                 project(current)
                 require(current.get("workload_identity_pool_id") == "github" and current.get("workload_identity_pool_provider_id") == "github-operational-observer", "unexpected operational WIF provider")
-                add(f"https://iam.googleapis.com/v1/projects/{PROJECT}/locations/global/workloadIdentityPools/github:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules", "iam.workloadIdentityPoolProviders.get", "iam.workloadIdentityPoolProviders." + action))
+                require(action == "create", "operational WIF provider updates and deletes require separately reviewed authority")
+                add(f"https://iam.googleapis.com/v1/{wif_setup.POOL}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules"))
+                add(wif_setup.PROVIDER_URL, (wif_setup.GET, wif_setup.CREATE))
             elif kind == "google_project_iam_member":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
