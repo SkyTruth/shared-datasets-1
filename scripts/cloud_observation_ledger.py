@@ -49,6 +49,8 @@ CONTRACT_FILES = tuple(sorted({
     POLICY_FILE, "catalog/shared-datasets-catalog.csv", "scripts/operational_policy.py", "scripts/cloud_operational_observations.py",
     "ingestion/common/operational_events.py", "scripts/slack_incidents.py",
     "scripts/cloud_incident_adapter.py", "scripts/operational_reconcile.py",
+    "scripts/translation_recovery.py", "scripts/release_feature_model.py", "scripts/catalog_csv.py",
+    "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
     "scripts/operational_cutover.py", "scripts/operational_delivery_activation.py",
     ".github/workflows/prod-terraform-target-apply.yml",
     "terraform/envs/prod/operational_observer.tf",

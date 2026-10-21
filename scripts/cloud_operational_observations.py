@@ -377,6 +377,11 @@ class CloudReader:
         require(re.fullmatch(f"projects/{PROJECT}/locations/{REGION}/jobs/[a-z][a-z0-9-]{{0,62}}/executions/[a-z][a-z0-9-]{{0,62}}", name), "invalid execution resource")
         return self.request("GET", "https://run.googleapis.com/v2/" + name)
 
+    def translation_manifest(self, uri):
+        """Read only an already named, current canonical translation manifest."""
+        from scripts.translation_recovery import Reader
+        return Reader(self.session).read(uri)
+
     def receipt_metadata(self, uri, *, generation=None):
         require(isinstance(uri, str) and uri.startswith(f"gs://{BUCKET}/"), "foreign operational receipt")
         name = uri.removeprefix(f"gs://{BUCKET}/")

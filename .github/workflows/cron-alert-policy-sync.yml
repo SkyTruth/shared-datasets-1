@@ -97,7 +97,16 @@ jobs:
         google_project_iam_custom_role.operational_observer_reader
         google_project_iam_member.operational_observer_reader
         google_project_iam_custom_role.operational_observer_receipts
-        google_storage_bucket_iam_member.operational_observer_receipts
+        google_storage_bucket_iam_member.operational_observer_receipts["0"]
+        google_storage_bucket_iam_member.operational_observer_receipts["1"]
+        google_storage_bucket_iam_member.operational_observer_receipts["2"]
+        google_storage_bucket_iam_member.operational_observer_receipts["3"]
+        google_storage_bucket_iam_member.operational_observer_receipts["4"]
+        google_storage_bucket_iam_member.operational_observer_manifests["0"]
+        google_storage_bucket_iam_member.operational_observer_manifests["1"]
+        google_storage_bucket_iam_member.operational_observer_manifests["2"]
+        google_storage_bucket_iam_member.operational_observer_manifests["3"]
+        google_storage_bucket_iam_member.operational_observer_manifests["4"]
         google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
       allowed_exact: |
         google_iam_workload_identity_pool_provider.operational_observer
@@ -111,7 +120,16 @@ jobs:
         google_project_iam_custom_role.operational_observer_reader
         google_project_iam_member.operational_observer_reader
         google_project_iam_custom_role.operational_observer_receipts
-        google_storage_bucket_iam_member.operational_observer_receipts
+        google_storage_bucket_iam_member.operational_observer_receipts["0"]
+        google_storage_bucket_iam_member.operational_observer_receipts["1"]
+        google_storage_bucket_iam_member.operational_observer_receipts["2"]
+        google_storage_bucket_iam_member.operational_observer_receipts["3"]
+        google_storage_bucket_iam_member.operational_observer_receipts["4"]
+        google_storage_bucket_iam_member.operational_observer_manifests["0"]
+        google_storage_bucket_iam_member.operational_observer_manifests["1"]
+        google_storage_bucket_iam_member.operational_observer_manifests["2"]
+        google_storage_bucket_iam_member.operational_observer_manifests["3"]
+        google_storage_bucket_iam_member.operational_observer_manifests["4"]
         google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
