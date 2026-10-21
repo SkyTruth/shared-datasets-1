@@ -58,7 +58,21 @@ def notification_boundary(filename, identifier, workflow, job):
     if filename != NOTIFICATION_WORKFLOW or identifier != "incidents":
         return False
     trigger = workflow.get("on", workflow.get(True, {}))
-    if not isinstance(trigger, dict) or set(trigger) != {"workflow_run", "workflow_dispatch"}:
+    if not isinstance(trigger, dict) or set(trigger) != {"workflow_run", "workflow_dispatch", "schedule"}:
+        return False
+    if trigger["schedule"] != [{"cron": "3-59/5 * * * *"}] or set(workflow.get("jobs", {})) != {"incidents"}:
+        return False
+    inputs = trigger["workflow_dispatch"].get("inputs", {})
+    if set(inputs) != {"action", "supervision_request", "supervision_request_id", "incident_id", "operation", "delivery_result", "message_ts"}:
+        return False
+    if (inputs["action"].get("type") != "choice" or inputs["action"].get("options") != ["reconcile-delivery", "supervision"]
+            or inputs["action"].get("default") != "reconcile-delivery"
+            or any(inputs[key].get("type") != "string" or inputs[key].get("required") is True for key in ("supervision_request", "supervision_request_id", "incident_id", "operation", "message_ts"))
+            or inputs["delivery_result"].get("options") != ["none", "delivered", "not-delivered", "seal-checkpoint"]
+            or inputs["delivery_result"].get("default") != "none"
+            or inputs["delivery_result"].get("required") is True):
+        return False
+    if workflow.get("run-name") != "${{ inputs.action == 'supervision' && format('Supervision {0}', inputs.supervision_request_id) || 'Workflow health and Slack reconciliation' }}":
         return False
     upstream = trigger["workflow_run"]
     if not isinstance(upstream, dict) or upstream.get("branches") != ["main"] or upstream.get("types") != ["completed"]:

@@ -1,12 +1,17 @@
 # Operational alert routing
 
-Slack reports unattended failures. A supervised execution can be quiet only
-when its GitHub workflow waits for its result and reports failure itself.
+Shared Slack is an escalation channel for unresolved action. The versioned
+`catalog/alert-routing.json` policy distinguishes safe source recovery,
+authenticated owner handling, clarification waits and immediate security risks.
+An agent acting for a human owns safe deployment, verification and reconciliation
+in its originating chat. The signed supervision contract is documented in the
+[Slack incident lifecycle](slack-incidents.md#policy-and-accountable-supervision).
 
 GitHub incident recovery follows the [Slack incident lifecycle](slack-incidents.md):
 verified recovery edits the original parent to **Resolved** and creates no reply
-or new channel message. That document owns configuration and reconciliation;
-the existing failure-only webhook remains active until incident mode is enabled.
+or new channel message. That document owns configuration and reconciliation.
+There is one signed operational delivery path; disabling incident mode pauses
+delivery without falling back to the legacy workflow-failure webhook.
 
 | Execution | Failure reporting |
 | --- | --- |
@@ -15,7 +20,7 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
 | Five-minute WDPA execution observer or its Scheduler dispatch | Monitoring Slack only after persistent loss of successful completions |
 | Detached WDPA worker canary | Monitoring Slack |
-| Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
+| Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub evidence; one Slack parent when action is eligible |
 | Explicit monitoring delivery test | Monitoring Slack |
 
 The Cloud Run policy retains the project/region-wide failure condition and

@@ -336,6 +336,41 @@ Git and history:
   evidence are supplementary; GitHub `ci-ready` independently validates all
   selected suites and remains authoritative.
 
+## Operational ownership and escalation
+
+An agent overseeing a deployment acts for its responsible human and owns the
+operation through its required terminal verification and incident reconciliation.
+Before overseeing deployment, register supervision through the authenticated
+main-only notification workflow, binding the exact PR, tested revision, target,
+responsible human and originating conversation. Registration alone is not active
+supervision; record a check-in with the current action and repeat at least every
+ten minutes while handling an unresolved safe issue.
+
+Confirmed transient read failures receive one shared thirty-minute recovery
+budget. Source workers own safe retries; notification handling grants no
+production mutation authority. Unknown mutation outcomes freeze replay until
+authoritative inspection establishes the outcome. Preserve existing reviewed
+recovery, protected-environment and exact-revision requirements.
+
+Active supervision can retain a safe unresolved issue privately for at most two
+hours from its first verified failure. Repeated failures, new commits and owner
+renewals cannot restart that clock. Security and demonstrated data-integrity
+risks bypass these waiting periods. Stale, released or expired supervision
+requires one actionable escalation.
+
+Ask needed clarification in the originating conversation, then record the
+question reference and responsible human through the supervision CLI. Check-ins
+pause while awaiting that answer, but the original deadline remains fixed and
+the wait never proves recovery. Before stopping unresolved work, record an
+explicit clarification wait, release or accepted handoff. Do not assume another
+agent will finish deployment or alert reconciliation.
+
+Supervision does not authorize automatic cross-chat messaging, creation of new
+agents, transfer of deployment authority, merging, or production mutation. Keep
+synthetic notification tests outside the shared channel. Preserve uncertain
+delivery claims and use the existing receipt-only recovery path after completed
+publication; never replay publication or Slack delivery to repair a PR receipt.
+
 ## When To Ask For Human Input
 
 Ask before:
