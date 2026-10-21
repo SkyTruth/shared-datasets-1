@@ -74,7 +74,7 @@ the production observer to test an outage notification.
 WDPA's ten-minute worker watch retains Cloud Monitoring coverage.
 Do not suppress it based solely on its creator, branch, or workflow trigger.
 Routine deployments do not deliberately fail production jobs to test alerts.
-`cron-alert-delivery-test.yml` now exercises the Slack API in a separate channel
+`notification-rehearsal.yml` exercises the Slack API in a separate channel
 using `SHARED_DATASETS_SLACK_TEST_CHANNEL_ID` and the dedicated
 `SHARED_DATASETS_SLACK_TEST_BOT_TOKEN` secret. It requires the configured production
 `SHARED_DATASETS_SLACK_CHANNEL_ID` for comparison and refuses unset destinations,
@@ -84,8 +84,9 @@ delivery; it does not prove production Monitoring detection or end-to-end routin
 
 Verify production detection by replaying deployed filters against authoritative
 historical execution/audit evidence and inspecting complete live policy inventory.
-`verify_alert_probe.py` remains a read-only verifier for retained historical
-negative-control evidence; it starts no execution or Slack delivery.
+The old production failure-injection workflow, runtime override and probe
+verifier remain removed. Use genuine incident delivery evidence when available;
+otherwise report production delivery as unverified.
 
 The pytest session installs an audit hook before test collection to prohibit real
 Slack HTTP/DNS transport and production webhook-secret subprocess resolution.

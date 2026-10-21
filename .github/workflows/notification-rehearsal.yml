@@ -1,4 +1,4 @@
-name: Cron alert delivery test
+name: Isolated notification rehearsal
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
-                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/cron-alert-delivery-test.yml@refs/heads/main" ]]; then
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/notification-rehearsal.yml@refs/heads/main" ]]; then
             echo "Execution must use this workflow from main." >&2
             exit 1
           fi

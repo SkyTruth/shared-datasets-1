@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import sys
-import time
+from time import monotonic, sleep
 from typing import TypeVar
 
 
@@ -27,6 +27,10 @@ UNATTENDED = RetryProfile("unattended", (0, 5, 20, 60, 180, 420, 900, 1740), 180
 T = TypeVar("T")
 
 
+class RetryBudgetExhausted(TimeoutError):
+    """The operation cannot start another read after its recovery deadline."""
+
+
 class RetryBudget:
     """Share retry opportunities, including across successful nested reads.
 
@@ -39,11 +43,24 @@ class RetryBudget:
         if profile not in (SHORT, UNATTENDED):
             raise ValueError("unsupported safe-read retry profile")
         self.profile = profile
-        self.started = time.monotonic()
+        self.started = monotonic()
         self.retry_index = 0
+        self.exhausted_error: Exception | None = None
+
+    def remaining_seconds(self) -> float | None:
+        if self.exhausted_error is not None:
+            raise self.exhausted_error
+        if self.profile.deadline_seconds is None:
+            return None
+        remaining = self.profile.deadline_seconds - (monotonic() - self.started)
+        if remaining <= 0:
+            self.exhausted_error = RetryBudgetExhausted("safe-read recovery deadline exhausted")
+            raise self.exhausted_error
+        return remaining
 
     def run(self, action: Callable[[], T], *, classify: Callable[[Exception], str | None], label: str) -> T:
         while True:
+            self.remaining_seconds()  # Nested helpers cannot start a ninth read after exhaustion.
             try:
                 return action()
             except Exception as error:
@@ -53,10 +70,11 @@ class RetryBudget:
                 offsets = self.profile.offsets
                 attempt = self.retry_index + 1
                 diagnostic = f"{label}: attempt {attempt}/{len(offsets)} failed ({reason})"
-                elapsed = time.monotonic() - self.started
+                elapsed = monotonic() - self.started
                 if attempt == len(offsets) or (
                     self.profile.deadline_seconds is not None and elapsed >= self.profile.deadline_seconds
                 ):
+                    self.exhausted_error = error
                     print(diagnostic + "; giving up", file=sys.stderr)
                     raise
                 delay = (
@@ -66,8 +84,9 @@ class RetryBudget:
                 )
                 self.retry_index += 1
                 print(diagnostic + f"; retrying in {delay:g}s", file=sys.stderr)
-                time.sleep(delay)
-                if self.profile.deadline_seconds is not None and time.monotonic() - self.started >= self.profile.deadline_seconds:
+                sleep(delay)
+                if self.profile.deadline_seconds is not None and monotonic() - self.started >= self.profile.deadline_seconds:
+                    self.exhausted_error = error
                     raise
 
 
@@ -97,9 +116,7 @@ def run_read(action: Callable[[], T], *, classify: Callable[[Exception], str | N
 def request_timeout(maximum: float) -> float:
     """Cap a transport timeout at the owning operation's remaining window."""
     budget = _CURRENT.get()
-    if budget is None or budget.profile.deadline_seconds is None:
+    if budget is None:
         return maximum
-    remaining = budget.profile.deadline_seconds - (time.monotonic() - budget.started)
-    if remaining <= 0:
-        raise TimeoutError("safe-read recovery deadline exhausted")
-    return min(maximum, remaining)
+    remaining = budget.remaining_seconds()
+    return maximum if remaining is None else min(maximum, remaining)

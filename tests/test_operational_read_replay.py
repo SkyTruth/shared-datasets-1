@@ -38,8 +38,8 @@ sys.exit(result.get("exit", 0))
         waits.append(seconds)
         now[0] += seconds
 
-    monkeypatch.setattr(operational_retry.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(operational_retry.time, "sleep", sleep)
+    monkeypatch.setattr(operational_retry, "monotonic", lambda: now[0])
+    monkeypatch.setattr(operational_retry, "sleep", sleep)
     return counter, waits
 
 

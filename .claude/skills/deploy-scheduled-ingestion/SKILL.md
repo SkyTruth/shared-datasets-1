@@ -189,7 +189,7 @@ If the user expects Slack delivery, verify the relevant path:
 - Cloud Monitoring Slack alerts use Monitoring notification channels.
 - Protected Terraform workflow summaries use `scripts/slack_notify.py` and the `shared-datasets-slack-webhook-url` Secret Manager secret, unless `SHARED_DATASETS_SLACK_WEBHOOK_URL` is set locally.
 
-A safe controlled alert test is to execute a newly deployed job with an env override that fails before any GCS write, then confirm the matching log and Slack notification. Do not use a failure mode that can write partial releases, overwrite `latest/`, delete objects, or create confusing run records.
+Test alert handling with isolated fixtures; do not deliberately fail production jobs or send synthetic production alerts. Verify live filters and notification channels, use genuine incident delivery evidence when available, and report unobserved delivery as unverified.
 
 ## Job-specific procedures
 
@@ -283,7 +283,7 @@ job.
 9. Verify alert coverage for the deployed job and future jobs:
    - Read the live Cloud Run and Scheduler failure alert filters.
    - Confirm the new job is covered without depending on a stale allowlist.
-   - If a controlled failure test is safe, run it and verify the matching log and Slack delivery.
+   - Check delivery evidence from genuine incidents; otherwise report delivery as unverified.
    - Confirm any bad one-off env overrides were not persisted to the job.
 
 ## Completion notes

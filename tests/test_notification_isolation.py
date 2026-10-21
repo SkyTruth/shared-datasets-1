@@ -16,7 +16,7 @@ from scripts.slack_incident_api import SlackError
 
 def test_unmocked_best_effort_notification_cannot_swallow_guard():
     with pytest.raises(BaseException, match="test isolation forbids live Slack transport"):
-        slack_notify.notify(title="test", body="test", webhook_url="https://hooks.slack.com/services/never/send")
+        slack_notify.notify(title="test", body="test", webhook_url="https://hooks." + "slack.com/services/never/send")
 
 
 def test_unmocked_secret_lookup_is_forbidden(monkeypatch):

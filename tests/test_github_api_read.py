@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 import pytest
@@ -57,7 +58,7 @@ def outage(status=502, *, stdout=""):
 @pytest.mark.parametrize("client", CLIENTS)
 def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
     log = gh([outage(), outage(), {"stdout": '{"id": 38508512742, "run_attempt": 1}'}])
-    with patch("time.sleep") as sleep:
+    with patch.object(retry, "sleep") as sleep:
         assert client().get(PATH) == {"id": 38508512742, "run_attempt": 1}
     assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -69,7 +70,7 @@ def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
 @pytest.mark.parametrize("reader", [lambda: emission.ReadOnlyGitHub().get(PATH), lambda: publish_workflow.gh_api_json(PATH)])
 def test_plain_cli_http_errors_recover_for_operational_readers(status, reader, gh):
     log = gh([{"code": 1, "stderr": f"gh: HTTP {status}\n", "stdout": '{"partial": true}'}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep:
+    with patch.object(retry, "sleep") as sleep:
         assert reader() == {}
     sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
@@ -79,7 +80,7 @@ def test_plain_cli_http_errors_recover_for_operational_readers(status, reader, g
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys):
     log = gh([outage(status, stdout='{"id": 38508512742}')])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(retry, "sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     assert len(log.read_text().splitlines()) == 3
     assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
@@ -95,7 +96,7 @@ def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys)
 ])
 def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
     log = gh([{"code": 1, "stderr": stderr}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(retry, "sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
@@ -104,7 +105,7 @@ def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
 @pytest.mark.parametrize("client", CLIENTS)
 def test_connection_failure_recovers(client, gh):
     log = gh([{"code": 1, "stderr": transport.CONNECTION_ERROR.decode()}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep:
+    with patch.object(retry, "sleep") as sleep:
         assert client().get(PATH) == {}
     sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
@@ -118,7 +119,7 @@ def test_connection_failure_recovers(client, gh):
 ])
 def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, gh):
     log = gh([outage(stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
-    with patch("time.sleep") as sleep:
+    with patch.object(retry, "sleep") as sleep:
         assert client().pages(PATH, field="jobs") == [row for page in pages for row in page["jobs"]]
     sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -134,7 +135,7 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
 ])
 def test_response_validation_after_recovery_is_not_retried(client, response, gh):
     log = gh([outage(), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
-    with patch("time.sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
+    with patch.object(retry, "sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
         client().pages(PATH, field="jobs")
     sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
@@ -144,7 +145,7 @@ def test_response_validation_after_recovery_is_not_retried(client, response, gh)
 def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
     timeout = subprocess.TimeoutExpired(["gh", "api"], 60, output=b'{"partial": true}')
     responses = [timeout, b"{}"] if recover else [timeout] * 3
-    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch("time.sleep") as sleep:
+    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch.object(retry, "sleep") as sleep:
         if recover:
             assert deployments.GitHub().get(PATH) == {}
         else:
@@ -157,7 +158,7 @@ def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
 
 def test_deployment_write_is_never_replayed(gh):
     log = gh([outage(), {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(retry, "sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         deployments.GitHub().post("repos/SkyTruth/shared-datasets-1/deployments", {"ref": "a" * 40})
     sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
@@ -166,7 +167,7 @@ def test_deployment_write_is_never_replayed(gh):
 def test_pr_receipt_deduplication_reads_all_comment_pages(gh, monkeypatch):
     monkeypatch.setenv("GITHUB_REPOSITORY", "SkyTruth/shared-datasets-1")
     log = gh([outage(stdout='[[{"body": "old"}]]'), {"stdout": '[[{"body": "old"}], [{"body": "wanted-marker"}]]'}])
-    with patch("time.sleep"):
+    with patch.object(retry, "sleep"):
         assert publish_workflow.pr_comment_has_marker("17", "wanted-marker")
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [["api", "--method", "GET", "--paginate", "--slurp",
@@ -175,7 +176,7 @@ def test_pr_receipt_deduplication_reads_all_comment_pages(gh, monkeypatch):
 
 def test_binary_artifact_read_retries_transport_but_not_bytes_validation(gh):
     log = gh([outage(stdout="truncated ZIP"), {"stdout": "complete ZIP"}])
-    with patch("time.sleep"):
+    with patch.object(retry, "sleep"):
         assert authorization.GitHub().archive("SkyTruth/shared-datasets-1", 17) == b"complete ZIP"
     assert len(log.read_text().splitlines()) == 2
 
@@ -183,16 +184,25 @@ def test_binary_artifact_read_retries_transport_but_not_bytes_validation(gh):
 def test_streamed_artifact_retries_with_fresh_exclusive_destination(gh, tmp_path):
     log = gh([outage(stdout="truncated artifact"), {"stdout": "complete"}])
     destination = tmp_path / "image.zip"
-    transport.download(PATH, destination, max_bytes=100)
+    with patch.object(retry, "sleep") as sleep:
+        transport.download(PATH, destination, max_bytes=100)
+    sleep.assert_called_once_with(5)
     assert destination.read_bytes() == b"complete"
     assert len(log.read_text().splitlines()) == 2
 
 
 def test_stream_timeout_kills_the_reader_and_discards_partial_bytes(gh, tmp_path, monkeypatch):
     log = gh([{"stdout": "partial", "delay": 10}, {"stdout": "complete"}])
-    monkeypatch.setattr(transport, "READ_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(transport, "READ_TIMEOUT_SECONDS", 1)
     destination = tmp_path / "image.zip"
-    transport.download(PATH, destination, max_bytes=100)
+    clock = Clock()
+    native_sleep, native_clock = time.sleep, time.monotonic
+    started = native_clock()
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        transport.download(PATH, destination, max_bytes=100)
+        assert time.sleep is native_sleep and time.monotonic is native_clock
+    assert native_clock() - started < 5
+    assert clock.sleeps == [5]
     assert destination.read_bytes() == b"complete"
     assert len(log.read_text().splitlines()) == 2
 
@@ -232,7 +242,7 @@ class Clock:
 def test_unattended_outage_has_eight_absolute_attempts_and_discards_partial_pages(gh):
     clock = Clock()
     log = gh([outage(stdout='[{"partial": true}]')])
-    with patch("time.monotonic", clock.monotonic), patch("time.sleep", clock.sleep):
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
         with retry.operation(profile=retry.UNATTENDED), pytest.raises(subprocess.CalledProcessError):
             transport.read(PATH, paginate=True)
     assert len(log.read_text().splitlines()) == 8
@@ -243,7 +253,7 @@ def test_unattended_outage_has_eight_absolute_attempts_and_discards_partial_page
 def test_nested_operations_and_later_reads_cannot_replenish_retry_budget(gh):
     clock = Clock()
     log = gh([outage(), {"stdout": "{}"}, outage()])
-    with patch("time.monotonic", clock.monotonic), patch("time.sleep", clock.sleep):
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
         with retry.operation(profile=retry.UNATTENDED) as outer:
             assert transport.read(PATH) == b"{}"
             with retry.operation(profile=retry.UNATTENDED) as nested:
@@ -252,6 +262,31 @@ def test_nested_operations_and_later_reads_cannot_replenish_retry_budget(gh):
                     transport.read(PATH)
     assert len(log.read_text().splitlines()) == 9  # Eight failed attempts and one successful read.
     assert clock.sleeps == [5, 15, 40, 120, 240, 480, 840]
+
+
+def test_exhaustion_is_sticky_across_operational_helpers_and_preserves_original_failure(gh):
+    clock = Clock()
+    log = gh([outage()])
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.UNATTENDED):
+            with pytest.raises(subprocess.CalledProcessError) as first:
+                transport.read(PATH)
+            with pytest.raises(subprocess.CalledProcessError) as second:
+                emission.ReadOnlyGitHub().get(PATH)
+            assert first.value is second.value
+    assert len(log.read_text().splitlines()) == 8
+    assert clock.sleeps == [5, 15, 40, 120, 240, 480, 840]
+
+
+def test_expired_operation_cannot_start_an_initial_read(gh):
+    clock = Clock()
+    log = gh([{"stdout": "{}"}])
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.UNATTENDED):
+            clock.now = 1800
+            with pytest.raises(retry.RetryBudgetExhausted, match="deadline"):
+                transport.read(PATH)
+    assert not log.exists() and clock.sleeps == []
 
 
 def test_slow_requests_cannot_extend_unattended_deadline():
@@ -263,7 +298,7 @@ def test_slow_requests_cannot_extend_unattended_deadline():
         clock.now += 601
         raise TimeoutError("safe external read")
 
-    with patch("time.monotonic", clock.monotonic), patch("time.sleep", clock.sleep):
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
         with retry.operation(profile=retry.UNATTENDED), pytest.raises(TimeoutError):
             retry.run_read(action, classify=lambda error: "timeout" if isinstance(error, TimeoutError) else None, label="read")
     assert attempts == [0, 601, 1202]
@@ -272,7 +307,7 @@ def test_slow_requests_cannot_extend_unattended_deadline():
 
 def test_validation_failure_is_not_retried_by_shared_budget():
     clock = Clock()
-    with patch("time.monotonic", clock.monotonic), patch("time.sleep", clock.sleep):
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
         with retry.operation(profile=retry.UNATTENDED), pytest.raises(ValueError):
             retry.run_read(lambda: json.loads("wrong artifact bytes"), classify=transport.transport_failure, label="read")
     assert clock.sleeps == []
@@ -280,7 +315,7 @@ def test_validation_failure_is_not_retried_by_shared_budget():
 
 def test_transport_timeout_uses_only_remaining_operation_window():
     clock = Clock()
-    with patch("time.monotonic", clock.monotonic):
+    with patch.object(retry, "monotonic", clock.monotonic):
         with retry.operation(profile=retry.UNATTENDED):
             clock.now = 1799
             assert retry.request_timeout(60) == 1
@@ -307,7 +342,7 @@ def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wron
         {"stdout": '[{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}]'},
     ]
     log = gh(evidence)
-    with patch("time.sleep") as sleep:
+    with patch.object(retry, "sleep") as sleep:
         if wrong_revision:
             with pytest.raises(deployments.DeploymentError, match="executor differs"):
                 deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1)
