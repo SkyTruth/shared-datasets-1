@@ -47,6 +47,12 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
     assert select_deployments(["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"]) == ["ingestion_iam"]
 
 
+@pytest.mark.parametrize("path", ["terraform/envs/prod/github_readonly_iam.tf", "scripts/readonly_wif_trust.py"])
+def test_readonly_trust_repair_selects_only_its_protected_policy_owner(path):
+    assert select_deployments([path]) == ["cron_alert_policy"]
+    assert ALWAYS <= set(select_suites([path])[0])
+
+
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
     assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])

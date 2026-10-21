@@ -22,6 +22,11 @@
     "cron-alert-policy-sync.yml/bootstrap": [
       "google_project_service.required"
     ],
+    "cron-alert-policy-sync.yml/readonly-bootstrap": [],
+    "cron-alert-policy-sync.yml/readonly-trust": [
+      "google_iam_workload_identity_pool.github",
+      "google_project_service.required"
+    ],
     "cron-alert-policy-sync.yml/sync": [
       "google_monitoring_notification_channel.cron_alert_slack",
       "google_project_iam_audit_config.storage_data_write",

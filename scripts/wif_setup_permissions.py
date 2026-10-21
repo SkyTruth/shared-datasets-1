@@ -31,15 +31,20 @@ def condition():
             "expression": "request.time < timestamp('" + EXPIRES + "')"}
 
 
-def verify_provider(url, permissions, token, read, *, now=None):
-    proof.require(url == PROVIDER_URL and set(permissions) in ({GET}, {GET, CREATE}), "unsupported operational provider resource or operation")
+def canonical_pool(read):
+    """Resolve the existing pool's authoritative numeric resource identity."""
     project = read(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}?" + urlencode({"fields": "projectId,projectNumber"}))
     number = project.get("projectNumber")
     proof.require(project.get("projectId") == PROJECT and isinstance(number, str) and re.fullmatch(r"[1-9][0-9]*", number), "provider project metadata is inconsistent")
     canonical_pool = f"projects/{number}/locations/global/workloadIdentityPools/github"
     pool = read(POOL_URL + "?" + urlencode({"fields": "name,state,disabled"}))
     proof.require(pool.get("name") == canonical_pool and pool.get("state") == "ACTIVE" and not pool.get("disabled", False), "existing GitHub pool metadata is inconsistent or disabled")
-    provider_name = canonical_pool + "/providers/" + PROVIDER_ID
+    return canonical_pool
+
+
+def verify_provider(url, permissions, token, read, *, now=None):
+    proof.require(url == PROVIDER_URL and set(permissions) in ({GET}, {GET, CREATE}), "unsupported operational provider resource or operation")
+    provider_name = canonical_pool(read) + "/providers/" + PROVIDER_ID
     try:
         provider = read("https://iam.googleapis.com/v1/" + provider_name + "?" + urlencode({"fields": "name,state,disabled"}))
     except proof.ProbeHTTPError as error:

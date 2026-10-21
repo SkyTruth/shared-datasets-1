@@ -95,7 +95,7 @@ class ObserverBoundaryTests(unittest.TestCase):
             "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
         }
         assert_target_apply_caller(self, ROOT / ".github/workflows/cron-alert-policy-sync.yml", expected_name="Cron alert policy sync", job_name="observations", push_paths=None,
-            expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}", expected_needs="bootstrap",
+            expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}", expected_needs=["bootstrap", "readonly-trust"],
             sync_name="Operational observation setup", refusal_prefix="Refusing automatic operational observation setup", expected_targets=targets, expected_block_deletes=True,
             blocked_resources={"google_storage_bucket.shared_bucket", "google_cloud_run_v2_job.this"})
         self.assertIn("cron_alert_policy", ci_contract.select_deployments(["terraform/envs/prod/operational_observer.tf"]))
@@ -110,7 +110,7 @@ class ObserverBoundaryTests(unittest.TestCase):
         }
         self.assertEqual(set(bootstrap["targets"].split()), expected)
         self.assertEqual(set(bootstrap["allowed_exact"].split()), expected)
-        self.assertEqual(workflow["jobs"]["observations"]["needs"], "bootstrap")
+        self.assertEqual(workflow["jobs"]["observations"]["needs"], ["bootstrap", "readonly-trust"])
         text = TERRAFORM.read_text()
         provider = text.split('resource "google_iam_workload_identity_pool_provider" "operational_observer"', 1)[1].split('\nresource ', 1)[0]
         self.assertIn("depends_on = [google_project_iam_member.github_actions_operational_provider_creator, google_project_iam_member.github_actions_operational_provider_reader]", provider)

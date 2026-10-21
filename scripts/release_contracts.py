@@ -26,6 +26,7 @@ from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
 from scripts import logging_setup_permissions as logging_setup
 from scripts import wif_setup_permissions as wif_setup
+from scripts import readonly_wif_trust as readonly_trust
 
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -50,6 +51,54 @@ def role_permissions(text, name):
         return set()
     permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
     return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
+
+
+def readonly_trust_contract(root):
+    """Bind the new proposal to its exact role, existing provider and owner."""
+    errors = []
+    text = (root / "terraform/envs/prod/github_readonly_iam.tf").read_text()
+    role = re.search(r'resource "google_project_iam_custom_role" "readonly_provider_updater"\s*\{(.*?)\n\}', text, re.S)
+    if (role is None or not re.search(r'role_id\s*=\s*"' + readonly_trust.ROLE.rsplit('/', 1)[1] + '"', role[1])
+            or role_permissions(text, "readonly_provider_updater") != {readonly_trust.UPDATE}):
+        errors.append("read-only trust repair requires its separate update-only role")
+    binding = re.search(r'resource "google_project_iam_member" "github_actions_readonly_provider_updater"\s*\{(.*?)\n\}', text, re.S)
+    expected = 'project = var.project_id\nrole = google_project_iam_custom_role.readonly_provider_updater.name\nmember = "serviceAccount:${var.github_actions_terraform_service_account_email}"\ncondition {\n'
+    expected += '\n'.join(key + ' = "' + value + '"' for key, value in readonly_trust.condition().items()) + '\n}'
+    if binding is None or re.sub(r'\s+', '', binding[1]) != re.sub(r'\s+', '', expected):
+        errors.append("read-only trust repair requires the exact protected principal and fixed-expiry binding")
+    provider = re.search(r'resource "google_iam_workload_identity_pool_provider" "github_readonly"\s*\{(.*?)\n\}', text, re.S)
+    expected = '''project = var.project_id
+      workload_identity_pool_id = google_iam_workload_identity_pool.github.workload_identity_pool_id
+      workload_identity_pool_provider_id = var.github_readonly_workload_identity_pool_provider_id
+      display_name = "GitHub Actions read-only"
+      description = "Restricts GitHub OIDC tokens to read-only shared-datasets bucket checks."
+      disabled = false
+      attribute_mapping = {
+        "google.subject" = "assertion.sub"
+        "attribute.actor" = "assertion.actor"
+        "attribute.repository" = "assertion.repository"
+        "attribute.repository_owner" = "assertion.repository_owner"
+        "attribute.workflow" = "assertion.workflow"
+      }
+      attribute_condition = join(" && ", [
+        "assertion.repository == '${var.github_repository}'",
+        "''' + '(' + ' || '.join("assertion.workflow == '" + name + "'" for name in readonly_trust.WORKFLOWS) + ')' + '''",
+      ])
+      oidc { issuer_uri = "https://token.actions.githubusercontent.com" }'''
+    if provider is None or re.sub(r'\s+', '', provider[1]) != re.sub(r'\s+', '', expected):
+        errors.append("read-only trust repair must retain the exact declared provider configuration and workflow addition")
+    jobs = workflow(root, "cron-alert-policy-sync.yml")["jobs"]
+    for name, predecessor, readiness, targets in (
+        ("readonly-bootstrap", "bootstrap", "iam-bootstrap", {"google_project_iam_custom_role.readonly_provider_updater", "google_project_iam_member.github_actions_readonly_provider_updater"}),
+        ("readonly-trust", "readonly-bootstrap", "readonly-wif-trust", {readonly_trust.ADDRESS}),
+    ):
+        job = jobs.get(name, {})
+        inputs = job.get("with", {})
+        if (job.get("needs") != predecessor or inputs.get("readiness_target") != readiness
+                or inputs.get("block_deletes") is not True
+                or any(set(inputs.get(field, "").split()) != targets for field in ("targets", "allowed_exact"))):
+            errors.append("read-only trust repair requires its ordered two-target bootstrap and exact one-target sync")
+    return errors
 
 
 def operational_storage_contract(root, text, inputs):
@@ -251,9 +300,10 @@ def iam_contract(root):
         for field in ("targets", "allowed_exact"):
             if not {"google_project_iam_custom_role." + label, "google_project_iam_member.github_actions_" + label} <= set(bootstrap.get(field, "").split()):
                 errors.append("operational provider " + kind + " has no exact protected bootstrap " + field)
+    errors += readonly_trust_contract(root)
     observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
     errors += operational_storage_contract(root, operational, observations["with"])
-    if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
+    if observations.get("needs") != ["bootstrap", "readonly-trust"] or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
         errors.append("operational setup requires ordered bootstrap, permission readiness and blocked deletion")
     audit_address = "google_project_iam_audit_config.operational_run_data_write"
     audit_match = re.search(r'resource\s+"google_project_iam_audit_config"\s+"operational_run_data_write"\s*\{(.*?)(?=\nresource |\Z)', operational, re.S)
@@ -292,7 +342,7 @@ def iam_contract(root):
     expected_auth = {
         "workload_identity_provider": "${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}",
         "service_account": "${{ env.TERRAFORM_SERVICE_ACCOUNT }}",
-        "token_format": "${{ inputs.readiness_target == 'operational-observer-setup' && 'access_token' || '' }}",
+        "token_format": "${{ (inputs.readiness_target == 'operational-observer-setup' || inputs.readiness_target == 'readonly-wif-trust') && 'access_token' || '' }}",
         "access_token_scopes": "https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email",
     }
     if (generic.get("env", {}).get("TERRAFORM_SERVICE_ACCOUNT") != "${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"

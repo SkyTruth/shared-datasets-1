@@ -25,6 +25,28 @@ resource "google_iam_workload_identity_pool_provider" "github_readonly" {
   }
 }
 
+# PROPOSAL: separate approval is required before merging or applying this
+# temporary project-wide update grant. IAM has no provider-ID condition support;
+# the protected saved-plan guard permits only the exact trust-condition repair.
+resource "google_project_iam_custom_role" "readonly_provider_updater" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsReadonlyTrustUpdater"
+  title       = "Shared Datasets Temporary Read-only Trust Updater"
+  description = "Temporary protected trust repair only; no create, delete or pool mutation."
+  permissions = ["iam.workloadIdentityPoolProviders.update"]
+}
+
+resource "google_project_iam_member" "github_actions_readonly_provider_updater" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.readonly_provider_updater.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  condition {
+    title       = "readonly-trust-update-expires"
+    description = "Expire temporary read-only provider update authority at 2026-10-22 02:00 UTC."
+    expression  = "request.time < timestamp('2026-10-22T02:00:00Z')"
+  }
+}
+
 module "github_readonly_service_account" {
   source = "../../modules/service_account"
 

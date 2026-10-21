@@ -54,6 +54,8 @@ CONTRACT_FILES = tuple(sorted({
     "scripts/operational_cutover.py", "scripts/operational_delivery_activation.py",
     ".github/workflows/prod-terraform-target-apply.yml",
     "terraform/envs/prod/operational_observer.tf",
+    "terraform/envs/prod/github_readonly_iam.tf",
+    "scripts/readonly_wif_trust.py", "scripts/wif_setup_permissions.py", "scripts/setup_grant_proof.py",
     "scripts/cloud_observation_ledger.py", "scripts/deployment_receipt_contracts.py",
     "scripts/deployment_emission.py", "scripts/deployment_revision.py", "scripts/slack_incident_api.py", "scripts/workflow_failure_alert.py",
     "scripts/operational_retry.py",

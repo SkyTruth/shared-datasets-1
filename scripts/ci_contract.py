@@ -60,6 +60,7 @@ CONTRACT_FILES = (
     "scripts/scheduled_job_contracts.py",
     "scripts/cdn_plan_readiness.py",
     "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
+    "scripts/readonly_wif_trust.py", "scripts/wif_setup_permissions.py", "scripts/setup_grant_proof.py",
     "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
     ".github/actions/deployment-receipt/action.yml",
 )
@@ -251,6 +252,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
             "terraform/envs/prod/operational_observer.tf",
             "scripts/wif_setup_permissions.py", "scripts/setup_grant_proof.py", "scripts/logging_setup_permissions.py",
+            "terraform/envs/prod/github_readonly_iam.tf", "scripts/readonly_wif_trust.py",
         }:
             selected.add("cron_alert_policy")
         if path == "catalog/categories.yaml":

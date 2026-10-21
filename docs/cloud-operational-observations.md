@@ -57,6 +57,14 @@ The collector's `entries:list` query additionally requires the runtime schema,
 exact legacy/v1/v2 RunJob methods or Scheduler errors before retrieving entries.
 Those query checks select observations; they are not an IAM boundary.
 
+The view filter has four flat disjunctive branches, each repeating the project,
+region, resource type and log family. Cloud Logging rejects Boolean grouping
+deeper than one level for these views, as the protected setup on revision
+`18b2884c` demonstrated. Do not factor the shared labels outside another grouped
+expression: that would reintroduce nested groups or change the access boundary.
+The offline filter regression evaluates every supported family and rejects
+cross-project, cross-region, cross-resource and unrelated-family combinations.
+
 RunJob uses `DATA_WRITE` in the [current Run audit
 contract](https://docs.cloud.google.com/run/docs/audit-logging#googlecloudrunv2Jobs).
 The protected observation setup enables `run.googleapis.com` DATA_WRITE capture
@@ -305,6 +313,29 @@ metadata GET after expiry; a saved plan requests create authority only for an
 actual create. Updates/deletes require a new separately reviewed authority plan.
 Installed allow-grant proof does not claim to defeat independent deny policies
 or authorize another target, and it is never treated as proof of deployment.
+
+An independent live audit found that the existing `github-actions-readonly`
+provider still allows only `Catalog drift guard` and `Bucket hygiene audit`,
+while Terraform also declares `Dataset breaking change alert`. A generation-pinned
+backend read confirmed this exact provider is already managed (state serial 759,
+generation 1792616426547848). No failed consumer run or earlier drift date is
+inferred from that snapshot. A separate proposed protected repair adds a
+project-wide update-only role for the Terraform identity with the same fixed
+`2026-10-22T02:00:00Z` expiry. **It requires separate explicit human approval
+before merge/apply; approval of the observer create grant does not cover it.**
+The exact two-resource bootstrap precedes a one-resource trust sync. A strict
+saved-plan guard accepts only the old two-workflow condition becoming the
+declared three-workflow condition, with no other field changes, replacement,
+creation or deletion. Readiness GETs the real child, verifies its unchanged
+issuer/mapping/configuration and exact installed update-only allow grant; it
+does not call a nonexistent provider permission-test method. A later verified
+no-op does not require update permission after expiry.
+
+Successful main5 shadow cycles may seed the independent heartbeat after its
+protected setup and absence policy are ready. They remain audit evidence for
+that protocol. The final trust-repair protocol must establish its own complete
+24-hour qualification window after compatible protected setup/policy; earlier
+cycles do not start or satisfy that final cutover clock.
 
 ## Heartbeat and cutover evidence
 

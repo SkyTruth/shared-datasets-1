@@ -202,7 +202,7 @@ jobs:
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
           # Logging has no bucket permission-test API. Its read-only installed
           # grant proof binds token identity, including delegated-user rejection.
-          token_format: ${{ inputs.readiness_target == 'operational-observer-setup' && 'access_token' || '' }}
+          token_format: ${{ (inputs.readiness_target == 'operational-observer-setup' || inputs.readiness_target == 'readonly-wif-trust') && 'access_token' || '' }}
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email
 
       - name: Set up gcloud
