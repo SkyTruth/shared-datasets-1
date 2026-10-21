@@ -239,6 +239,60 @@ class Clock:
         self.now += seconds
 
 
+def test_observer_read_has_three_absolute_attempts_and_sticky_exhaustion():
+    clock, attempts = Clock(), []
+    failure = TimeoutError("recognized read-only outage")
+
+    def action():
+        attempts.append(clock.now)
+        raise failure
+
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.OBSERVER_READ):
+            for _ in range(2):
+                with pytest.raises(TimeoutError) as raised:
+                    retry.run_read(action, classify=lambda _: "transport", label="observer snapshot")
+                assert raised.value is failure
+    assert attempts == [0, 5, 20] and clock.sleeps == [5, 15]
+    assert retry.OBSERVER_READ.deadline_seconds == 60
+
+
+def test_observer_snapshot_pages_share_one_minute_and_nested_profiles_cannot_extend_it():
+    clock, attempts, timeouts = Clock(), [], []
+    failure = TimeoutError("read deadline")
+
+    def snapshot():
+        attempts.append(clock.now)
+        if len(attempts) == 1:
+            clock.now += 40  # Several successful pages spent the same operation budget.
+        timeouts.append(retry.request_timeout(15))
+        clock.now += timeouts[-1]
+        raise failure
+
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.OBSERVER_READ) as outer:
+            with retry.operation(profile=retry.UNATTENDED) as nested:
+                assert nested is outer
+                with pytest.raises(TimeoutError) as raised:
+                    retry.run_read(snapshot, classify=lambda _: "transport", label="observer snapshot")
+                assert raised.value is failure
+            with pytest.raises(TimeoutError) as raised:
+                retry.request_timeout(15)
+            assert raised.value is failure
+    assert attempts == [0, 55] and timeouts == [15, 5] and clock.now == 60
+
+
+def test_expired_observer_budget_cannot_start_another_page():
+    clock = Clock()
+    with patch.object(retry, "monotonic", clock.monotonic):
+        with retry.operation(profile=retry.OBSERVER_READ):
+            clock.now = 59
+            assert retry.request_timeout(15) == 1
+            clock.now = 60
+            with pytest.raises(retry.RetryBudgetExhausted):
+                retry.request_timeout(15)
+
+
 def test_unattended_outage_has_eight_absolute_attempts_and_discards_partial_pages(gh):
     clock = Clock()
     log = gh([outage(stdout='[{"partial": true}]')])

@@ -457,12 +457,22 @@ def required_failures(state):
     failures = state["incident"]["failures"]
     specific = {source_alias(item) for item in failures if item["kind"] != "workflow"}
     promoted = {item["source_id"]: item for item in failures if item.get("source") == "cloud" and item["kind"] == "deployment"}
+    typed_observers = {(item["proof"]["fact"]["execution"]["name"], item["proof"]["fact"]["execution"]["uid"],
+                        tuple(item["proof"]["fact"]["execution"]["images"]))
+                       for item in failures if item.get("source") == "cloud"
+                       and item["proof"]["correlation"] is not None and item["proof"]["correlation"].get("kind") == "auxiliary_artifact"
+                       and item["proof"]["fact"]["kind"] == "runtime"
+                       and item["proof"]["fact"]["fact"]["kind"] == "job_outcome"
+                       and item["proof"]["fact"]["fact"]["details"].get("failure_reason") is not None}
     # Exact legacy delivery coverage prevents a duplicate new bot broadcast.
     # Its failure/action evidence and clock remain; no recovery/ACK is invented.
     legacy_coverage = state.get("cloud_legacy_coverage", {})
     return [item for item in failures if (item["kind"] != "workflow" or source_alias(item) not in specific)
             and not (item.get("source") == "cloud" and item["kind"] != "deployment" and item["source_id"] in promoted
                      and item["proof"]["fact"] == promoted[item["source_id"]]["proof"]["fact"])
+            and not (item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "execution"
+                     and (item["proof"]["fact"]["execution"]["name"], item["proof"]["fact"]["execution"]["uid"],
+                          tuple(item["proof"]["fact"]["execution"]["images"])) in typed_observers)
             and observation_key(item) not in legacy_coverage]
 
 
@@ -1203,9 +1213,41 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
     return prepared
 
 
+def verified_auxiliary_artifact(api, fact, *, expected=None):
+    """Image provenance only: no dataset success or same-attempt correlation."""
+    contract = deployments.AUXILIARY_CLOUD_JOBS[fact["job"]]
+    if api is None or not cloud.DIGEST.fullmatch(cloud_adapter.revision(fact)):
+        require(expected is None, "auxiliary artifact provenance cannot be reverified")
+        return None
+    target, resource = contract["deployment_target"], contract["resource"]
+    records = ([api.get(f"repos/{REPOSITORY}/deployments/{expected['record_id']}")] if expected else
+               api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100"))
+    matches = []
+    for record in records:
+        raw = record.get("payload")
+        raw = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(raw, dict) or raw.get("artifact") not in fact["execution"]["images"] or resource not in raw.get("targets", []):
+            continue
+        payload = deployments.verify_record(api, REPOSITORY, record)
+        require(payload["target"] == target, "auxiliary resource belongs to another deployment")
+        statuses = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+        selected = [status for status in statuses if expected is None or status["id"] == expected["status_id"]]
+        require(selected, "auxiliary image has no protected signed receipt")
+        status = max(selected, key=lambda item: item["id"])
+        deployments.verify_receipt(api, REPOSITORY, record, status)
+        matches.append(cloud_adapter.validate_correlation({"kind": "auxiliary_artifact",
+            "deployment_target": target, "resource": resource, "record_id": record["id"], "status_id": status["id"],
+            "revision": record["sha"], "artifact": payload["artifact"], "execution": fact["execution"]["name"]}))
+    result = max(matches, key=lambda item: item["record_id"]) if matches else None
+    require(expected is None or result == expected, "saved auxiliary image proof differs from its signed resource receipt")
+    return result
+
+
 def verified_cloud_correlation(api, fact, *, expected=None):
     """Bind only an exact signed deployment/execution and complete source attempt."""
     cloud_adapter.validate_fact(fact)
+    if fact["job"] in deployments.AUXILIARY_CLOUD_JOBS:
+        return verified_auxiliary_artifact(api, fact, expected=expected)
     if (api is None or cloud_adapter.provenance_gap(fact)
             or fact["job"] not in cloud_adapter.registered_jobs()):
         require(expected is None, "saved cloud correlation no longer has exact provenance")
@@ -1259,6 +1301,10 @@ def reverify_saved_cloud_success(reader, observation, *, github_api=None):
     expected = fact["execution"]
     actual = cloud.authoritative_execution(reader, fact["job"], expected["name"].rsplit("/", 1)[-1])
     require(actual == expected and actual["terminal"] and actual["success"], "cloud recovery execution changed or lacks terminal proof")
+    correlation = observation["proof"]["correlation"]
+    if correlation is not None and correlation.get("kind") == "auxiliary_artifact":
+        verified_auxiliary_artifact(github_api, fact, expected=correlation)
+        return True  # Observer health only; no canonical data receipt is implied.
     receipt = fact.get("run_receipt")
     require(receipt is not None and reader.run_receipt(receipt["uri"], generation=receipt["generation"]) == receipt,
             "cloud recovery canonical receipt changed")
@@ -1272,7 +1318,7 @@ def cloud_variants(fact, correlation, *, shadow):
     if observation is None:
         return []
     observations = [observation]
-    if observation["conclusion"] == "success":
+    if observation["conclusion"] == "success" and cloud_adapter.recoverable(fact):
         recovered = copy.deepcopy(observation)
         subject = fact["fact"]["subject"]
         recovered.update(scope="cloud:identity:" + cloud.digest({"asset": subject["asset_slug"], "release": subject["release"]}),
@@ -1283,7 +1329,7 @@ def cloud_variants(fact, correlation, *, shadow):
 
 def normalize_cloud_collection(proposal, github_api=None, *, shadow=True):
     cloud.validate_checkpoint(proposal)
-    observations, audits, seen = [], [], {}
+    observations, audits, seen, deferred, deferred_proofs = [], [], {}, [], {}
     for fact in proposal["pending"]:
         cloud_adapter.validate_fact(fact)
         source = fact["source_id"]
@@ -1296,8 +1342,17 @@ def normalize_cloud_collection(proposal, github_api=None, *, shadow=True):
             audits.append(fact)
             continue
         correlation = verified_cloud_correlation(github_api, fact)
+        if (correlation is not None and correlation.get("kind") == "auxiliary_artifact"
+                and not cloud_adapter.provenance_gap(fact, correlation)
+                and fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact["kind"] == "execution"
+                and fact["execution"]["terminal"] and fact["execution"]["completion_time"] is not None
+                and cloud.instant(fact["execution"]["completion_time"]) > cloud.instant(proposal["covered_through"])):
+            deferred.append(source)
+            deferred_proofs[source] = correlation
+            continue  # Typed runtime evidence lies beyond this complete scan.
         observations.extend(cloud_variants(fact, correlation, shadow=shadow))
-    return {"observations": observations, "audit_reports": audits, "sources": list(seen.values())}
+    return {"observations": observations, "audit_reports": audits, "sources": list(seen.values()),
+            "deferred_source_ids": deferred, "deferred_proofs": deferred_proofs}
 
 
 def cloud_evaluation(normalized, states, *, shadow, worker):
@@ -1342,13 +1397,20 @@ def cloud_evaluation(normalized, states, *, shadow, worker):
         else:
             counts["record_only"] += 1
         counts["uncertain_mutation"] += int(operational_fact(observation).mutation_status == policy.MutationStatus.UNCERTAIN)
-    gaps = [fact["source_id"] for fact in normalized["sources"] if cloud_adapter.provenance_gap(fact)]
+    source_proofs = {item["source_id"]: item["proof"]["correlation"] for item in normalized["observations"]}
+    gaps = [fact["source_id"] for fact in normalized["sources"] if fact["source_id"] not in normalized["deferred_source_ids"]
+            and cloud_adapter.provenance_gap(fact, source_proofs.get(fact["source_id"]))]
     counts["provenance_gaps"] = len(gaps)
     counts["quiet_sources"] = len({fact["source_id"] for fact in normalized["sources"]}
                                  - {item["source_id"] for item in normalized["observations"] if item["conclusion"] != "success"})
-    counts["verified_asset_publications"] = len({item["source_id"] for item in normalized["observations"] if item["conclusion"] == "success"})
+    counts["verified_asset_publications"] = len({item["source_id"] for item in normalized["observations"]
+                                                if cloud_adapter.recoverable(item["proof"]["fact"])})
+    counts["verified_observer_health"] = len({item["source_id"] for item in normalized["observations"]
+                                              if cloud_adapter.observational_success(item["proof"]["fact"], item["proof"]["correlation"])})
     return {"schema": "shared-datasets-cloud-evaluation-v1", "complete": True, "provenance_complete": not gaps,
             "resolved_source_ids": [], "provenance_gap_source_ids": gaps, "shadow": shadow, "worker": copy.deepcopy(worker),
+            "deferred_source_ids": list(normalized["deferred_source_ids"]),
+            "deferred_proofs": copy.deepcopy(normalized["deferred_proofs"]),
             "source_digest": cloud.digest(normalized["sources"]), "observation_digest": cloud.digest(normalized["observations"]),
             "sources": copy.deepcopy(normalized["sources"]), "observations": copy.deepcopy(normalized["observations"]),
             "incident_refs": refs, "audit_refs": audit_refs, "cloud_counts": counts}
@@ -1376,12 +1438,15 @@ def verify_cloud_evaluation(checkpoint, evaluation, states, *, shadow, worker):
         correlations[source] = correlation
     expected_observations = []
     for fact in expected["sources"]:
-        if fact not in expected["audit_reports"]:
+        if fact not in expected["audit_reports"] and fact["source_id"] not in evaluation.get("deferred_source_ids", []):
             expected_observations.extend(cloud_variants(fact, correlations.get(fact["source_id"]), shadow=shadow))
     require(observations == expected_observations, "evaluation omitted or altered a canonical cloud action")
     if shadow:
         require(all(item["kind"] != "deployment" for item in observations), "shadow cannot promote cloud observations into public GitHub episodes")
     expected["observations"] = expected_observations
+    expected["deferred_source_ids"] = evaluation.get("deferred_source_ids", [])
+    expected["deferred_proofs"] = evaluation.get("deferred_proofs", {})
+    cloud.unresolved_pending({**checkpoint, "pending": sources}, evaluation)
     require(cloud_evaluation(expected, states, shadow=shadow, worker=worker) == evaluation, "cloud evaluation differs from signed incident evidence")
     return True
 
@@ -1481,7 +1546,7 @@ def inherit_cloud_supervision(states, identity, observations, *, now):
         correlation = observation["proof"]["correlation"]
         if correlation is None or observation["kind"] == "deployment" or observation["conclusion"] == "success":
             continue
-        operation_id = "deployment:" + observation["proof"]["fact"]["job"]
+        operation_id = "deployment:" + correlation.get("deployment_target", observation["proof"]["fact"]["job"])
         sources = [state["supervision"][operation_id] for state in states.values() if operation_id in state["supervision"]]
         require(len(sources) <= 1, "cloud action has conflicting accountable deployment owners")
         if not sources:
@@ -1566,7 +1631,7 @@ def supervise(ledger, identity, request, *, now=None):
         if scope.startswith("cloud:"):
             require(state["incident"] is not None and any(item.get("source") == "cloud"
                     and item["proof"]["correlation"] is not None and binding_for(item) == binding
-                    and not cloud_adapter.provenance_gap(item["proof"]["fact"]) for item in state["incident"]["failures"]),
+                    and not cloud_adapter.provenance_gap(item["proof"]["fact"], item["proof"]["correlation"]) for item in state["incident"]["failures"]),
                     "cloud ownership requires exact signed deployment/execution/artifact evidence")
     else:
         require(kind != "job", "new unregistered jobs cannot be concealed by guessed scopes")

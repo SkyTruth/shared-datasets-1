@@ -276,7 +276,9 @@ def evaluated_collection(candidate, evaluation):
     require(isinstance(resolved, list) and all(isinstance(source, str) for source in resolved) and len(resolved) == len(set(resolved)) and set(resolved) <= {fact["source_id"] for fact in candidate["pending"]}, "invalid provenance resolution identities")
     policy_gaps = evaluation.get("provenance_gap_source_ids", [])
     require(isinstance(policy_gaps, list) and len(policy_gaps) == len(set(policy_gaps)) and set(policy_gaps) <= {fact["source_id"] for fact in candidate["pending"]}, "invalid evaluated provenance gap identities")
-    unresolved = [fact for fact in candidate["pending"] if fact["source_id"] not in resolved and (fact["source_id"] in policy_gaps or fact.get("coverage_gaps") or fact.get("execution", {}).get("coverage_gaps"))]
+    deferred = evaluation.get("deferred_source_ids", [])
+    require(isinstance(deferred, list) and len(deferred) == len(set(deferred)) and set(deferred) <= {fact["source_id"] for fact in candidate["pending"]}, "invalid deferred runtime coverage identities")
+    unresolved = [fact for fact in candidate["pending"] if fact["source_id"] not in resolved and (fact["source_id"] in deferred or fact["source_id"] in policy_gaps or fact.get("coverage_gaps") or fact.get("execution", {}).get("coverage_gaps"))]
     coverage = {**candidate["last_cycle"], "coverage_gaps": sorted({gap for fact in unresolved for gap in [*fact.get("coverage_gaps", []), *fact.get("execution", {}).get("coverage_gaps", []), *(["unregistered_or_unverified_cloud_source"] if fact["source_id"] in policy_gaps else [])]})}
     return {"checkpoint": {**candidate, "pending": unresolved, "last_cycle": coverage}, "evaluation": deepcopy(evaluation)}
 
@@ -296,10 +298,32 @@ def confirm_heartbeat(expected, verified_durable, *, delivery_verified, heartbea
     evaluation = expected["evaluation"]
     require(isinstance(evaluation, dict) and evaluation.get("complete") is True, "policy evaluation is incomplete")
     checkpoint = expected["checkpoint"]
-    if checkpoint["pending"] or checkpoint["last_cycle"].get("coverage_gaps") or evaluation.get("provenance_complete", True) is not True:
+    if unresolved_pending(checkpoint, evaluation) or checkpoint["last_cycle"].get("coverage_gaps") or evaluation.get("provenance_complete", True) is not True:
         return False
     heartbeat(instant(checkpoint["last_cycle"]["completed_at"]))
     return True
+
+
+def unresolved_pending(checkpoint, evaluation):
+    """Future terminal metadata is a watch buffer, not a gap before the cutoff."""
+    from scripts.deployment_revision import AUXILIARY_CLOUD_JOBS
+    from scripts import cloud_incident_adapter as adapter
+    deferred = evaluation.get("deferred_source_ids", [])
+    proofs = evaluation.get("deferred_proofs", {})
+    require(isinstance(deferred, list) and len(deferred) == len(set(deferred))
+            and set(deferred) <= {fact["source_id"] for fact in checkpoint["pending"]}, "invalid deferred future observations")
+    require(isinstance(proofs, dict) and set(proofs) == set(deferred), "deferred coverage lacks exact auxiliary artifact proofs")
+    for fact in checkpoint["pending"]:
+        if fact["source_id"] in deferred:
+            execution = fact.get("execution", {})
+            proof = adapter.validate_correlation(proofs[fact["source_id"]])
+            require(fact.get("kind") == "execution" and fact.get("job") in AUXILIARY_CLOUD_JOBS
+                    and proof.get("kind") == "auxiliary_artifact" and proof["execution"] == execution.get("name")
+                    and proof["artifact"] in execution.get("images", []) and not adapter.provenance_gap(fact, proof)
+                    and execution.get("terminal") is True and execution.get("completion_time") is not None
+                    and instant(checkpoint["covered_through"]) < instant(execution["completion_time"]) <= instant(checkpoint["last_cycle"]["completed_at"]),
+                    "deferred terminal observation does not lie beyond the complete coverage cutoff")
+    return [fact for fact in checkpoint["pending"] if fact["source_id"] not in deferred]
 
 
 def reconcile_cycle(previous, api, *, now, reconcile, persist, heartbeat):

@@ -43,9 +43,10 @@ def shadow():
 
 
 def verify(evidence, cycles, heartbeats, **kwargs):
-    return gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, contract_hash=CONTRACT, policy_hash=POLICY,
-                               policy_ids={"exact": "policies/123"}, policy_changed_at=NOW - timedelta(hours=25), heartbeat_points=heartbeats,
-                               now=NOW, revision_allowed=lambda _: True, **kwargs)
+    defaults = {"load_cycle": cycles.__getitem__, "load_latest": lambda: cycles[max(cycles)], "contract_hash": CONTRACT, "policy_hash": POLICY,
+                "policy_ids": {"exact": "policies/123"}, "policy_changed_at": NOW - timedelta(hours=25), "heartbeat_points": heartbeats,
+                "now": NOW, "revision_allowed": lambda _: True}
+    return gate.validate_shadow(evidence, **(defaults | kwargs))
 
 
 def test_full_day_requires_observed_post_policy_samples_and_signed_continuity():
@@ -54,9 +55,131 @@ def test_full_day_requires_observed_post_policy_samples_and_signed_continuity():
     with pytest.raises(ValueError, match="heartbeat sample"):
         verify(evidence, cycles, set())
     with pytest.raises(ValueError, match="predates"):
-        gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, contract_hash=CONTRACT, policy_hash=POLICY,
+        gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, load_latest=lambda: cycles[max(cycles)], contract_hash=CONTRACT, policy_hash=POLICY,
             policy_ids=evidence["policy_ids"], policy_changed_at=NOW - timedelta(hours=23), heartbeat_points=heartbeats,
             now=NOW, revision_allowed=lambda _: True)
+
+
+@pytest.mark.parametrize("defect", [None, "within_window", "future", "unregistered", "unresolved", "tagged", "missing_proof"])
+def test_only_proven_auxiliary_terminal_buffer_beyond_coverage_can_remain_pending(defect):
+    from scripts import cloud_incident_adapter as adapter
+    evidence, cycles, points = shadow()
+    cycle = cycles[145]
+    covered, completed = (gate.collector.instant(cycle["manifest"][key]) for key in ("covered_through", "completed_at"))
+    terminal = covered if defect == "within_window" else completed + timedelta(seconds=1) if defect == "future" else completed - timedelta(seconds=1)
+    job = "unregistered-observer" if defect == "unregistered" else "wdpa-execution-observer"
+    log_name = "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr"
+    source = "cloudlog:" + gate.collector.digest({"logName": log_name, "insertId": "auxiliary-buffer"})
+    fact = {"source_id": source, "observed_at": gate.collector.timestamp(covered - timedelta(minutes=1)), "resource_type": "cloud_run_job", "job": job,
+            "evidence": {"log_name": log_name, "insert_id": "auxiliary-buffer"}, "kind": "execution",
+            "execution": {"name": f"projects/shared-datasets-1/locations/us-central1/jobs/{job}/executions/observer-abcde",
+                          "uid": "10be5376-cc93-4eed-9b11-ab2d3ef8d790", "images": [image("wdpa-monthly")], "revision": "sha256:" + "f" * 64,
+                          "terminal": True, "success": True, "create_time": gate.collector.timestamp(covered - timedelta(minutes=1)), "start_time": gate.collector.timestamp(covered - timedelta(minutes=1)),
+                          "completion_time": gate.collector.timestamp(terminal), "coverage_gaps": []}}
+    if defect == "tagged":
+        fact["execution"].update(images=["mutable:latest"], revision="cloudrun-execution:" + fact["execution"]["uid"], coverage_gaps=["execution_image_digest_unresolved"])
+    cycle["checkpoint"]["pending"] = [adapter.validate_fact(gate.strict_json(gate.canonical(fact)))]
+    cycle["evaluation"]["deferred_source_ids"] = [] if defect == "unresolved" else [source]
+    cycle["evaluation"]["deferred_proofs"] = {} if defect in {"unresolved", "missing_proof"} else {source: {
+        "kind": "auxiliary_artifact", "record_id": 1, "status_id": 2, "revision": "b" * 40, "artifact": image("wdpa-monthly"),
+        "execution": fact["execution"]["name"], "deployment_target": "wdpa-monthly", "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this"}}
+    if defect:
+        with pytest.raises(ValueError, match="coverage|deferred|registered"):
+            verify(evidence, cycles, points)
+    else:
+        assert verify(evidence, cycles, points)["hours"] == 24
+
+
+def rolling_shadow():
+    evidence, cycles, _ = shadow()
+    for identifier in range(290, 578):
+        cycle = deepcopy(cycles[identifier - 1])
+        cycle["manifest_id"] = identifier
+        cycle["manifest"].update(previous_cycle_id=identifier - 1, source_sha="e" * 40)
+        for key in ("completed_at", "covered_through"):
+            cycle["manifest"][key] = gate.collector.timestamp(gate.collector.instant(cycle["manifest"][key]) + timedelta(minutes=5))
+        coverage = cycle["checkpoint"]["last_cycle"]
+        for key in ("start", "end", "completed_at"):
+            coverage[key] = gate.collector.timestamp(gate.collector.instant(coverage[key]) + timedelta(minutes=5))
+        cycle["checkpoint"]["covered_through"] = cycle["manifest"]["covered_through"]
+        cycles[identifier] = gate.strict_json(gate.canonical(cycle))
+    points = {gate.collector.instant(cycle["manifest"]["completed_at"]) for identifier, cycle in cycles.items() if identifier >= 289}
+    return evidence, cycles, points
+
+
+def test_reviewed_historical_day_allows_fresh_compatible_post_merge_window():
+    evidence, cycles, points = rolling_shadow()
+    result = verify(evidence, cycles, points, now=NOW + timedelta(hours=24))
+    assert result["reviewed_last_cycle_id"] == 289
+    assert result["first_cycle_id"] == 289 and result["last_cycle_id"] == 577
+    assert result["last_cycle_manifest_sha256"] == gate.sha256(gate.canonical(cycles[577]["manifest"]))
+    # Historical heartbeat retention cannot make immutable review bytes stale;
+    # all 289 fresh cycles still require independent observed metric points.
+    assert len(points) == 289 and result["hours"] == 24
+
+
+@pytest.mark.parametrize("defect", ["bad_latest", "different_contract", "different_policy", "incomplete", "gap", "missing_heartbeat", "nonmain", "stale", "rewound", "missing_predecessor"])
+def test_rolling_window_never_falls_back_to_good_historical_day(defect):
+    evidence, cycles, points = rolling_shadow()
+    options = {"now": NOW + timedelta(hours=24)}
+    if defect == "bad_latest":
+        options["load_latest"] = mock.Mock(side_effect=ValueError("unsigned latest cycle"))
+    elif defect == "different_contract":
+        cycles[577]["manifest"]["collector_contract_sha256"] = "0" * 64
+    elif defect == "different_policy":
+        cycles[577]["manifest"]["policy_sha256"] = "0" * 64
+    elif defect == "incomplete":
+        cycles[400]["evaluation"]["complete"] = False
+    elif defect == "gap":
+        cycles[400]["manifest"]["previous_cycle_id"] = 397
+    elif defect == "missing_heartbeat":
+        points.remove(gate.collector.instant(cycles[400]["manifest"]["completed_at"]))
+    elif defect == "nonmain":
+        options["revision_allowed"] = lambda sha: sha != "e" * 40
+    elif defect == "stale":
+        options["now"] += timedelta(minutes=6)
+    elif defect == "rewound":
+        options["load_latest"] = lambda: cycles[288]
+    elif defect == "missing_predecessor":
+        cycles[400]["manifest"]["previous_cycle_id"] = None
+    with pytest.raises(ValueError):
+        verify(evidence, cycles, points, **options)
+
+
+@pytest.mark.parametrize("defect", [None, "future", "missing_sample"])
+def test_new_cycle_during_signature_verification_uses_fresh_clock_and_heartbeat_inventory(defect):
+    evidence, cycles, old_points = shadow()
+    fresh_points = set(old_points)
+    def latest_after_review():
+        assert reads[-1] == 289
+        for identifier in (290, 291):
+            cycle = deepcopy(cycles[identifier - 1])
+            cycle["manifest_id"] = identifier
+            cycle["manifest"]["previous_cycle_id"] = identifier - 1
+            for key in ("completed_at", "covered_through"):
+                cycle["manifest"][key] = gate.collector.timestamp(gate.collector.instant(cycle["manifest"][key]) + timedelta(minutes=5))
+            for key in ("start", "end", "completed_at"):
+                cycle["checkpoint"]["last_cycle"][key] = gate.collector.timestamp(gate.collector.instant(cycle["checkpoint"]["last_cycle"][key]) + timedelta(minutes=5))
+            cycle["checkpoint"]["covered_through"] = cycle["manifest"]["covered_through"]
+            cycles[identifier] = gate.strict_json(gate.canonical(cycle))
+            fresh_points.add(gate.collector.instant(cycle["manifest"]["completed_at"]))
+        return cycles[291]
+    reads = []
+    def read(identifier):
+        reads.append(identifier)
+        return cycles[identifier]
+    def observed_heartbeats(*, now):
+        assert 290 in reads  # No metric snapshot before the current window reads.
+        assert now == NOW + timedelta(minutes=6) if defect != "future" else now == NOW
+        return old_points if defect == "missing_sample" else fresh_points
+    options = {"load_cycle": read, "load_latest": latest_after_review, "clock": lambda: NOW if defect == "future" else NOW + timedelta(minutes=6), "heartbeat_reader": observed_heartbeats}
+    if defect:
+        with pytest.raises(ValueError, match="future|heartbeat sample"):
+            verify(evidence, cycles, old_points, **options)
+    else:
+        result = verify(evidence, cycles, old_points, **options)
+        assert result["last_cycle_id"] == 291
+        assert result["heartbeat_at"] == result["last_cycle_completed_at"] == gate.collector.timestamp(NOW + timedelta(minutes=5))
 
 
 def test_final_wall_clock_rejects_evidence_aged_during_signature_enumeration():
@@ -123,7 +246,7 @@ def test_rejects_forged_incomplete_or_stale_shadow_history(defect):
     elif defect == "public_send":
         cycle["evaluation"]["public_delivery_count"] = 1
     elif defect == "pending":
-        cycle["checkpoint"]["pending"] = [{"unresolved": True}]
+        cycle["checkpoint"]["pending"] = [{"source_id": "cloudlog:" + "0" * 64, "unresolved": True}]
     elif defect == "views":
         cycle["checkpoint"]["last_cycle"]["views"].pop()
     elif defect == "coverage":
@@ -138,7 +261,7 @@ def test_rejects_forged_incomplete_or_stale_shadow_history(defect):
         evidence["cycles"] = evidence["cycles"][:-2]
     elif defect == "unverified_main":
         with pytest.raises(ValueError, match="main ancestry"):
-            gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, contract_hash=CONTRACT, policy_hash=POLICY,
+            gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, load_latest=lambda: cycles[max(cycles)], contract_hash=CONTRACT, policy_hash=POLICY,
                 policy_ids=evidence["policy_ids"], policy_changed_at=NOW - timedelta(hours=25), heartbeat_points=heartbeats,
                 now=NOW, revision_allowed=lambda _: False)
         return
@@ -168,9 +291,10 @@ class Runtime:
 
 
 def drain(evidence, live=None, **kwargs):
-    return gate.validate_drain(evidence["runtime_deployments"], live=live or Runtime(),
-        load_deployment=lambda identity: ({"sha": "a" * 40}, {"target": gate.JOBS[identity - 1], "artifact": image(gate.JOBS[identity - 1])}),
-        runtime_hash=lambda sha: "e" * 64, revision_allowed=lambda sha: True, **kwargs)
+    defaults = {"live": live or Runtime(), "load_deployment": lambda identity: ({"id": identity, "sha": "a" * 40}, {"target": gate.JOBS[(identity - 1) % 100], "artifact": image(gate.JOBS[(identity - 1) % 100])}),
+                "resolve_current": lambda job, current: {"record": {"id": 201 + gate.JOBS.index(job), "sha": "b" * 40}, "payload": {"target": job, "artifact": current}, "status_id": 301 + gate.JOBS.index(job)},
+                "runtime_hash": lambda sha: "e" * 64, "revision_allowed": lambda sha: True, "ancestor": lambda old, new: True, "unified_source": lambda sha: True}
+    return gate.validate_drain(evidence["runtime_deployments"], **(defaults | kwargs))
 
 
 def test_old_active_images_and_native_mode_cannot_authorize_cutover_or_secret_retirement():
@@ -188,6 +312,110 @@ def test_old_active_images_and_native_mode_cannot_authorize_cutover_or_secret_re
     live.active["wdpa-monthly"][0]["template"]["containers"][0]["image"] = "mutable:latest"
     with pytest.raises(ValueError, match="old or unverified"):
         drain(evidence, live)
+
+
+def test_native_era_source_anchor_allows_new_signed_compatible_unified_image():
+    evidence, _, _ = shadow()
+    for index, job in enumerate(gate.JOBS):
+        evidence["runtime_deployments"][job]["deployment_id"] = index + 1
+    result = drain(evidence, load_deployment=lambda identifier: ({"id": identifier, "sha": "a" * 40}, {"target": gate.JOBS[identifier - 1], "artifact": "old-native-image@sha256:" + "a" * 64}))
+    proof = result["wdpa-monthly"]
+    assert proof == {"anchor_deployment_id": 1, "deployment_id": 201, "status_id": 301, "source_sha": "b" * 40, "runtime_sha256": "e" * 64, "image": image("wdpa-monthly")}
+
+
+@pytest.mark.parametrize("defect", ["anchor_id", "target", "artifact", "status", "older_attempt", "runtime", "nonmain", "divergent", "native_source"])
+def test_current_deployment_must_be_signed_supported_unified_descendant(defect):
+    evidence, _, _ = shadow()
+    for index, job in enumerate(gate.JOBS):
+        evidence["runtime_deployments"][job]["deployment_id"] = index + 1
+    options = {}
+    current = {"record": {"id": 201, "sha": "b" * 40}, "payload": {"target": "wdpa-monthly", "artifact": image("wdpa-monthly")}, "status_id": 301}
+    if defect == "anchor_id":
+        options["load_deployment"] = lambda identifier: ({"id": 999, "sha": "a" * 40}, {"target": "wdpa-monthly"})
+    elif defect == "target":
+        current["payload"]["target"] = "eamlis-monthly"
+    elif defect == "artifact":
+        current["payload"]["artifact"] = "other@sha256:" + "e" * 64
+    elif defect == "status":
+        current["status_id"] = False
+    elif defect == "older_attempt":
+        current["record"]["id"] = 0
+    elif defect == "runtime":
+        options["runtime_hash"] = lambda sha: "e" * 64 if sha == "a" * 40 else "f" * 64
+    elif defect == "nonmain":
+        options["revision_allowed"] = lambda sha: sha == "a" * 40
+    elif defect == "divergent":
+        options["ancestor"] = lambda old, new: False
+    elif defect == "native_source":
+        options["unified_source"] = lambda sha: False
+    with pytest.raises(ValueError, match="source anchor|unified main ancestry"):
+        drain(evidence, resolve_current=lambda job, image: current, **options)
+
+
+@pytest.mark.parametrize("producer", ["ingestion/common/runtime.py", "ingestion/wdpa_monthly/execution_observer.py", "scripts/operational_retry.py", "scripts/gcp_read_retry.py", "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/Dockerfile.promotion"])
+def test_runtime_fact_producer_change_invalidates_reviewed_source_anchor(tmp_path, producer):
+    evidence, _, _ = shadow()
+    def source(command, **kwargs):
+        return b"changed runtime facts" if command[-1] == "b" * 40 + ":" + producer else b"same reviewed file"
+    with mock.patch.object(gate.subprocess, "check_output", side_effect=source):
+        expected = gate.runtime_contract(tmp_path, "a" * 40)
+        assert gate.runtime_contract(tmp_path, "b" * 40) != expected
+        for index, job in enumerate(gate.JOBS):
+            evidence["runtime_deployments"][job] = {"deployment_id": index + 1, "runtime_sha256": expected}
+        with pytest.raises(ValueError, match="supported unified main ancestry"):
+            drain(evidence, runtime_hash=lambda sha: gate.runtime_contract(tmp_path, sha))
+
+
+@pytest.mark.parametrize("defect", [None, "native", "other_cutover", "duplicate_json"])
+def test_current_runtime_source_itself_requires_reviewed_unified_config(tmp_path, defect):
+    value = rollout("native" if defect == "native" else "unified")
+    if defect == "other_cutover":
+        value["cutover_evidence"]["sha256"] = "0" * 64
+    raw = b'{"schema":1,"schema":2}' if defect == "duplicate_json" else gate.canonical(value)
+    with mock.patch.object(gate.subprocess, "check_output", return_value=raw) as read:
+        if defect == "duplicate_json":
+            with pytest.raises(ValueError, match="duplicate JSON"):
+                gate.unified_runtime_source(tmp_path, "b" * 40, rollout("unified")["cutover_evidence"])
+        else:
+            assert gate.unified_runtime_source(tmp_path, "b" * 40, rollout("unified")["cutover_evidence"]) is (defect is None)
+        read.assert_called_once_with(["git", "show", "b" * 40 + ":" + gate.CONFIG], cwd=tmp_path)
+
+
+@pytest.mark.parametrize("defect", [None, "unsigned", "failed", "unknown", "pending", "artifact", "target", "empty", "duplicate", "missing_id"])
+def test_latest_runtime_inventory_never_falls_back_from_bad_attempt(defect):
+    from scripts import deployment_revision as deployments
+    records = gate.strict_json(b'[{"id":201,"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"id":1,"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]')
+    payload = {"target": "wdpa-monthly", "artifact": image("wdpa-monthly")}
+    status = {"id": 301, "state": "success", "description": "verified"}
+    if defect == "failed":
+        status.update(state="failure", description="failed")
+    elif defect == "unknown":
+        status.update(state="error", description="unknown")
+    elif defect == "pending":
+        status.update(state="in_progress", description="verification_pending")
+    elif defect == "artifact":
+        payload["artifact"] = "another@sha256:" + "0" * 64
+    elif defect == "target":
+        payload["target"] = "eamlis-monthly"
+    elif defect == "empty":
+        records = []
+    elif defect == "duplicate":
+        records.append(records[0])
+    elif defect == "missing_id":
+        records[0].pop("id")
+    api = mock.Mock()
+    api.pages.return_value = records
+    with mock.patch.object(deployments, "verify_record", return_value=payload, side_effect=ValueError("unsigned latest attempt") if defect == "unsigned" else None) as verify_record, \
+         mock.patch.object(deployments, "verified_statuses", return_value=[status]):
+        if defect:
+            with pytest.raises(ValueError):
+                gate.current_runtime_deployment(api, "SkyTruth/shared-datasets-1", "wdpa-monthly", image("wdpa-monthly"))
+        else:
+            proof = gate.current_runtime_deployment(api, "SkyTruth/shared-datasets-1", "wdpa-monthly", image("wdpa-monthly"))
+            assert proof["record"]["id"] == 201 and proof["status_id"] == 301
+        if records and defect not in {"duplicate", "missing_id"}:
+            assert verify_record.call_args.args[-1]["id"] == 201
+    api.pages.assert_called_once_with("repos/SkyTruth/shared-datasets-1/deployments?environment=production-wdpa-monthly&per_page=100")
 
 
 def test_only_registered_operational_route_removal_is_eligible_and_schema_retirement_stays_possible():
@@ -368,19 +596,26 @@ def test_full_plan_gate_audits_current_filters_channels_and_preserves_independen
     for index, job in enumerate(gate.JOBS):
         evidence["runtime_deployments"][job]["deployment_id"] = index + 1
     def deployment(identity):
-        job = gate.JOBS[identity - 1]
-        return {"sha": "a" * 40}, {"target": job, "artifact": image(job)}
-    kwargs = {"now": NOW, "executor_sha": "a" * 40, "live": Live(), "load_cycle": cycles.__getitem__, "contract_hash": CONTRACT,
+        job = gate.JOBS[(identity - 1) % 100]
+        return {"id": identity, "sha": "a" * 40}, {"target": job, "artifact": image(job)}
+    kwargs = {"now": NOW, "executor_sha": "a" * 40, "live": Live(), "load_cycle": cycles.__getitem__, "load_latest": lambda: cycles[max(cycles)], "contract_hash": CONTRACT,
               "policy_hash": POLICY, "revision_allowed": lambda _: True, "load_deployment": deployment, "runtime_hash": lambda _: "e" * 64,
+              "resolve_current": lambda job, current: {"record": {"id": 201 + gate.JOBS.index(job), "sha": "b" * 40}, "payload": {"target": job, "artifact": current}, "status_id": 301 + gate.JOBS.index(job)},
+              "ancestor": lambda old, new: True, "unified_source": lambda sha: True,
               "load_setup": lambda identifier: {"deployment_id": identifier, "status_id": 501, "completed_at": gate.collector.timestamp(NOW - timedelta(hours=25))}}
     with mock.patch.object(gate, "immutable_file", return_value=evidence):
         result = gate.verify_plan(plan, rollout("unified"), **kwargs)
         assert result["cutover_authorized"] is True and len(result["route_removals"]) == 4
+        premature_retirement = deepcopy(plan)
+        premature_retirement["resource_changes"].append({"type": "google_secret_manager_secret_iam_member", "address": 'google_secret_manager_secret_iam_member.translation_notice["wdpa"]',
+            "change": {"actions": ["delete"], "before": {"secret_id": gate.RUNTIME_SECRET, "role": "roles/secretmanager.secretAccessor", "member": "serviceAccount:wdpa-monthly-job@shared-datasets-1.iam.gserviceaccount.com"}}})
+        with pytest.raises(ValueError, match="already-applied"):
+            gate.verify_plan(premature_retirement, rollout("unified", retire=True), **kwargs)
         recent_setup = {**kwargs, "load_setup": lambda identifier: {"deployment_id": identifier, "status_id": 501, "completed_at": gate.collector.timestamp(NOW - timedelta(hours=23))}}
         with pytest.raises(ValueError, match="predates"):
             gate.verify_plan(plan, rollout("unified"), **recent_setup)
         with pytest.raises(ValueError, match="final freshness"):
-            gate.verify_plan(plan, rollout("unified"), **kwargs, clock=lambda: NOW + timedelta(minutes=6))
+            gate.verify_plan(plan, rollout("unified"), **kwargs, clock=mock.Mock(side_effect=[NOW, NOW + timedelta(minutes=6)]))
         # Later secret retirement uses the verified original policy receipt;
         # unified collection must not pretend to create new shadow cycles.
         for row in plan["resource_changes"]:
@@ -392,16 +627,32 @@ def test_full_plan_gate_audits_current_filters_channels_and_preserves_independen
                 policy["notificationChannels"] = []
         plan["resource_changes"].append({"type": "google_secret_manager_secret_iam_member", "address": 'google_secret_manager_secret_iam_member.translation_notice["wdpa"]',
             "change": {"actions": ["delete"], "before": {"secret_id": gate.RUNTIME_SECRET, "role": "roles/secretmanager.secretAccessor", "member": "serviceAccount:wdpa-monthly-job@shared-datasets-1.iam.gserviceaccount.com"}}})
-        retirement = {"schema": "shared-datasets-runtime-webhook-retirement-v1", "cutover_sha256": rollout("unified")["cutover_evidence"]["sha256"], "runtime_deployments": evidence["runtime_deployments"]}
+        retirement = {"schema": "shared-datasets-runtime-webhook-retirement-v1", "cutover_sha256": rollout("unified")["cutover_evidence"]["sha256"],
+                      "runtime_deployments": {job: {"deployment_id": 101 + index, "runtime_sha256": "e" * 64} for index, job in enumerate(gate.JOBS)}}
         with mock.patch.object(gate, "immutable_file", side_effect=lambda root, sha, ref: retirement if ref["path"].endswith("drain.json") else evidence):
             with pytest.raises(ValueError, match="verified original policy apply"):
                 gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)
             kwargs["prior_activation"] = {"mode": "unified", "policy_deployment_id": 999}
-            assert gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)["runtime_secret_removals"]
+            retired = gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)
+            assert retired["runtime_secret_removals"]
+            assert retired["runtime_deployment_proof"]["wdpa-monthly"]["anchor_deployment_id"] == 101
+            assert retired["runtime_deployment_proof"]["wdpa-monthly"]["deployment_id"] == 201
+            retirement["cutover_sha256"] = "0" * 64
+            with pytest.raises(ValueError, match="original cutover"):
+                gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)
+            retirement["cutover_sha256"] = rollout("unified")["cutover_evidence"]["sha256"]
             points.clear()
             with pytest.raises(ValueError, match="fresh post-policy heartbeat"):
                 gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)
             points.add(NOW - timedelta(minutes=1))
+            # With no new removals a routine policy sync cannot gain removal
+            # authority and must not depend on historical runtime image pins.
+            noop = deepcopy(plan)
+            noop["resource_changes"].pop()
+            forbidden = mock.Mock(side_effect=AssertionError("no new removal requires no runtime drain"))
+            result = gate.verify_plan(noop, rollout("unified", retire=True), **(kwargs | {"resolve_current": forbidden}), scope=gate.OPERATIONAL_POLICIES)
+            assert result["runtime_deployment_proof"] == {} and result["original_policy_deployment_id"] == 999
+            forbidden.assert_not_called()
         policies.append({**deepcopy(policies[0]), "name": "projects/shared-datasets-1/alertPolicies/unknown"})
         with pytest.raises(ValueError, match="live routing audit"):
             gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)

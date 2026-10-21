@@ -79,6 +79,27 @@ def correlation():
             "workflow": ".github/workflows/ci.yml", "execution": f"projects/{cloud.PROJECT}/locations/{cloud.REGION}/jobs/{JOB}/executions/{EXECUTION}"}
 
 
+def auxiliary_source(identifier="observer", *, status="failed", reason="transient_transport", success=False, time=NOW, image=None, audit=False):
+    image = image or IMAGE.replace("sea-ice-daily@", "wdpa-monthly@")
+    value = source(identifier, job="wdpa-execution-observer", status=status, image=image, success=success, time=time,
+                   details={"failure_reason": reason, "mutation_status": "not_started"} if status == "failed" else {})
+    name = "wdpa-execution-observer-abcde"
+    value["execution"]["name"] = f"projects/{cloud.PROJECT}/locations/{cloud.REGION}/jobs/wdpa-execution-observer/executions/{name}"
+    value["execution"]["completion_time"] = at(1)
+    value["fact"]["context"]["execution"] = name
+    if audit:
+        value.pop("fact")
+        value["kind"] = "execution"
+    return adapter.validate_fact(value)
+
+
+def auxiliary_proof(fact):
+    return {"kind": "auxiliary_artifact", "deployment_target": "wdpa-monthly",
+            "resource": incidents.deployments.AUXILIARY_CLOUD_JOBS["wdpa-execution-observer"]["resource"],
+            "record_id": 17, "status_id": 18, "revision": "b" * 40,
+            "artifact": fact["execution"]["images"][0], "execution": fact["execution"]["name"]}
+
+
 def supervised_deployment(*, revision="b" * 40, active=True):
     binding = policy.OperationBinding("deployment:" + JOB, JOB, revision, None)
     authority = {"actor": "jonaraphael", "repository": incidents.REPOSITORY, "workflow": incidents.WORKFLOW,
@@ -509,6 +530,110 @@ def test_final_policy_clock_cannot_hold_an_owner_that_expired_during_authoritati
         records, evaluation = ingest(ledger, blocked, shadow=False, now=at(1), clock=lambda: policy.instant(at(11)))
     assert len(records) == 1 and evaluation["worker"]["evaluated_at"] == at(11)
     assert evaluation["cloud_counts"]["owner_held"] == 0
+
+
+def test_auxiliary_registration_is_the_existing_wdpa_target_resource_and_same_image_contract():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    contract = incidents.deployments.AUXILIARY_CLOUD_JOBS["wdpa-execution-observer"]
+    assert contract["deployment_target"] in incidents.deployments.TARGET_WORKFLOWS
+    text = (root / "terraform/envs/prod/wdpa_execution_observer.tf").read_text()
+    assert 'wdpa_execution_observer_job_name = "wdpa-execution-observer"' in text
+    assert 'module "wdpa_execution_observer_job"' in text and "image                 = var.wdpa_monthly_image" in text
+    workflow = (root / ".github/workflows/wdpa-monthly-deploy.yml").read_text()
+    assert contract["resource"] in workflow and "unexpected image for" in workflow
+
+
+def test_signed_auxiliary_image_proof_is_not_a_fabricated_same_attempt_correlation():
+    fact = auxiliary_source()
+    proof = auxiliary_proof(fact)
+    assert adapter.normalize(fact, correlation=proof, promote=True)["kind"] == "job"
+    assert adapter.provenance_gap(fact) and not adapter.provenance_gap(fact, proof)
+    api = Mock()
+    record = {"id": 17, "sha": "b" * 40, "payload": {"target": "wdpa-monthly", "artifact": proof["artifact"], "targets": [proof["resource"]]}}
+    api.pages.side_effect = lambda path: [record] if "?environment=" in path else [{"id": 18, "description": "verification_pending", "state": "in_progress"}]
+    with patch.object(incidents.deployments, "verify_record", return_value=record["payload"]), patch.object(incidents.deployments, "verify_receipt") as verify:
+        assert incidents.verified_auxiliary_artifact(api, fact) == proof
+    verify.assert_called_once()
+    record["payload"]["targets"] = []
+    assert incidents.verified_auxiliary_artifact(api, fact) is None
+    forged = {**proof, "resource": "module.wdpa_monthly_job.google_cloud_run_v2_job.this"}
+    with pytest.raises(ValueError, match="registered deployment resource"):
+        adapter.normalize(fact, correlation=forged)
+
+
+def test_typed_observer_read_failure_has_one_thirty_minute_window_and_quiet_health_recovery():
+    raw = auxiliary_source("raw", audit=True)
+    typed = auxiliary_source("typed")
+    ledger = PersistedLedger()
+    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact: auxiliary_proof(fact)):
+        records, evaluation = ingest(ledger, raw, typed, shadow=False, now=at(2))
+    assert records == [] and evaluation["cloud_counts"]["actionable"] == 0
+    scope = adapter.source_scope(raw)
+    state = ledger.states[scope]
+    assert len(state["incident"]["failures"]) == 2 and incidents.required_failures(state) == [adapter.normalize(typed, correlation=auxiliary_proof(typed))]
+    assert incidents.episode_decisions(state, now=at(29))[0][1].disposition == policy.Disposition.RECOVER
+    healed = auxiliary_source("healthy", status="success", success=True, time=at(3), audit=True)
+    healed["execution"].update(create_time=at(2), start_time=at(2), completion_time=at(4))
+    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact: auxiliary_proof(fact)):
+        records, evaluation = ingest(ledger, healed, shadow=False, now=at(5), recovery_verifier=lambda _: True)
+    assert records == [] and evaluation["cloud_counts"]["verified_asset_publications"] == 0
+    assert evaluation["cloud_counts"]["verified_observer_health"] == 1
+    assert ledger.states[scope]["incident"]["resolution"] is not None
+    assert "canonical dataset and deployment outcomes remain separate" in incidents.operational_fact(ledger.states[scope]["incident"]["resolution"]).published_data_state
+
+
+@pytest.mark.parametrize("reason", ["permission_denied", "missing_configuration", "unknown"])
+def test_permanent_or_unknown_observer_read_failure_is_actionable(reason):
+    fact = auxiliary_source(reason=reason)
+    ledger = PersistedLedger()
+    with patch.object(incidents, "verified_cloud_correlation", return_value=auxiliary_proof(fact)):
+        assert len(ingest(ledger, fact, shadow=False, now=at(2))[0]) == 1
+
+
+def test_exhausted_observer_episode_escalates_once_and_later_exact_repair_image_can_recover_only_health():
+    failed = auxiliary_source()
+    ledger = PersistedLedger()
+    with patch.object(incidents, "verified_cloud_correlation", return_value=auxiliary_proof(failed)):
+        ingest(ledger, failed, shadow=False, now=at(2))
+    records, _ = ingest(ledger, shadow=False, now=at(30))
+    assert len(records) == 1
+    new_image = failed["execution"]["images"][0].replace("a" * 64, "c" * 64)
+    healed = auxiliary_source("repair", status="success", success=True, time=at(32), image=new_image, audit=True)
+    healed["execution"].update(create_time=at(31), start_time=at(31), completion_time=at(33))
+    recovery = adapter.normalize(healed, correlation=auxiliary_proof(healed))
+    failure = adapter.normalize(failed, correlation=auxiliary_proof(failed))
+    assert adapter.covers(failure, recovery)
+    stale = deepcopy(recovery)
+    stale["proof"]["fact"]["execution"]["create_time"] = at(-1)
+    assert not adapter.covers(failure, stale)
+    canonical = github_observation(scope="deployment:wdpa-monthly", label="wdpa-monthly", time=NOW)
+    assert not incidents.covers_failure(canonical, recovery, lambda *_: True)
+
+
+def test_future_auxiliary_metadata_is_buffered_without_failing_complete_cutoff_heartbeat():
+    raw = auxiliary_source(audit=True)
+    raw["execution"]["completion_time"] = at(9)
+    ledger = PersistedLedger()
+    candidate = proposal(raw)
+    with patch.object(incidents, "verified_cloud_correlation", return_value=auxiliary_proof(raw)):
+        _, evaluation = incidents.prepare_cloud(ledger, IDENTITY, candidate, now=at(10))
+    bundle = cloud.evaluated_collection(candidate, evaluation)
+    assert cloud.unresolved_pending(bundle["checkpoint"], evaluation) == []
+    assert bundle["checkpoint"]["pending"] == [raw] and evaluation["deferred_source_ids"] == [raw["source_id"]]
+    assert evaluation["provenance_complete"] and ledger.states == {}
+    assert incidents.verify_cloud_evaluation(bundle["checkpoint"], evaluation, ledger.states,
+                                             shadow=True, worker=evaluation["worker"])
+    heartbeat = Mock()
+    assert cloud.confirm_heartbeat(bundle, deepcopy(bundle), delivery_verified=True, heartbeat=heartbeat)
+    forged = deepcopy(evaluation)
+    forged["deferred_proofs"][raw["source_id"]]["artifact"] = "tag:latest"
+    with pytest.raises(ValueError):
+        cloud.unresolved_pending(bundle["checkpoint"], forged)
+    covered = deepcopy(bundle["checkpoint"])
+    covered["covered_through"] = at(10)
+    with pytest.raises(ValueError, match="coverage cutoff"):
+        cloud.unresolved_pending(covered, evaluation)
 
 
 def test_runtime_dict_and_list_results_emit_existing_generation_pinned_receipts_without_writes(capsys):

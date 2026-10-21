@@ -111,8 +111,11 @@ def commands(target, executor, *, image_id=None):
     package = target.replace("-", "_")
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]
     run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", tested_image]
+    imports = f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"
+    if target == "wdpa-monthly":
+        imports += "; import ingestion.wdpa_monthly.execution_observer; from scripts.operational_retry import OBSERVER_READ; assert OBSERVER_READ.deadline_seconds == 60"
     checks = [
-        run + ["python", "-c", f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"],
+        run + ["python", "-c", imports],
         run + ["python", "-c", INTERPRETER_PROBE],
         run + ["python", "-c", NATIVE_VERSION_PROBE],
     ]

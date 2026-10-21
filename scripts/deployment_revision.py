@@ -34,6 +34,14 @@ TARGET_WORKFLOWS = {
     "catalog-web": "catalog-web-deploy.yml",
     "catalog-viewer": "catalog-viewer-deploy.yml",
 }
+# Auxiliary resources belong to their existing protected deployment target.
+# They are observation workers, never aliases for that target's data recovery.
+AUXILIARY_CLOUD_JOBS = {
+    "wdpa-execution-observer": {
+        "deployment_target": "wdpa-monthly",
+        "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+    },
+}
 TERRAFORM_SYNCS = {
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
