@@ -59,6 +59,10 @@ jobs:
         google_project_iam_member.github_actions_operational_log_view_manager
         google_project_iam_custom_role.operational_metric_descriptor_manager
         google_project_iam_member.github_actions_operational_metric_descriptor_manager
+        google_project_iam_custom_role.operational_provider_creator
+        google_project_iam_member.github_actions_operational_provider_creator
+        google_project_iam_custom_role.operational_provider_reader
+        google_project_iam_member.github_actions_operational_provider_reader
       allowed_exact: |
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
@@ -66,6 +70,10 @@ jobs:
         google_project_iam_member.github_actions_operational_log_view_manager
         google_project_iam_custom_role.operational_metric_descriptor_manager
         google_project_iam_member.github_actions_operational_metric_descriptor_manager
+        google_project_iam_custom_role.operational_provider_creator
+        google_project_iam_member.github_actions_operational_provider_creator
+        google_project_iam_custom_role.operational_provider_reader
+        google_project_iam_member.github_actions_operational_provider_reader
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync

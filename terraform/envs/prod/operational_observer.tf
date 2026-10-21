@@ -65,6 +65,7 @@ resource "google_iam_workload_identity_pool_provider" "operational_observer" {
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
+  depends_on = [google_project_iam_member.github_actions_operational_provider_creator, google_project_iam_member.github_actions_operational_provider_reader]
 }
 
 module "operational_observer_service_account" {
@@ -211,9 +212,48 @@ resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy"
   depends_on = [google_project_service.required, google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2, terraform_data.cron_alert_channel_configured]
 }
 
-# New setup grants are limited to log-view management and metric descriptors.
+# Setup grants include log views, metric descriptors and the reviewed temporary
+# provider-create proposal below. Observer runtime authority remains read-only.
 # Existing protected IAM bootstrap owns identity/project/bucket policy changes;
 # saved-plan permission probes must prove those prerequisites before mutation.
+# REVIEW REQUIRED: IAM does not support resource.name conditions for these
+# permissions. Creation applies to every existing project pool until this fixed
+# deadline; it cannot inspect the requested providerId. Only the protected exact
+# saved-plan allowlist authorizes the reviewed github/observer provider mutation.
+# This broader create scope requires explicit human approval before merge/apply.
+resource "google_project_iam_custom_role" "operational_provider_creator" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalProviderCreator"
+  title       = "Shared Datasets Temporary Operational Provider Creator"
+  description = "Temporary protected setup creation only; no update, delete or pool mutation."
+  permissions = ["iam.workloadIdentityPoolProviders.create"]
+}
+
+resource "google_project_iam_member" "github_actions_operational_provider_creator" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_provider_creator.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  condition {
+    title       = "operational-provider-create-expires"
+    description = "Expire temporary provider creation authority at 2026-10-22 02:00 UTC."
+    expression  = "request.time < timestamp('2026-10-22T02:00:00Z')"
+  }
+}
+
+resource "google_project_iam_custom_role" "operational_provider_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalProviderReader"
+  title       = "Shared Datasets Operational Provider Reader"
+  description = "Read provider metadata for protected setup; no mutation or secret access."
+  permissions = ["iam.workloadIdentityPoolProviders.get"]
+}
+
+resource "google_project_iam_member" "github_actions_operational_provider_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_provider_reader.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+}
+
 resource "google_project_iam_custom_role" "operational_log_view_manager" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalLogViewManager"

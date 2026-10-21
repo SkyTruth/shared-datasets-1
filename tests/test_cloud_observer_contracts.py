@@ -4,7 +4,7 @@ import unittest
 
 import yaml
 
-from scripts import ci_contract, cloud_operational_observations, deployment_permissions, release_contracts
+from scripts import ci_contract, cloud_operational_observations, deployment_permissions, release_contracts, wif_setup_permissions
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks
 from test_terraform_plan_permissions import plan, row
 from workflow_helpers import assert_target_apply_caller
@@ -100,6 +100,24 @@ class ObserverBoundaryTests(unittest.TestCase):
             blocked_resources={"google_storage_bucket.shared_bucket", "google_cloud_run_v2_job.this"})
         self.assertIn("cron_alert_policy", ci_contract.select_deployments(["terraform/envs/prod/operational_observer.tf"]))
 
+    def test_provider_proposal_is_owned_by_exact_ordered_bootstrap(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/cron-alert-policy-sync.yml").read_text())
+        bootstrap = workflow["jobs"]["bootstrap"]["with"]
+        expected = {
+            "google_project_iam_custom_role.monitoring_alert_policy_manager", "google_project_iam_member.github_actions_monitoring_alert_policy_manager",
+            *("google_project_iam_custom_role." + role for role in ("operational_log_view_manager", "operational_metric_descriptor_manager", "operational_provider_creator", "operational_provider_reader")),
+            *("google_project_iam_member.github_actions_" + role for role in ("operational_log_view_manager", "operational_metric_descriptor_manager", "operational_provider_creator", "operational_provider_reader")),
+        }
+        self.assertEqual(set(bootstrap["targets"].split()), expected)
+        self.assertEqual(set(bootstrap["allowed_exact"].split()), expected)
+        self.assertEqual(workflow["jobs"]["observations"]["needs"], "bootstrap")
+        text = TERRAFORM.read_text()
+        provider = text.split('resource "google_iam_workload_identity_pool_provider" "operational_observer"', 1)[1].split('\nresource ', 1)[0]
+        self.assertIn("depends_on = [google_project_iam_member.github_actions_operational_provider_creator, google_project_iam_member.github_actions_operational_provider_reader]", provider)
+        self.assertNotIn("timestamp()", text)
+        for path in ("scripts/wif_setup_permissions.py", "scripts/setup_grant_proof.py", "scripts/logging_setup_permissions.py"):
+            self.assertIn("cron_alert_policy", ci_contract.select_deployments([path]))
+
     def test_storage_read_scope_is_exact_paired_manifest_and_receipt_chunks(self):
         text = TERRAFORM.read_text()
         caller = yaml.safe_load((ROOT / ".github/workflows/cron-alert-policy-sync.yml").read_text())["jobs"]["observations"]["with"]
@@ -137,7 +155,8 @@ class ObserverBoundaryTests(unittest.TestCase):
         self.assertEqual(set(actual[PROJECT_URL]), {"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get"})
         legacy = dict(plan_checks(plan(row("google_monitoring_metric_descriptor", ["create"], {**metric, "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"})), project_number="123456789"))
         self.assertEqual(set(legacy[PROJECT_URL]), {"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get"})
-        self.assertIn("iam.workloadIdentityPoolProviders.create", actual[f"https://iam.googleapis.com/v1/projects/{PROJECT}/locations/global/workloadIdentityPools/github:testIamPermissions"])
+        self.assertEqual(set(actual[wif_setup_permissions.PROVIDER_URL]), {wif_setup_permissions.GET, wif_setup_permissions.CREATE})
+        self.assertNotIn(wif_setup_permissions.GET, actual[wif_setup_permissions.POOL_URL + ":testIamPermissions"])
         iam = dict(plan_checks(plan(row("google_logging_log_view_iam_member", ["update"], view)), project_number="123456789"))
         self.assertEqual(set(next(iter(iam.values()))), {"logging.views.getIamPolicy", "logging.views.setIamPolicy"})
         existing = dict(plan_checks(plan(row("google_logging_log_view_iam_member", ["create"], view)), project_number="123456789"))

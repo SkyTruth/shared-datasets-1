@@ -97,6 +97,25 @@ class ReleaseContractTests(unittest.TestCase):
             self.assertTrue(any("Logging installed-grant proof" in item for item in contracts.iam_contract(self.root)))
         path.write_text(original)
 
+    def test_provider_setup_proposal_has_fixed_expiry_exact_roles_and_bootstrap(self):
+        path = self.root / "terraform/envs/prod/operational_observer.tf"
+        original = path.read_text()
+        for before, after in (
+            ("request.time < timestamp('2026-10-22T02:00:00Z')", "request.time < timestamp('2099-01-01T00:00:00Z')"),
+            ('"sharedDatasetsOperationalProviderCreator"', '"otherCreator"'),
+            ('permissions = ["iam.workloadIdentityPoolProviders.create"]', 'permissions = ["iam.workloadIdentityPoolProviders.create", "iam.workloadIdentityPoolProviders.update"]'),
+            ('title       = "operational-provider-create-expires"', 'title       = "changed"'),
+        ):
+            self.assertIn(before, original)
+            path.write_text(original.replace(before, after, 1))
+            self.assertTrue(any("operational provider" in item or "operational_provider_creator" in item for item in contracts.iam_contract(self.root)))
+        path.write_text(original)
+        workflow_path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        workflow = yaml.safe_load(workflow_path.read_text())
+        workflow["jobs"]["bootstrap"]["with"]["allowed_exact"] = workflow["jobs"]["bootstrap"]["with"]["allowed_exact"].replace("google_project_iam_member.github_actions_operational_provider_creator", "")
+        workflow_path.write_text(yaml.safe_dump(workflow))
+        self.assertTrue(any("exact protected bootstrap allowed_exact" in item for item in contracts.iam_contract(self.root)))
+
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
         evidence = json.loads(path.read_text())

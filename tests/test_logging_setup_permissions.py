@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from scripts import deployment_permissions as live
 from scripts import logging_setup_permissions as logging_setup
+from scripts import setup_grant_proof as grant_proof
 
 PROJECT = "shared-datasets-1"
 PRINCIPAL = f"shared-datasets-terraform@{PROJECT}.iam.gserviceaccount.com"
@@ -65,11 +66,15 @@ class LoggingHttp:
             assert parse_qs(raw.decode()) == {"access_token": [TOKEN]}
             assert not request.has_header("Authorization")
             result = self.identity
+        elif parsed.hostname == "cloudresourcemanager.googleapis.com" and request.method == "GET":
+            result = {"projectId": PROJECT, "projectNumber": "123456789"}
         elif parsed.hostname == "iam.googleapis.com":
             assert request.method == "GET"
             if "/serviceAccounts/" in parsed.path:
                 assert parsed.path == f"/v1/projects/{PROJECT}/serviceAccounts/{PRINCIPAL}"
                 result = self.account
+            elif "/workloadIdentityPools/" in parsed.path:
+                result = {"name": parsed.path.removeprefix("/v1/").replace("projects/" + PROJECT + "/", "projects/123456789/"), "state": "ACTIVE"}
             else:
                 assert parsed.path == "/v1/" + ROLE
                 result = self.role
@@ -214,7 +219,7 @@ class LoggingPermissionTests(unittest.TestCase):
     def test_tokeninfo_error_never_exposes_token_in_url_or_diagnostic(self):
         transport = LoggingHttp()
         def failing(request, timeout):
-            if request.full_url == logging_setup.TOKENINFO:
+            if request.full_url == grant_proof.TOKENINFO:
                 self.assertNotIn(TOKEN, request.full_url)
                 message = "invalid " + TOKEN + " encoded " + request.data.decode().split("=", 1)[1]
                 payload = {"error": {"code": 400, "message": message}}

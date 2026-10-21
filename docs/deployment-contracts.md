@@ -57,6 +57,14 @@ account creation and bindings. Read-only probes check the actual registry or
 bucket policy resource and the declared project permissions before planning.
 These checks grant no additional authority and retain the existing allowlists.
 
+Operational observer setup uses an exact provider metadata GET, not a fabricated
+provider `testIamPermissions` endpoint or a parent test presented as child proof.
+An absent provider additionally requires the reviewed fixed-expiry project
+create grant and a real create-permission test on its existing parent pool.
+The proposed broader create scope requires human approval before merge/apply;
+see the [scope and expiry contract](cloud-operational-observations.md).
+An existing provider does not require creation permission after expiry.
+
 Immediately before each saved-plan apply, trusted code runs
 `python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`
 after the resource allowlist. It derives permission probes from every changed

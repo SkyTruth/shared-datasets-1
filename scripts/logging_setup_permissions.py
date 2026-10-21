@@ -7,10 +7,10 @@ deny policies or the authorization of a later mutation.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
+
+from scripts import setup_grant_proof as proof
 
 PROJECT = "shared-datasets-1"
 BUCKETS = ("_Default", "_Required")
@@ -18,9 +18,8 @@ PARENT_PERMISSIONS = ("logging.buckets.get", "logging.views.create", "logging.vi
 VIEW_PERMISSIONS = ("logging.views.get", "logging.views.update", "logging.views.getIamPolicy", "logging.views.setIamPolicy")
 SETUP_PERMISSIONS = PARENT_PERMISSIONS + VIEW_PERMISSIONS
 ROLE = f"projects/{PROJECT}/roles/sharedDatasetsOperationalLogViewManager"
-TOKENINFO = "https://oauth2.googleapis.com/tokeninfo"
-TOKEN_ENV = "LOGGING_SETUP_ACCESS_TOKEN"
-TOKEN_SCOPES = ("https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/userinfo.email")
+TOKEN_ENV = proof.TOKEN_ENV
+TOKEN_SCOPES = proof.TOKEN_SCOPES
 
 
 def bucket_url(bucket):
@@ -59,21 +58,7 @@ def verify_parent(url, permissions, token, read):
     """
     require(url in {bucket_url(bucket) for bucket in BUCKETS}, "unexpected bucket resource")
     require(permissions and set(permissions) <= set(PARENT_PERMISSIONS), "unexpected bucket permissions")
-    principal = os.environ.get("TERRAFORM_SERVICE_ACCOUNT", "")
-    require(re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]@" + PROJECT + r"\.iam\.gserviceaccount\.com", principal), "configured protected service account is missing or invalid")
-    account_name = f"projects/{PROJECT}/serviceAccounts/{principal}"
-    account = read("https://iam.googleapis.com/v1/" + quote(account_name, safe="/@") + "?" + urlencode({"fields": "name,email,uniqueId,disabled"}))
-    unique_id = account.get("uniqueId")
-    require(account.get("name") == account_name and account.get("email") == principal
-            and isinstance(unique_id, str) and re.fullmatch(r"[1-9][0-9]{5,31}", unique_id)
-            and account.get("disabled", False) is False, "configured service-account metadata is inconsistent or disabled")
-    identity = read(TOKENINFO, data=urlencode({"access_token": token}).encode(), method="POST", content_type="application/x-www-form-urlencoded", bearer=False)
-    require(identity.get("aud") == unique_id, "access token does not identify the configured service account")
-    expires = identity.get("expires_in")
-    require(type(expires) is int and expires > 0 or isinstance(expires, str) and re.fullmatch(r"[1-9][0-9]*", expires), "access token is expired or has invalid expiry")
-    require(identity.get("email") == principal and (identity.get("email_verified") is True or identity.get("email_verified") == "true"), "identity-scoped token lacks the configured service account's verified email")
-    scope = identity.get("scope")
-    require(isinstance(scope, str) and set(TOKEN_SCOPES) <= set(scope.split()), "access token lacks the explicit operational identity scopes")
+    principal = proof.principal(token, read)
 
     resource = url.removeprefix("https://logging.googleapis.com/v2/")
     require(read(url + "?" + urlencode({"fields": "name"})).get("name") == resource, "bucket metadata identifies another resource")
@@ -98,17 +83,5 @@ def verify_parent(url, permissions, token, read):
     else:
         raise RuntimeError("Logging setup grant proof: view enumeration exceeded its complete-page bound")
 
-    role = read("https://iam.googleapis.com/v1/" + ROLE + "?" + urlencode({"fields": "name,stage,deleted,includedPermissions"}))
-    actual = role.get("includedPermissions")
-    require(role.get("name") == ROLE and role.get("stage") == "GA" and role.get("deleted", False) is False
-            and isinstance(actual, list) and all(isinstance(value, str) for value in actual)
-            and len(actual) == len(SETUP_PERMISSIONS) and set(actual) == set(SETUP_PERMISSIONS), "installed custom role is missing, inactive or differs from the reviewed permissions")
-    policy = read(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:getIamPolicy", method="POST", data=json.dumps({"options": {"requestedPolicyVersion": 3}}).encode())
-    bindings = policy.get("bindings")
-    require(policy.get("version") == 3 and isinstance(bindings, list)
-            and all(isinstance(value, dict) and isinstance(value.get("role"), str)
-                    and isinstance(value.get("members"), list) and all(isinstance(member, str) for member in value["members"]) for value in bindings), "live v3 project policy is unavailable or malformed")
-    member = "serviceAccount:" + principal
-    matching = [value for value in bindings if value["role"] == ROLE and member in value["members"]]
-    require(len(matching) == 1 and matching[0]["members"] == [member] and matching[0].get("condition") == condition(), "live binding does not exactly match the protected principal and two-bucket condition")
+    proof.grants(principal, [(ROLE, SETUP_PERMISSIONS, condition())], read)
     return []

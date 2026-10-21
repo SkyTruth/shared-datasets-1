@@ -193,6 +193,15 @@ enumeration and authoritative source-attempt checks are required. Longer
 GitHub outages require reviewed replay of the missing interval; blanket
 production retries are never a notification recovery mechanism.
 
+After complete ledger enumeration, up to four independent receipt proofs are
+verified concurrently. Every proof still requires current complete statuses,
+valid state and exact signer/source verification. API reads remain serial and
+share the caller's retry budget; only independent attestation verification
+overlaps. The loader waits for every proof before returning states or processing
+aliases, and any invalid proof fails the complete load. Verification caches
+remain private to the current process. Writes and Slack delivery remain serial;
+this optimization does not guarantee a supervision turnaround time.
+
 Before posting, the worker persists and signs the claim. After Slack returns a
 valid channel and message timestamp, it persists an acknowledgement; confirmed
 delivery checkpoints are attested even if a later send fails. Posting is paced

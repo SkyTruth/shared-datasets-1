@@ -269,12 +269,42 @@ unset. It cannot invent a PR association or grant deployment or retry authority.
 The protected cron policy workflow runs bootstrap, exact allowlisted observation
 setup, then policy sync. Setup blocks deletion/replacement and probes the exact
 saved plan's resource operations, including the exact Run DATA_WRITE audit
-configuration under existing protected project IAM authority. New
-Terraform-identity grants are limited to
-two-bucket log-view setup and metric-descriptor create/get/list. Existing
-protected identity/project/bucket IAM authority remains a prerequisite. Missing
-WIF-provider creation authority must be resolved through a reviewed protected
-setup change; it is not silently added to the observer role.
+configuration under existing protected project IAM authority. Log-view setup
+remains limited to two buckets; metric setup permits descriptor create/get/list.
+Observer runtime permissions remain execution metadata reads, scoped operational
+object reads and the fixed heartbeat write.
+
+The protected setup in CI run `39646971194/1` at revision
+`34374accba86b8978e770ef29643427fe37835bb` stopped before plan/claim/apply because
+the Terraform identity lacked provider create/get authority. The proposed repair adds a permanent
+get-only provider metadata role and a separate create-only project role bound
+only to the protected Terraform identity. The creator binding has the fixed
+condition `request.time < timestamp('2026-10-22T02:00:00Z')`; it does not renew
+itself. **This proposal requires explicit human approval before merge/apply.**
+It grants creation across existing project pools during that window, rather
+than an IAM-enforced provider-ID restriction. The protected main workflow's
+exact saved-plan allowlist still permits only the existing `github` pool's
+`github-operational-observer` provider. No provider update/delete, pool mutation,
+pool policy setter, or observer runtime mutation permission is added.
+
+Google checks [provider creation on its parent pool](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers/create)
+and [provider reads on the child](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers/get).
+IAM pools/providers are absent from the supported
+[resource-name condition types](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes),
+so the proposal does not use a misleading `resource.name` condition. A pool-local
+grant would first require pool get/set-IAM-policy authority, which this deployer
+lacks; it would add policy mutation authority solely to bootstrap creation.
+The temporary project create-only grant avoids that additional write class.
+
+Readiness derives the canonical pool name from authoritative project/pool
+metadata, then GETs the exact child. Only a structured `404 NOT_FOUND` enters
+initial-creation checks: strict scoped-token identity, exact installed reader
+and expiring creator roles/bindings, and the supported parent create-permission
+test. Other errors remain failures. Existing providers need only their real
+metadata GET after expiry; a saved plan requests create authority only for an
+actual create. Updates/deletes require a new separately reviewed authority plan.
+Installed allow-grant proof does not claim to defeat independent deny policies
+or authorize another target, and it is never treated as proof of deployment.
 
 ## Heartbeat and cutover evidence
 
