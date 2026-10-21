@@ -1,10 +1,13 @@
 # Reviewed operational Slack cutover evidence
 
-There is no production cutover evidence checked in yet. The native route is the
-default; synthetic notifications and invented cycle/deployment identifiers are
-not acceptable evidence. Keep the cutover PR draft until the real prerequisites
-below are satisfied. The future reviewed activation change must also update the
-explicit native-default test fixture alongside its real immutable evidence.
+There is no production cutover evidence checked in yet. Dormant native-default
+support may merge after the cloud observation foundation. With `mode: native`,
+null evidence and runtime secret retirement disabled, that merge preserves native
+operational routes and webhook access; normal protected deployments may still run.
+Keep the later activation PR/config change draft until the real prerequisites
+below are reviewable. Synthetic notifications and invented cycle/deployment
+identifiers are not acceptable evidence. The reviewed activation change must also
+update the explicit native-default test fixture alongside its real immutable evidence.
 
 `catalog/operational-slack-rollout.json` is the reviewed switch. `mode: native`
 retains native operational delivery. A later reviewed change to `mode: unified`

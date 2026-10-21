@@ -18,10 +18,16 @@ production mutation, merge, or transfer to another chat.
 3. **Cloud observations and health**, dependent on 2: structured runtime events,
    filtered read-only observer identity, complete checkpointed scans, shadow
    evaluation and independently monitored successful-cycle heartbeat.
-4. **Operational cutover**, dependent on 3 and 24 hours of successful shadow
-   collection: migrate historical delivery evidence, remove duplicate operational
-   routes and obsolete secret access, and verify live routing. Preserve independent
-   security coverage throughout. Seed the heartbeat after its absence policy exists.
+4. **Dormant operational cutover support**, dependent on 3: land the protected
+   routing and runtime switches with `mode: native`, no cutover evidence and
+   runtime secret retirement disabled. This support may merge after 3; it preserves
+   operational routes and secret access while normal protected deployments may run.
+   Keep the later activation PR/config change draft until real setup, post-policy
+   heartbeat and at least 24 hours of complete compatible shadow evidence are
+   reviewable. Actual cutover still requires immutable reviewed evidence, verified
+   runtime receipts and drain, live routing checks and a successful protected policy
+   apply. Obsolete runtime secret access is retired separately after activation.
+   Independent security and pipeline-health coverage remain native throughout.
 
 The overlapping contracts are `deployment_revision.py`, `slack_incidents.py`, the
 notification workflow and its provenance verifier, protected Terraform policy/IAM
