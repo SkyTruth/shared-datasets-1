@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_csv
+from scripts.github_api_read import read
 from ingestion.common.identity_reset import ASSET_ROOTS, require_unmanaged_target
 from ingestion.common.publication import is_protocol_namespace, require, split_uri
 
@@ -164,8 +165,8 @@ def gcs_asset_args(*args: str) -> list[str]:
     return ["uv", "run", "python", "scripts/gcs_asset.py", *args]
 
 
-def gh_api_json(path: str) -> Any:
-    return json.loads(subprocess.check_output(["gh", "api", path], text=True))
+def gh_api_json(path: str, *, paginate: bool = False) -> Any:
+    return json.loads(read(path, paginate=paginate))
 
 
 def download_promotion_source(promotion: dict[str, Any], dataset_path: pathlib.Path) -> None:
@@ -524,7 +525,10 @@ def breaking_alert_base_args(
 
 
 def pr_comment_has_marker(pr_number: str, marker: str) -> bool:
-    comments = gh_api_json(f"repos/{repository()}/issues/{pr_number}/comments?per_page=100")
+    pages = gh_api_json(f"repos/{repository()}/issues/{pr_number}/comments?per_page=100", paginate=True)
+    require(isinstance(pages, list) and pages and all(isinstance(page, list) for page in pages), "invalid comment pages")
+    comments = [comment for page in pages for comment in page]
+    require(all(isinstance(comment, dict) for comment in comments), "invalid comment entry")
     return any(marker in str(comment.get("body") or "") for comment in comments)
 
 

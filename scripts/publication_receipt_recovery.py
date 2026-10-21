@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import dataset_mutation_authorization as auth
 from scripts.catalog_refresh_authorization import verify_completed_mutation
+from scripts.github_api_read import read
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 REPAIR_STEP = "Repair verified publication receipt"
@@ -67,8 +68,7 @@ def verify_source(api, pr_number: int, run_id: int, attempt: int) -> tuple[dict,
     auth.require(failed == ["Send breaking change alert"], "failure extends beyond the PR receipt")
     # Job logs contain Actions' ANSI formatting. Capture the faithful bytes for
     # parsing; never send the raw response to a terminal.
-    log = subprocess.check_output(["gh", "api", "--allow-escape-sequences",
-                                   f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs"], text=True)
+    log = read(f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs", allow_escape_sequences=True).decode()
     body = receipt_from_log(log, pr_number, envelope["document"]["publish"]["asset_slug"])
     return run, job, body
 

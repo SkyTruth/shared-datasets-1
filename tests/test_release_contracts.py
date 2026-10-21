@@ -65,6 +65,17 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("must require source_run_id" in item for item in errors))
         self.assertTrue(any("ci-ready" in item for item in errors))
 
+    def test_every_policy_including_deletion_and_retired_schema_has_protected_coverage(self):
+        path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        original = path.read_text()
+        for name in ("dataset_object_deleted", "dataset_schema_changed"):
+            with self.subTest(name=name):
+                path.write_text(original.replace("        google_monitoring_alert_policy." + name + "\n", "", 1))
+                self.assertTrue(any("every declared alert policy" in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
+        (self.root / "terraform/envs/prod/new_alert.tf").write_text('resource "google_monitoring_alert_policy" "future_job" {}\n')
+        self.assertTrue(any("every declared alert policy" in error for error in contracts.iam_contract(self.root)))
+
     def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
         for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):
             with self.subTest(filename=filename):

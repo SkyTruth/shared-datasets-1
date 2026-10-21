@@ -21,12 +21,14 @@ from typing import Any, Sequence
 
 from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_site
+from scripts.operational_retry import request_timeout
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -96,12 +98,12 @@ def get_client() -> storage.Client:
     return storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
 
 
-def download_text(bucket_name: str, object_name: str, *, client: storage.Client | None = None) -> RemoteObject:
+def download_text(bucket_name: str, object_name: str, *, client: storage.Client | None = None, retry=DEFAULT_RETRY) -> RemoteObject:
     client = client or get_client()
     blob = client.bucket(bucket_name).blob(object_name)
     uri = f"gs://{bucket_name}/{object_name}"
     try:
-        blob.reload()
+        blob.reload(retry=retry, timeout=request_timeout(60))
     except NotFound as exc:
         raise CatalogDriftGuardError(f"remote contract object is missing: {uri}") from exc
 
@@ -111,7 +113,7 @@ def download_text(bucket_name: str, object_name: str, *, client: storage.Client 
     else:
         download_blob = blob
     try:
-        text = download_blob.download_as_text()
+        text = download_blob.download_as_text(retry=retry, timeout=request_timeout(60))
     except NotFound as exc:
         message = f"remote contract object generation is missing: {uri}#{generation}"
         raise CatalogDriftGuardError(message) from exc
@@ -255,12 +257,12 @@ def expected_web_payload(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-def run_checks(args: argparse.Namespace) -> list[CheckResult]:
+def run_checks(args: argparse.Namespace, *, retry=DEFAULT_RETRY) -> list[CheckResult]:
     local_catalog_text = args.catalog.read_text()
     expected_payload = expected_web_payload(args)
     client = get_client()
-    remote_csv = download_text(args.bucket, REMOTE_CSV_OBJECT, client=client)
-    remote_web_catalog = download_text(args.bucket, REMOTE_WEB_CATALOG_OBJECT, client=client)
+    remote_csv = download_text(args.bucket, REMOTE_CSV_OBJECT, client=client, retry=retry)
+    remote_web_catalog = download_text(args.bucket, REMOTE_WEB_CATALOG_OBJECT, client=client, retry=retry)
     return [
         check_csv_contract(local_catalog_text, remote_csv),
         check_web_catalog_contract(expected_payload, remote_web_catalog),

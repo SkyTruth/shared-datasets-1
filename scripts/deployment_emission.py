@@ -21,6 +21,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.github_api_read import read
+
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
 PHASES = {
@@ -43,7 +45,7 @@ class ReadOnlyGitHub:
     """Rehearsal can land before deployment writers and never creates a record."""
 
     def get(self, path):
-        return json.loads(subprocess.check_output(["gh", "api", path]))
+        return json.loads(read(path))
 
 
 class EmissionError(RuntimeError):

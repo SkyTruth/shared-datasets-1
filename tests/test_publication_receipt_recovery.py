@@ -1,6 +1,7 @@
 """Receipt repair consumes real serialized provenance; no data/Slack replay exists."""
 from copy import deepcopy
 import json
+import subprocess
 from unittest import mock
 
 import pytest
@@ -63,7 +64,7 @@ def test_original_failure_repairs_only_the_receipt_and_reuses_its_exact_marker()
 
     def transport(command, **kwargs):
         if command[-1].endswith("/logs"):
-            return log()
+            return log().encode()
         assert command[:4] == ["gh", "api", "repos/SkyTruth/shared-datasets-1/issues/7/comments", "-f"]
         body = command[4].removeprefix("body=")
         assert body.startswith(BODY + "\n\n")
@@ -79,10 +80,10 @@ def test_raw_ansi_job_logs_are_captured_with_the_cli_explicit_opt_in():
     api = PublicationAPI()
 
     def transport(command, **kwargs):
-        assert command == ["gh", "api", "--allow-escape-sequences",
+        assert command == ["gh", "api", "--method", "GET", "--allow-escape-sequences",
                            "repos/SkyTruth/shared-datasets-1/actions/jobs/900/logs"]
-        assert kwargs == {"text": True}
-        return "\x1b[36moriginal workflow command\x1b[0m\n" + log()
+        assert kwargs == {"stderr": subprocess.PIPE, "timeout": 60}
+        return ("\x1b[36moriginal workflow command\x1b[0m\n" + log()).encode()
 
     with mock.patch.object(recovery.subprocess, "check_output", side_effect=transport):
         _, _, body = recovery.verify_source(api, 7, 700, 1)
@@ -94,7 +95,7 @@ def test_raw_ansi_job_logs_are_captured_with_the_cli_explicit_opt_in():
 def test_existing_receipt_never_replays_slack_or_posts_another_comment(comments):
     api = PublicationAPI()
     api.comments = comments
-    with mock.patch.object(recovery.subprocess, "check_output", return_value=log()) as send:
+    with mock.patch.object(recovery.subprocess, "check_output", return_value=log().encode()) as send:
         report = recovery.repair(api, 7, 700, 1)
     assert report["receipt_comment_id"] == comments[0]["id"] and send.call_count == 1
 
