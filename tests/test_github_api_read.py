@@ -25,7 +25,7 @@ def gh(tmp_path, monkeypatch):
     binary = tmp_path / "gh"
     binary.write_text(
         f"#!{sys.executable}\n"
-        "import json, pathlib, sys\n"
+        "import json, os, pathlib, sys, time\n"
         f"responses = json.loads(pathlib.Path({str(responses)!r}).read_text())\n"
         f"log = pathlib.Path({str(log)!r})\n"
         "count = len(log.read_text().splitlines()) if log.exists() else 0\n"
@@ -33,6 +33,9 @@ def gh(tmp_path, monkeypatch):
         "response = responses[min(count, len(responses) - 1)]\n"
         "sys.stdout.write(response.get('stdout', ''))\n"
         "sys.stderr.write(response.get('stderr', ''))\n"
+        "if response.get('delayed_exit'):\n"
+        "    sys.stdout.flush(); sys.stderr.flush(); os.close(1); os.close(2)\n"
+        "    time.sleep(0.05); os._exit(response.get('code', 0))\n"
         "sys.exit(response.get('code', 0))\n"
     )
     binary.chmod(0o755)
@@ -52,7 +55,7 @@ def outage(status=502, *, stdout=""):
 @pytest.mark.parametrize("client", CLIENTS)
 def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
     log = gh([outage(), outage(), {"stdout": '{"id": 38508512742, "run_attempt": 1}'}])
-    with patch("time.sleep") as sleep:
+    with patch("scripts.github_api_read.sleep") as sleep:
         assert client().get(PATH) == {"id": 38508512742, "run_attempt": 1}
     assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -64,7 +67,7 @@ def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys):
     log = gh([outage(status, stdout='{"id": 38508512742}')])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch("scripts.github_api_read.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     assert len(log.read_text().splitlines()) == 3
     assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
@@ -79,7 +82,7 @@ def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys)
 ])
 def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
     log = gh([{"code": 1, "stderr": stderr}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch("scripts.github_api_read.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
@@ -87,8 +90,9 @@ def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
 
 @pytest.mark.parametrize("client", CLIENTS)
 def test_connection_failure_recovers(client, gh):
-    log = gh([{"code": 1, "stderr": transport.CONNECTION_ERROR.decode()}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep:
+    # Closing output before exit exercises subprocess's separate timeout polling.
+    log = gh([{"code": 1, "stderr": transport.CONNECTION_ERROR.decode()}, {"stdout": "{}", "delayed_exit": True}])
+    with patch("scripts.github_api_read.sleep") as sleep:
         assert client().get(PATH) == {}
     sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
@@ -102,7 +106,7 @@ def test_connection_failure_recovers(client, gh):
 ])
 def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, gh):
     log = gh([outage(stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
-    with patch("time.sleep") as sleep:
+    with patch("scripts.github_api_read.sleep") as sleep:
         assert client().pages(PATH, field="jobs") == [row for page in pages for row in page["jobs"]]
     sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
@@ -118,7 +122,7 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
 ])
 def test_response_validation_after_recovery_is_not_retried(client, response, gh):
     log = gh([outage(), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
-    with patch("time.sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
+    with patch("scripts.github_api_read.sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
         client().pages(PATH, field="jobs")
     sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
@@ -128,7 +132,7 @@ def test_response_validation_after_recovery_is_not_retried(client, response, gh)
 def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
     timeout = subprocess.TimeoutExpired(["gh", "api"], 60, output=b'{"partial": true}')
     responses = [timeout, b"{}"] if recover else [timeout] * 3
-    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch("time.sleep") as sleep:
+    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch("scripts.github_api_read.sleep") as sleep:
         if recover:
             assert deployments.GitHub().get(PATH) == {}
         else:
@@ -141,7 +145,7 @@ def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
 
 def test_deployment_write_is_never_replayed(gh):
     log = gh([outage(), {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch("scripts.github_api_read.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
         deployments.GitHub().post("repos/SkyTruth/shared-datasets-1/deployments", {"ref": "a" * 40})
     sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
@@ -165,7 +169,7 @@ def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wron
         {"stdout": '[{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}]'},
     ]
     log = gh(evidence)
-    with patch("time.sleep") as sleep:
+    with patch("scripts.github_api_read.sleep") as sleep:
         if wrong_revision:
             with pytest.raises(deployments.DeploymentError, match="executor differs"):
                 deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1)
