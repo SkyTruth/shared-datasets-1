@@ -47,6 +47,13 @@ MONITORING_PERMISSIONS = (
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
 )
+OPERATIONAL_LOG_SETUP_PERMISSIONS = (
+    "logging.buckets.get", "logging.views.create", "logging.views.get", "logging.views.list", "logging.views.update",
+    "logging.views.getIamPolicy", "logging.views.setIamPolicy",
+)
+OPERATIONAL_METRIC_SETUP_PERMISSIONS = (
+    "monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get", "monitoring.metricDescriptors.list",
+)
 
 
 def request(url, permissions, token):
@@ -87,6 +94,13 @@ def checks(target):
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
     if target == "monitoring-alerts":
         return [(project_url, MONITORING_PERMISSIONS)]
+    if target == "operational-observer-setup":
+        pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
+        return checks("iam-bootstrap") + checks("bucket-iam") + [
+            (project_url, OPERATIONAL_METRIC_SETUP_PERMISSIONS + ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "serviceusage.services.list")),
+            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules", "iam.workloadIdentityPoolProviders.create", "iam.workloadIdentityPoolProviders.get")),
+            *[(f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/{bucket}/views/_AllLogs:testIamPermissions", OPERATIONAL_LOG_SETUP_PERMISSIONS) for bucket in ("_Default", "_Required")],
+        ]
     if target == "preview-service-account-iam":
         # The preview WIF binding references the managed GitHub pool, while
         # its signing binding references a managed custom role. Terraform
@@ -143,7 +157,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):

@@ -61,6 +61,14 @@ and complete live policy/channel inventories. Findings never authorize automatic
 disabling of unknown policies. Use only the protected PR workflow for production
 policy retirement and declarative import.
 
+The WDPA auxiliary execution observer shares the verified WDPA image and explicit
+resource edge. Its two-minute worker limit uses a separate 60-second safe-read
+budget, with complete pagination restarted after recognized transport failures.
+Typed read-only failures remain one observer-health episode across scheduled
+attempts under the shared 30-minute escalation clock. Exact healthy observer
+executions resolve only that health scope; they never prove dataset, identity or
+deployment recovery. Status-object writes stay outside the retry boundary.
+
 Before v3 migration, drain notification workers and preserve verified historical
 records and uncertain claims. Before cloud cutover, retain 24 hours of complete
 shadow scan and heartbeat evidence; a missed or incomplete cycle emits no heartbeat

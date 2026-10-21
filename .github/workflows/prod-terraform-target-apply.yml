@@ -270,6 +270,23 @@ jobs:
           READINESS_TARGET: ${{ inputs.readiness_target }}
         run: python scripts/deployment_permissions.py --target "$READINESS_TARGET" --plan-json "$RUNNER_TEMP/target-apply.tfplan.json"
 
+      - name: Set up locked cutover verifier
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install locked cutover verifier dependencies
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: uv sync --locked --no-dev
+
+      - name: Verify operational route and runtime-secret cutover evidence
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ inputs.targets }}
+        run: uv run --no-sync python scripts/operational_cutover.py --plan-json "$RUNNER_TEMP/target-apply.tfplan.json" --executor-sha "$EXECUTOR_SHA" --scope "$TARGETS" --output "$RUNNER_TEMP/operational-cutover-proof.json"
+
       - name: Verify run-bound signing capability without mutation
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: ./.github/actions/deployment-receipt
@@ -300,6 +317,12 @@ jobs:
         with:
           mode: receipt
           receipt-path: ${{ steps.revision.outputs.receipt_path }}
+
+      - name: Recheck operational cutover freshness before apply
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: uv run --no-sync python scripts/operational_cutover.py --plan-json "$RUNNER_TEMP/target-apply.tfplan.json" --executor-sha "$EXECUTOR_SHA" --scope "$TARGETS" --recheck "$RUNNER_TEMP/operational-cutover-proof.json"
 
       - name: Terraform apply
         if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}

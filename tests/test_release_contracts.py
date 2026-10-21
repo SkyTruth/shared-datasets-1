@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 from pathlib import Path
 import shutil
 import tempfile
@@ -54,6 +55,23 @@ class ReleaseContractTests(unittest.TestCase):
         errors = contracts.iam_contract(self.root)
         self.assertTrue(any("runWithOverrides" in item for item in errors))
         self.assertTrue(any("bootstrap" in item for item in errors))
+
+    def test_observer_catalog_growth_cannot_exceed_reviewed_iam_chunk_scope(self):
+        path = self.root / "catalog/shared-datasets-catalog.csv"
+        with path.open() as stream:
+            reader = csv.DictReader(stream)
+            fields, rows = reader.fieldnames, list(reader)
+        while len(rows) <= 30:
+            additional = {**rows[0], "asset_slug": "additional-asset-" + str(len(rows))}
+            rows.append(additional)
+        with path.open("w") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+        caller = contracts.workflow(self.root, "cron-alert-policy-sync.yml")["jobs"]["observations"]["with"]
+        text = (self.root / "terraform/envs/prod/operational_observer.tf").read_text()
+        errors = contracts.operational_storage_contract(self.root, text, caller)
+        self.assertTrue(any("exceeds the reviewed five IAM chunks" in item for item in errors))
 
     def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
         path = self.root / ".github/workflows/prod-terraform-target-apply.yml"

@@ -34,6 +34,14 @@ TARGET_WORKFLOWS = {
     "catalog-web": "catalog-web-deploy.yml",
     "catalog-viewer": "catalog-viewer-deploy.yml",
 }
+# Auxiliary resources belong to their existing protected deployment target.
+# They are observation workers, never aliases for that target's data recovery.
+AUXILIARY_CLOUD_JOBS = {
+    "wdpa-execution-observer": {
+        "deployment_target": "wdpa-monthly",
+        "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+    },
+}
 TERRAFORM_SYNCS = {
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
@@ -48,6 +56,7 @@ TERRAFORM_SYNCS = {
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
+    "Operational observation setup": "cron-alert-policy-sync.yml",
 }
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow

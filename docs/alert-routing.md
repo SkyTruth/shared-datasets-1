@@ -160,6 +160,11 @@ verify Google Cloud's audit payloads or Slack delivery; record those separately.
 
 ## Monitoring configuration
 
+Cloud observation is introduced in [shadow mode](cloud-operational-observations.md)
+before any operational delivery cutover. Runtime facts, filtered reads and a
+signed reconciliation checkpoint must demonstrate coverage before native routes
+are removed; security and pipeline-health alerts remain independent.
+
 Prefer an existing Cloud Monitoring Slack notification channel. Include its
 resource name in the local review plan with `cron_alert_notification_channels`;
 the protected `cron-alert-policy-sync.yml` applies reviewed changes after merge.
@@ -215,10 +220,20 @@ consumer-impacting changes use the reviewed `breaking_changes` plan contract in
 
 Repository functionality notices use fenced commit messages under the
 [repo-alert workflow](../.claude/skills/repo-alert-commit-messages/SKILL.md).
-GitHub webhook notifications use the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions
-secret. Runtime FYI notifications use the Secret Manager secret
-`shared-datasets-slack-webhook-url` by default. To set or rotate it, supply the
-webhook bytes through a local file:
+Approved announcement entrypoints explicitly construct a webhook capability from
+the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions secret. Domain helpers cannot
+discover a production webhook from ambient credentials; the generic Slack CLI
+only previews payloads. Named break-glass delivery holds its own explicit,
+deferred Secret Manager capability.
+
+During shadow collection, the temporary native runtime bridge uses only the
+explicit webhook environment injected into the existing authorized jobs. Unified
+mode constructs no runtime delivery capability. Legacy translation claims stay
+audit evidence and never authorize blind resending. Retiring runtime secret access
+requires verified cutover and old-image drain evidence.
+
+The existing runtime secret is `shared-datasets-slack-webhook-url`. To set or
+rotate it, supply the webhook bytes through a local file:
 
 ```bash
 gcloud secrets versions add shared-datasets-slack-webhook-url \

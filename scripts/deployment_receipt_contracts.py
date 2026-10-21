@@ -92,7 +92,7 @@ def notification_boundary(filename, identifier, workflow, job):
     guard = '''set -euo pipefail
 if [[ "${GITHUB_REF}" != "refs/heads/main" ||
       "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/unattended-workflow-alert.yml@refs/heads/main" ]]; then
-  echo "Incident notifications require this workflow from main." >&2
+  echo "Execution must use this workflow from main." >&2
   exit 1
 fi'''
     if not steps or set(steps[0]) != {"name", "run"} or re.sub(r"\s+", " ", steps[0]["run"].strip()) != re.sub(r"\s+", " ", guard):
@@ -100,27 +100,38 @@ fi'''
     runs = {
         "uv sync --locked --no-dev": None,
         "python scripts/install_deployment_verifier.py": None,
-        'uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
-        'uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
-        'uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': None,
+        'uv run --no-sync python scripts/operational_reconcile.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
+        'uv run --no-sync python scripts/operational_reconcile.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
+        'uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': "verify",
+        'uv run --no-sync python scripts/operational_reconcile.py finalize-cycle --work-dir "$RUNNER_TEMP/slack-incidents"': "finalize-cycle",
+        'uv run --no-sync python scripts/operational_reconcile.py verify-heartbeat --work-dir "$RUNNER_TEMP/slack-incidents"': None,
     }
     actions = {
         "actions/checkout@v4": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False},
         "actions/setup-python@v5": {"python-version": "3.12.12"},
         "astral-sh/setup-uv@v6": {"version": "0.11.8", "enable-cache": False},
+        "google-github-actions/auth@v2": {
+            "workload_identity_provider": "${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}",
+            "service_account": "${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}",
+            "create_credentials_file": True,
+        },
     }
     environment = {
         "GH_TOKEN": "${{ github.token }}",
         "SHARED_DATASETS_SLACK_BOT_TOKEN": "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}",
         "SHARED_DATASETS_SLACK_CHANNEL_ID": "${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}",
         "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": "${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}",
+        "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED": "${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}",
     }
     command_environments = {
         "prepare": environment,
-        "deliver": {key: value for key, value in environment.items() if not key.endswith("_SINCE")},
+        "deliver": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_SLACK_BOT_TOKEN",
+                    "SHARED_DATASETS_SLACK_CHANNEL_ID", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
         "verify": {"GH_TOKEN": environment["GH_TOKEN"]},
+        "finalize-cycle": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
+        "verify-heartbeat": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
     }
-    if [step.get("uses") for step in steps[1:4]] != list(actions):
+    if [step.get("uses") for step in steps[1:4]] != list(actions)[:3]:
         return False
     seen_runs, seen_actions, signers = [], [], {}
     for step in steps[1:]:
@@ -132,41 +143,48 @@ fi'''
             run = step["run"].strip()
             if "uses" in step or run not in runs or step.get("id") != runs[run]:
                 return False
-            phase = next((name for name in command_environments if f"slack_incidents.py {name} " in run), None)
+            phase = next((name for name in command_environments if f"operational_reconcile.py {name} " in run), None)
             if step.get("env", {}) != command_environments.get(phase, {}):
                 return False
-            if phase not in {"deliver", "verify"} and "if" in step:
+            if phase not in {"deliver", "verify", "finalize-cycle", "verify-heartbeat"} and "if" in step:
                 return False
             seen_runs.append(run)
         elif step.get("uses") == NOTIFICATION_ATTEST:
             identifier = step.get("id")
-            if identifier not in {"attest-claims", "attest-outcomes"} or identifier in signers:
+            if identifier not in {"attest-claims", "attest-outcomes", "attest-cycle"} or identifier in signers:
                 return False
-            phase = "claims" if identifier == "attest-claims" else "outcomes"
+            phase = "outcomes" if identifier == "attest-outcomes" else "claims"
             if step.get("with") != {"subject-path": "${{ runner.temp }}/slack-incidents/" + phase + "/*.json", "create-storage-record": False}:
                 return False
             signers[identifier] = step
         else:
             action = step.get("uses")
-            if action not in actions or step.get("with") != actions[action] or step.get("env") or "if" in step or "id" in step:
+            if action not in actions or step.get("with") != actions[action] or step.get("env") or "id" in step:
+                return False
+            expected_if = "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}" if action == "google-github-actions/auth@v2" else None
+            if step.get("if") != expected_if:
                 return False
             seen_actions.append(action)
-    if seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}:
+    if seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes", "attest-cycle"}:
         return False
     by_id = {step.get("id"): step for step in steps if step.get("id")}
     delivery = by_id["deliver"]
     claims = signers["attest-claims"]
     outcomes = signers["attest-outcomes"]
-    verify = steps[-1]
+    verify = by_id["verify"]
     expected_conditions = (
         (claims, "${{ always() && steps.prepare.outputs.claims == 'true' }}"),
         (delivery, "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}"),
         (outcomes, "${{ always() && steps.deliver.outputs.outcomes == 'true' }}"),
-        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}"),
+        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success' || steps.prepare.outputs.cycle_proposed == 'true') }}"),
+        (by_id["finalize-cycle"], "${{ success() && steps.prepare.outputs.cycle_proposed == 'true' && steps.verify.outcome == 'success' }}"),
+        (signers["attest-cycle"], "${{ success() && steps.finalize-cycle.outputs.cycle_saved == 'true' }}"),
+        (steps[-1], "${{ success() && steps.attest-cycle.outcome == 'success' }}"),
     )
     if any(step.get("if") != condition for step, condition in expected_conditions):
         return False
-    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 1
+    return (steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes)
+            < steps.index(verify) < steps.index(by_id["finalize-cycle"]) < steps.index(signers["attest-cycle"]) < len(steps) - 1)
 
 
 def enabled(step):

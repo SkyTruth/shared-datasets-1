@@ -116,7 +116,7 @@ jobs:
     needs: candidate
     if: needs.candidate.outputs.release_needed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
       actions: read
@@ -227,31 +227,18 @@ jobs:
           receipt-path: ${{ steps.deployment.outputs.receipt_path }}
 
       - name: Publish exact tested package
+        id: publish-package
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.registry.outputs.should_publish == 'true'
         working-directory: api/typescript
         env:
           TARBALL: ${{ steps.candidate.outputs.tarball }}
         run: npm publish "$TARBALL" --access public --ignore-scripts --registry=https://registry.npmjs.org
       - name: Verify registry retained the tested bytes
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (steps.publish-package.outcome == 'success' || steps.registry.outputs.should_publish == 'false')
         working-directory: api/typescript
         env:
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
-        run: |
-          set -euo pipefail
-          # npm may process an accepted publication for several minutes.
-          # Only an absent version is retried; verifier errors fail immediately.
-          # These reads never republish package bytes.
-          for attempt in {0..60}; do
-            registry_result="$(GITHUB_OUTPUT='' node scripts/release-policy.mjs registry "$CANDIDATE")"
-            if [[ "$registry_result" == should_publish=false ]]; then exit 0; fi
-            if (( attempt < 60 )); then
-              echo "Waiting for npm publication visibility (check $((attempt + 1))/61)"
-              sleep 10
-            fi
-          done
-          echo "Registry has not confirmed the exact tested package integrity after ten minutes of propagation waits; inspect the existing publication before recovery" >&2
-          exit 1
+        run: python ../../scripts/npm_visibility.py --accepted-publication --candidate "$CANDIDATE"
       - name: Record terminal SDK outcome
         id: deployment-outcome
         if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}

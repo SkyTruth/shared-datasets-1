@@ -21,6 +21,7 @@ from ingestion.common.http import (
     STATUS_SUCCESS,
     request_with_retries,
 )
+from ingestion.common.operational_events import emit as emit_operational_event
 
 
 LOGGER = logging.getLogger(__name__)
@@ -183,6 +184,8 @@ def run_job_main(
     try:
         records = run()
     except IdentityDecisionRequired as blocked:
+        emit_operational_event("job_outcome", "blocked", subject={"asset_slug": blocked.asset_slug, "release": blocked.release},
+                               details={"published_data_state": "unchanged", "mutation_status": "not_started"})
         logger.warning(
             "%s %s release %s paused for %d maintainer identity decision(s); nothing published",
             feature_metadata_release_blocked_marker(),
@@ -195,14 +198,33 @@ def run_job_main(
         sys.stdout.write("\n")
         return
     except Exception:
+        # The generic boundary cannot establish whether earlier writes happened.
+        # A read failure label must never authorize replay of an uncertain job.
+        emit_operational_event("job_outcome", "failed", details={"published_data_state": "unknown", "mutation_status": "uncertain"})
         logger.exception(failure_message)
         raise
-    if isinstance(records, list) and any(record.get("localization") for record in records):
+    result_records = records if isinstance(records, list) else [records] if isinstance(records, dict) else []
+    if any(record.get("localization") for record in result_records):
         from ingestion.common.translation_notices import notify_records
         try:
-            notify_records(records)
+            notify_records(result_records)
         except Exception:
             logger.warning("Translation notices failed after publication", exc_info=True)
+    # Emit the receipt already returned by canonical publication. These facts
+    # add no writes and cannot manufacture proof for legacy/missing receipts.
+    for record in result_records:
+        receipt = record.get("run_record")
+        if (record.get("status") in {"success", "skipped"} and record.get("asset_slug")
+                and record.get("release_date") and isinstance(receipt, dict)
+                and isinstance(receipt.get("path"), str) and type(receipt.get("generation")) is int):
+            emit_operational_event("job_outcome", record["status"],
+                subject={"asset_slug": record["asset_slug"], "release": record["release_date"]},
+                details={"run_record_uri": receipt["path"], "run_record_generation": receipt["generation"],
+                         "published_data_state": "unchanged" if record["status"] == "skipped" else "published",
+                         "mutation_status": "not_required" if record["status"] == "skipped" else "completed"})
+    statuses = [record.get("status") for record in result_records]
+    emit_operational_event("job_outcome", "skipped" if statuses and all(status == "skipped" for status in statuses) else "success",
+                           details={"record_count": len(statuses)})
     json.dump(records, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
 

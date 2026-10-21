@@ -73,6 +73,18 @@ output "github_readonly_service_account" {
   value = module.github_readonly_service_account.email
 }
 
+output "operational_observer_workload_identity_provider" {
+  value = google_iam_workload_identity_pool_provider.operational_observer.name
+}
+
+output "operational_observer_service_account" {
+  value = module.operational_observer_service_account.email
+}
+
+output "operational_observer_log_views" {
+  value = [for view in google_logging_log_view.operational_observations : view.id]
+}
+
 output "canonical_destructive_action_deny_policy" {
   value = try(google_iam_deny_policy.canonical_destructive_actions[0].id, null)
 }

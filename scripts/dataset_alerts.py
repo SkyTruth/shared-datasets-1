@@ -26,7 +26,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import catalog_csv
 from scripts import catalog_docs
 from scripts.gcs_asset import ALLOW_CANONICAL_MUTATION_ENV, parse_gs_uri, require_mutation_allowed
-from scripts.slack_notify import notify
+from scripts.slack_notify import notify, webhook_capability
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -936,6 +936,7 @@ def upload_summary(
         return
     notify(
         title=title,
+        capability=webhook_capability("new_dataset"),
         body=body,
         status=upload_summary_status(new_dataset=resolved_new_dataset),
         fields=fields,
@@ -1011,6 +1012,7 @@ def breaking_alert(
         return
     notify(
         title=alert["title"],
+        capability=webhook_capability("breaking_change"),
         body=alert["body"],
         status=alert["status"],
         dry_run=dry_run,

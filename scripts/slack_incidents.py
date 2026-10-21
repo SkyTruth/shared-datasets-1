@@ -25,6 +25,9 @@ from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import operational_policy as policy
+from scripts import cloud_incident_adapter as cloud_adapter
+from scripts import cloud_operational_observations as cloud
+from scripts import translation_recovery as translations
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
@@ -66,11 +69,15 @@ def escape(value):
 
 
 def observation_key(value):
+    if value.get("source") == "cloud":
+        return value["source_id"] + ":" + hashlib.sha256(value["scope"].encode()).hexdigest()[:16]
     proof = value["proof"]
     return f"{value['run_id']}:{value['attempt']}:{value['job_id']}:{proof['status_id'] if proof else 0}"
 
 
 def binding_for(observation):
+    if observation.get("source") == "cloud":
+        return cloud_adapter.binding(observation)
     scope = observation["scope"]
     publication = re.fullmatch(r"publication:pr-([1-9][0-9]*):(?:apply|reset)", scope)
     return policy.OperationBinding(scope, scope.removeprefix("deployment:"), observation["sha"],
@@ -84,6 +91,10 @@ def operational_fact(observation, value=None):
     explicit adapter may supply narrower verified facts; a job name or red CI
     conclusion alone cannot authorize replay or a transient suppression.
     """
+    if observation.get("source") == "cloud":
+        fact = cloud_adapter.operational(observation)
+        require(value is None or value == fact.to_dict(), "cloud classification differs from its canonical source proof")
+        return fact
     binding = binding_for(observation)
     source_id = "github:" + observation_key(observation)
     if value is None:
@@ -143,6 +154,8 @@ def latch_escalation(state, now):
 
 
 def validate_observation(value):
+    if isinstance(value, dict) and value.get("source") == "cloud":
+        return cloud_adapter.validate_observation(value)
     require(isinstance(value, dict) and set(value) == {
         "scope", "kind", "label", "run_id", "attempt", "sha", "time", "job_id", "job_name", "conclusion", "proof",
     }, "invalid incident observation schema")
@@ -397,9 +410,12 @@ def terminal_observation(scope, record, payload, status):
     })
 
 
-def verify_saved_success(api, observation):
+def verify_saved_success(api, observation, *, cloud_reader=None):
     """Reverify historical recovery without confusing it with current health."""
     validate_observation(observation)
+    if observation.get("source") == "cloud":
+        require(cloud_reader is not None, "cloud recovery requires a read-only authoritative verifier")
+        return reverify_saved_cloud_success(cloud_reader, observation, github_api=api)
     proof = observation["proof"]
     require(observation["kind"] == "deployment" and observation["conclusion"] == "success" and proof is not None,
             "saved recovery must identify a terminal deployment receipt")
@@ -414,15 +430,22 @@ def verify_saved_success(api, observation):
 
 
 def new_state(observation, identity):
-    return {"scope": observation["scope"], "kind": observation["kind"], "label": observation["label"],
+    state = {"scope": observation["scope"], "kind": observation["kind"], "label": observation["label"],
             "identity": identity, "healthy": None, "incident": None, "deferred": [],
             "operation_id": observation["scope"], "first_failure_at": None, "stable_since": None,
             "escalation_at": None, "escalation_reason": None,
             "aliases": [observation["scope"]], "source_aliases": [], "operational": {},
             "recoveries": {}, "watermarks": {}, "supervision": {}}
+    if observation["scope"].startswith("cloud:"):
+        state["cloud_audit"] = {}
+        state["cloud_owner_source"] = None
+        state["cloud_legacy_coverage"] = {}
+    return state
 
 
 def source_alias(observation):
+    if observation.get("source") == "cloud":
+        return cloud_adapter.alias(observation)
     return f"github:{observation['run_id']}:{observation['attempt']}"
 
 
@@ -434,10 +457,48 @@ def required_failures(state):
     """
     failures = state["incident"]["failures"]
     specific = {source_alias(item) for item in failures if item["kind"] != "workflow"}
-    return [item for item in failures if item["kind"] != "workflow" or source_alias(item) not in specific]
+    promoted = {item["source_id"]: item for item in failures if item.get("source") == "cloud" and item["kind"] == "deployment"}
+    typed_observers = {(item["proof"]["fact"]["execution"]["name"], item["proof"]["fact"]["execution"]["uid"],
+                        tuple(item["proof"]["fact"]["execution"]["images"]))
+                       for item in failures if item.get("source") == "cloud"
+                       and item["proof"]["correlation"] is not None and item["proof"]["correlation"].get("kind") == "auxiliary_artifact"
+                       and item["proof"]["fact"]["kind"] == "runtime"
+                       and item["proof"]["fact"]["fact"]["kind"] == "job_outcome"
+                       and item["proof"]["fact"]["fact"]["details"].get("failure_reason") is not None}
+    # Exact legacy delivery coverage prevents a duplicate new bot broadcast.
+    # Its failure/action evidence and clock remain; no recovery/ACK is invented.
+    legacy_coverage = state.get("cloud_legacy_coverage", {})
+    return [item for item in failures if (item["kind"] != "workflow" or source_alias(item) not in specific)
+            and not (item.get("source") == "cloud" and item["kind"] != "deployment" and item["source_id"] in promoted
+                     and item["proof"]["fact"] == promoted[item["source_id"]]["proof"]["fact"])
+            and not (item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "execution"
+                     and (item["proof"]["fact"]["execution"]["name"], item["proof"]["fact"]["execution"]["uid"],
+                          tuple(item["proof"]["fact"]["execution"]["images"])) in typed_observers)
+            and observation_key(item) not in legacy_coverage]
+
+
+def observation_revision(observation):
+    return observation["revision"] if observation.get("source") == "cloud" else observation["sha"]
+
+
+def revision_ancestor(older, newer, ancestor):
+    if (older.get("source") == newer.get("source") == "cloud"
+            and older["proof"]["fact"]["kind"] == newer["proof"]["fact"]["kind"] == "translation_manifest"):
+        left, right = older["proof"]["fact"]["manifest"], newer["proof"]["fact"]["manifest"]
+        return translations.same_generation(left, right) or translations.follows(left, right)
+    if older.get("source") == "cloud" or newer.get("source") == "cloud":
+        return observation_revision(older) == observation_revision(newer)
+    return ancestor(older["sha"], newer["sha"])
 
 
 def covers_failure(failure, evidence, ancestor):
+    if failure.get("source") == "cloud" or evidence.get("source") == "cloud":
+        if failure.get("source") == "cloud" and evidence.get("source") == "cloud":
+            return cloud_adapter.covers(failure, evidence)
+        # A signed deployment completion can resolve a GitHub failure, but
+        # cannot establish the mutation frontier of a separate cloud failure.
+        # Cloud publication receipts likewise cannot replace deployment proof.
+        return False
     if failure["scope"] != evidence["scope"] or not ancestor(failure["sha"], evidence["sha"]):
         return False
     if instant(evidence["time"]) <= instant(failure["time"]) and (
@@ -469,11 +530,14 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, cor
         if incident["resolution"] is not None:
             covered = [item for item in required_failures(state) if item["scope"] == observation["scope"]]
             healthy = state["watermarks"].get(observation["scope"])
-            if healthy is not None and instant(observation["time"]) <= instant(healthy["time"]):
+            manifest_progression = (healthy is not None and observation.get("source") == healthy.get("source") == "cloud"
+                                    and observation["proof"]["fact"]["kind"] == healthy["proof"]["fact"]["kind"] == "translation_manifest"
+                                    and translations.follows(healthy["proof"]["fact"]["manifest"], observation["proof"]["fact"]["manifest"]))
+            if healthy is not None and instant(observation["time"]) <= instant(healthy["time"]) and not manifest_progression:
                 return state
             if covered and all(covers_failure(item, observation, ancestor) for item in covered) and (
-                    healthy is None or (instant(observation["time"]) > instant(healthy["time"])
-                                        and ancestor(healthy["sha"], observation["sha"]))):
+                    healthy is None or ((instant(observation["time"]) > instant(healthy["time"]) or manifest_progression)
+                                        and revision_ancestor(healthy, observation, ancestor))):
                 state["watermarks"][observation["scope"]] = observation
                 state["recoveries"][observation["scope"]] = observation
                 state["healthy"] = max(state["watermarks"].values(), key=lambda item: instant(item["time"]))
@@ -495,10 +559,10 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, cor
         return state
     if observation["scope"] in state["watermarks"]:
         healthy = state["watermarks"][observation["scope"]]
-        if observation["sha"] == healthy["sha"]:
+        if observation_revision(observation) == observation_revision(healthy):
             if instant(observation["time"]) <= instant(healthy["time"]):
                 return state
-        elif ancestor(observation["sha"], healthy["sha"]):
+        elif revision_ancestor(observation, healthy, ancestor):
             return state  # A superseded execution can finish after recovery.
     stable = (incident is not None and incident["resolution"] is not None
               and instant(observation["time"]) < instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds))
@@ -509,6 +573,8 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, cor
         state["escalation_at"], state["escalation_reason"] = None, None
         state["recoveries"] = {}
         state["operational"] = {}
+        if "cloud_legacy_coverage" in state:
+            state["cloud_legacy_coverage"] = {}
         state["source_aliases"] = [source_alias(observation)]
         if incident is not None:
             # Stable recovery ends the old ownership episode. Its immutable
@@ -516,6 +582,8 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, cor
             # stale ownership cannot change a new issue's recovery budget.
             state["supervision"] = {key: owner for key, owner in state["supervision"].items()
                                     if owner["first_failure_at"] is None}
+            if "cloud_owner_source" in state:
+                state["cloud_owner_source"] = None
         state["aliases"] = sorted({state["scope"], observation["scope"], *state["supervision"], *state["watermarks"]})
     elif observation_key(observation) not in {observation_key(item) for item in incident["failures"]}:
         incident["failures"].append(observation)
@@ -525,7 +593,8 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor, cor
     state["stable_since"] = None
     state["recoveries"].pop(observation["scope"], None)
     state["source_aliases"] = sorted(set(state["source_aliases"]) | {source_alias(observation)})
-    state["operational"].setdefault(observation_key(observation), operational_fact(observation).to_dict())
+    if observation.get("source") != "cloud":
+        state["operational"].setdefault(observation_key(observation), operational_fact(observation).to_dict())
     return state
 
 
@@ -537,6 +606,8 @@ def validate_state(state, *, legacy=False, schema=SCHEMA):
     if schema == SCHEMA:
         fields |= {"operation_id", "first_failure_at", "stable_since", "aliases", "source_aliases",
                    "operational", "recoveries", "watermarks", "supervision", "escalation_at", "escalation_reason"}
+        if isinstance(state, dict) and isinstance(state.get("scope"), str) and state["scope"].startswith("cloud:"):
+            fields |= {"cloud_audit", "cloud_owner_source", "cloud_legacy_coverage"}
     require(isinstance(state, dict) and set(state) == fields, "invalid incident state schema")
     aliases = state["aliases"] if schema == SCHEMA else [state["scope"]]
     require(isinstance(aliases, list) and aliases and state["scope"] in aliases
@@ -557,10 +628,29 @@ def validate_state(state, *, legacy=False, schema=SCHEMA):
         require(item["scope"] in aliases and observation_key(item) not in deferred_events, "incompatible/duplicate deferred observation")
         deferred_events.add(observation_key(item))
     incident = state["incident"]
+    if "cloud_audit" in state:
+        require(isinstance(state["cloud_audit"], dict), "invalid cloud audit evidence")
+        for source, fact in state["cloud_audit"].items():
+            cloud_adapter.validate_fact(fact)
+            require(source == fact["source_id"] and cloud_adapter.domain(fact) == "translation"
+                    and (fact["fact"]["status"] == "delivered" or fact["fact"]["details"].get("legacy_delivery_state") == "delivered")
+                    and cloud_adapter.source_scope(fact) == state["scope"],
+                    "legacy delivery report is not an exact audit-only source")
+        source = state["cloud_owner_source"]
+        require(source is None or isinstance(source, dict) and set(source) == {"operation_id", "sha256"}
+                and isinstance(source["operation_id"], str) and re.fullmatch(r"deployment:[a-z][a-z0-9-]{0,80}", source["operation_id"])
+                and isinstance(source["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", source["sha256"]),
+                "invalid inherited cloud ownership source")
+        require(source is None or state["scope"] in state["supervision"], "cloud ownership source lacks accountable supervision")
+        require(isinstance(state["cloud_legacy_coverage"], dict), "invalid legacy notice coverage")
+        for key, source in state["cloud_legacy_coverage"].items():
+            require(incident is not None and source in state["cloud_audit"]
+                    and any(observation_key(item) == key and cloud_adapter.legacy_delivery_covers(item, state["cloud_audit"][source])
+                            for item in incident["failures"]), "legacy notice coverage lacks exact retained source evidence")
     if schema == SCHEMA:
         require(state["operation_id"] == state["scope"], "operation identity differs from canonical scope")
         require(isinstance(state["source_aliases"], list) and len(state["source_aliases"]) == len(set(state["source_aliases"]))
-                and all(isinstance(value, str) and re.fullmatch(r"github:[1-9][0-9]*:[1-9][0-9]*", value)
+                and all(isinstance(value, str) and re.fullmatch(r"(?:github:[1-9][0-9]*:[1-9][0-9]*|cloud:[0-9a-f]{64})", value)
                         for value in state["source_aliases"]), "invalid source aliases")
         require(isinstance(state["operational"], dict) and isinstance(state["recoveries"], dict)
                 and isinstance(state["watermarks"], dict), "invalid operational evidence")
@@ -583,7 +673,7 @@ def validate_state(state, *, legacy=False, schema=SCHEMA):
             require(scope in aliases and evidence["scope"] == scope and evidence["conclusion"] == "success",
                     "invalid target recovery proof")
         if incident is None:
-            require(bool(state["supervision"]) and state["first_failure_at"] is None
+            require((bool(state["supervision"]) or bool(state.get("cloud_audit"))) and state["first_failure_at"] is None
                     and state["stable_since"] is None and not state["operational"] and not state["recoveries"] and not state["watermarks"]
                     and not state["source_aliases"] and not state["deferred"] and state["healthy"] is None,
                     "a prospective registration cannot claim a failure or recovery")
@@ -633,6 +723,7 @@ def validate_state(state, *, legacy=False, schema=SCHEMA):
         require(set(state["operational"]) <= seen, "classification has no retained source observation")
         for item in incident["failures"]:
             if observation_key(item) in state["operational"]:
+                require(item.get("source") != "cloud", "cloud facts have one canonical proof, not a second classification")
                 operational_fact(item, state["operational"][observation_key(item)])
         require(set(state["source_aliases"]) == {source_alias(item) for item in incident["failures"]}, "source alias lacks exact retained failure evidence")
     return state
@@ -671,6 +762,8 @@ def desired_posts(state, *, now=None):
         # Existing failed-attempt claims still need owner reconciliation, but
         # corrected failures cannot authorize any new message or retry reply.
         return {"parent": None} if parent and parent["state"] == "delivered" else {}
+    if not required_failures(state):
+        return {}
     if state["escalation_at"] is not None:
         return {"parent": None}
     # Historical attempt claims remain auditable and require reconciliation;
@@ -687,6 +780,8 @@ def pending_posts(state):
 
 
 def run_link(observation):
+    if observation.get("source") == "cloud":
+        return cloud_adapter.link(observation["proof"]["fact"])
     return emissions.invocation(REPOSITORY, observation["run_id"], observation["attempt"])
 
 
@@ -696,9 +791,13 @@ def render(state):
     resolution = incident["resolution"]
     status = "success" if resolution else "error"
     title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
-    attempts = len({source_alias(item) for item in incident["failures"]})
-    evidence = (f"*Original failure:* {escape(first['job_name'])[:400]} ({first['conclusion']})\n"
-                f"<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n"
+    execution_aliases = {item["proof"]["fact"]["execution"]["name"]: source_alias(item)
+                         for item in incident["failures"] if item.get("source") == "cloud" and item["kind"] == "deployment"}
+    attempts = len({execution_aliases.get(item["proof"]["fact"].get("execution", {}).get("name"), source_alias(item))
+                    if item.get("source") == "cloud" and cloud_adapter.domain(item["proof"]["fact"]) is None
+                    else source_alias(item) for item in incident["failures"]})
+    evidence = (f"*Original failure:* {escape(first.get('job_name', first['label']))[:400]} ({first['conclusion']})\n"
+                f"<{run_link(first)}|Failed attempt> · `{observation_revision(first)[:24]}` · {first['time']}\n"
                 f"*Failed attempts:* {attempts} · {len(incident['failures'])} source observations")
     if latest != first:
         evidence += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
@@ -730,10 +829,14 @@ def render(state):
         paragraphs.append(f"*Escalation eligible:* {state['escalation_at']} · {escape(state['escalation_reason'])}")
     paragraphs.append("*Evidence:*\n" + evidence)
     if resolution:
-        recovery = f"*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
-        if resolution["proof"]:
+        recovery = f"*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{observation_revision(resolution)[:24]}`"
+        if resolution["proof"] and resolution.get("source") != "cloud":
             recovery += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
         paragraphs.append(recovery)
+        for current in state["recoveries"].values():
+            if (current != resolution and current.get("source") == "cloud"
+                    and current["proof"]["fact"]["kind"] == "translation_manifest"):
+                paragraphs.append(f"*Current verified translation coverage:* <{run_link(current)}|Exact canonical manifest generation> · {current['time']}")
     body = "\n\n".join(paragraphs)
     payload = build_slack_payload(title=title, body=body, status=status, emoji="✅" if status == "success" else "🔴")
     # Preserve every displayed target action rather than letting the generic
@@ -851,7 +954,12 @@ class Ledger:
                 if alias == scope or alias not in states:
                     continue
                 prospective = states[alias]
-                require(prospective["incident"] is None and latest[scope]["id"] > latest[alias]["id"],
+                shadow_adoption = (alias.startswith("cloud:") and prospective["incident"] is not None
+                                  and not prospective["incident"]["posts"] and not prospective["cloud_audit"]
+                                  and state["incident"] is not None
+                                  and all(item in state["incident"]["failures"] for item in prospective["incident"]["failures"])
+                                  and all(state[key].get(target) == proof for key in ("recoveries", "watermarks") for target, proof in prospective[key].items()))
+                require((prospective["incident"] is None or shadow_adoption) and latest[scope]["id"] > latest[alias]["id"],
                         "signed episode alias conflicts with an existing incident or newer registration")
                 for operation_id, owner in prospective["supervision"].items():
                     current = state["supervision"].get(operation_id)
@@ -951,7 +1059,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     state = migrate_verified_state(state, payload["schema"])
     resolution = state["incident"]["resolution"]
     evidence = ([resolution] if resolution else []) + list(state["recoveries"].values()) + list(state["watermarks"].values())
-    for item in {observation_key(item): item for item in evidence if item["kind"] == "deployment"}.values():
+    for item in {observation_key(item): item for item in evidence if item["kind"] == "deployment" or item.get("source") == "cloud"}.values():
         verify_saved_success(ledger.api, item)
     if resolution:
         require(all(item["scope"] in state["recoveries"] and covers_failure(
@@ -995,7 +1103,7 @@ def bind_episode_owners(state, now):
         for item in required_failures(state):
             key = observation_key(item)
             fact = operational_fact(item, state["operational"].get(key))
-            if (item["kind"] == "deployment" and fact.operation_id == operation_id
+            if (item.get("source") != "cloud" and item["kind"] == "deployment" and fact.operation_id == operation_id
                     and fact.revision == binding.revision and fact.pr_number is None and binding.pr_number is not None):
                 # supervise verified this exact merged PR/executor relation;
                 # the signed registration can enrich absent source metadata.
@@ -1012,7 +1120,8 @@ def bind_episode_owners(state, now):
 
 
 def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success,
-            on_saved=lambda _: None, now=None, operational=None, initial_states=None, original_states=None):
+            on_saved=lambda _: None, now=None, operational=None, initial_states=None, original_states=None,
+            cloud_delivery_enabled=False, before_decisions=lambda _states, _now: None, decision_clock=None):
     now = now or policy.timestamp(datetime.now(timezone.utc))
     policy.instant(now)
     states = ledger.load() if initial_states is None else initial_states
@@ -1049,12 +1158,18 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
                 states[scope]["operational"][key] = operational_fact(observation, operational[key]).to_dict()
     for scope, state in list(states.items()):
         if (scope not in blocked or admits_blocked_observations(state)) and state["incident"] is not None:
-            targets = {item["scope"] for item in required_failures(state) if item["kind"] == "deployment"}
+            targets = {item["scope"] for item in required_failures(state) if item["kind"] == "deployment" and item.get("source") != "cloud"}
             for target in sorted(targets):
                 evidence = success(ledger.api, target)
                 if evidence:
                     state = fold(state, evidence, identity, ancestor=ancestor, correlate=target != scope)
             states[scope] = state
+    if decision_clock is not None:
+        updated = policy.timestamp(decision_clock())
+        require(instant(updated) >= instant(now), "policy evaluation clock moved backwards")
+        now = updated
+    before_decisions(states, now)
+    for state in states.values():
         bind_episode_owners(state, now)
         latch_escalation(state, now)
     prepared = []
@@ -1062,6 +1177,25 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
         existing = original.get(scope)
         incident = state["incident"]
+        cloud_history = incident is not None and any(item.get("source") == "cloud" for item in incident["failures"])
+        if not cloud_delivery_enabled and cloud_history:
+            parent = incident["posts"].get("parent")
+            if parent and parent["state"] == "delivered":
+                # Native rollback retains the known parent and its signed
+                # identity. Updating that parent cannot authorize a new send.
+                update_only = needs_parent_delivery(state)
+                if state != existing or update_only:
+                    record = ledger.save(state, "claims")
+                    if update_only:
+                        prepared.append(record)
+                        on_saved(record)
+                continue
+            github_eligible = any(fact.source_id.startswith("github:") and decision.disposition == policy.Disposition.ESCALATE
+                                  for fact, decision in episode_decisions(state, now=now))
+            if not github_eligible:
+                if state != existing:
+                    ledger.save(state, "claims")
+                continue
         if incident is None:
             if state != existing:
                 ledger.save(state, "claims")
@@ -1089,6 +1223,538 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
                 prepared.append(record)
                 on_saved(record)
     return prepared
+
+
+def verified_auxiliary_artifact(api, fact, *, expected=None):
+    """Image provenance only: no dataset success or same-attempt correlation."""
+    contract = deployments.AUXILIARY_CLOUD_JOBS[fact["job"]]
+    if api is None or not cloud.DIGEST.fullmatch(cloud_adapter.revision(fact)):
+        require(expected is None, "auxiliary artifact provenance cannot be reverified")
+        return None
+    target, resource = contract["deployment_target"], contract["resource"]
+    records = ([api.get(f"repos/{REPOSITORY}/deployments/{expected['record_id']}")] if expected else
+               api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100"))
+    matches = []
+    for record in records:
+        raw = record.get("payload")
+        raw = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(raw, dict) or raw.get("artifact") not in fact["execution"]["images"] or resource not in raw.get("targets", []):
+            continue
+        payload = deployments.verify_record(api, REPOSITORY, record)
+        require(payload["target"] == target, "auxiliary resource belongs to another deployment")
+        statuses = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+        selected = [status for status in statuses if expected is None or status["id"] == expected["status_id"]]
+        require(selected, "auxiliary image has no protected signed receipt")
+        status = max(selected, key=lambda item: item["id"])
+        deployments.verify_receipt(api, REPOSITORY, record, status)
+        matches.append(cloud_adapter.validate_correlation({"kind": "auxiliary_artifact",
+            "deployment_target": target, "resource": resource, "record_id": record["id"], "status_id": status["id"],
+            "revision": record["sha"], "artifact": payload["artifact"], "execution": fact["execution"]["name"]}))
+    result = max(matches, key=lambda item: item["record_id"]) if matches else None
+    require(expected is None or result == expected, "saved auxiliary image proof differs from its signed resource receipt")
+    return result
+
+
+def verified_cloud_correlation(api, fact, *, expected=None):
+    """Bind only an exact signed deployment/execution and complete source attempt."""
+    cloud_adapter.validate_fact(fact)
+    if fact["job"] in deployments.AUXILIARY_CLOUD_JOBS:
+        return verified_auxiliary_artifact(api, fact, expected=expected)
+    if (api is None or cloud_adapter.provenance_gap(fact)
+            or fact["job"] not in cloud_adapter.registered_jobs()):
+        require(expected is None, "saved cloud correlation no longer has exact provenance")
+        return None
+    target = fact["job"]
+    execution_link = cloud_adapter.link(fact)
+    records = ([api.get(f"repos/{REPOSITORY}/deployments/{expected['record_id']}")] if expected else
+               api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100"))
+    matches = []
+    for record in records:
+        statuses = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+        candidates = [status for status in statuses if status.get("environment_url") == execution_link
+                      and (expected is None or status["id"] == expected["status_id"])]
+        if not candidates:
+            continue
+        payload = deployments.verify_record(api, REPOSITORY, record)
+        require(payload["target"] == target and payload["artifact"] in fact["execution"]["images"], "exact execution receipt has different target/artifact")
+        for status in candidates:
+            deployments.verify_receipt(api, REPOSITORY, record, status)
+        status = max(candidates, key=lambda item: item["id"])
+        run_id, attempt = payload["execution_run_id"], payload["execution_run_attempt"]
+        run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
+        # A running, obsolete or incompletely enumerated attempt cannot be used
+        # as a bridge to a public GitHub incident.
+        if run.get("status") != "completed" or not alerts.verify_source_event(api, run):
+            require(expected is None, "saved source attempt is no longer authoritative")
+            continue
+        jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
+        require(isinstance(jobs, list) and jobs and len({job["id"] for job in jobs}) == len(jobs)
+                and all(positive(job["id"]) and job.get("run_id") == run_id and job.get("status") == "completed"
+                        and job.get("conclusion") in alerts.FAILED_CONCLUSIONS | {"success", "skipped", "neutral"} for job in jobs),
+                "source attempt job enumeration is incomplete or inconsistent")
+        targets = job_targets()
+        selected = [job for job in jobs if scope_for_job(job["name"], targets, alerts.WORKFLOW_PATHS[run["name"]])[0] == "deployment:" + target]
+        require(len(selected) == 1, "exact deployment source job is unavailable or ambiguous")
+        job = selected[0]
+        matches.append(cloud_adapter.validate_correlation({"record_id": record["id"], "status_id": status["id"],
+            "revision": record["sha"], "artifact": payload["artifact"], "run_id": run_id, "attempt": attempt,
+            "job_id": job["id"], "job_name": job["name"], "workflow": run["path"], "execution": fact["execution"]["name"]}))
+    require(len(matches) <= 1, "execution belongs to conflicting signed deployment receipts")
+    result = matches[0] if matches else None
+    require(expected is None or result == expected, "saved correlation differs from its exact signed source")
+    return result
+
+
+def reverify_saved_cloud_success(reader, observation, *, github_api=None, clock=None):
+    """Re-fetch exact resources; a caller cannot turn local green JSON into proof."""
+    cloud_adapter.validate_observation(observation)
+    require(observation["conclusion"] == "success", "cloud recovery is not a successful publication")
+    fact = observation["proof"]["fact"]
+    if fact["kind"] == "translation_manifest":
+        current = reader.translation_manifest(fact["manifest"]["uri"])
+        require(translations.observed_by(current, (clock or (lambda: datetime.now(timezone.utc)))()),
+                "translation recovery metadata is from the future")
+        require(translations.same_generation(fact["manifest"], current),
+                "translation recovery is no longer the current canonical manifest")
+        return True
+    expected = fact["execution"]
+    actual = cloud.authoritative_execution(reader, fact["job"], expected["name"].rsplit("/", 1)[-1])
+    require(actual == expected and actual["terminal"] and actual["success"], "cloud recovery execution changed or lacks terminal proof")
+    correlation = observation["proof"]["correlation"]
+    if correlation is not None and correlation.get("kind") == "auxiliary_artifact":
+        verified_auxiliary_artifact(github_api, fact, expected=correlation)
+        return True  # Observer health only; no canonical data receipt is implied.
+    receipt = fact.get("run_receipt")
+    require(receipt is not None and reader.run_receipt(receipt["uri"], generation=receipt["generation"]) == receipt,
+            "cloud recovery canonical receipt changed")
+    if observation["proof"]["correlation"]:
+        verified_cloud_correlation(github_api, fact, expected=observation["proof"]["correlation"])
+    return True
+
+
+def cloud_variants(fact, correlation, *, shadow):
+    observation = cloud_adapter.normalize(fact, correlation=correlation, promote=not shadow)
+    if observation is None:
+        return []
+    observations = [observation]
+    if observation["conclusion"] == "success" and cloud_adapter.recoverable(fact):
+        recovered = copy.deepcopy(observation)
+        subject = fact["fact"]["subject"]
+        recovered.update(scope="cloud:identity:" + cloud.digest({"asset": subject["asset_slug"], "release": subject["release"]}),
+                         kind="job", label=f"Identity decision · {subject['asset_slug']} {subject['release']}")
+        observations.append(cloud_adapter.validate_observation(recovered))
+    return observations
+
+
+def translation_evidence(states):
+    result = []
+    for state in states.values():
+        result.extend([*state["recoveries"].values(), *state["watermarks"].values(), *state["deferred"]])
+        incident = state["incident"]
+        if incident:
+            result.extend(incident["failures"])
+            if incident["resolution"]:
+                result.append(incident["resolution"])
+    return result
+
+
+def observable_translation_check(fact, evidence):
+    """Old unchanged debt is an audited read, never a newly dated failure."""
+    if translations.complete(fact["manifest"]):
+        return True
+    related = [item for item in evidence if item.get("source") == "cloud"
+               and item["scope"] == cloud_adapter.source_scope(fact)]
+    if any(item["source_id"] == fact["source_id"] and item["conclusion"] != "success" for item in related):
+        return True
+    if any(item["proof"]["fact"]["kind"] == "translation_manifest"
+           and translations.follows(item["proof"]["fact"]["manifest"], fact["manifest"]) for item in related):
+        return True
+    return bool(related and cloud.instant(fact["observed_at"]) > max(
+        cloud.instant(item["proof"]["fact"]["observed_at"]) for item in related))
+
+
+def poll_translation_manifests(states, observations, reader, *, now, clock=None):
+    """Revisit named issues, including a short stable-recovery flap window.
+
+    Manual translation fixes run in GitHub, so their stderr is not a Cloud Run
+    source. The current canonical generation itself is the recovery source.
+    """
+    evidence = list(observations)
+    for state in states.values():
+        incident = state["incident"]
+        if incident is None:
+            continue
+        if (incident["resolution"] is not None and not pending_recovery_update(state)
+                and policy.instant(now) - policy.instant(state["stable_since"]) > timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds)):
+            continue
+        evidence.extend(required_failures(state))
+    uris = set()
+    for observation in evidence:
+        if observation.get("source") != "cloud" or observation["conclusion"] == "success":
+            continue
+        fact = observation["proof"]["fact"]
+        if cloud_adapter.domain(fact) != "translation":
+            continue
+        if fact["kind"] == "translation_manifest":
+            uris.add(fact["manifest"]["uri"])
+        elif fact["fact"]["status"] == "required" and fact["fact"]["subject"].get("manifest_uri"):
+            uris.add(fact["fact"]["subject"]["manifest_uri"])
+    facts = []
+    for uri in sorted(uris):
+        proof = translations.validate(reader(uri))
+        require(proof["uri"] == uri, "translation poll returned another canonical manifest")
+        require(translations.observed_by(proof, (clock or (lambda: policy.instant(now)))()),
+                "translation manifest metadata is from the future")
+        prior = [item["proof"]["fact"]["manifest"] for item in translation_evidence(states)
+                 if item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "translation_manifest"
+                 and item["proof"]["fact"]["manifest"]["uri"] == uri
+                 and item["proof"]["fact"]["manifest"]["generation"] == proof["generation"]]
+        if prior:
+            require(all(translations.same_generation(item, proof) for item in prior),
+                    "canonical translation generation changed immutable bytes")
+            proof = min(prior, key=lambda item: cloud.instant(item["updated_at"]))
+        facts.append(cloud_adapter.validate_fact({"kind": "translation_manifest", "resource_type": "gcs_object",
+            "source_id": "gcsmanifest:" + cloud.digest({"uri": uri, "generation": proof["generation"]}),
+            "observed_at": proof["created_at"], "manifest": proof}))
+    return facts
+
+
+def normalize_cloud_collection(proposal, github_api=None, *, shadow=True, states=None):
+    cloud.validate_checkpoint(proposal)
+    observations, audits, seen, deferred, deferred_proofs = [], [], {}, [], {}
+    for fact in proposal["pending"]:
+        cloud_adapter.validate_fact(fact)
+        source = fact["source_id"]
+        require(source not in seen or seen[source] == fact, "one cloud source has conflicting normalized proofs")
+        if source in seen:
+            continue
+        seen[source] = fact
+        if fact["kind"] == "translation_manifest":
+            continue  # Select debt observations after all runtime sources are known.
+        if not cloud_adapter.provenance_gap(fact) and cloud_adapter.domain(fact) == "translation" and (fact["fact"]["status"] == "delivered"
+                or fact["fact"]["details"].get("legacy_delivery_state") == "delivered"):
+            audits.append(fact)
+            continue
+        correlation = verified_cloud_correlation(github_api, fact)
+        if (correlation is not None and correlation.get("kind") == "auxiliary_artifact"
+                and not cloud_adapter.provenance_gap(fact, correlation)
+                and fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact["kind"] == "execution"
+                and fact["execution"]["terminal"] and fact["execution"]["completion_time"] is not None
+                and cloud.instant(fact["execution"]["completion_time"]) > cloud.instant(proposal["covered_through"])):
+            deferred.append(source)
+            deferred_proofs[source] = correlation
+            continue  # Typed runtime evidence lies beyond this complete scan.
+        observations.extend(cloud_variants(fact, correlation, shadow=shadow))
+    evidence = [*translation_evidence(states or {}), *observations]
+    for fact in seen.values():
+        if fact["kind"] == "translation_manifest" and observable_translation_check(fact, evidence):
+            observations.extend(cloud_variants(fact, None, shadow=shadow))
+    return {"observations": observations, "audit_reports": audits, "sources": list(seen.values()),
+            "deferred_source_ids": deferred, "deferred_proofs": deferred_proofs}
+
+
+def cloud_evaluation(normalized, states, *, shadow, worker):
+    refs, counts = [], {"observations": 0, "record_only": 0, "actionable": 0, "owner_held": 0,
+                       "clarification_wait": 0, "automatic_recovery": 0, "uncertain_mutation": 0,
+                       "provenance_gaps": 0, "legacy_delivery_reports": len(normalized["audit_reports"]),
+                       }
+    audit_refs = []
+    for fact in normalized["audit_reports"]:
+        matches = [state for state in states.values() if state.get("cloud_audit", {}).get(fact["source_id"]) == fact]
+        require(len(matches) == 1, "legacy delivery audit was not durably retained once")
+        audit_refs.append({"source_id": fact["source_id"], "scope": matches[0]["scope"]})
+    for observation in normalized["observations"]:
+        counts["observations"] += 1
+        key = observation_key(observation)
+        matches = []
+        for state in states.values():
+            incident = state["incident"]
+            retained = list(state["deferred"]) + list(state["watermarks"].values()) + list(state["recoveries"].values())
+            if incident:
+                retained += incident["failures"] + ([incident["resolution"]] if incident["resolution"] else [])
+            if any(observation_key(item) == key for item in retained):
+                require(all(item == observation for item in retained if observation_key(item) == key), "signed cloud source differs from evaluated proof")
+                matches.append(state)
+        require(len(matches) <= 1, "cloud source has duplicate signed public parents")
+        disposition = "record_only"
+        if matches:
+            state = matches[0]
+            incident = state["incident"]
+            if observation["conclusion"] != "success" and incident and incident["resolution"] is None and observation in required_failures(state):
+                decisions = episode_decisions(state, now=worker["evaluated_at"])
+                decision = next((decision for fact, decision in decisions if fact.source_id == observation["source_id"]), None)
+                disposition = decision.disposition.value if decision else "record_only"
+            refs.append({"source_id": observation["source_id"], "scope": state["scope"], "observation_key": key, "disposition": disposition})
+        elif observation["conclusion"] != "success":
+            require(False, "actionable cloud source was not durably retained")
+        if disposition in {"owner_held", "clarification_wait"}:
+            counts["owner_held"] += 1
+            counts["clarification_wait"] += int(disposition == "clarification_wait")
+        elif disposition == "escalate":
+            counts["actionable"] += 1
+        else:
+            counts["record_only"] += 1
+        counts["uncertain_mutation"] += int(operational_fact(observation).mutation_status == policy.MutationStatus.UNCERTAIN)
+    source_proofs = {item["source_id"]: item["proof"]["correlation"] for item in normalized["observations"]}
+    gaps = [fact["source_id"] for fact in normalized["sources"] if fact["source_id"] not in normalized["deferred_source_ids"]
+            and cloud_adapter.provenance_gap(fact, source_proofs.get(fact["source_id"]))]
+    counts["provenance_gaps"] = len(gaps)
+    counts["quiet_sources"] = len({fact["source_id"] for fact in normalized["sources"]}
+                                 - {item["source_id"] for item in normalized["observations"] if item["conclusion"] != "success"})
+    counts["verified_asset_publications"] = len({item["source_id"] for item in normalized["observations"]
+                                                if cloud_adapter.recoverable(item["proof"]["fact"])})
+    counts["verified_observer_health"] = len({item["source_id"] for item in normalized["observations"]
+                                              if cloud_adapter.observational_success(item["proof"]["fact"], item["proof"]["correlation"])})
+    counts["verified_translation_recoveries"] = len({item["source_id"] for item in normalized["observations"]
+                                                    if item["proof"]["fact"]["kind"] == "translation_manifest" and item["conclusion"] == "success"})
+    return {"schema": "shared-datasets-cloud-evaluation-v1", "complete": True, "provenance_complete": not gaps,
+            "resolved_source_ids": [], "provenance_gap_source_ids": gaps, "shadow": shadow, "worker": copy.deepcopy(worker),
+            "deferred_source_ids": list(normalized["deferred_source_ids"]),
+            "deferred_proofs": copy.deepcopy(normalized["deferred_proofs"]),
+            "source_digest": cloud.digest(normalized["sources"]), "observation_digest": cloud.digest(normalized["observations"]),
+            "sources": copy.deepcopy(normalized["sources"]), "observations": copy.deepcopy(normalized["observations"]),
+            "incident_refs": refs, "audit_refs": audit_refs, "cloud_counts": counts}
+
+
+def verify_cloud_evaluation(checkpoint, evaluation, states, *, shadow, worker):
+    """Recompute signed evaluation from canonical source proofs and signed states."""
+    cloud.validate_checkpoint(checkpoint)
+    require(evaluation.get("shadow") is shadow and evaluation.get("worker") == worker, "cloud evaluation worker/mode differs")
+    sources = evaluation.get("sources")
+    require(isinstance(sources, list), "cloud evaluation lacks replayable source facts")
+    # Correlation contains externally verified signed receipts. Preserve the
+    # exact proof already retained by the trusted worker; never infer it anew
+    # from a log field during finalization.
+    expected = normalize_cloud_collection({**checkpoint, "pending": sources}, shadow=True, states=states)
+    observations = evaluation.get("observations")
+    require(isinstance(observations, list), "cloud evaluation lacks canonical observations")
+    for item in observations:
+        cloud_adapter.validate_observation(item)
+    correlations = {}
+    for item in observations:
+        correlation = item["proof"]["correlation"]
+        source = item["source_id"]
+        require(source not in correlations or correlations[source] == correlation, "one cloud source has inconsistent correlation proofs")
+        correlations[source] = correlation
+    expected_observations = []
+    for fact in expected["sources"]:
+        if (fact not in expected["audit_reports"] and fact["source_id"] not in evaluation.get("deferred_source_ids", [])
+                and (fact["kind"] != "translation_manifest" or observable_translation_check(fact, [*translation_evidence(states), *expected["observations"]]))):
+            expected_observations.extend(cloud_variants(fact, correlations.get(fact["source_id"]), shadow=shadow))
+    require(observations == expected_observations, "evaluation omitted or altered a canonical cloud action")
+    if shadow:
+        require(all(item["kind"] != "deployment" for item in observations), "shadow cannot promote cloud observations into public GitHub episodes")
+    expected["observations"] = expected_observations
+    expected["deferred_source_ids"] = evaluation.get("deferred_source_ids", [])
+    expected["deferred_proofs"] = evaluation.get("deferred_proofs", {})
+    cloud.unresolved_pending({**checkpoint, "pending": sources}, evaluation)
+    require(cloud_evaluation(expected, states, shadow=shadow, worker=worker) == evaluation, "cloud evaluation differs from signed incident evidence")
+    return True
+
+
+def prepare_cloud(ledger, identity, proposal, *, shadow=True, now=None, github_api=None,
+                  recovery_verifier=None, on_saved=lambda _: None, github_observations=(), clock=None,
+                  translation_reader=None):
+    """One load/fold/save transaction: cloud shadow plus normal GitHub sweep."""
+    now = policy.timestamp(cloud.instant(now)) if now is not None else policy.timestamp(datetime.now(timezone.utc))
+    states = ledger.load()
+    original = copy.deepcopy(states)
+    normalized = normalize_cloud_collection(proposal, github_api=github_api, shadow=shadow, states=states)
+    if translation_reader is not None:
+        checks = poll_translation_manifests(states, normalized["observations"], translation_reader, now=now, clock=clock)
+        checked_at = (clock or (lambda: policy.instant(now)))()
+        evidence = [*translation_evidence(states), *normalized["observations"]]
+        existing_sources = {fact["source_id"]: fact for fact in normalized["sources"]}
+        for fact in checks:
+            require(translations.observed_by(fact["manifest"], checked_at), "translation manifest metadata is from the future")
+            require(fact["source_id"] not in existing_sources or existing_sources[fact["source_id"]] == fact,
+                    "one canonical generation has inconsistent translation proofs")
+            if fact["source_id"] in existing_sources:
+                continue
+            normalized["sources"].append(fact)
+            if observable_translation_check(fact, evidence):
+                normalized["observations"].extend(cloud_variants(fact, None, shadow=shadow))
+    if not shadow:
+        adopt_cloud_shadow(states, normalized["observations"])
+    for fact in normalized["audit_reports"]:
+        scope = cloud_adapter.source_scope(fact)
+        state = states.setdefault(scope, new_state({"scope": scope, "kind": "job", "label": "Translation delivery audit"}, identity))
+        require(state["identity"] == identity, "cloud audit Slack identity changed")
+        state["cloud_audit"][fact["source_id"]] = copy.deepcopy(fact)
+    for observation in normalized["observations"]:
+        if observation["conclusion"] == "success":
+            require(recovery_verifier is not None and recovery_verifier(observation) is True,
+                    "cloud recovery requires current authoritative execution/receipt verification")
+    advanced = set()
+    for observation in normalized["observations"]:
+        if observation["proof"]["fact"]["kind"] != "translation_manifest":
+            continue
+        state = states.get(observation["scope"])
+        if state is not None and state["incident"] is not None and state["incident"]["resolution"] is not None:
+            # A currently verified newer generation supersedes a queued green;
+            # it never authorizes resending a claimed notification operation.
+            if observation["conclusion"] != "success" and pending_recovery_update(state):
+                # The original parent never acknowledged green. Even after a
+                # long queue delay, reopening edits that known parent only.
+                state["incident"]["resolution"], state["stable_since"] = None, None
+                state["recoveries"].pop(observation["scope"], None)
+            states[observation["scope"]] = fold(state, observation, identity)
+            advanced.add(observation_key(observation))
+    evaluated_at = [now]
+    def ownership(current, as_of):
+        evaluated_at[0] = as_of
+        for state in current.values():
+            if "cloud_legacy_coverage" in state and state["incident"] is not None and "parent" not in state["incident"]["posts"]:
+                for observation in state["incident"]["failures"]:
+                    for source, report in state["cloud_audit"].items():
+                        if cloud_adapter.legacy_delivery_covers(observation, report):
+                            state["cloud_legacy_coverage"][observation_key(observation)] = source
+        continue_translation_supervision(current, normalized["observations"])
+        inherit_cloud_supervision(current, identity, normalized["observations"], now=as_of)
+        continue_translation_supervision(current, normalized["observations"])
+    records = prepare(ledger, identity, [*github_observations, *(item for item in normalized["observations"] if observation_key(item) not in advanced)], now=now, on_saved=on_saved,
+                      initial_states=states, original_states=original, cloud_delivery_enabled=not shadow,
+                      before_decisions=ownership, decision_clock=clock)
+    worker = {"id": ledger.run["id"], "attempt": ledger.run["run_attempt"], "head_sha": ledger.run["head_sha"], "evaluated_at": evaluated_at[0]}
+    evaluation = cloud_evaluation(normalized, states, shadow=shadow, worker=worker)
+    return records, evaluation
+
+
+def adopt_cloud_shadow(states, observations):
+    """Adopt only unposted shadow history through a verified exact bridge.
+
+    The newer signed checkpoint must retain every old source and owner. load()
+    verifies both records before treating the old scope as an adopted alias.
+    """
+    for observation in observations:
+        if observation["kind"] != "deployment":
+            continue
+        old_scope = cloud_adapter.source_scope(observation["proof"]["fact"])
+        old = states.get(old_scope)
+        if old is None or old["incident"] is None or old["incident"]["resolution"] is not None:
+            continue
+        if observation["scope"] in old["aliases"]:
+            continue
+        require(not old["incident"]["posts"] and not old["cloud_audit"], "cloud scope with historical public delivery cannot be silently adopted")
+        target_scope = locate_scope({scope: state for scope, state in states.items() if scope != old_scope}, observation)
+        if target_scope not in states:
+            old["aliases"] = sorted(set(old["aliases"]) | {observation["scope"]})
+            continue
+        current = states[target_scope]
+        require(current["identity"] == old["identity"], "cloud adoption crosses Slack identities")
+        for operation_id, owner in old["supervision"].items():
+            require(operation_id not in current["supervision"] or current["supervision"][operation_id] == owner, "cloud adoption has conflicting owner evidence")
+            current["supervision"][operation_id] = owner
+        current["aliases"] = sorted(set(current["aliases"]) | set(old["aliases"]) | {observation["scope"]})
+        current["deferred"] += [item for item in old["deferred"] if item not in current["deferred"]]
+        if current["incident"] is None:
+            current.update(incident=copy.deepcopy(old["incident"]), first_failure_at=old["first_failure_at"],
+                           stable_since=old["stable_since"], escalation_at=old["escalation_at"], escalation_reason=old["escalation_reason"],
+                           source_aliases=list(old["source_aliases"]), operational=copy.deepcopy(old["operational"]),
+                           recoveries=copy.deepcopy(old["recoveries"]), watermarks=copy.deepcopy(old["watermarks"]))
+        else:
+            incident = current["incident"]
+            incident["failures"] += [item for item in old["incident"]["failures"] if item not in incident["failures"]]
+            incident["failures"].sort(key=lambda item: (instant(item["time"]), observation_key(item)))
+            incident["resolution"], current["stable_since"] = None, None
+            current["first_failure_at"] = min(item["time"] for item in incident["failures"])
+            current["source_aliases"] = sorted(set(current["source_aliases"]) | set(old["source_aliases"]))
+            for key in ("operational", "recoveries", "watermarks"):
+                for target, proof in old[key].items():
+                    require(target not in current[key] or current[key][target] == proof, "cloud adoption has inconsistent target proof")
+                    current[key][target] = copy.deepcopy(proof)
+            if old["escalation_at"] is not None and (current["escalation_at"] is None or old["escalation_at"] < current["escalation_at"]):
+                current["escalation_at"], current["escalation_reason"] = old["escalation_at"], old["escalation_reason"]
+        del states[old_scope]
+
+
+def continue_translation_supervision(states, observations):
+    """An exact canonical alias retains an existing accountable lease only.
+
+    The owner must already cover a retained required failure for this same
+    manifest. Observation does not create an owner or refresh any activity,
+    question, authority, deadline, or execution/retry binding.
+    """
+    for observation in observations:
+        cloud_adapter.validate_observation(observation)
+        fact = observation["proof"]["fact"]
+        if fact["kind"] != "translation_manifest" or observation["conclusion"] == "success":
+            continue
+        state = states.get(observation["scope"])
+        owner = state["supervision"].get(observation["scope"]) if state else None
+        if owner is None or state["incident"] is None:
+            continue
+        binding = binding_for(observation)
+        if policy.covers_binding(owner, binding) or len(owner["covered_bindings"]) >= 64:
+            continue
+        for prior in required_failures(state):
+            if prior.get("source") != "cloud" or prior["scope"] != observation["scope"]:
+                continue
+            old = prior["proof"]["fact"]
+            if (cloud_adapter.domain(old) != "translation" or cloud_adapter.provenance_gap(old, prior["proof"]["correlation"])
+                    or cloud_adapter.domain_subject(old) != cloud_adapter.domain_subject(fact)
+                    or not policy.covers_binding(owner, binding_for(prior))):
+                continue
+            if old["kind"] == "translation_manifest":
+                uri = old["manifest"]["uri"]
+            elif old["kind"] == "runtime" and old["fact"]["status"] == "required":
+                uri = old["fact"]["subject"].get("manifest_uri")
+            else:
+                continue
+            if uri == fact["manifest"]["uri"]:
+                retained = copy.deepcopy(owner)
+                retained["covered_bindings"].append(binding.to_dict())
+                state["supervision"][observation["scope"]] = policy.validate_supervision(retained)
+                break
+
+
+def inherit_cloud_supervision(states, identity, observations, *, now):
+    """Carry accountability, never deployment authority, through exact proof.
+
+    The source owner comes only from verified signed state; the execution,
+    artifact and source revision come only from a verified deployment receipt.
+    No log or request can name a human or refresh activity through this path.
+    """
+    for observation in observations:
+        correlation = observation["proof"]["correlation"]
+        if correlation is None or observation["kind"] == "deployment" or observation["conclusion"] == "success":
+            continue
+        operation_id = "deployment:" + correlation.get("deployment_target", observation["proof"]["fact"]["job"])
+        sources = [state["supervision"][operation_id] for state in states.values() if operation_id in state["supervision"]]
+        require(len(sources) <= 1, "cloud action has conflicting accountable deployment owners")
+        if not sources:
+            continue
+        owner = sources[0]
+        source_binding = policy.OperationBinding(operation_id, operation_id.removeprefix("deployment:"), correlation["revision"], owner["pr_number"])
+        if not policy.covers_binding(owner, source_binding):
+            continue
+        scope = observation["scope"]
+        state = states.setdefault(scope, new_state(observation, identity))
+        require(state["identity"] == identity, "inherited cloud supervision has a different Slack identity")
+        previous = state["supervision"].get(scope)
+        if previous is not None:
+            latch_escalation(state, now)  # A missed lease remains eligible after late renewal.
+        if previous is not None and any(previous[key] != owner[key] for key in ("responsible_human", "conversation_ref")):
+            continue  # Changing the responsible party requires explicit handoff.
+        source = {"operation_id": operation_id, "sha256": cloud.digest(owner)}
+        if state["cloud_owner_source"] == source and previous is not None and policy.covers_binding(previous, binding_for(observation)):
+            continue  # No source activity changed; retain direct clarification/check-ins.
+        bound = copy.deepcopy(owner)
+        binding = binding_for(observation)
+        bound.update(binding.to_dict(), covered_bindings=[])
+        if previous is not None:
+            bound["covered_bindings"] = [item.to_dict() for item in {
+                policy.OperationBinding.from_dict(value) for value in previous["covered_bindings"]
+            } | {policy.OperationBinding.from_dict({key: previous[key] for key in policy.OperationBinding.__dataclass_fields__})}
+                if item != binding]
+            bound["covered_bindings"].sort(key=lambda value: (value["revision"], value["pr_number"] or 0))
+        first = min([observation["time"]] + [record["first_failure_at"] for record in (owner, previous) if record and record["first_failure_at"] is not None]
+                    + ([state["first_failure_at"]] if state["first_failure_at"] else []))
+        bound["first_failure_at"], bound["deadline"] = None, None
+        # bind_supervision changes bookkeeping time only. last_check_in and
+        # clarification references retain the authenticated source activity.
+        state["supervision"][scope] = policy.bind_supervision(bound, binding, first_failure_at=first, now=now)
+        state["cloud_owner_source"] = source
 
 
 def supervise(ledger, identity, request, *, now=None):
@@ -1126,7 +1792,7 @@ def supervise(ledger, identity, request, *, now=None):
         require(binding.target == scope and binding.pr_number == int(publication[1]), "supervision publication PR differs")
         kind = "publication"
     else:
-        require(scope.startswith("job:") and binding.target == scope, "invalid exact job supervision scope")
+        require(scope.startswith(("job:", "cloud:")) and binding.target == scope, "invalid exact job supervision scope")
         kind = "job"
     states = ledger.load()
     original = copy.deepcopy(states)
@@ -1135,6 +1801,13 @@ def supervise(ledger, identity, request, *, now=None):
     if matches:
         state = matches[0]
         require(state["identity"] == identity, "supervision Slack identity changed")
+        if scope.startswith("cloud:"):
+            require(state["incident"] is not None and any(item.get("source") == "cloud"
+                    and (item["proof"]["correlation"] is not None
+                         or item["proof"]["fact"]["kind"] == "translation_manifest" and binding.pr_number is None)
+                    and binding_for(item) == binding
+                    and not cloud_adapter.provenance_gap(item["proof"]["fact"], item["proof"]["correlation"]) for item in state["incident"]["failures"]),
+                    "cloud ownership requires exact signed execution or canonical source evidence")
     else:
         require(kind != "job", "new unregistered jobs cannot be concealed by guessed scopes")
         state = new_state({"scope": scope, "kind": kind, "label": binding.target}, identity)
@@ -1150,10 +1823,16 @@ def supervise(ledger, identity, request, *, now=None):
         verified_bindings=[operational_fact(item, state["operational"].get(observation_key(item))).binding
                            for item in state["incident"]["failures"]] if state["incident"] is not None else [])
     state["supervision"][scope] = owner
+    if scope.startswith("cloud:") and state["cloud_owner_source"] is not None:
+        source_id = state["cloud_owner_source"]["operation_id"]
+        source_owners = [item["supervision"][source_id] for item in states.values() if source_id in item["supervision"]]
+        require(len(source_owners) <= 1, "cloud ownership source is ambiguous")
+        if source_owners:
+            state["cloud_owner_source"] = {"operation_id": source_id, "sha256": cloud.digest(source_owners[0])}
     return prepare(ledger, identity, [], now=now, initial_states=states, original_states=original)
 
 
-def deliver(ledger, records, slack):
+def deliver(ledger, records, slack, *, recovery_verifier=None):
     identity = slack.identity()
     for record in records:
         state = ledger.verify(record)
@@ -1174,6 +1853,11 @@ def deliver(ledger, records, slack):
             continue
         view = parent_view_sha256(state)
         if incident["parent_view_sha256"] != view:
+            if incident["resolution"] is not None:
+                for resolution in state["recoveries"].values():
+                    if resolution.get("source") == "cloud" and resolution["proof"]["fact"]["kind"] == "translation_manifest":
+                        require(recovery_verifier is not None and recovery_verifier(resolution) is True,
+                                "translation recovery requires current canonical coverage immediately before its public update")
             slack.update(parent["ts"], render(state))
             incident["parent_view_sha256"] = view
             ledger.save(state, "outcomes")

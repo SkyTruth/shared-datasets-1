@@ -7,6 +7,7 @@ and IAM propagation are separately checked by trusted production code.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
-from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
+from scripts.deployment_permissions import MONITORING_PERMISSIONS, OPERATIONAL_LOG_SETUP_PERMISSIONS, OPERATIONAL_METRIC_SETUP_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
@@ -47,6 +48,57 @@ def role_permissions(text, name):
         return set()
     permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
     return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
+
+
+def operational_storage_contract(root, text, inputs):
+    """Keep registry-derived observer reads inside IAM's fixed condition limits."""
+    errors = []
+    with (root / "catalog/shared-datasets-catalog.csv").open() as stream:
+        assets = [row for row in csv.DictReader(stream) if row["canonical_path"].startswith("gs://skytruth-shared-datasets-1/")
+                  and ("/latest/" in row["canonical_path"] or "/releases/" in row["canonical_path"])]
+    groups = (len(assets) + 5) // 6
+    if not 1 <= groups <= 5:
+        errors.append("observer asset registry exceeds the reviewed five IAM chunks; update exact protected targets before deployment")
+    expected = {f'google_storage_bucket_iam_member.operational_observer_{surface}["{index}"]' for surface in ("receipts", "manifests") for index in range(groups)}
+    for field in ("targets", "allowed_exact"):
+        actual = {address for address in inputs.get(field, "").split() if address.startswith("google_storage_bucket_iam_member.operational_observer_")}
+        if actual != expected:
+            errors.append(f"operational {field} must cover every exact quota-safe receipt and manifest IAM chunk")
+    # Exact expression templates prevent replacing paired asset boundaries with
+    # independent prefix/suffix sets, or introducing an unconditional alternative.
+    templates = {
+        "operational_observer_receipt_conditions": """{ for index, group in local.operational_observer_asset_groups : index => join(" && ", [
+            "resource.type == 'storage.googleapis.com/Object'",
+            "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/runs/') && resource.name.endsWith('.json'))"])})",
+        ]) }""",
+        "operational_observer_manifest_conditions": """{ for index, group in local.operational_observer_asset_groups : index => join(" && ", [
+            "resource.type == 'storage.googleapis.com/Object'",
+            "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json'))"])})",
+        ]) }""",
+    }
+    def compact(value):
+        return re.sub(r"\s+", "", value)
+    for name, expected_template in templates.items():
+        match = re.search(r'\n  ' + name + r'\s*=\s*(.*?)(?=\n  [a-zA-Z_]|\n\})', text, re.S)
+        if match is None or compact(match[1]) != compact(expected_template):
+            errors.append(f"{name}: observer reads require exact Object type and paired registered asset prefix/suffix boundaries")
+    expected_groups = """{ for index, group in chunklist([
+        for row in local.shared_catalog_rows : {
+            slug = row.asset_slug
+            root = split("/releases/", split("/latest/", replace(row.canonical_path, "gs://${var.bucket_name}/", ""))[0])[0]
+        } if startswith(row.canonical_path, "gs://${var.bucket_name}/") && (strcontains(row.canonical_path, "/latest/") || strcontains(row.canonical_path, "/releases/"))
+    ], 6) : tostring(index) => group }"""
+    scope_match = re.search(r'\n  operational_observer_asset_groups\s*=\s*(.*?)(?=\n  [a-zA-Z_]|\n\})', text, re.S)
+    if scope_match is None or compact(scope_match[1]) != compact(expected_groups):
+        errors.append("observer reads must derive six-asset IAM chunks from the catalog registry")
+    for surface in ("receipts", "manifests"):
+        block = re.search(r'resource "google_storage_bucket_iam_member" "operational_observer_' + surface + r'"\s*\{(.*?)\n\}', text, re.S)
+        conditions = "receipt" if surface == "receipts" else "manifest"
+        assignments = {"for_each": f"local.operational_observer_{conditions}_conditions", "bucket": "var.bucket_name",
+                       "role": "google_project_iam_custom_role.operational_observer_receipts.name", "member": "module.operational_observer_service_account.member", "expression": "each.value"}
+        if block is None or any(re.search(r'(?m)^\s*' + key + r'\s*=\s*' + re.escape(value) + r'\s*$', block[1]) is None for key, value in assignments.items()):
+            errors.append(f"operational_observer_{surface}: observer bindings must retain the exact read-only identity/role/bucket/condition")
+    return errors
 
 
 def saved_plan_permission_contract(root):
@@ -159,6 +211,23 @@ def iam_contract(root):
     missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
+    operational = (root / "terraform/envs/prod/operational_observer.tf").read_text()
+    for role, expected in (("operational_log_view_manager", set(OPERATIONAL_LOG_SETUP_PERMISSIONS)), ("operational_metric_descriptor_manager", set(OPERATIONAL_METRIC_SETUP_PERMISSIONS)),
+                           ("operational_observer_reader", {"run.executions.get", "run.executions.list", "monitoring.timeSeries.create"}), ("operational_observer_receipts", {"storage.objects.get"})):
+        if role_permissions(operational, role) != expected:
+            errors.append(f"{role}: operational authority must match its exact permission contract")
+    observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
+    errors += operational_storage_contract(root, operational, observations["with"])
+    if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
+        errors.append("operational setup requires ordered bootstrap, permission readiness and blocked deletion")
+    audit_address = "google_project_iam_audit_config.operational_run_data_write"
+    audit_match = re.search(r'resource\s+"google_project_iam_audit_config"\s+"operational_run_data_write"\s*\{(.*?)(?=\nresource |\Z)', operational, re.S)
+    if (audit_match is None or not re.search(r'service\s*=\s*"run.googleapis.com"', audit_match[1])
+            or re.findall(r'log_type\s*=\s*"([^"]+)"', audit_match[1]) != ["DATA_WRITE"] or "exempted_members" in audit_match[1]):
+        errors.append("operational setup must enable exact unexempted Run DATA_WRITE capture")
+    for field in ("targets", "allowed_exact"):
+        if audit_address not in observations["with"].get(field, "").split():
+            errors.append(f"operational {field} omits required Run DATA_WRITE capture")
     # Derive coverage from the declarations so adding a new policy cannot leave
     # it outside the protected saved-plan/permission/receipt boundary.
     declared_policies = {
@@ -202,7 +271,8 @@ def iam_contract(root):
                 if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
                     errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
     for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
-        if workflow(root, filename)["jobs"][child].get("needs") != "bootstrap":
+        expected = ["bootstrap", "observations"] if filename == "cron-alert-policy-sync.yml" else "bootstrap"
+        if workflow(root, filename)["jobs"][child].get("needs") != expected:
             errors.append(f"{filename}: bootstrap authority must precede dependent mutation")
     return errors
 
