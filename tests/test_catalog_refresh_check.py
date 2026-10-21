@@ -127,8 +127,8 @@ def test_outages_and_invalid_snapshots_never_emit_a_selection(workspace, tmp_pat
 @pytest.fixture
 def fake_clock(monkeypatch):
     now = [0.0]
-    monkeypatch.setattr(operational_retry.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(operational_retry.time, "sleep", lambda delay: now.__setitem__(0, now[0] + delay))
+    monkeypatch.setattr(operational_retry, "monotonic", lambda: now[0])
+    monkeypatch.setattr(operational_retry, "sleep", lambda delay: now.__setitem__(0, now[0] + delay))
     return now
 
 

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import sys
-import time
+from time import monotonic, sleep
 from typing import TypeVar
 
 
@@ -39,7 +39,7 @@ class RetryBudget:
         if profile not in (SHORT, UNATTENDED):
             raise ValueError("unsupported safe-read retry profile")
         self.profile = profile
-        self.started = time.monotonic()
+        self.started = monotonic()
         self.retry_index = 0
 
     def run(self, action: Callable[[], T], *, classify: Callable[[Exception], str | None], label: str) -> T:
@@ -53,7 +53,7 @@ class RetryBudget:
                 offsets = self.profile.offsets
                 attempt = self.retry_index + 1
                 diagnostic = f"{label}: attempt {attempt}/{len(offsets)} failed ({reason})"
-                elapsed = time.monotonic() - self.started
+                elapsed = monotonic() - self.started
                 if attempt == len(offsets) or (
                     self.profile.deadline_seconds is not None and elapsed >= self.profile.deadline_seconds
                 ):
@@ -66,8 +66,8 @@ class RetryBudget:
                 )
                 self.retry_index += 1
                 print(diagnostic + f"; retrying in {delay:g}s", file=sys.stderr)
-                time.sleep(delay)
-                if self.profile.deadline_seconds is not None and time.monotonic() - self.started >= self.profile.deadline_seconds:
+                sleep(delay)
+                if self.profile.deadline_seconds is not None and monotonic() - self.started >= self.profile.deadline_seconds:
                     raise
 
 
@@ -99,7 +99,7 @@ def request_timeout(maximum: float) -> float:
     budget = _CURRENT.get()
     if budget is None or budget.profile.deadline_seconds is None:
         return maximum
-    remaining = budget.profile.deadline_seconds - (time.monotonic() - budget.started)
+    remaining = budget.profile.deadline_seconds - (monotonic() - budget.started)
     if remaining <= 0:
         raise TimeoutError("safe-read recovery deadline exhausted")
     return min(maximum, remaining)
