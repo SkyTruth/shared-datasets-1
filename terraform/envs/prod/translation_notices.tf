@@ -12,7 +12,9 @@ locals {
 }
 
 resource "google_secret_manager_secret_iam_member" "translation_notice" {
-  for_each = local.translation_notice_jobs
+  # The protected saved-plan evidence gate verifies immutable shadow history,
+  # live routing and old-image drain before permitting either deletion.
+  for_each = local.operational_slack_rollout.retire_runtime_webhook_access ? {} : local.translation_notice_jobs
 
   project   = var.project_id
   secret_id = google_secret_manager_secret.slack_webhook_url.secret_id

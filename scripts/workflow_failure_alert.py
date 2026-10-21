@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notify only for failed unattended GitHub runs; never execute their artifacts."""
+"""Classify verified unattended GitHub failures for the signed incident engine."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.slack_notify import notify
 from scripts.dataset_mutation_authorization import GitHub
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
@@ -154,7 +153,7 @@ def jobs_for_event(api: GitHub, run: dict) -> list[dict] | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--event-path", type=Path, required=True)
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="Compatibility flag; this CLI always previews classification")
     args = parser.parse_args()
     event = json.loads(args.event_path.read_text())
     run = event["workflow_run"]
@@ -173,10 +172,10 @@ def main() -> None:
         alert = None
     if alert is None:
         print("No unattended workflow failure to announce.")
-    elif args.dry_run:
-        print(json.dumps(alert, indent=2))
     else:
-        notify(**alert, strict=True)
+        # Delivery belongs exclusively to the signed incident engine. Preserve
+        # this historical classifier for replay without a webhook bypass.
+        print(json.dumps(alert, indent=2))
 
 
 if __name__ == "__main__":

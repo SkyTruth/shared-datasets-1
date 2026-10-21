@@ -46,6 +46,7 @@ MONITORING_PERMISSIONS = (
     "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete",
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
+    "monitoring.timeSeries.list",
 )
 OPERATIONAL_LOG_SETUP_PERMISSIONS = (
     "logging.buckets.get", "logging.views.create", "logging.views.get", "logging.views.list", "logging.views.update",
@@ -93,7 +94,8 @@ def checks(target):
     if target == "artifact-registry-images":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
     if target == "monitoring-alerts":
-        return [(project_url, MONITORING_PERMISSIONS)]
+        return [(project_url, MONITORING_PERMISSIONS),
+                *[(f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations:testIamPermissions", ("logging.views.get",)) for bucket in ("_Default", "_Required")]]
     if target == "operational-observer-setup":
         pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
         return checks("iam-bootstrap") + checks("bucket-iam") + [

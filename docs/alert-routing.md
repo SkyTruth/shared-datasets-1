@@ -13,6 +13,15 @@ or new channel message. That document owns configuration and reconciliation.
 There is one signed operational delivery path; disabling incident mode pauses
 delivery without falling back to the legacy workflow-failure webhook.
 
+Cloud operational delivery is staged separately. The checked-in rollout remains
+`mode: native`; the four operational Monitoring policies retain their channels.
+The [reviewed cutover contract](../.github/operational-cutovers/README.md) requires
+24 hours of verified shadow cycles, observed post-policy heartbeat samples,
+current routing audit and old-image drain before protected channel removal.
+Security and pipeline-health policies retain direct native delivery throughout.
+No real cutover, heartbeat seed or runtime secret retirement is established by
+offline tests. A config merge alone does not activate cloud delivery.
+
 | Execution | Failure reporting |
 | --- | --- |
 | PR CI, build checks, manual GitHub checks | GitHub |
@@ -221,8 +230,13 @@ consumer-impacting changes use the reviewed `breaking_changes` plan contract in
 Repository functionality notices use fenced commit messages under the
 [repo-alert workflow](../.claude/skills/repo-alert-commit-messages/SKILL.md).
 GitHub webhook notifications use the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions
-secret. Runtime FYI notifications use the Secret Manager secret
-`shared-datasets-slack-webhook-url` by default. To set or rotate it, supply the
+secret. During the native bridge stage, runtime FYI notifications use the explicit
+webhook environment mounted from Secret Manager secret
+`shared-datasets-slack-webhook-url`. Domain helpers never discover secrets from
+ambient GCP credentials; the temporary native bridge and reviewed announcement
+entrypoints hold explicit delivery capabilities. Unified runtime mode emits facts
+without public transport. A named approved emergency helper alone can explicitly
+resolve the production secret. To set or rotate it, supply the
 webhook bytes through a local file:
 
 ```bash

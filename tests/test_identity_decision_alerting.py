@@ -169,6 +169,7 @@ class AlertPolicyTests(unittest.TestCase):
                 "monitoring.alertPolicies.update",
                 "monitoring.notificationChannels.get",
                 "monitoring.notificationChannels.list",
+                "monitoring.timeSeries.list",
             },
         )
 

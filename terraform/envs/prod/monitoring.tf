@@ -12,6 +12,13 @@ locals {
     local.cron_alert_created_slack_channel,
   )
 
+  operational_slack_rollout = jsondecode(file("${path.module}/../../../catalog/operational-slack-rollout.json"))
+  operational_alert_notification_channels = (
+    local.operational_slack_rollout.mode == "unified"
+    ? []
+    : local.cron_alert_notification_channels
+  )
+
   dataset_delete_excluded_prefix_filter = join(" AND ", [
     for prefix in var.dataset_delete_alert_excluded_prefixes :
     "NOT protoPayload.resourceName=~\"/objects/${replace(prefix, "/", "\\/")}\""
@@ -58,6 +65,14 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
   lifecycle {
     precondition {
+      condition     = local.operational_slack_rollout.schema == "shared-datasets-operational-slack-rollout-v1" && contains(["native", "unified"], local.operational_slack_rollout.mode)
+      error_message = "Operational routing requires an explicit reviewed native/unified rollout configuration."
+    }
+    precondition {
+      condition     = local.operational_slack_rollout.mode != "unified" || local.operational_slack_rollout.cutover_evidence != null
+      error_message = "Unified operational routing requires checked-in immutable cutover evidence verified by the protected saved-plan gate."
+    }
+    precondition {
       condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
       error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
     }
@@ -100,7 +115,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_cloud_run_failure
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.cron_alert_notification_channels
+  notification_channels = local.operational_alert_notification_channels
 
   conditions {
     display_name = "Cloud Run Job execution failed"
@@ -173,7 +188,7 @@ resource "google_monitoring_alert_policy" "wdpa_execution_observer_unhealthy" {
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.cron_alert_notification_channels
+  notification_channels = local.operational_alert_notification_channels
 
   conditions {
     display_name = "No successful WDPA observer completion for 15 minutes"
@@ -250,7 +265,7 @@ resource "google_monitoring_alert_policy" "release_awaiting_identity_decision" {
   enabled      = var.cron_alerts_enabled
   severity     = "WARNING"
 
-  notification_channels = local.cron_alert_notification_channels
+  notification_channels = local.operational_alert_notification_channels
 
   conditions {
     display_name = "Release paused for a feature identity decision"
@@ -309,7 +324,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_scheduler_failure
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.cron_alert_notification_channels
+  notification_channels = local.operational_alert_notification_channels
 
   conditions {
     display_name = "Cloud Scheduler failed to start a scheduled ingestion job"

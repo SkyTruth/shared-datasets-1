@@ -54,14 +54,15 @@ module "wdpa_monthly_job" {
   timeout               = "86400s"
   max_retries           = 0
 
-  secret_env = {
+  secret_env = local.operational_slack_rollout.retire_runtime_webhook_access ? {} : {
     SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id
   }
 
   env = {
-    GOOGLE_CLOUD_PROJECT     = var.project_id
-    SHARED_DATASETS_BUCKET   = var.bucket_name
-    WDPA_SOURCE_URL_TEMPLATE = var.wdpa_source_url_template
+    SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE = local.operational_slack_rollout.mode
+    GOOGLE_CLOUD_PROJECT                      = var.project_id
+    SHARED_DATASETS_BUCKET                    = var.bucket_name
+    WDPA_SOURCE_URL_TEMPLATE                  = var.wdpa_source_url_template
     # Deployment verifies this exact retained build's reviewed promotion authority.
     # RUN_DATE stays execution-only: scheduled runs must use the current UTC month.
     WDPA_PROMOTION_BUNDLE   = jsonencode(jsondecode(file("${path.module}/../../../catalog/wdpa-processing-acceptance.json")).build.artifact_bundle)
@@ -73,7 +74,7 @@ module "wdpa_monthly_job" {
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_storage_bucket_iam_member.wdpa_job_object_user,
-    google_secret_manager_secret_iam_member.translation_notice["wdpa"],
+    google_secret_manager_secret_iam_member.translation_notice,
     google_storage_bucket_iam_member.translation_debt_writer["wdpa"],
   ]
 }

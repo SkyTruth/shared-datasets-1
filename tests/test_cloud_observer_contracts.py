@@ -51,7 +51,8 @@ class ObserverBoundaryTests(unittest.TestCase):
         monitoring = (TERRAFORM.parent / "monitoring.tf").read_text()
         for policy in ("scheduled_ingestion_cloud_run_failure", "scheduled_ingestion_scheduler_failure", "release_awaiting_identity_decision", "dataset_object_deleted", "dataset_object_written_by_unapproved_principal"):
             body = monitoring.split(f'"{policy}"', 1)[1].split('\nresource ', 1)[0]
-            self.assertIn("notification_channels = local.cron_alert_notification_channels", body)
+            channels = "cron_alert_notification_channels" if policy.startswith("dataset_") else "operational_alert_notification_channels"
+            self.assertIn(f"notification_channels = local.{channels}", body)
 
     def test_observation_setup_uses_protected_exact_saved_plan_boundary(self):
         targets = {

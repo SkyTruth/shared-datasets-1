@@ -13,11 +13,12 @@ import os
 from pathlib import Path
 import tempfile
 
-from google.api_core.exceptions import PreconditionFailed
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common.publication import require, split_uri
 from ingestion.common.operational_events import emit
-from scripts import catalog_csv, feature_metadata_localization as localization, release_feature_model as model, slack_notify
+from scripts import catalog_csv, feature_metadata_localization as localization, release_feature_model as model
+from ingestion.common import legacy_runtime_notifications as slack_notify
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,6 +94,21 @@ def _notify_release(client, manifest_uri, *, generation=None):
     event_subject = {"asset_slug": slug, "release": release, "manifest_uri": manifest_uri}
     event_details = {"manifest_generation": manifest_generation, "locale_counts": {locale: {field: counts[field] for field in ("translatable_values", "current", "stale", "missing")} for locale, counts in translations["locales"].items()},
                      "receipt_uri": f"gs://{bucket_name}/{marker_name}", "published_data_state": "published", "mutation_status": "completed"}
+    if slack_notify.mode() == "unified":
+        # A signed operational episode owns new delivery. Keep legacy claims as
+        # audit evidence; neither adopt their webhook parent nor replay a send.
+        try:
+            marker.reload()
+        except NotFound:
+            emit("translation_maintenance", "required", subject=event_subject, details={key: value for key, value in event_details.items() if key != "receipt_uri"})
+            return "observed"
+        existing_generation = int(marker.generation)
+        legacy = json.loads(marker.download_as_bytes(if_generation_match=existing_generation))
+        require(legacy.get("schema_version") == 1 and legacy.get("asset_slug") == slug and legacy.get("release") == release
+                and legacy.get("manifest") == record["manifest"] and legacy.get("status") in {"claimed", "delivered", "delivery_unknown"}, "legacy translation receipt requires authoritative inspection")
+        emit("translation_maintenance", "already_claimed", subject=event_subject,
+             details={**event_details, "receipt_generation": existing_generation, "legacy_delivery_state": legacy["status"]})
+        return "already_claimed"
     emit("translation_maintenance", "required", subject=event_subject, details=event_details)
     try:
         marker.upload_from_string(json.dumps(record), content_type="application/json", if_generation_match=0)

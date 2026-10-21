@@ -47,8 +47,10 @@ def validate(event):
     require(isinstance(event["details"], dict), "invalid detail object")
     # Producers emit counts, hashes and receipt references, never source text,
     # secret values, guessed ownership, or guessed repository revisions.
-    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status"}, "unsupported detail field")
+    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status", "legacy_delivery_state"}, "unsupported detail field")
     detail = event["details"]
+    if "legacy_delivery_state" in detail:
+        require(event["kind"] == "translation_maintenance" and event["status"] == "already_claimed" and detail["legacy_delivery_state"] in {"claimed", "delivered", "delivery_unknown"}, "invalid legacy delivery evidence")
     for field in ("ambiguity_count", "record_count", "receipt_generation", "manifest_generation"):
         if field in detail:
             require(type(detail[field]) is int and detail[field] >= (0 if field == "record_count" else 1), "invalid count or generation")
