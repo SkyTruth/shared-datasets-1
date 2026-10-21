@@ -824,15 +824,28 @@ class Ledger:
     def load(self):
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
         latest = {}
+        versions = {}
+        seen_ids = {}
         for record in records:
+            require(record["id"] not in seen_ids or seen_ids[record["id"]] == record,
+                    "notification checkpoint ID has inconsistent historical bytes")
+            seen_ids[record["id"]] = record
             payload = record["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
             require(isinstance(payload, dict) and payload.get("schema") in SCHEMAS, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
+            versions.setdefault(scope, []).append((record, payload["schema"]))
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
         states = {scope: self.verify(record) for scope, record in latest.items()}
+        for scope, rows in versions.items():
+            latest_schema = next(schema for record, schema in rows if record["id"] == latest[scope]["id"])
+            if latest_schema != SCHEMA:
+                for record, schema in rows:
+                    if schema == SCHEMA:
+                        self.verify(record)
+                        require(False, "older notification worker superseded a signed v3 checkpoint; drain workers and reconcile exact history")
         for scope, state in list(states.items()):
             for alias in state["aliases"]:
                 if alias == scope or alias not in states:
