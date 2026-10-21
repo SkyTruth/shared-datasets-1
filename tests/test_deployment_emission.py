@@ -190,6 +190,20 @@ class EmissionTests(unittest.TestCase):
         self.assertIn("--deny-self-hosted-runners", command)
         self.api.post.assert_not_called()
 
+    def test_actual_verifier_recovers_exact_502_without_changing_receipt_or_policy(self):
+        value = e.receipt(REPO, record(), status())
+        outage = self.unavailable(code=502)
+        outage["stderr"] = outage["stderr"].replace("trust-metadata-api service unavailable", "Server Error")
+        environment, log = self.fake_verifier([outage, self.unavailable(), {"stdout": json.dumps(verified(value))}])
+        with environment, patch("time.sleep") as sleep:
+            e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
+        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls, [calls[0]] * 3)
+        self.assertEqual(calls[0]["digest"], hashlib.sha256(e.canonical(value)).hexdigest())
+        self.api.post.assert_not_called()
+
     def test_actual_verifier_exhausted_503_remains_failure(self):
         response = self.unavailable()
         response["stdout"] = json.dumps(verified(e.receipt(REPO, record(), status())))
@@ -215,6 +229,14 @@ class EmissionTests(unittest.TestCase):
             ({**self.unavailable(), "stderr": self.unavailable()["stderr"].replace(hashlib.sha256(e.canonical(value)).hexdigest(), "0" * 64)}, subprocess.CalledProcessError),
             ({**self.unavailable(), "stderr": self.unavailable()["stderr"] + "\nError: cryptographic verification failed"}, subprocess.CalledProcessError),
         ]
+        server_error = self.unavailable(code=502)
+        server_error["stderr"] = server_error["stderr"].replace("trust-metadata-api service unavailable", "Server Error")
+        for message in (
+            server_error["stderr"].replace(REPO, "other/repository"),
+            server_error["stderr"].replace(hashlib.sha256(e.canonical(value)).hexdigest(), "0" * 64),
+            server_error["stderr"] + "\nError: cryptographic verification failed",
+        ):
+            cases.append(({**server_error, "stderr": message}, subprocess.CalledProcessError))
         cases.extend((self.unavailable(code=code), subprocess.CalledProcessError) for code in (401, 403, 404, 502, 504))
         for response, expected in cases:
             with self.subTest(response=response):

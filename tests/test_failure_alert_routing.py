@@ -291,7 +291,7 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
     assert 'NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"' in scheduler_filter
     health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
     assert 'enabled      = var.cron_alerts_enabled' in health
-    assert 'notification_channels = local.cron_alert_notification_channels' in health
+    assert 'notification_channels = local.operational_alert_notification_channels' in health
     assert 'resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in health
     # An alert-only target plan must not pull in the Cloud Run job and its
     # placeholder image. The same constant names both the job and its policies.

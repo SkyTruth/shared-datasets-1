@@ -118,6 +118,9 @@ selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry reco
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
 selection does not change deployment selection.
+Selected runtime deployments use explicit successful CI/IAM prerequisites and a
+cancellation-aware status guard, so skipped optional ancestors cannot silently
+discard selected production work.
 The standard Python run permits only the six named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.

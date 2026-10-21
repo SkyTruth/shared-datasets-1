@@ -2,7 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 import json
 
 import pytest
@@ -48,7 +48,7 @@ def test_finalization_requires_fresh_signed_incident_state_before_advancing(cycl
     ledger.load.side_effect = None
     assert worker.finalize_cycle(ledger, cycles) == {"manifest_id": 11}
     cycles.save.assert_called_once_with(value["bundle"]["checkpoint"], value["bundle"]["evaluation"],
-                                       mode="shadow", previous_cycle_id=10)
+                                       mode="shadow", previous_cycle_id=10, before_commit=ANY)
 
 
 def test_reconciliation_finish_clock_is_captured_after_all_verified_reads(cycle):
@@ -106,6 +106,65 @@ def test_heartbeat_reloads_signed_cycle_and_preserves_original_proposal(cycle, m
     ledger.load.assert_called_once()
     confirm.assert_called_once_with(value["bundle"], value["bundle"], delivery_verified=True,
                                     heartbeat=cloud_reader.heartbeat)
+
+
+@pytest.mark.parametrize("transition_at", ["before_finalize", "during_finalize_reads", "before_heartbeat", "during_heartbeat_reads"])
+def test_native_receipt_transition_cannot_commit_coverage_or_emit_shadow_health(cycle, monkeypatch, transition_at):
+    from scripts import operational_delivery_activation as selector
+    from test_operational_delivery_activation import context
+    from test_cloud_operational_observations import reader as empty_reader
+    from test_operational_cutover import rollout
+
+    value, ledger, cycles = cycle
+    root, api, original_source, records, payload, statuses = context(ledger.directory, mode="native", prior_mode="native")
+    monkeypatch.setattr(selector.deployments, "verify_record", Mock(return_value=payload))
+    monkeypatch.setattr(selector.deployments, "verified_statuses", Mock(return_value=statuses))
+
+    def source(root, revision, path):
+        if revision == "c" * 40 and path == selector.cutover.CONFIG:
+            return (json.dumps(rollout("unified"), sort_keys=True) + "\n").encode()
+        return original_source(root, revision, path)
+
+    monkeypatch.setattr(worker, "routing", lambda *_: selector.activation(api, "SkyTruth/shared-datasets-1", root, CONTEXT["source_sha"],
+                                                                        read_source=source, ancestor=lambda *_: True))
+    value["activation"] = worker.write_context(ledger, cycles)["activation"]
+    now = worker.utc_now()
+    value["bundle"] = worker.cloud.evaluated_collection(worker.cloud.collect(None, empty_reader(), now=now), value["bundle"]["evaluation"])
+    (ledger.directory / worker.PROPOSAL).write_text(json.dumps(value))
+    cloud_reader = SimpleNamespace(heartbeat=Mock())
+
+    def transition():
+        records.append({"id": 101, "sha": "c" * 40})
+
+    if transition_at.startswith("before_heartbeat") or transition_at == "during_heartbeat_reads":
+        worker.finalize_cycle(ledger, cycles)
+        value = json.loads((ledger.directory / worker.PROPOSAL).read_text())
+        durable = {"manifest": {**CONTEXT, "mode": "shadow", "previous_cycle_id": 10}, **value["bundle"]}
+        cycles.verify_cycle_id.return_value = durable
+        if transition_at == "during_heartbeat_reads":
+            def signed_read(_):
+                transition()
+                return durable
+            cycles.verify_cycle_id.side_effect = signed_read
+        else:
+            transition()
+        def action():
+            worker.verify_heartbeat(ledger, cycles, cloud_reader)
+    else:
+        if transition_at == "during_finalize_reads":
+            def signed_read():
+                transition()
+                return {}
+            ledger.load.side_effect = signed_read
+        else:
+            transition()
+        def action():
+            worker.finalize_cycle(ledger, cycles)
+    with pytest.raises(ValueError, match="native worker.*unified|activation changed"):
+        action()
+    if "finalize" in transition_at:
+        cycles.save.assert_not_called()
+    cloud_reader.heartbeat.assert_not_called()
 
 
 def test_foreign_worker_or_failed_verification_cannot_emit_heartbeat(cycle):

@@ -1,6 +1,7 @@
 locals {
-  operational_observer_log_buckets = toset(["_Default", "_Required"])
-  operational_heartbeat_metric     = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
+  operational_observer_log_buckets    = toset(["_Default", "_Required"])
+  operational_heartbeat_metric        = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
+  legacy_operational_heartbeat_metric = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
   # IAM permits at most 12 logical operators per conditional role binding.
   # Each prefix/suffix branch consumes two including the outer Object guard.
   # Six assets per group keeps both read surfaces within that fixed quota.
@@ -153,12 +154,27 @@ resource "google_storage_bucket_iam_member" "operational_observer_manifests" {
 
 resource "google_monitoring_metric_descriptor" "operational_reconciliation_heartbeat" {
   project      = var.project_id
-  type         = local.operational_heartbeat_metric
+  type         = local.legacy_operational_heartbeat_metric
   metric_kind  = "GAUGE"
   value_type   = "INT64"
   unit         = "1"
   display_name = "Shared datasets complete operational reconciliation"
   description  = "Only complete scans, policy evaluation and durable checkpoint. Seed after absence-policy creation."
+  # Persisted descriptor from the unfenced worker. Keep it managed; its samples
+  # cannot satisfy the current absence policy and must never be replayed.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "google_monitoring_metric_descriptor" "operational_reconciliation_heartbeat_v2" {
+  project      = var.project_id
+  type         = local.operational_heartbeat_metric
+  metric_kind  = "GAUGE"
+  value_type   = "INT64"
+  unit         = "1"
+  display_name = "Shared datasets fenced complete operational reconciliation"
+  description  = "Complete signed cycles whose installed policy receipt still matches the worker protocol and configuration. Seed after absence-policy installation."
 }
 
 resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy" {
@@ -192,7 +208,7 @@ resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy"
     service   = "shared-datasets"
     kind      = "pipeline-health"
   }
-  depends_on = [google_project_service.required, google_monitoring_metric_descriptor.operational_reconciliation_heartbeat, terraform_data.cron_alert_channel_configured]
+  depends_on = [google_project_service.required, google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2, terraform_data.cron_alert_channel_configured]
 }
 
 # New setup grants are limited to log-view management and metric descriptors.

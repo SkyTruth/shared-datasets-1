@@ -53,8 +53,9 @@ module "mpatlas_monthly_job" {
   max_retries           = 0
 
   env = {
-    GOOGLE_CLOUD_PROJECT   = var.project_id
-    SHARED_DATASETS_BUCKET = var.bucket_name
+    SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE = local.operational_slack_rollout.mode
+    GOOGLE_CLOUD_PROJECT                      = var.project_id
+    SHARED_DATASETS_BUCKET                    = var.bucket_name
   }
 
   depends_on = [

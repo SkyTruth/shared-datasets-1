@@ -15,6 +15,7 @@ from scripts import production_image_contracts as producer
 from scripts import sdk_release_authorization as proof
 from scripts import tested_image_authorization as consumer
 from scripts import tested_image_bundle as bundle
+from scripts import operational_retry as retry
 from scripts.deployment_revision import DeploymentError
 
 SHA = "a" * 40
@@ -549,7 +550,7 @@ def test_streamed_download_bounds_bytes_and_stops_only_its_process(tmp_path, mon
     with pytest.raises(ValueError, match="download exceeds"):
         consumer.GitHub().archive_to(REPO, 3, tmp_path / "archive.zip")
     process.kill.assert_called_once()
-    process.wait.assert_any_call(timeout=60)
+    assert 60 < process.wait.call_args.kwargs["timeout"] <= 1800
 
 
 def test_failed_github_stream_command_remains_a_failure(tmp_path, monkeypatch):
@@ -568,3 +569,148 @@ def test_failed_github_stream_command_remains_a_failure(tmp_path, monkeypatch):
     assert commands == [["gh", "api", "--method", "GET", f"repos/{REPO}/actions/artifacts/3/zip"]]
     process.kill.assert_not_called()
     assert not (tmp_path / "archive.zip").exists()
+
+
+@pytest.fixture
+def streamed_handoff(handoff, monkeypatch):
+    """Keep ZIP/hash/image admission real; replace only the external gh process."""
+    class Clock:
+        now = 0.0
+
+        def __init__(self):
+            self.sleeps = []
+
+        def sleep(self, seconds):
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    clock, responses, waits, commands = Clock(), [], [], []
+    monkeypatch.setattr(retry, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(retry, "sleep", clock.sleep)
+
+    def popen(command, **kwargs):
+        assert command == ["gh", "api", "--method", "GET", f"repos/{REPO}/actions/artifacts/3/zip"]
+        commands.append(command)
+        elapsed, status, body = responses.pop(0)
+        if status:
+            kwargs["stderr"].write(f"gh: HTTP {status}".encode())
+        process = Mock(stdout=io.BytesIO(body), returncode=1 if status else 0)
+        process.__enter__ = Mock(return_value=process)
+        process.__exit__ = Mock(return_value=False)
+        process.poll.return_value = process.returncode
+
+        def wait(*, timeout):
+            waits.append(timeout)
+            clock.now += min(elapsed, timeout)
+            if elapsed > timeout:
+                raise subprocess.TimeoutExpired(command, timeout)
+            return process.returncode
+
+        process.wait.side_effect = wait
+        return process
+
+    monkeypatch.setattr(consumer.subprocess, "Popen", popen)
+    handoff["api"].archive_to.side_effect = lambda repository, artifact, path: consumer.GitHub().archive_to(repository, artifact, path)
+    return {"handoff": handoff, "clock": clock, "responses": responses, "waits": waits, "commands": commands}
+
+
+def test_large_verified_image_stream_can_take_longer_than_sixty_seconds(streamed_handoff):
+    state = streamed_handoff
+    state["responses"].append((90, 0, state["handoff"]["payloads"][2]))
+    result = download(state["handoff"])
+    assert result["image_id"] == state["handoff"]["manifest"]["images"]["sea-ice-daily"]["config_digest"]
+    assert state["clock"].now == 90
+    assert state["waits"] == [1800]
+    assert state["clock"].sleeps == []
+    assert len(state["commands"]) == 1
+
+
+def test_partial_large_image_retry_shares_original_deadline(streamed_handoff):
+    state = streamed_handoff
+    state["responses"].extend([(1700, 503, b"truncated ZIP"), (90, 0, state["handoff"]["payloads"][2])])
+    result = download(state["handoff"])
+    assert Path(result["archive"]).read_bytes() == state["handoff"]["files"]["images/sea-ice-daily.docker.tar"]
+    assert state["waits"] == [1800, 100]
+    assert state["clock"].now == 1790
+    assert state["clock"].sleeps == [0]
+    assert len(state["commands"]) == 2
+
+
+def test_enclosing_unattended_read_budget_cannot_be_restarted_by_image_loader(streamed_handoff):
+    state = streamed_handoff
+    state["responses"].append((90, 0, state["handoff"]["payloads"][2]))
+    with retry.operation(profile=retry.UNATTENDED):
+        state["clock"].now = 1700
+        download(state["handoff"])
+    assert state["waits"] == [100]
+    assert state["clock"].now == 1790
+
+
+def test_source_provenance_reads_consume_the_same_image_download_window(streamed_handoff):
+    state = streamed_handoff
+    original_get = state["handoff"]["api"].get.side_effect
+
+    def delayed_source(endpoint):
+        if state["clock"].now == 0:
+            state["clock"].now += 1700
+        return original_get(endpoint)
+
+    state["handoff"]["api"].get.side_effect = delayed_source
+    state["responses"].append((90, 0, state["handoff"]["payloads"][2]))
+    download(state["handoff"])
+    assert state["waits"] == [100]
+    assert state["clock"].now == 1790
+
+
+def test_image_stream_completing_at_expired_deadline_is_discarded(streamed_handoff):
+    state = streamed_handoff
+    state["responses"].append((1800, 0, state["handoff"]["payloads"][2]))
+    with pytest.raises(retry.RetryBudgetExhausted):
+        download(state["handoff"])
+    assert state["waits"] == [1800]
+    assert state["handoff"]["calls"] == []
+    assert not list((state["handoff"]["root"] / "loaded").glob("**/*"))
+
+
+@pytest.mark.parametrize("responses,waits,elapsed", [
+    ([(900, 503, b"partial")] * 2, [1800, 900], 1800),
+    ([(0, 503, b"partial")] * 8, [1800, 1795, 1780, 1740, 1620, 1380, 900, 60], 1740),
+])
+def test_large_image_outage_is_bounded_by_one_window_and_eight_attempts(streamed_handoff, responses, waits, elapsed):
+    state = streamed_handoff
+    state["responses"].extend(responses)
+    with retry.operation(profile=retry.UNATTENDED):
+        for _ in range(2):
+            with pytest.raises(subprocess.CalledProcessError):
+                download(state["handoff"])
+    assert state["waits"] == waits
+    assert state["clock"].now == elapsed
+    assert state["handoff"]["calls"] == []
+    assert not list((state["handoff"]["root"] / "loaded").glob("**/*"))
+
+
+@pytest.mark.parametrize("failure", ["digest", "zip", "authorization"])
+def test_large_image_verification_and_authorization_errors_do_not_retry(streamed_handoff, failure):
+    state, status = streamed_handoff, 0
+    payload = state["handoff"]["payloads"][2]
+    if failure == "digest":
+        state["handoff"]["artifacts"][2]["digest"] = "sha256:" + "0" * 64
+    elif failure == "zip":
+        payload = b"malformed ZIP"
+        state["handoff"]["artifacts"][2].update(size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
+    else:
+        status = 403
+    state["responses"].append((90, status, payload))
+    with pytest.raises((DeploymentError, zipfile.BadZipFile, subprocess.CalledProcessError)):
+        download(state["handoff"])
+    assert len(state["commands"]) == 1
+    assert state["clock"].sleeps == []
+    assert state["handoff"]["calls"] == []
+
+
+def test_image_archive_preserves_explicit_short_read_owner(streamed_handoff):
+    state = streamed_handoff
+    state["responses"].append((0, 0, b"transport bytes only"))
+    with retry.operation(profile=retry.SHORT):
+        consumer.GitHub().archive_to(REPO, 3, state["handoff"]["root"] / "archive.zip")
+    assert state["waits"] == [60]

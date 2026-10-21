@@ -51,10 +51,11 @@ module "sea_ice_daily_job" {
   max_retries           = 0
 
   env = {
-    GOOGLE_CLOUD_PROJECT        = var.project_id
-    SHARED_DATASETS_BUCKET      = var.bucket_name
-    SEA_ICE_SOURCE_URL_TEMPLATE = var.sea_ice_source_url_template
-    SEA_ICE_MAX_LOOKBACK_DAYS   = tostring(var.sea_ice_max_lookback_days)
+    SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE = local.operational_slack_rollout.mode
+    GOOGLE_CLOUD_PROJECT                      = var.project_id
+    SHARED_DATASETS_BUCKET                    = var.bucket_name
+    SEA_ICE_SOURCE_URL_TEMPLATE               = var.sea_ice_source_url_template
+    SEA_ICE_MAX_LOOKBACK_DAYS                 = tostring(var.sea_ice_max_lookback_days)
   }
 
   depends_on = [

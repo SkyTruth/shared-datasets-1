@@ -44,7 +44,9 @@ def reader():
 
 def routing(ledger, cycles):
     from scripts.operational_delivery_activation import activation
-    return activation(ledger.api, incidents.REPOSITORY, cycles.root, ledger.run["head_sha"])
+    if not hasattr(ledger, "_verified_policy_receipts"):
+        ledger._verified_policy_receipts = {}
+    return activation(ledger.api, incidents.REPOSITORY, cycles.root, ledger.run["head_sha"], verified_receipts=ledger._verified_policy_receipts)
 
 
 def write_context(ledger, cycles):
@@ -281,12 +283,13 @@ def finalize_cycle(ledger, cycles, *, clock=None, cloud_reader=None):
     bundle = value["bundle"]
     incidents.require(all(bundle["evaluation"].get(key) == 0 for key in TRANSPORT_FIELDS), "unfinalized cycle contains an invented transport count")
     counts = public_delivery_counts(ledger, states, shadow=value["mode"] == "shadow")
+    read_context(ledger, cycles)  # Signature and delivery reads may outlive a policy transition.
     completed = (clock or utc_now)()  # All authoritative observation, incident and delivery reads have completed.
     verify_evaluation(value, states, now=completed)
     bundle["evaluation"].update(counts)
     bundle["checkpoint"]["last_cycle"]["completed_at"] = cloud.timestamp(completed)
     saved = cycles.save(bundle["checkpoint"], bundle["evaluation"], mode=value["mode"],
-                        previous_cycle_id=value["previous_cycle_id"])
+                        previous_cycle_id=value["previous_cycle_id"], before_commit=lambda: read_context(ledger, cycles))
     (ledger.directory / PROPOSAL).write_text(json.dumps(value, sort_keys=True) + "\n")
     output("cycle_saved", "true")
     return saved
@@ -309,6 +312,7 @@ def verify_heartbeat(ledger, cycles, cloud_reader, *, clock=None):
     incidents.require(cloud.instant(verified["checkpoint"]["last_cycle"]["completed_at"])
                       >= incidents.policy.instant(verified["evaluation"]["worker"]["evaluated_at"]),
                       "heartbeat predates policy evaluation")
+    read_context(ledger, cycles)  # Recheck after durable signature/provenance verification.
     sent = cloud.confirm_heartbeat(value["bundle"], verified, delivery_verified=True,
                                    heartbeat=cloud_reader.heartbeat)
     output("heartbeat", str(sent).lower())

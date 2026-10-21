@@ -30,7 +30,7 @@ PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 BUCKET = "skytruth-shared-datasets-1"
 SCHEMA = "shared-datasets-cloud-observation-checkpoint-v1"
-METRIC = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
+METRIC = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
 VIEWS = tuple(f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations" for bucket in ("_Default", "_Required"))
 OVERLAP = timedelta(minutes=10)
 INGESTION_LAG = timedelta(minutes=2)

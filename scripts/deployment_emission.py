@@ -141,7 +141,7 @@ def verify_result(results, value, expected, *, batch=False):
 def verified_output(command, repository, digest):
     """Retry the observed read-only service outage, never failed verification."""
     outage = re.compile(
-        r"Error: HTTP 503: trust-metadata-api service unavailable \(https://api\.github\.com/repos/"
+        r"Error: HTTP (?:503: trust-metadata-api service unavailable|502: Server Error) \(https://api\.github\.com/repos/"
         + re.escape(repository) + r"/attestations/sha256:" + digest + r"(?:\?[^\s)]*)?\)"
     )
     for attempt, delay in enumerate((5, 15, None), 1):

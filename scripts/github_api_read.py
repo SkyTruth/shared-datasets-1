@@ -7,6 +7,7 @@ this helper; authorization, rate limits and unknown CLI errors fail immediately.
 from __future__ import annotations
 
 import re
+import math
 import subprocess
 from pathlib import Path
 import tempfile
@@ -39,8 +40,10 @@ def transport_failure(error: Exception) -> str | None:
     return None
 
 
-def read(path: str, *, paginate: bool = False, allow_escape_sequences: bool = False) -> bytes:
+def read(path: str, *, paginate: bool = False, allow_escape_sequences: bool = False, no_cache: bool = False) -> bytes:
     command = ["gh", "api", "--method", "GET"]
+    if no_cache:
+        command += ["-H", "Cache-Control: no-cache"]
     if paginate:
         command += ["--paginate", "--slurp"]
     if allow_escape_sequences:
@@ -52,7 +55,7 @@ def read(path: str, *, paginate: bool = False, allow_escape_sequences: bool = Fa
     )
 
 
-def download(path: str, destination: Path, *, max_bytes: int) -> None:
+def download(path: str, destination: Path, *, max_bytes: int, timeout_seconds: float = READ_TIMEOUT_SECONDS) -> None:
     """Stream one bounded artifact, discarding incomplete bytes before retry.
 
     The exclusive destination belongs to this operation only. Content/digest
@@ -60,10 +63,12 @@ def download(path: str, destination: Path, *, max_bytes: int) -> None:
     """
     if type(max_bytes) is not int or max_bytes <= 0:
         raise ValueError("download requires a positive byte limit")
+    if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("download requires a finite positive timeout")
     command = ["gh", "api", "--method", "GET", path]
 
     def attempt() -> None:
-        timeout = request_timeout(READ_TIMEOUT_SECONDS)
+        timeout = request_timeout(timeout_seconds)
         created = False
         try:
             with destination.open("xb") as stream, tempfile.TemporaryFile() as stderr:
@@ -98,6 +103,7 @@ def download(path: str, destination: Path, *, max_bytes: int) -> None:
                     if process.returncode:
                         stderr.seek(0)
                         raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr.read())
+                    request_timeout(timeout_seconds)  # A completed read cannot outlive its owning budget.
         except BaseException:
             if created:
                 destination.unlink()

@@ -194,11 +194,16 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Authenticate to Google Cloud
+        id: auth
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+          # Logging has no bucket permission-test API. Its read-only installed
+          # grant proof binds token identity, including delegated-user rejection.
+          token_format: ${{ inputs.readiness_target == 'operational-observer-setup' && 'access_token' || '' }}
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email
 
       - name: Set up gcloud
         if: ${{ steps.replay.outputs.proceed == 'true' }}
@@ -208,6 +213,7 @@ jobs:
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         env:
           READINESS_TARGET: ${{ inputs.readiness_target }}
+          LOGGING_SETUP_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: python scripts/deployment_permissions.py --target "$READINESS_TARGET"
 
       - name: Set up Terraform
@@ -268,6 +274,7 @@ jobs:
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         env:
           READINESS_TARGET: ${{ inputs.readiness_target }}
+          LOGGING_SETUP_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: python scripts/deployment_permissions.py --target "$READINESS_TARGET" --plan-json "$RUNNER_TEMP/target-apply.tfplan.json"
 
       - name: Set up locked cutover verifier

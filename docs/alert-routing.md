@@ -13,6 +13,15 @@ or new channel message. That document owns configuration and reconciliation.
 There is one signed operational delivery path; disabling incident mode pauses
 delivery without falling back to the legacy workflow-failure webhook.
 
+Cloud operational delivery is staged separately. The checked-in rollout remains
+`mode: native`; the four operational Monitoring policies retain their channels.
+The [reviewed cutover contract](../.github/operational-cutovers/README.md) requires
+24 hours of verified shadow cycles, observed post-policy heartbeat samples,
+current routing audit and old-image drain before protected channel removal.
+Security and pipeline-health policies retain direct native delivery throughout.
+No real cutover, heartbeat seed or runtime secret retirement is established by
+offline tests. A config merge alone does not activate cloud delivery.
+
 | Execution | Failure reporting |
 | --- | --- |
 | PR CI, build checks, manual GitHub checks | GitHub |

@@ -906,6 +906,7 @@ def worker_context(api, environment=os.environ):
 class Ledger:
     def __init__(self, api, run, directory):
         self.api, self.run, self.directory = api, run, directory
+        self._verified_receipts = set()
 
     def verify(self, record):
         payload = record["payload"]
@@ -921,7 +922,15 @@ class Ledger:
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
+        # Repeated consumers in this process may reuse that proof only after
+        # fresh complete status enumeration and exact record-byte comparison.
+        key = hashlib.sha256(emissions.canonical({
+            "repository": REPOSITORY, "original_signer": WORKFLOW, "batch": True,
+            "record": record, "statuses": statuses,
+        })).digest()
+        if key not in self._verified_receipts:
+            emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
+            self._verified_receipts.add(key)
         return migrate_verified_state(state, payload["schema"])
 
     def load(self):
@@ -1157,7 +1166,8 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             if key in operational and key in {observation_key(item) for item in states[scope]["incident"]["failures"]}:
                 states[scope]["operational"][key] = operational_fact(observation, operational[key]).to_dict()
     for scope, state in list(states.items()):
-        if (scope not in blocked or admits_blocked_observations(state)) and state["incident"] is not None:
+        if ((scope not in blocked or admits_blocked_observations(state)) and state["incident"] is not None
+                and state["incident"]["resolution"] is None):
             targets = {item["scope"] for item in required_failures(state) if item["kind"] == "deployment" and item.get("source") != "cloud"}
             for target in sorted(targets):
                 evidence = success(ledger.api, target)

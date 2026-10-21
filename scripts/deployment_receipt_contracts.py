@@ -86,6 +86,11 @@ def notification_boundary(filename, identifier, workflow, job):
         return False
     if job.get("runs-on") != "ubuntu-latest":
         return False
+    if workflow.get("concurrency") != {
+        "group": "slack-notification-${{ github.repository }}-${{ github.event_name == 'schedule' && 'scheduled-reconciliation' || github.run_id }}",
+        "cancel-in-progress": False,
+    }:
+        return False  # Coalesce only unstarted ticks, preserving every control/source event.
     if job.get("concurrency") != {"group": "slack-incidents-${{ github.repository }}", "queue": "max", "cancel-in-progress": False}:
         return False
     steps = job.get("steps", [])
