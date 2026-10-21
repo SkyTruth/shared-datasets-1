@@ -16,6 +16,7 @@ import tempfile
 from google.api_core.exceptions import PreconditionFailed
 
 from ingestion.common.publication import require, split_uri
+from ingestion.common.operational_events import emit
 from scripts import catalog_csv, feature_metadata_localization as localization, release_feature_model as model, slack_notify
 
 LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,8 @@ def notify_release(client, manifest_uri, *, generation=None):
     try:
         return _notify_release(client, manifest_uri, generation=generation)
     except Exception:  # external storage/Slack failures after the publication commit
+        emit("translation_maintenance", "failed", subject={"manifest_uri": manifest_uri},
+             details={"published_data_state": "published", "mutation_status": "completed"})
         LOGGER.warning("Translation notice failed for %s; release remains published", manifest_uri, exc_info=True)
         return "failed"
 
@@ -82,13 +85,19 @@ def _notify_release(client, manifest_uri, *, generation=None):
     row = catalog_csv.catalog_row(slug)
     require(row is not None, "translation notice requires catalog access classification")
     require(set(translations["locales"]) == set(row["translation_locales"].split(";")), "manifest locales differ from maintained configuration")
-    marker = bucket.blob(f"{root}/runs/{release}.translation-notice.json")
+    marker_name = f"{root}/runs/{release}.translation-notice.json"
+    marker = bucket.blob(marker_name)
     record = {"schema_version": 1, "asset_slug": slug, "release": release,
               "manifest": {"path": manifest_uri, "generation": manifest_generation},
               "status": "claimed", "claimed_at": dt.datetime.now(dt.UTC).isoformat(), "debt_files": []}
+    event_subject = {"asset_slug": slug, "release": release, "manifest_uri": manifest_uri}
+    event_details = {"manifest_generation": manifest_generation, "locale_counts": {locale: {field: counts[field] for field in ("translatable_values", "current", "stale", "missing")} for locale, counts in translations["locales"].items()},
+                     "receipt_uri": f"gs://{bucket_name}/{marker_name}", "published_data_state": "published", "mutation_status": "completed"}
+    emit("translation_maintenance", "required", subject=event_subject, details=event_details)
     try:
         marker.upload_from_string(json.dumps(record), content_type="application/json", if_generation_match=0)
     except PreconditionFailed:
+        emit("translation_maintenance", "already_claimed", subject=event_subject, details=event_details)
         return "already_claimed"
     marker_generation = int(marker.generation)
 
@@ -143,6 +152,7 @@ def _notify_release(client, manifest_uri, *, generation=None):
         LOGGER.warning("Translation notice delivery unconfirmed for %s; automatic retry suppressed", manifest_uri)
     record.update(status="delivered" if delivered else "delivery_unknown", finished_at=dt.datetime.now(dt.UTC).isoformat())
     marker.upload_from_string(json.dumps(record), content_type="application/json", if_generation_match=marker_generation)
+    emit("translation_maintenance", record["status"], subject=event_subject, details={**event_details, "receipt_generation": int(marker.generation)})
     return record["status"]
 
 

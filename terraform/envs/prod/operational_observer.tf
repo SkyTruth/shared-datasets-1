@@ -1,0 +1,207 @@
+locals {
+  operational_observer_log_buckets = toset(["_Default", "_Required"])
+  operational_heartbeat_metric     = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
+  operational_observer_log_filter  = <<-EOT
+resource.labels.project_id="${var.project_id}"
+resource.labels.location="${var.region}"
+(
+  (
+    resource.type="cloud_run_job"
+    (
+      jsonPayload.schema="shared-datasets-runtime-operation-v1"
+      OR (
+        protoPayload.serviceName="run.googleapis.com"
+        (protoPayload.methodName="/Jobs.RunJob" OR protoPayload.methodName="google.cloud.run.v2.Jobs.RunJob")
+      )
+    )
+  )
+  OR (resource.type="cloud_scheduler_job" severity>=ERROR)
+)
+EOT
+}
+
+# No project-wide Logs Viewer or production mutation role is granted.
+resource "google_iam_workload_identity_pool_provider" "operational_observer" {
+  project                            = var.project_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-operational-observer"
+  display_name                       = "GitHub operational observer"
+  description                        = "Main-only notification observation; no production mutation authority."
+  attribute_mapping = {
+    "google.subject"                = "assertion.sub"
+    "attribute.observer_repository" = "assertion.repository"
+  }
+  attribute_condition = join(" && ", [
+    "assertion.repository == '${var.github_repository}'",
+    "assertion.ref == 'refs/heads/main'",
+    "assertion.workflow_ref == '${var.github_repository}/.github/workflows/unattended-workflow-alert.yml@refs/heads/main'",
+  ])
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+module "operational_observer_service_account" {
+  source       = "../../modules/service_account"
+  project_id   = var.project_id
+  account_id   = "shared-datasets-alert-observer"
+  display_name = "Shared datasets operational observer"
+  depends_on   = [google_project_service.required]
+}
+
+resource "google_service_account_iam_member" "operational_observer_wif" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.operational_observer_service_account.email}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.observer_repository/${var.github_repository}"
+}
+
+resource "google_logging_log_view" "operational_observations" {
+  for_each    = local.operational_observer_log_buckets
+  parent      = "projects/${var.project_id}"
+  location    = "global"
+  bucket      = each.value
+  name        = "shared-datasets-operations"
+  description = "Regional Cloud Run operational facts/execution audit and Scheduler failures, including new jobs."
+  filter      = local.operational_observer_log_filter
+  depends_on  = [google_project_service.required]
+}
+
+resource "google_logging_log_view_iam_member" "operational_observer" {
+  for_each = local.operational_observer_log_buckets
+  parent   = "projects/${var.project_id}"
+  location = "global"
+  bucket   = each.value
+  name     = google_logging_log_view.operational_observations[each.key].name
+  role     = "roles/logging.viewAccessor"
+  member   = module.operational_observer_service_account.member
+}
+
+resource "google_project_iam_custom_role" "operational_observer_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalObserver"
+  title       = "Shared Datasets Operational Observer"
+  description = "Read execution metadata and emit reconciliation health; no execution start or production mutation."
+  permissions = [
+    "run.executions.get",
+    "run.executions.list",
+    "monitoring.timeSeries.create",
+  ]
+}
+
+resource "google_project_iam_member" "operational_observer_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_observer_reader.name
+  member  = module.operational_observer_service_account.member
+}
+
+resource "google_project_iam_custom_role" "operational_observer_receipts" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalReceiptReader"
+  title       = "Shared Datasets Operational Receipt Reader"
+  description = "Read known translation-notice receipts; no listing or dataset access."
+  permissions = ["storage.objects.get"]
+}
+
+resource "google_storage_bucket_iam_member" "operational_observer_receipts" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.operational_observer_receipts.name
+  member = module.operational_observer_service_account.member
+  condition {
+    title       = "operational-translation-receipts-only"
+    description = "Only operational receipt names obtained from verified logs."
+    expression = join(" && ", [
+      "resource.name.endsWith('.translation-notice.json')",
+      "(${join(" || ", [for row in local.shared_catalog_rows : "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${dirname(dirname(replace(row.canonical_path, "gs://${var.bucket_name}/", "")))}/runs/')" if startswith(row.canonical_path, "gs://${var.bucket_name}/")])})",
+    ])
+  }
+}
+
+resource "google_monitoring_metric_descriptor" "operational_reconciliation_heartbeat" {
+  project      = var.project_id
+  type         = local.operational_heartbeat_metric
+  metric_kind  = "GAUGE"
+  value_type   = "INT64"
+  unit         = "1"
+  display_name = "Shared datasets complete operational reconciliation"
+  description  = "Only complete scans, policy evaluation and durable checkpoint. Seed after absence-policy creation."
+}
+
+resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy" {
+  project               = var.project_id
+  display_name          = "Shared datasets operational reconciliation stopped"
+  combiner              = "OR"
+  enabled               = var.cron_alerts_enabled
+  severity              = "ERROR"
+  notification_channels = local.cron_alert_notification_channels
+  conditions {
+    display_name = "No complete reconciliation heartbeat for 30 minutes"
+    condition_absent {
+      filter   = "resource.type=\"global\" AND resource.labels.project_id=\"${var.project_id}\" AND metric.type=\"${local.operational_heartbeat_metric}\""
+      duration = "1800s"
+      trigger {
+        count = 1
+      }
+    }
+  }
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Operational alert coverage needs attention"
+    content   = "The reconciliation pipeline has not completed successfully for 30 minutes. Inspect its scheduled main workflow, filtered-log enumeration, signed persistence and heartbeat delivery. Missing notifications do not prove healthy datasets. Seed and verify a heartbeat after policy creation, then require 24 hours of shadow coverage before operational Slack cutover. Independent security alerts remain enabled."
+  }
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+  }
+  user_labels = {
+    component = "operational-reconciliation"
+    service   = "shared-datasets"
+    kind      = "pipeline-health"
+  }
+  depends_on = [google_project_service.required, google_monitoring_metric_descriptor.operational_reconciliation_heartbeat, terraform_data.cron_alert_channel_configured]
+}
+
+# New setup grants are limited to log-view management and metric descriptors.
+# Existing protected IAM bootstrap owns identity/project/bucket policy changes;
+# saved-plan permission probes must prove those prerequisites before mutation.
+resource "google_project_iam_custom_role" "operational_log_view_manager" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalLogViewManager"
+  title       = "Shared Datasets Operational Log View Manager"
+  description = "Protected setup of two filtered operational log views; no deletion or project IAM authority."
+  permissions = [
+    "logging.buckets.get",
+    "logging.views.create", "logging.views.get", "logging.views.list", "logging.views.update",
+    "logging.views.getIamPolicy", "logging.views.setIamPolicy",
+  ]
+}
+
+resource "google_project_iam_member" "github_actions_operational_log_view_manager" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_log_view_manager.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  condition {
+    title       = "operational-view-buckets-only"
+    description = "No access to views in other Logging buckets."
+    expression = join(" || ", [for bucket in local.operational_observer_log_buckets :
+      "(resource.name == 'projects/${var.project_id}/locations/global/buckets/${bucket}' || resource.name.startsWith('projects/${var.project_id}/locations/global/buckets/${bucket}/views/'))"
+    ])
+  }
+}
+
+resource "google_project_iam_custom_role" "operational_metric_descriptor_manager" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalMetricDescriptorManager"
+  title       = "Shared Datasets Operational Metric Descriptor Manager"
+  description = "Protected heartbeat descriptor setup; no metric deletion, time-series write or IAM authority."
+  permissions = [
+    "monitoring.metricDescriptors.create",
+    "monitoring.metricDescriptors.get",
+    "monitoring.metricDescriptors.list",
+  ]
+}
+
+resource "google_project_iam_member" "github_actions_operational_metric_descriptor_manager" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_metric_descriptor_manager.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+}

@@ -245,6 +245,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
             "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
+            "terraform/envs/prod/operational_observer.tf",
         }:
             selected.add("cron_alert_policy")
         if path == "catalog/categories.yaml":

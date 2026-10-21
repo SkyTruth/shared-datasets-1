@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
-from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
+from scripts.deployment_permissions import MONITORING_PERMISSIONS, OPERATIONAL_LOG_SETUP_PERMISSIONS, OPERATIONAL_METRIC_SETUP_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
@@ -159,6 +159,14 @@ def iam_contract(root):
     missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
+    operational = (root / "terraform/envs/prod/operational_observer.tf").read_text()
+    for role, expected in (("operational_log_view_manager", set(OPERATIONAL_LOG_SETUP_PERMISSIONS)), ("operational_metric_descriptor_manager", set(OPERATIONAL_METRIC_SETUP_PERMISSIONS)),
+                           ("operational_observer_reader", {"run.executions.get", "run.executions.list", "monitoring.timeSeries.create"}), ("operational_observer_receipts", {"storage.objects.get"})):
+        if role_permissions(operational, role) != expected:
+            errors.append(f"{role}: operational authority must match its exact permission contract")
+    observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
+    if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
+        errors.append("operational setup requires ordered bootstrap, permission readiness and blocked deletion")
     # Derive coverage from the declarations so adding a new policy cannot leave
     # it outside the protected saved-plan/permission/receipt boundary.
     declared_policies = {
@@ -202,7 +210,8 @@ def iam_contract(root):
                 if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
                     errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
     for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
-        if workflow(root, filename)["jobs"][child].get("needs") != "bootstrap":
+        expected = ["bootstrap", "observations"] if filename == "cron-alert-policy-sync.yml" else "bootstrap"
+        if workflow(root, filename)["jobs"][child].get("needs") != expected:
             errors.append(f"{filename}: bootstrap authority must precede dependent mutation")
     return errors
 

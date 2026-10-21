@@ -154,6 +154,11 @@ verify Google Cloud's audit payloads or Slack delivery; record those separately.
 
 ## Monitoring configuration
 
+Cloud observation is introduced in [shadow mode](cloud-operational-observations.md)
+before any operational delivery cutover. Runtime facts, filtered reads and a
+signed reconciliation checkpoint must demonstrate coverage before native routes
+are removed; security and pipeline-health alerts remain independent.
+
 Prefer an existing Cloud Monitoring Slack notification channel. Include its
 resource name in the local review plan with `cron_alert_notification_channels`;
 the protected `cron-alert-policy-sync.yml` applies reviewed changes after merge.

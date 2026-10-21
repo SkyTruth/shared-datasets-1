@@ -36,6 +36,10 @@
       "google_project_iam_custom_role.dataset_usage_deployer",
       "google_project_iam_member.github_actions_dataset_usage_deployer"
     ],
+    "cron-alert-policy-sync.yml/observations": [
+      "google_project_service.required",
+      "google_iam_workload_identity_pool.github"
+    ],
     "dataset-usage-deploy.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/sync": [

@@ -48,6 +48,7 @@ TERRAFORM_SYNCS = {
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
+    "Operational observation setup": "cron-alert-policy-sync.yml",
 }
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow

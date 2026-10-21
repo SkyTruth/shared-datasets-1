@@ -55,9 +55,62 @@ jobs:
       targets: |
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
+        google_project_iam_custom_role.operational_log_view_manager
+        google_project_iam_member.github_actions_operational_log_view_manager
+        google_project_iam_custom_role.operational_metric_descriptor_manager
+        google_project_iam_member.github_actions_operational_metric_descriptor_manager
       allowed_exact: |
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
+        google_project_iam_custom_role.operational_log_view_manager
+        google_project_iam_member.github_actions_operational_log_view_manager
+        google_project_iam_custom_role.operational_metric_descriptor_manager
+        google_project_iam_member.github_actions_operational_metric_descriptor_manager
+      tf_vars: |
+        wdpa_monthly_image=unused-by-cron-alert-policy-sync
+        sea_ice_daily_image=unused-by-cron-alert-policy-sync
+        eamlis_monthly_image=unused-by-cron-alert-policy-sync
+
+  observations:
+    name: Apply operational observation setup
+    needs: bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: cron-alert-policy-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: operational-observer-setup
+      sync_name: Operational observation setup
+      refusal_prefix: Refusing automatic operational observation setup
+      block_deletes: true
+      targets: |
+        google_iam_workload_identity_pool_provider.operational_observer
+        module.operational_observer_service_account.google_service_account.this
+        google_service_account_iam_member.operational_observer_wif
+        google_logging_log_view.operational_observations["_Default"]
+        google_logging_log_view.operational_observations["_Required"]
+        google_logging_log_view_iam_member.operational_observer["_Default"]
+        google_logging_log_view_iam_member.operational_observer["_Required"]
+        google_project_iam_custom_role.operational_observer_reader
+        google_project_iam_member.operational_observer_reader
+        google_project_iam_custom_role.operational_observer_receipts
+        google_storage_bucket_iam_member.operational_observer_receipts
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
+      allowed_exact: |
+        google_iam_workload_identity_pool_provider.operational_observer
+        module.operational_observer_service_account.google_service_account.this
+        google_service_account_iam_member.operational_observer_wif
+        google_logging_log_view.operational_observations["_Default"]
+        google_logging_log_view.operational_observations["_Required"]
+        google_logging_log_view_iam_member.operational_observer["_Default"]
+        google_logging_log_view_iam_member.operational_observer["_Required"]
+        google_project_iam_custom_role.operational_observer_reader
+        google_project_iam_member.operational_observer_reader
+        google_project_iam_custom_role.operational_observer_receipts
+        google_storage_bucket_iam_member.operational_observer_receipts
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync
@@ -65,7 +118,7 @@ jobs:
 
   sync:
     name: Apply cron alert policy sync
-    needs: bootstrap
+    needs: [bootstrap, observations]
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
@@ -84,6 +137,7 @@ jobs:
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
         google_monitoring_alert_policy.dataset_object_deleted
         google_monitoring_alert_policy.dataset_schema_changed
+        google_monitoring_alert_policy.operational_reconciliation_unhealthy
       allowed_exact: |
         google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
         google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
@@ -92,6 +146,7 @@ jobs:
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
         google_monitoring_alert_policy.dataset_object_deleted
         google_monitoring_alert_policy.dataset_schema_changed
+        google_monitoring_alert_policy.operational_reconciliation_unhealthy
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync
