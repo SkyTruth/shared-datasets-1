@@ -75,6 +75,20 @@ def test_original_failure_repairs_only_the_receipt_and_reuses_its_exact_marker()
     assert send.call_count == 2  # One log GET and one PR receipt, no other mutation.
 
 
+def test_raw_ansi_job_logs_are_captured_with_the_cli_explicit_opt_in():
+    api = PublicationAPI()
+
+    def transport(command, **kwargs):
+        assert command == ["gh", "api", "--allow-escape-sequences",
+                           "repos/SkyTruth/shared-datasets-1/actions/jobs/900/logs"]
+        assert kwargs == {"text": True}
+        return "\x1b[36moriginal workflow command\x1b[0m\n" + log()
+
+    with mock.patch.object(recovery.subprocess, "check_output", side_effect=transport):
+        _, _, body = recovery.verify_source(api, 7, 700, 1)
+    assert body == BODY and "\x1b" not in body
+
+
 @pytest.mark.parametrize("comments", [[{"id": 500, "body": BODY, "user": {"login": "github-actions[bot]"}}],
                                       [{"id": 501, "body": BODY, "user": {"login": "jonaraphael"}}]])
 def test_existing_receipt_never_replays_slack_or_posts_another_comment(comments):

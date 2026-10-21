@@ -65,7 +65,10 @@ def verify_source(api, pr_number: int, run_id: int, attempt: int) -> tuple[dict,
     auth.require(all(steps.get(name, {}).get("conclusion") == "success" for name in required), "publication did not reach its completed boundary")
     failed = [step["name"] for step in job["steps"] if step.get("conclusion") not in {"success", "skipped"}]
     auth.require(failed == ["Send breaking change alert"], "failure extends beyond the PR receipt")
-    log = subprocess.check_output(["gh", "api", f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs"], text=True)
+    # Job logs contain Actions' ANSI formatting. Capture the faithful bytes for
+    # parsing; never send the raw response to a terminal.
+    log = subprocess.check_output(["gh", "api", "--allow-escape-sequences",
+                                   f"repos/{REPOSITORY}/actions/jobs/{job['id']}/logs"], text=True)
     body = receipt_from_log(log, pr_number, envelope["document"]["publish"]["asset_slug"])
     return run, job, body
 
