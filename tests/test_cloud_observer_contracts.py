@@ -4,7 +4,7 @@ import unittest
 
 import yaml
 
-from scripts import ci_contract, deployment_permissions, release_contracts
+from scripts import ci_contract, cloud_operational_observations, deployment_permissions, release_contracts
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks
 from test_terraform_plan_permissions import plan, row
 from workflow_helpers import assert_target_apply_caller
@@ -61,6 +61,22 @@ class ObserverBoundaryTests(unittest.TestCase):
             channels = "cron_alert_notification_channels" if policy.startswith("dataset_") else "operational_alert_notification_channels"
             self.assertIn(f"notification_channels = local.{channels}", body)
 
+    def test_fenced_metric_cannot_be_refreshed_by_old_workers_and_keeps_legacy_descriptor(self):
+        text = TERRAFORM.read_text()
+        self.assertEqual(cloud_operational_observations.METRIC, "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2")
+        active = re.search(r'\n  operational_heartbeat_metric\s*=\s*"([^"]+)"', text)[1]
+        legacy = re.search(r'\n  legacy_operational_heartbeat_metric\s*=\s*"([^"]+)"', text)[1]
+        self.assertEqual(active, cloud_operational_observations.METRIC)
+        self.assertEqual(legacy, "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat")
+        old = text.split('resource "google_monitoring_metric_descriptor" "operational_reconciliation_heartbeat"', 1)[1].split('\nresource ', 1)[0]
+        self.assertIn("type         = local.legacy_operational_heartbeat_metric", old)
+        self.assertIn("prevent_destroy = true", old)
+        current = text.split('resource "google_monitoring_metric_descriptor" "operational_reconciliation_heartbeat_v2"', 1)[1].split('\nresource ', 1)[0]
+        self.assertIn("type         = local.operational_heartbeat_metric", current)
+        health = text.split('resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy"', 1)[1].split('\nresource ', 1)[0]
+        self.assertIn("${local.operational_heartbeat_metric}", health)
+        self.assertNotIn("legacy_operational_heartbeat_metric", health)
+
     def test_observation_setup_uses_protected_exact_saved_plan_boundary(self):
         targets = {
             "google_iam_workload_identity_pool_provider.operational_observer",
@@ -76,6 +92,7 @@ class ObserverBoundaryTests(unittest.TestCase):
             "google_project_iam_custom_role.operational_observer_receipts",
             *(f'google_storage_bucket_iam_member.operational_observer_{surface}["{index}"]' for surface in ("receipts", "manifests") for index in range(5)),
             "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
+            "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
         }
         assert_target_apply_caller(self, ROOT / ".github/workflows/cron-alert-policy-sync.yml", expected_name="Cron alert policy sync", job_name="observations", push_paths=None,
             expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}", expected_needs="bootstrap",
@@ -112,11 +129,14 @@ class ObserverBoundaryTests(unittest.TestCase):
 
     def test_exact_new_resource_permission_probes_reject_foreign_boundaries(self):
         view = {"parent": f"projects/{PROJECT}", "location": "global", "bucket": "_Default", "name": "shared-datasets-operations"}
-        metric = {"project": PROJECT, "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"}
+        metric = {"project": PROJECT, "type": cloud_operational_observations.METRIC}
         provider = {"project": PROJECT, "workload_identity_pool_id": "github", "workload_identity_pool_provider_id": "github-operational-observer"}
         actual = dict(plan_checks(plan(row("google_logging_log_view", ["create"], view), row("google_monitoring_metric_descriptor", ["create"], metric), row("google_iam_workload_identity_pool_provider", ["create"], provider)), project_number="123456789"))
-        self.assertEqual(set(actual[f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/_Default/views/_AllLogs:testIamPermissions"]), {"logging.views.create", "logging.views.get"})
+        self.assertEqual(set(actual[f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/_Default/views/_AllLogs:testIamPermissions"]), {"logging.views.get"})
+        self.assertEqual(set(actual[f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/_Default"]), {"logging.buckets.get", "logging.views.create", "logging.views.list"})
         self.assertEqual(set(actual[PROJECT_URL]), {"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get"})
+        legacy = dict(plan_checks(plan(row("google_monitoring_metric_descriptor", ["create"], {**metric, "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"})), project_number="123456789"))
+        self.assertEqual(set(legacy[PROJECT_URL]), {"monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get"})
         self.assertIn("iam.workloadIdentityPoolProviders.create", actual[f"https://iam.googleapis.com/v1/projects/{PROJECT}/locations/global/workloadIdentityPools/github:testIamPermissions"])
         iam = dict(plan_checks(plan(row("google_logging_log_view_iam_member", ["update"], view)), project_number="123456789"))
         self.assertEqual(set(next(iter(iam.values()))), {"logging.views.getIamPolicy", "logging.views.setIamPolicy"})

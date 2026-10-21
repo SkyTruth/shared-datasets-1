@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import csv
 from pathlib import Path
@@ -25,6 +26,76 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_current_reviewed_contracts_pass_without_live_credentials(self):
         self.assertEqual(contracts.check(self.root, {"wdpa", "eamlis", "sea-ice", "wdpa-processing"}), [])
+
+    def test_runtime_ci_callers_cannot_inherit_optional_skips_or_bypass_prerequisites(self):
+        path = self.root / ".github/workflows/ci.yml"
+        original = yaml.safe_load(path.read_text())
+        for target in contracts.DEPLOYS:
+            condition = original["jobs"][target]["if"]
+            for unsafe in (
+                condition.replace("!cancelled() && ", ""),
+                condition.replace("!cancelled()", "always()"),
+                condition.replace("needs.ingestion-iam.result == 'success' && ", ""),
+                condition.replace("needs.artifact-registry-iam.result == 'success' && ", ""),
+                condition.replace("needs.ci-ready.result == 'success'", "needs.ci-ready.result != 'failure'"),
+            ):
+                with self.subTest(target=target, condition=unsafe):
+                    current = deepcopy(original)
+                    current["jobs"][target]["if"] = unsafe
+                    path.write_text(yaml.safe_dump(current))
+                    errors = contracts.deployment_contract(self.root, target)
+                    self.assertTrue(any("CI caller must bypass skipped ancestors" in item for item in errors))
+            for needs in (
+                [name for name in original["jobs"][target]["needs"] if name != "ingestion-iam"],
+                original["jobs"][target]["needs"] + ["preview-terraform-iam"],
+            ):
+                current = deepcopy(original)
+                current["jobs"][target]["needs"] = needs
+                path.write_text(yaml.safe_dump(current))
+                self.assertTrue(any("CI caller must bypass skipped ancestors" in item
+                                    for item in contracts.deployment_contract(self.root, target)))
+        path.write_text(yaml.safe_dump(original))
+
+    def test_logging_identity_proof_wiring_cannot_change_principal_scope_or_delegate(self):
+        path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
+        original = yaml.safe_load(path.read_text())
+        for field, changed in (
+            ("service_account", "other@shared-datasets-1.iam.gserviceaccount.com"),
+            ("token_format", "access_token"),
+            ("access_token_scopes", "https://www.googleapis.com/auth/cloud-platform"),
+            ("access_token_subject", "delegate@example.com"),
+            ("delegates", "other@shared-datasets-1.iam.gserviceaccount.com"),
+            ("create_credentials_file", False),
+        ):
+            current = deepcopy(original)
+            auth = next(step for step in current["jobs"]["sync"]["steps"] if step.get("id") == "auth")
+            auth["with"][field] = changed
+            path.write_text(yaml.safe_dump(current))
+            self.assertTrue(any("explicit scoped identity token" in item for item in contracts.iam_contract(self.root)))
+        for name in ("Verify prerequisite deployment permissions", "Verify complete saved-plan mutation permissions"):
+            current = deepcopy(original)
+            step = next(step for step in current["jobs"]["sync"]["steps"] if step.get("name") == name)
+            step["env"].pop("LOGGING_SETUP_ACCESS_TOKEN")
+            path.write_text(yaml.safe_dump(current))
+            self.assertTrue(any("masked scoped auth token" in item for item in contracts.iam_contract(self.root)))
+        current = deepcopy(original)
+        current["env"]["TERRAFORM_SERVICE_ACCOUNT"] = "different-principal"
+        path.write_text(yaml.safe_dump(current))
+        self.assertTrue(any("explicit scoped identity token" in item for item in contracts.iam_contract(self.root)))
+
+    def test_logging_installed_grant_proof_tracks_exact_terraform_scope(self):
+        path = self.root / "terraform/envs/prod/operational_observer.tf"
+        original = path.read_text()
+        for before, after in (
+            ('toset(["_Default", "_Required"])', 'toset(["_Default", "_Required", "other"])'),
+            ('role_id     = "sharedDatasetsOperationalLogViewManager"', 'role_id     = "otherLogRole"'),
+            ('title       = "operational-view-buckets-only"', 'title       = "different-scope"'),
+            ("resource.name.startsWith('projects/${var.project_id}/locations/global/buckets/${bucket}/views/')", "resource.name.startsWith('projects/${var.project_id}/')"),
+        ):
+            self.assertIn(before, original)
+            path.write_text(original.replace(before, after, 1))
+            self.assertTrue(any("Logging installed-grant proof" in item for item in contracts.iam_contract(self.root)))
+        path.write_text(original)
 
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
@@ -93,6 +164,14 @@ class ReleaseContractTests(unittest.TestCase):
         path.write_text(original)
         (self.root / "terraform/envs/prod/new_alert.tf").write_text('resource "google_monitoring_alert_policy" "future_job" {}\n')
         self.assertTrue(any("every declared alert policy" in error for error in contracts.iam_contract(self.root)))
+
+    def test_protected_setup_retains_legacy_and_fenced_heartbeat_descriptors(self):
+        path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        original = path.read_text()
+        for suffix in ("", "_v2"):
+            with self.subTest(suffix=suffix):
+                path.write_text(original.replace("        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat" + suffix + "\n", "", 1))
+                self.assertTrue(any("retain the legacy heartbeat descriptor" in error for error in contracts.iam_contract(self.root)))
 
     def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
         for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):

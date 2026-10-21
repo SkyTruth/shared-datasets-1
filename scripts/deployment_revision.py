@@ -87,7 +87,7 @@ class GitHub:
         return json.loads(read(path))
 
     def pages(self, path, field=None):
-        pages = json.loads(read(path, paginate=True))
+        pages = json.loads(read(path, paginate=True, no_cache=True))
         require(isinstance(pages, list) and pages, "missing API pages")
         if field:
             count = pages[0].get("total_count")

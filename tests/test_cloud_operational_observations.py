@@ -216,6 +216,7 @@ def test_http_pagination_metadata_and_fixed_heartbeat_construct_real_requests():
     call = session.request.call_args
     assert call.args == ("POST", f"https://monitoring.googleapis.com/v3/projects/{cloud.PROJECT}/timeSeries")
     assert call.kwargs["json"]["timeSeries"][0]["metric"]["type"] == cloud.METRIC
+    assert call.kwargs["json"]["timeSeries"][0]["metric"]["type"] == "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
     with pytest.raises(ValueError, match="non-operational receipt"):
         api.receipt_metadata(f"gs://{cloud.BUCKET}/dataset/latest/data.fgb")
     name = "category/group/asset/runs/2026-10-01.translation-notice.json"

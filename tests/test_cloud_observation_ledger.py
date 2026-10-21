@@ -97,7 +97,7 @@ def ledger(tmp_path, monkeypatch):
 
 def saved(ledger, **kwargs):
     checkpoint, evaluation = bundle()
-    result = ledger.save(checkpoint, evaluation, "shadow", **kwargs)
+    result = ledger.save(checkpoint, evaluation, "shadow", before_commit=lambda: None, **kwargs)
     ledger.api.sign()
     return result, checkpoint, evaluation
 
@@ -147,9 +147,63 @@ def test_partial_pagination_is_a_failure_and_never_reuses_an_old_cursor(ledger):
         ledger.load()
 
 
+def test_writer_cannot_omit_the_installed_policy_fence(ledger):
+    with pytest.raises(TypeError, match="before_commit"):
+        ledger.save(*bundle(), "shadow")
+    assert ledger.api.writes == []
+
+
+@pytest.mark.parametrize("transition_at", ["predecessor_verification", "part_write"])
+def test_changed_installed_policy_cannot_advance_serialized_manifest(ledger, monkeypatch, transition_at):
+    from scripts import operational_delivery_activation as selector
+    from test_operational_delivery_activation import context
+    from test_operational_cutover import rollout
+
+    root, policy_api, original_source, records, payload, statuses = context(ledger.root, mode="native", prior_mode="native")
+    monkeypatch.setattr(selector.deployments, "verify_record", lambda *_: payload)
+    monkeypatch.setattr(selector.deployments, "verified_statuses", lambda *_: statuses)
+
+    def source(root, revision, path):
+        if revision == "c" * 40 and path == selector.cutover.CONFIG:
+            return (json.dumps(rollout("unified"), sort_keys=True) + "\n").encode()
+        return original_source(root, revision, path)
+
+    def installed():
+        return selector.activation(policy_api, cycles.REPOSITORY, root, SHA, read_source=source, ancestor=lambda *_: True)
+
+    expected = installed()
+    def fence():
+        selector.same_activation(expected, installed())
+
+    first = ledger.save(*bundle(), "shadow", before_commit=fence)
+    ledger.api.sign()
+    original_load, original_post = ledger.load, ledger.api.post
+    def transition():
+        records[:] = [{"id": 101, "sha": "c" * 40}]
+    if transition_at == "predecessor_verification":
+        def load():
+            result = original_load()
+            transition()
+            return result
+        monkeypatch.setattr(ledger, "load", load)
+    else:
+        def post(path, value):
+            result = original_post(path, value)
+            if path.endswith("/deployments") and value["task"] == cycles.PART_TASK:
+                transition()
+            return result
+        monkeypatch.setattr(ledger.api, "post", post)
+    with pytest.raises(ValueError, match="native worker.*unified"):
+        ledger.save(*bundle(), "shadow", previous_cycle_id=first["manifest_id"], before_commit=fence)
+    assert ledger.local_cycle_id() == first["manifest_id"]
+    assert [r["id"] for r in ledger.api.records.values() if r["task"] == cycles.TASK] == [first["manifest_id"]]
+    ledger.api.sign()
+    assert original_load()["manifest_id"] == first["manifest_id"]
+
+
 def test_latest_unsigned_cycle_blocks_instead_of_skipping_to_older_signature(ledger):
     first, _, _ = saved(ledger)
-    later = ledger.save(*bundle(), "shadow", previous_cycle_id=first["manifest_id"])
+    later = ledger.save(*bundle(), "shadow", previous_cycle_id=first["manifest_id"], before_commit=lambda: None)
     with pytest.raises(emissions.EmissionError, match="signature"):
         ledger.load()
     assert later["manifest_id"] > first["manifest_id"]
@@ -164,7 +218,7 @@ def test_interrupted_persistence_never_publishes_a_complete_new_cursor(ledger, w
     else:
         ledger.api.fail_status_task = cycles.PART_TASK if where.startswith("part") else cycles.TASK
     with pytest.raises(RuntimeError):
-        ledger.save(*bundle(), "shadow", previous_cycle_id=first["manifest_id"])
+        ledger.save(*bundle(), "shadow", previous_cycle_id=first["manifest_id"], before_commit=lambda: None)
     assert ledger.local_cycle_id() == first["manifest_id"]
     if where == "manifest-status":
         with pytest.raises(cycles.CycleLedgerError, match="incomplete"):
@@ -224,7 +278,7 @@ def test_large_cycle_is_chunked_and_reconstructed_without_direct_payload(ledger,
     monkeypatch.setattr(cycles, "CHUNK_BYTES", 128)
     checkpoint, evaluation = bundle()
     evaluation["proofs"] = [cycles.digest(str(index).encode()) for index in range(100)]
-    proposal = ledger.save(checkpoint, evaluation, "shadow")
+    proposal = ledger.save(checkpoint, evaluation, "shadow", before_commit=lambda: None)
     ledger.api.sign()
     assert len(proposal["manifest"]["parts"]) > 1
     assert all(len(json.loads(record["payload"]).get("data", "")) <= 128 for record in ledger.api.records.values())
@@ -270,7 +324,7 @@ def test_historical_cycle_keeps_original_worker_and_heartbeat_timestamp(ledger):
     current, evaluation = bundle()
     current["covered_through"] = current["last_cycle"]["end"] = "2026-10-21T12:05:00.000000Z"
     current["last_cycle"]["completed_at"] = "2026-10-21T12:07:00.000000Z"
-    later = ledger.save(current, evaluation, "shadow", previous_cycle_id=first["manifest_id"])
+    later = ledger.save(current, evaluation, "shadow", previous_cycle_id=first["manifest_id"], before_commit=lambda: None)
     ledger.api.sign()
     old = ledger.verify_cycle_id(first["manifest_id"])
     points = []
@@ -353,7 +407,7 @@ def test_invalid_cycle_fails_before_any_durable_write(ledger, change):
     else:
         kwargs["source_sha"] = "c" * 40
     with pytest.raises((cycles.CycleLedgerError, ValueError)):
-        ledger.save(checkpoint, evaluation, "shadow", **kwargs)
+        ledger.save(checkpoint, evaluation, "shadow", before_commit=lambda: None, **kwargs)
     assert ledger.api.writes == []
 
 
@@ -362,7 +416,7 @@ def test_read_only_gate_can_verify_but_cannot_write_a_cycle(ledger):
     readonly = cycles.CycleLedger(ledger.api, None, ledger.workdir, root=ledger.root)
     assert readonly.verify_cycle_id(proposal["manifest_id"])["manifest_id"] == proposal["manifest_id"]
     with pytest.raises(cycles.CycleLedgerError, match="authenticated main"):
-        readonly.save(*bundle(), "shadow")
+        readonly.save(*bundle(), "shadow", before_commit=lambda: None)
 
 
 def test_valid_signature_cannot_claim_another_worker_revision(ledger):
@@ -386,8 +440,8 @@ def test_predecessor_is_verified_and_monotonic_before_persistence(ledger, change
     elif change == "completion-rewind":
         checkpoint["last_cycle"]["completed_at"] = "2026-10-21T12:01:00.000000Z"
     else:
-        ledger.save(checkpoint, evaluation, "shadow", previous_cycle_id=predecessor)
+        ledger.save(checkpoint, evaluation, "shadow", previous_cycle_id=predecessor, before_commit=lambda: None)
     written = len(ledger.api.writes)
     with pytest.raises((cycles.CycleLedgerError, emissions.EmissionError)):
-        ledger.save(checkpoint, evaluation, "shadow", previous_cycle_id=predecessor)
+        ledger.save(checkpoint, evaluation, "shadow", previous_cycle_id=predecessor, before_commit=lambda: None)
     assert len(ledger.api.writes) == written

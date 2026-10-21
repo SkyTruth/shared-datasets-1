@@ -80,7 +80,14 @@ transition adds a distinct evidence identity; a running observation does not
 establish recovery.
 
 The production entry point is `scripts/operational_reconcile.py`, called by the
-existing main-only notification workflow every five minutes. Collection remains
+existing main-only notification workflow every five minutes. Workflow-level
+concurrency coalesces only redundant, not-started scheduled ticks; each source
+event and supervision request retains a distinct workflow group. The existing
+job-level `queue: max` still serializes every signed write and Slack send, with
+active cancellation disabled at both levels. A replaced tick advances no
+checkpoint; the next complete pass resumes durable coverage and reconsiders
+absolute episode clocks. This reduces tick backlog without establishing a live
+latency guarantee; old queued workers still need to drain. Collection remains
 opt-in through `SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED=true`, after installing
 the reviewed observer resources and configuring the two identity variables below.
 The rollout defaults to shadow; GitHub incident escalation and recovery continue
@@ -123,6 +130,9 @@ notification workflow's signed receipt. The manifest binds the actual worker
 revision, policy and collector contract hashes, predecessor, coverage times,
 ordered part identities and content hashes. An unsigned latest manifest blocks
 progress; the reader never silently chooses an older cursor.
+`CycleLedger.save` requires the caller's installed-policy `before_commit` fence
+after predecessor verification and before the final manifest write. Partial
+parts remain audit evidence without advancing coverage when that fence fails.
 
 The workflow signs incident claims, delivers eligible GitHub changes, signs any
 outcomes, and re-verifies incident state before saving a complete cycle. It then
@@ -140,6 +150,15 @@ policy deployment, its complete managed policy scope, unchanged evidence-gate
 protocol and reviewed immutable evidence. Failed, unsigned or incompatible newer
 attempts cannot be replaced with an older successful receipt. The worker checks
 the same activation before delivery, final persistence and heartbeat.
+
+Native mode also requires a supported signed installed policy receipt. An older
+native worker cannot bypass that check after a newer unified policy is installed.
+The writer repeats the check after predecessor verification and after part
+writes, immediately before the coverage manifest; heartbeat emission checks again
+after durable signature verification. Only identical freshly enumerated record
+and status bytes can reuse in-process signature verification. Missing, changed,
+unsigned, failed or incompatible latest policy evidence pauses cloud coverage and
+health. GitHub incident handling remains independent while cloud collection is off.
 
 Cloud action episodes may inherit an active deployment owner only through the
 same authoritative execution, immutable image and signed deployment proof.
@@ -172,6 +191,29 @@ It does not evaluate policy, send Slack, or emit a heartbeat. Its file is not a
 replacement for authenticated production persistence.
 
 ## Access and protected installation
+
+The protected setup verifies Logging permissions at their supported resources.
+Logging's view permission-test API rejects bucket lookup, view creation and view
+listing permissions. The setup therefore reads each exact bucket's metadata and
+enumerates all pages of view names, and tests view get/update/IAM permissions on
+the existing view. Before view creation, the same readiness and saved-plan helper
+also verifies the active custom role's exact seven permissions and the live v3
+project binding's exact protected principal and two-bucket condition. A project
+permission test cannot substitute for that bucket-conditioned grant.
+
+For this check only, the protected authentication step supplies a masked access
+token with `cloud-platform` and `userinfo.email` scopes. Google token introspection
+must return the configured service account's verified email and its authoritative
+IAM unique ID as audience. Audience alone also occurs on delegated user tokens;
+missing email or another principal fails closed. The token is sent only in an
+HTTPS POST body and never appears in a URL or diagnostic. Other deployment probes
+retain their existing token path, and no IAM grant is added. This is evidence of
+the installed allow grant and successful metadata reads, not a guarantee against
+independent deny policies or later authorization changes. The actual protected
+Terraform operation still enforces authorization. See Google's
+[Logging view creation contract](https://docs.cloud.google.com/logging/docs/reference/v2/rest/v2/projects.locations.buckets.views/create),
+[resource-based conditions](https://docs.cloud.google.com/iam/docs/configuring-resource-based-access)
+and [token identities](https://docs.cloud.google.com/docs/authentication/token-types).
 
 Terraform output `operational_observer_workload_identity_provider` configures
 `GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER`, and
@@ -241,6 +283,16 @@ without a successful reconciliation heartbeat. A complete scan, successful
 policy evaluation and acknowledged durable persistence precede emission.
 Unresolved provenance gaps are recorded but do not emit this heartbeat.
 
+The current series is
+`custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2`.
+The original descriptor remains managed with destruction blocked, but its samples
+cannot satisfy the current absence policy. This separates old unfenced workers
+from current health without changing series between shadow and unified mode.
+Before collection is enabled, the final protected observation setup must create
+the v2 descriptor and the final policy sync must install its absence filter and
+the matching fenced worker protocol. An earlier native setup or heartbeat is not
+proof of this installation. No heartbeat is fabricated for migration.
+
 Metric absence detection requires a first sample after policy creation or
 update. The first successful shadow reconciliation must seed the metric only
 after the protected policy sync completes; retain evidence of both times and
@@ -251,6 +303,10 @@ Before removing direct operational Slack routes, require 24 continuous hours of
 successful shadow reconciliation and verified heartbeat coverage, with no
 unresolved scan/persistence/provenance gaps. Retain source identities, decisions,
 checkpoint and policy timestamps, and the routing audit as operational evidence.
+The fenced protocol requires a fresh 24-hour window; pre-fence cycles and samples
+do not count. Queue delays and stale supervision check-ins remain evidence gaps
+or expired ownership under their existing deadlines, never permission to relax
+the rollout gate.
 The immutable cutover document names `audit_setup_deployment_id`: the signed
 successful protected observation setup containing the Run audit resource and
 the exact current observation Terraform boundary. Every eligible shadow sample

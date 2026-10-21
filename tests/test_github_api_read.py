@@ -124,7 +124,15 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
     sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [calls[0]] * 2
-    assert calls[0] == ["api", "--method", "GET", "--paginate", "--slurp", PATH]
+    fresh = ["-H", "Cache-Control: no-cache"] if client is deployments.GitHub else []
+    assert calls[0] == ["api", "--method", "GET", *fresh, "--paginate", "--slurp", PATH]
+
+
+def test_durable_policy_status_pages_always_request_fresh_authority(gh):
+    path = "repos/SkyTruth/shared-datasets-1/deployments/100/statuses?per_page=100"
+    log = gh([{"stdout": '[[{"id": 200, "description": "applied"}]]'}])
+    assert deployments.GitHub().pages(path) == [{"id": 200, "description": "applied"}]
+    assert json.loads(log.read_text()) == ["api", "--method", "GET", "-H", "Cache-Control: no-cache", "--paginate", "--slurp", path]
 
 
 @pytest.mark.parametrize("client", CLIENTS)
@@ -193,13 +201,12 @@ def test_streamed_artifact_retries_with_fresh_exclusive_destination(gh, tmp_path
 
 def test_stream_timeout_kills_the_reader_and_discards_partial_bytes(gh, tmp_path, monkeypatch):
     log = gh([{"stdout": "partial", "delay": 10}, {"stdout": "complete"}])
-    monkeypatch.setattr(transport, "READ_TIMEOUT_SECONDS", 1)
     destination = tmp_path / "image.zip"
     clock = Clock()
     native_sleep, native_clock = time.sleep, time.monotonic
     started = native_clock()
     with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
-        transport.download(PATH, destination, max_bytes=100)
+        transport.download(PATH, destination, max_bytes=100, timeout_seconds=1)
         assert time.sleep is native_sleep and time.monotonic is native_clock
     assert native_clock() - started < 5
     assert clock.sleeps == [5]
@@ -223,6 +230,14 @@ def test_streamed_artifact_never_overwrites_or_removes_existing_bytes(gh, tmp_pa
     with pytest.raises(FileExistsError):
         transport.download(PATH, destination, max_bytes=100)
     assert destination.read_bytes() == b"existing"
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("timeout", [None, True, False, 0, -1, float("inf"), float("nan"), "1800"])
+def test_streamed_artifact_rejects_invalid_timeout_before_starting(gh, tmp_path, timeout):
+    log = gh([{"stdout": "unused"}])
+    with pytest.raises(ValueError, match="finite positive timeout"):
+        transport.download(PATH, tmp_path / "image.zip", max_bytes=100, timeout_seconds=timeout)
     assert not log.exists()
 
 

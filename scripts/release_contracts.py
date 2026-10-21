@@ -24,6 +24,7 @@ from scripts.deployment_permissions import MONITORING_PERMISSIONS, OPERATIONAL_L
 from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
+from scripts import logging_setup_permissions as logging_setup
 
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -216,6 +217,24 @@ def iam_contract(root):
                            ("operational_observer_reader", {"run.executions.get", "run.executions.list", "monitoring.timeSeries.create"}), ("operational_observer_receipts", {"storage.objects.get"})):
         if role_permissions(operational, role) != expected:
             errors.append(f"{role}: operational authority must match its exact permission contract")
+    log_role = re.search(r'resource "google_project_iam_custom_role" "operational_log_view_manager"\s*\{(.*?)\n\}', operational, re.S)
+    if log_role is None or not re.search(r'role_id\s*=\s*"' + re.escape(logging_setup.ROLE.rsplit("/", 1)[1]) + '"', log_role[1]):
+        errors.append("Logging installed-grant proof requires the exact active role identity")
+    bucket_scope = re.search(r'operational_observer_log_buckets\s*=\s*toset\(\[(.*?)\]\)', operational, re.S)
+    binding = re.search(r'resource "google_project_iam_member" "github_actions_operational_log_view_manager"\s*\{(.*?)\n\}', operational, re.S)
+    expected_binding = """project = var.project_id
+      role = google_project_iam_custom_role.operational_log_view_manager.name
+      member = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+      condition {
+        title = "operational-view-buckets-only"
+        description = "No access to views in other Logging buckets."
+        expression = join(" || ", [for bucket in local.operational_observer_log_buckets :
+          "(resource.name == 'projects/${var.project_id}/locations/global/buckets/${bucket}' || resource.name.startsWith('projects/${var.project_id}/locations/global/buckets/${bucket}/views/'))"
+        ])
+      }"""
+    if (bucket_scope is None or set(re.findall(r'"([^"]+)"', bucket_scope[1])) != set(logging_setup.BUCKETS)
+            or binding is None or re.sub(r"\s+", "", binding[1]) != re.sub(r"\s+", "", expected_binding)):
+        errors.append("Logging installed-grant proof requires the exact reviewed two-bucket Terraform binding")
     observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
     errors += operational_storage_contract(root, operational, observations["with"])
     if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
@@ -228,6 +247,10 @@ def iam_contract(root):
     for field in ("targets", "allowed_exact"):
         if audit_address not in observations["with"].get(field, "").split():
             errors.append(f"operational {field} omits required Run DATA_WRITE capture")
+        metrics = {"google_monitoring_metric_descriptor.operational_reconciliation_heartbeat" + suffix for suffix in ("", "_v2")}
+        actual_metrics = {address for address in observations["with"].get(field, "").split() if address.startswith("google_monitoring_metric_descriptor.")}
+        if actual_metrics != metrics:
+            errors.append(f"operational {field} must retain the legacy heartbeat descriptor and exact fenced v2 descriptor")
     # Derive coverage from the declarations so adding a new policy cannot leave
     # it outside the protected saved-plan/permission/receipt boundary.
     declared_policies = {
@@ -248,6 +271,21 @@ def iam_contract(root):
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")
+    steps = {step.get("name"): step for step in generic["jobs"]["sync"]["steps"]}
+    auth = steps.get("Authenticate to Google Cloud", {})
+    expected_auth = {
+        "workload_identity_provider": "${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}",
+        "service_account": "${{ env.TERRAFORM_SERVICE_ACCOUNT }}",
+        "token_format": "${{ inputs.readiness_target == 'operational-observer-setup' && 'access_token' || '' }}",
+        "access_token_scopes": "https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email",
+    }
+    if (generic.get("env", {}).get("TERRAFORM_SERVICE_ACCOUNT") != "${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"
+            or auth.get("id") != "auth" or auth.get("uses") != "google-github-actions/auth@v2"
+            or auth.get("with") != expected_auth):
+        errors.append("Logging grant proof requires the protected service account's explicit scoped identity token without delegation")
+    for name in ("Verify prerequisite deployment permissions", "Verify complete saved-plan mutation permissions"):
+        if steps.get(name, {}).get("env", {}).get("LOGGING_SETUP_ACCESS_TOKEN") != "${{ steps.auth.outputs.access_token }}":
+            errors.append(f"{name}: Logging grant proof must receive the masked scoped auth token")
     required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
     for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
         if not required[key].get("required"):
@@ -280,8 +318,19 @@ def iam_contract(root):
 def deployment_contract(root, target):
     name = DEPLOYS[target] + "-deploy.yml"
     value = workflow(root, name)
-    triggers = value.get("on", value.get(True, {}))
     errors = []
+    caller = workflow(root, "ci.yml")["jobs"][target]
+    required = {"ci-ready", "geospatial-changes", "ingestion-iam", "artifact-registry-iam"}
+    conditions = ["!cancelled()", "needs.ingestion-iam.result == 'success'", "needs.artifact-registry-iam.result == 'success'"]
+    if target == "mpatlas":
+        required.add("cron-alert-policy")
+        conditions.append("(needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success')")
+    conditions += ["github.event_name == 'push'", "github.ref == 'refs/heads/main'", "needs.ci-ready.result == 'success'",
+                   "needs.geospatial-changes.outputs." + target.replace("-", "_") + " == 'true'"]
+    if (required != set(caller.get("needs", []))
+            or caller.get("if") != "${{ " + " && ".join(conditions) + " }}"):
+        errors.append(f"{name}: CI caller must bypass skipped ancestors, respect cancellation and require exact successful CI/IAM prerequisites")
+    triggers = value.get("on", value.get(True, {}))
     if "push" in triggers or "pull_request" in triggers or "workflow_call" not in triggers:
         errors.append(f"{name}: automatic deployment must be called after ci-ready")
     job = value["jobs"]["deploy"]

@@ -165,6 +165,11 @@ class ReceiptContractTests(unittest.TestCase):
             "job shell override": lambda value, job: job.update(defaults={"run": {"shell": "python"}}),
             "other runner": lambda value, job: job.update({"runs-on": "self-hosted"}),
             "cancellation": lambda value, job: job["concurrency"].update({"cancel-in-progress": True}),
+            "running tick cancellation": lambda value, job: value["concurrency"].update({"cancel-in-progress": True}),
+            "unbounded tick backlog": lambda value, job: value["concurrency"].update(queue="max"),
+            "lost control requests": lambda value, job: value["concurrency"].update(group="slack-notification-all"),
+            "nested lock collision": lambda value, job: value["concurrency"].update(group=job["concurrency"]["group"]),
+            "missing tick coalescing": lambda value, job: value.pop("concurrency"),
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label):

@@ -11,6 +11,8 @@ from collections import defaultdict
 import re
 from urllib.parse import quote, urlencode
 
+from scripts import logging_setup_permissions as logging_setup
+
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 PROJECT_URL = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
@@ -257,18 +259,21 @@ def plan_checks(plan, *, project_number, target=None):
                 bucket = current.get("bucket")
                 require(bucket in {"_Default", "_Required"} and current.get("name") == "shared-datasets-operations", "unexpected operational log-view identity")
                 resource = f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/"
-                # Logging exposes testIamPermissions on views, not buckets.
-                # Before creating a view, test the inherited bucket-prefix grant
-                # on its existing _AllLogs sibling; later IAM checks use the
-                # exact installed view. The grant's condition covers both the
-                # bucket (create parent) and its views, never other buckets.
+                # Bucket creation authority cannot be tested on a view or a
+                # project: the installed grant is conditioned on bucket names.
+                # Use the same exact parent metadata/grant proof as readiness.
                 future = (kind == "google_logging_log_view" and action == "create") or (current.get("parent"), current.get("location"), bucket, current.get("name")) in created["google_logging_log_view"] or future_unknown(row, "google_logging_log_view")
                 resource += "_AllLogs" if future else "shared-datasets-operations"
-                needed = ("logging.views.getIamPolicy", "logging.views.setIamPolicy") if kind.endswith("iam_member") else ("logging.views.get", "logging.views." + action)
+                if kind == "google_logging_log_view" and action == "create":
+                    add(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS)
+                    needed = ("logging.views.get",)
+                else:
+                    needed = ("logging.views.getIamPolicy", "logging.views.setIamPolicy") if kind.endswith("iam_member") else ("logging.views.get", "logging.views." + action)
                 add("https://logging.googleapis.com/v2/" + resource + ":testIamPermissions", needed)
             elif kind == "google_monitoring_metric_descriptor":
                 project(current)
-                require(current.get("type") == "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat", "unexpected operational metric descriptor")
+                require(current.get("type") in {"custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat",
+                                                 "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"}, "unexpected operational metric descriptor")
                 add(PROJECT_URL, ("monitoring.metricDescriptors.get", "monitoring.metricDescriptors." + ("create" if action == "update" else action)))
             elif kind == "google_iam_workload_identity_pool_provider":
                 project(current)

@@ -80,6 +80,17 @@ reference and exact gate protocol. It rechecks that activation before delivery,
 finalizing the signed checkpoint and emitting the heartbeat. An invalid, failed
 or uncertain later attempt cannot be replaced by an older successful receipt.
 
+This check also applies to native-config workers. Cloud coverage and health wait
+for a supported signed installed native receipt; an old queued native worker
+cannot emit health after unified policy installation. The writer rechecks after
+predecessor verification and immediately before manifest commit, and the heartbeat
+step rechecks after durable signature verification. The fenced v2 heartbeat series
+is shared by shadow and unified mode. The legacy descriptor stays managed, but
+old-worker samples cannot keep the current absence policy healthy. Install the
+final protected v2 descriptor and absence policy before enabling collection, seed
+only from a genuine complete cycle, and collect a fresh compatible 24-hour shadow
+window. Pre-fence cycles, old metric samples and unsigned setup are ineligible.
+
 Runtime webhook access is a separate later step. Set
 `retire_runtime_webhook_access: true` only with an immutable retirement document
 of schema `shared-datasets-runtime-webhook-retirement-v1`. Its `cutover_sha256`
@@ -101,10 +112,12 @@ result and a fresh live routing audit; explicitly dispatch the exact tested-main
 protected workflows if automatic dependency ordering leaves a prerequisite
 pending. There is no local-apply fallback.
 
-Native mode makes the cloud worker shadow immediately. Until channel restoration
-is verified there is a transitional gap in public operational delivery, while
-signed collection retains observations and independent security/pipeline health
-stay native. The integration owner must retain supervision throughout this gap,
+Native rollback pauses cloud coverage and health until a supported signed native
+policy restoration matches the worker protocol and configuration. It then resumes
+shadow collection. Until channel restoration is verified there is a transitional
+gap in public operational delivery; retained signed observations remain audit
+evidence and independent security/pipeline health stay native. The integration
+owner must retain supervision throughout this gap,
 check in at least every ten minutes, and escalate unresolved restoration by the
 original two-hour supervision deadline; a rollback or new commit never resets
 that clock. A lost owner or incomplete collection cannot be treated as verified

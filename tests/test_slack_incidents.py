@@ -641,7 +641,7 @@ def test_signed_healthy_watermark_advances_without_another_recovery_post():
     incidents.deliver(ledger, records, slack)
     count = len(slack.calls)
     newer = success(sha="c" * 40, run_id=104, time="2026-10-06T11:00:00Z")
-    assert incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: newer) == []
+    assert incidents.prepare(ledger, IDENTITY, [newer], ancestor=lambda *_: True, success=lambda *_: None) == []
     assert ledger.states[SCOPE]["healthy"] == newer
     assert ledger.states[SCOPE]["incident"]["resolution"] == success()
     late = observation(sha="b" * 40, run_id=105, time="2026-10-06T11:30:00Z")

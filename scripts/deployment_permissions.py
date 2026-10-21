@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
+from scripts import logging_setup_permissions as logging_setup
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -48,21 +50,23 @@ MONITORING_PERMISSIONS = (
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
     "monitoring.timeSeries.list",
 )
-OPERATIONAL_LOG_SETUP_PERMISSIONS = (
-    "logging.buckets.get", "logging.views.create", "logging.views.get", "logging.views.list", "logging.views.update",
-    "logging.views.getIamPolicy", "logging.views.setIamPolicy",
-)
+OPERATIONAL_LOG_SETUP_PERMISSIONS = logging_setup.SETUP_PERMISSIONS
 OPERATIONAL_METRIC_SETUP_PERMISSIONS = (
     "monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get", "monitoring.metricDescriptors.list",
 )
 
 
-def request(url, permissions, token):
-    raw = json.dumps({"permissions": list(permissions)}).encode()
-    req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
+def read_json(url, token, *, data=None, method="GET", content_type="application/json", bearer=True):
+    headers = {"Content-Type": content_type}
+    if bearer:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
-            payload = json.load(response)
+            body = response.read(1024 * 1024 + 1)
+            if len(body) > 1024 * 1024:
+                raise RuntimeError("permission probe JSON exceeds 1 MiB")
+            payload = json.loads(body)
     except urllib.error.HTTPError as error:
         # Capture structured Google error diagnostics, never request headers or
         # an incomplete body that might contain a truncated credential value.
@@ -76,8 +80,19 @@ def request(url, permissions, token):
             if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
                 safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
                 encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
-                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]')[:4096]
+                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]').replace(quote_plus(token), '[REDACTED]')[:4096]
         raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid permission probe JSON response")
+    return payload
+
+
+def request(url, permissions, token):
+    if url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS}:
+        return logging_setup.verify_parent(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
+    storage = "storage.googleapis.com" in url
+    raw = None if storage else json.dumps({"permissions": list(permissions)}).encode()
+    payload = read_json(url, token, data=raw, method="GET" if storage else "POST")
     actual = payload.get("permissions", [])
     if not isinstance(actual, list) or not all(isinstance(value, str) for value in actual):
         raise RuntimeError("invalid testIamPermissions response")
@@ -101,7 +116,8 @@ def checks(target):
         return checks("iam-bootstrap") + checks("bucket-iam") + [
             (project_url, OPERATIONAL_METRIC_SETUP_PERMISSIONS + ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "serviceusage.services.list")),
             (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules", "iam.workloadIdentityPoolProviders.create", "iam.workloadIdentityPoolProviders.get")),
-            *[(f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/{bucket}/views/_AllLogs:testIamPermissions", OPERATIONAL_LOG_SETUP_PERMISSIONS) for bucket in ("_Default", "_Required")],
+            *[(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS) for bucket in logging_setup.BUCKETS],
+            *[(logging_setup.bucket_url(bucket) + "/views/_AllLogs:testIamPermissions", logging_setup.VIEW_PERMISSIONS) for bucket in logging_setup.BUCKETS],
         ]
     if target == "preview-service-account-iam":
         # The preview WIF binding references the managed GitHub pool, while
@@ -172,7 +188,15 @@ def main():
         required = plan_checks(plan, project_number=project_number, target=args.target)
     else:
         required = checks(args.target)
-    token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
+    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS} for url, _ in required)
+    if logging_parent:
+        # Minted by the same protected WIF auth step with identity metadata
+        # scope; an email-less gcloud token cannot prove the actual principal.
+        token = os.environ.get(logging_setup.TOKEN_ENV, "").strip()
+        if not token:
+            parser.error("Logging parent permission checks require the protected identity-scoped access token")
+    else:
+        token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
     if not token:
         parser.error("authenticated deployment identity has no access token")
     verify_checks(required, lambda url, permissions: request(url, permissions, token))

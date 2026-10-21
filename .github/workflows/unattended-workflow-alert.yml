@@ -61,6 +61,13 @@ on:
         required: false
         type: string
 
+# Only redundant scheduled ticks may replace a pending workflow. Every source
+# event and supervision request keeps its own workflow group; the job below
+# still serializes all signed writes and Slack sends without cancellation.
+concurrency:
+  group: slack-notification-${{ github.repository }}-${{ github.event_name == 'schedule' && 'scheduled-reconciliation' || github.run_id }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: read

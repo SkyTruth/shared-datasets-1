@@ -57,6 +57,7 @@ CONTRACT_FILES = tuple(sorted({
     "scripts/cloud_observation_ledger.py", "scripts/deployment_receipt_contracts.py",
     "scripts/deployment_emission.py", "scripts/deployment_revision.py", "scripts/slack_incident_api.py", "scripts/workflow_failure_alert.py",
     "scripts/operational_retry.py",
+    "scripts/github_api_read.py",
     "scripts/gcp_read_retry.py", "ingestion/wdpa_monthly/execution_observer.py",
     "terraform/envs/prod/wdpa_execution_observer.tf",
     "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/Dockerfile.promotion",
@@ -322,7 +323,7 @@ class CycleLedger:
                 stream.write("claims=true\n")
         return record
 
-    def save(self, checkpoint, evaluation, mode, *, previous_cycle_id=None, source_sha=None,
+    def save(self, checkpoint, evaluation, mode, *, before_commit, previous_cycle_id=None, source_sha=None,
              policy_sha256=None, collector_contract_sha256=None):
         run = validate_worker(self.run)
         require(source_sha is None or source_sha == run["head_sha"], "cycle source differs from current main worker")
@@ -347,6 +348,7 @@ class CycleLedger:
         common = {"cycle_nonce": secrets.token_hex(16), "source_sha": run["head_sha"],
                   "execution_run_id": run["id"], "execution_run_attempt": run["run_attempt"]}
         refs = []
+        before_commit()  # Predecessor verification can outlive the installed policy snapshot.
         for index, data in enumerate(chunks):
             part = validate_part({"schema": PART_SCHEMA, **common, "index": index, "total": len(chunks), "data": data, "sha256": digest(data.encode("ascii"))})
             record = self._save_record(part, PART_TASK)
@@ -357,6 +359,7 @@ class CycleLedger:
             "completed_at": cycle["completed_at"], "covered_through": checkpoint["covered_through"],
             "previous_cycle_id": previous_cycle_id, "encoding": ENCODING, "body_sha256": digest(body), "body_bytes": len(body),
             "compressed_sha256": digest(compressed), "compressed_bytes": len(compressed), "parts": refs})
+        before_commit()  # Unreferenced parts do not advance coverage after a transition.
         record = self._save_record(manifest, TASK)
         self.workdir.mkdir(parents=True, exist_ok=True)
         (self.workdir / "cycle.json").write_bytes(canonical({"manifest_id": record["id"]}))

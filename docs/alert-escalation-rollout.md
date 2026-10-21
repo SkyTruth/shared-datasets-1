@@ -29,6 +29,14 @@ production mutation, merge, or transfer to another chat.
    apply. Obsolete runtime secret access is retired separately after activation.
    Independent security and pipeline-health coverage remain native throughout.
 
+The final worker uses a fenced v2 heartbeat series and checks the latest signed
+installed policy even in native mode. Install its protected descriptor and native
+absence-policy filter before enabling collection, then seed only from a genuine
+complete cycle and start a fresh 24-hour compatible shadow window. Old cycles and
+the retained legacy metric cannot satisfy the new gate. On native rollback, cloud
+coverage and health pause until the supported signed native restoration is
+verified; a config change alone does not declare the pipeline healthy.
+
 The overlapping contracts are `deployment_revision.py`, `slack_incidents.py`, the
 notification workflow and its provenance verifier, protected Terraform policy/IAM
 allowlists, and alerting documentation. Finish prerequisites before final integration;
