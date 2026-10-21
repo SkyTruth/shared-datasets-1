@@ -58,8 +58,8 @@ remain independent exact-head checks. Record their evidence in each PR.
 Policy retirement requires reviewed merge and protected `Cron alert policy sync`.
 Run the read-only routing audit against complete reviewed Terraform planned values
 and complete live policy/channel inventories. Findings never authorize automatic
-disabling of unknown policies. No local Terraform apply or import is part of this
-rollout.
+disabling of unknown policies. Use only the protected PR workflow for production
+policy retirement and declarative import.
 
 Before v3 migration, drain notification workers and preserve verified historical
 records and uncertain claims. Before cloud cutover, retain 24 hours of complete
