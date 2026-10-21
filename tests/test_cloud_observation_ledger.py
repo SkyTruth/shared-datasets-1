@@ -76,7 +76,9 @@ class API:
                 self.signatures[identifier] = cycles.digest(emissions.canonical(emissions.receipt(cycles.REPOSITORY, record, self.statuses[identifier][0])))
 
     def verify_signature(self, api, repository, record, status, *, original_signer, batch):
-        assert api is self and repository == cycles.REPOSITORY and original_signer == cycles.WORKFLOW and batch is True
+        from scripts.slack_incidents import _ProofReads
+        assert api is self or isinstance(api, _ProofReads) and api.api is self
+        assert repository == cycles.REPOSITORY and original_signer == cycles.WORKFLOW and batch is True
         actual = cycles.digest(emissions.canonical(emissions.receipt(repository, record, status)))
         if self.signatures.get(record["id"]) != actual:
             raise emissions.EmissionError("signature rejected")

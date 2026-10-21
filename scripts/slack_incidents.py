@@ -7,6 +7,8 @@ when a later delivery fails. A claimed post is not automatically repeated.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextvars import copy_context
 import copy
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -15,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from threading import Lock
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,6 +47,7 @@ RUNTIME_TARGETS = {"wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice
 SDK_WORKFLOW = "publish-typescript-sdk.yml"
 SDK_CANDIDATE_STEP = "Verify tested SDK candidate and reviewed version"
 PUBLICATION_RECEIPT_JOB = re.compile(r"Complete publication receipt \(PR #([1-9][0-9]*); run ([1-9][0-9]*); attempt ([1-9][0-9]*)\)")
+PROOF_WORKERS = 4
 
 
 class IncidentError(RuntimeError):
@@ -903,10 +907,27 @@ def worker_context(api, environment=os.environ):
     return run
 
 
+class _ProofReads:
+    """Keep inherited retry budgets serial while independent crypto overlaps."""
+
+    def __init__(self, api):
+        self.api, self.lock = api, Lock()
+
+    def get(self, path):
+        with self.lock:
+            return self.api.get(path)
+
+    def pages(self, path):
+        with self.lock:
+            return self.api.pages(path)
+
+
 class Ledger:
     def __init__(self, api, run, directory):
         self.api, self.run, self.directory = api, run, directory
+        self._proof_reads = _ProofReads(api)
         self._verified_receipts = set()
+        self._receipt_lock = Lock()
 
     def verify(self, record):
         payload = record["payload"]
@@ -918,7 +939,7 @@ class Ledger:
                 and record.get("ref") == record.get("sha") and deployments.SHA.fullmatch(str(record.get("sha", "")))
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
         state = validate_state(payload["state"], schema=payload["schema"])
-        statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+        statuses = self._proof_reads.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
@@ -928,9 +949,12 @@ class Ledger:
             "repository": REPOSITORY, "original_signer": WORKFLOW, "batch": True,
             "record": record, "statuses": statuses,
         })).digest()
-        if key not in self._verified_receipts:
-            emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
-            self._verified_receipts.add(key)
+        with self._receipt_lock:
+            verified = key in self._verified_receipts
+        if not verified:
+            emissions.verify(self._proof_reads, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
+            with self._receipt_lock:
+                self._verified_receipts.add(key)
         return migrate_verified_state(state, payload["schema"])
 
     def load(self):
@@ -950,7 +974,15 @@ class Ledger:
             versions.setdefault(scope, []).append((record, payload["schema"]))
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
-        states = {scope: self.verify(record) for scope, record in latest.items()}
+        # Every task gets the caller's context, including its one retry budget.
+        # Only independent attestation verification overlaps; API reads retain
+        # the budget's serial attempt accounting. Await the complete proof set
+        # before consuming any state or applying alias/migration rules.
+        with ThreadPoolExecutor(max_workers=PROOF_WORKERS) as proofs:
+            pending = {scope: proofs.submit(copy_context().run, self.verify, record)
+                       for scope, record in latest.items()}
+            wait(pending.values())
+        states = {scope: proof.result() for scope, proof in pending.items()}
         for scope, rows in versions.items():
             latest_schema = next(schema for record, schema in rows if record["id"] == latest[scope]["id"])
             if latest_schema != SCHEMA:
