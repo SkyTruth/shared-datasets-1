@@ -3,7 +3,8 @@
 There is no production cutover evidence checked in yet. The native route is the
 default; synthetic notifications and invented cycle/deployment identifiers are
 not acceptable evidence. Keep the cutover PR draft until the real prerequisites
-below are satisfied.
+below are satisfied. The future reviewed activation change must also update the
+explicit native-default test fixture alongside its real immutable evidence.
 
 `catalog/operational-slack-rollout.json` is the reviewed switch. `mode: native`
 retains native operational delivery. A later reviewed change to `mode: unified`
@@ -21,7 +22,7 @@ The cutover document has schema
 | `audit_setup_deployment_id` | Exact signed successful protected Operational observation setup receipt proving the current observer Terraform and unexempted Run DATA_WRITE audit configuration. Shadow history starts after its applied timestamp. |
 | `policy_ids` | Every Terraform policy address and its exact installed `projects/shared-datasets-1/alertPolicies/…` identity. |
 | `cycles` | Ordered `{deployment_id, manifest_sha256}` references to at least 24 elapsed hours of signed, complete, provenance-complete shadow cycles; no public cloud delivery, missing predecessor, coverage gap or interval over ten minutes. |
-| `runtime_deployments` | Exactly `wdpa-monthly`, `eamlis-monthly`, `sea-ice-daily`, `mpatlas-monthly`, each with `{deployment_id, runtime_sha256}` binding a signed applied/verified exact image to the reviewed runtime bridge source. |
+| `runtime_deployments` | Exactly `wdpa-monthly`, `eamlis-monthly`, `sea-ice-daily`, `mpatlas-monthly`, each with `{deployment_id, runtime_sha256}` binding a signed applied/verified source anchor to the reviewed runtime bridge contract. The gate independently resolves the latest signed deployment and exact current unified image under that same contract. |
 
 The gate reads every referenced signed manifest and part, verifies main ancestry,
 and requires at least 24 hours of history after the verified audit setup applied
@@ -48,13 +49,17 @@ until a dedicated narrowly scoped metadata reader is installed for every cycle.
 Unknown enabled Slack-bound policies are discrepancies for review, never targets
 for automatic disabling. Detection changes cannot ride with channel removal.
 
-The gate additionally reads each current job and every execution page. Each
-current job and every nonterminal execution must use the receipt's exact image
-and explicit `SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE=unified`. An older image,
-native execution, partial enumeration or uncertain receipt prevents cutover.
-Deploy these settings using the reviewed protected job workflows first. If the
-policy sync runs before those deploys finish, it safely refuses; the integration
-owner re-dispatches it with the same exact tested main identity after terminal
+The gate additionally reads each current job and every execution page. Reviewed
+source anchors can come from native-compatible shadow deployments; they do not
+pre-name future deployment IDs. After the unified config merges, the protected
+job workflows deploy all four jobs. The gate resolves each latest signed terminal
+deployment, verifies its source descends from the reviewed anchor with the same
+bridge contract, and records both identities in its proof. Each current job and
+every nonterminal execution must use that exact current image and explicit
+`SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE=unified`. An older image, native
+execution, partial enumeration, failed latest attempt or uncertain receipt
+prevents cutover. If policy sync runs before those deploys finish, it safely
+refuses; the integration owner re-dispatches it with the same exact tested main identity after terminal
 deployment verification. Never resolve sequencing with a local apply.
 
 A config merge alone cannot activate cloud delivery. The notification worker
@@ -67,9 +72,11 @@ or uncertain later attempt cannot be replaced by an older successful receipt.
 Runtime webhook access is a separate later step. Set
 `retire_runtime_webhook_access: true` only with an immutable retirement document
 of schema `shared-datasets-runtime-webhook-retirement-v1`. Its `cutover_sha256`
-must match the existing cutover document hash and its `runtime_deployments` must
-match the exact drained deployments. The gate rechecks live routing, fresh
-post-policy pipeline heartbeat, signed original cutover and current image drain.
+must match the existing cutover document hash. Its `runtime_deployments` may name
+fresh signed source anchors after routine redeployment. The gate independently
+verifies the latest compatible current images and execution drain, together with
+live routing, fresh post-policy pipeline heartbeat and the signed original
+cutover. It does not require the original image to remain deployed forever.
 It only permits deletion of the two registered WDPA/e-AMLIS secret-accessor
 bindings. The workers' webhook secret mounts can then be removed by their
 protected deployments. No runtime secret read is part of verification.
