@@ -646,6 +646,15 @@ def from_run(api: GitHub, event: dict[str, Any], *, pr_number: int | None = None
         all(source.get(k) == run[k] for k in ("id", "run_attempt", "workflow_id", "head_sha", "path", "event")),
         "upstream event/run mismatch",
     )
+    return run_authorization(api, repository, run, pr_number=pr_number)
+
+
+def run_authorization(api: GitHub, repository: dict[str, Any], run: dict[str, Any], *, pr_number: int | None) -> dict[str, Any]:
+    """Read the immutable handoff after the caller verifies its required outcome.
+
+    This proves provenance and approval, not successful publication. Consumers
+    must independently establish their required mutation or notification boundary.
+    """
     repo = repository["full_name"]
     artifacts = api.pages(f"repos/{repo}/actions/runs/{run['id']}/artifacts?per_page=100", field="artifacts")
     prefix = artifact_name(run["id"], run["run_attempt"])

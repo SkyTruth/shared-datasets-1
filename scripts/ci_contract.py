@@ -74,11 +74,6 @@ CONTRACT_FILES = (
 # unproved scripts remain broad. Keep this proof with each exception; a new
 # consumer must expand its suites or remove the exception.
 NARROW_SCRIPTS = {
-    # Only importer: test_catalog_refresh_authorization; CLI: catalog-web-deploy.
-    # Produces authorization success/failure, no generated fixture input. Its
-    # catalog test classification retains both SDKs/browser; whole-directory COPY
-    # retains images. No ingestion/native or browser-fixture importer/caller.
-    "scripts/catalog_refresh_authorization.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
     # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
     # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
     # generator imports/calls it. Catalog tests retain SDKs/browser, COPY images;

@@ -24,6 +24,7 @@ import yaml
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
+from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
 
@@ -36,6 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_TARGETS = {"wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily"}
 SDK_WORKFLOW = "publish-typescript-sdk.yml"
 SDK_CANDIDATE_STEP = "Verify tested SDK candidate and reviewed version"
+PUBLICATION_RECEIPT_JOB = re.compile(r"Complete publication receipt \(PR #([1-9][0-9]*); run ([1-9][0-9]*); attempt ([1-9][0-9]*)\)")
 
 
 class IncidentError(RuntimeError):
@@ -139,6 +141,10 @@ def scope_for_job(name, targets, workflow):
         target = targets[(workflow, registered)]
         label = next((name for name in deployments.TERRAFORM_SYNCS if "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16] == target), target)
         return "deployment:" + target, "deployment", label
+    receipt = PUBLICATION_RECEIPT_JOB.fullmatch(name)
+    if receipt and workflow == "publish-dataset.yml":
+        pr = receipt[1]
+        return f"publication:pr-{pr}:apply", "publication", f"Dataset PR #{pr} (apply)"
     mutation = re.fullmatch(r"(?:Publish PR #([1-9][0-9]*) / )?(Apply approved PR mutation plans \(PR #([1-9][0-9]*)\)|Install reviewed feature-ID reset)", name)
     if mutation and (mutation[3] or mutation[1]) and workflow in {"ci.yml", "publish-dataset.yml"}:
         pr = mutation[3] or mutation[1]
@@ -193,7 +199,9 @@ def source_observations(api, event, targets):
     successful = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
                   and (alerts.WORKFLOW_PATHS[run["name"]], registered_name(job["name"])) not in targets
                   and (alerts.WORKFLOW_PATHS[run["name"]] != SDK_WORKFLOW or job["name"] != "candidate"
-                       or candidate_verified(job))]
+                       or candidate_verified(job))
+                  and (not job["name"].startswith("Complete publication receipt (")
+                       or step_verified(job, REPAIR_STEP))]
     result = [from_job(run, job, targets) for job in failures + successful]
     if not failures or run["conclusion"] == "success":
         result.append(from_workflow(run))  # Includes startup failures with no allocated jobs.
@@ -208,7 +216,11 @@ def source_observations(api, event, targets):
 
 
 def candidate_verified(job):
-    steps = [step for step in job.get("steps", []) if step["name"] == SDK_CANDIDATE_STEP]
+    return step_verified(job, SDK_CANDIDATE_STEP)
+
+
+def step_verified(job, name):
+    steps = [step for step in job.get("steps", []) if step["name"] == name]
     return len(steps) == 1 and steps[0]["status"] == "completed" and steps[0]["conclusion"] == "success"
 
 
@@ -342,6 +354,11 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
                 state["healthy"] = observation
             return state
         failures = incident["failures"]
+        receipt = PUBLICATION_RECEIPT_JOB.fullmatch(observation["job_name"])
+        if receipt and any(item["run_id"] != int(receipt[2]) or item["attempt"] != int(receipt[3])
+                           or item["job_name"] not in {f"Apply approved PR mutation plans (PR #{receipt[1]})",
+                               f"Publish PR #{receipt[1]} / Apply approved PR mutation plans (PR #{receipt[1]})"} for item in failures):
+            return state  # A receipt repairs only the exact original apply attempt.
         if not all(ancestor(item["sha"], observation["sha"]) for item in failures):
             return state
         if any(instant(observation["time"]) <= instant(item["time"])

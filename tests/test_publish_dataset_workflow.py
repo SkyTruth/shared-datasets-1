@@ -10,6 +10,26 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PublishDatasetWorkflowTests(unittest.TestCase):
+    def test_publication_comment_permission_covers_the_reusable_caller(self):
+        workflow = load_workflow(ROOT / ".github/workflows/publish-dataset.yml")
+        caller = load_workflow(ROOT / ".github/workflows/ci.yml")
+        self.assertEqual(workflow["permissions"]["pull-requests"], "write")
+        self.assertEqual(caller["jobs"]["publish-reviewed-dataset"]["permissions"]["pull-requests"], "write")
+
+    def test_receipt_recovery_cannot_allocate_publisher_credentials_or_replay_mutations(self):
+        workflow = load_workflow(ROOT / ".github/workflows/publish-dataset.yml")
+        job = workflow["jobs"]["complete-publication-receipt"]
+        self.assertEqual(job["permissions"], {"contents": "read", "actions": "read", "pull-requests": "write"})
+        self.assertEqual(job["environment"], "shared-datasets-production")
+        self.assertEqual(job["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "0")
+        self.assertIn("github.actor == 'jonaraphael'", job["if"])
+        self.assertIn("inputs.receipt_recovery_run_id == ''", workflow["jobs"]["reviewed_pr_plans"]["if"])
+        text = str(job["steps"])
+        self.assertNotIn("google-github-actions/auth", text)
+        self.assertNotIn("SLACK", text)
+        self.assertIn("publication_receipt_recovery.py", text)
+        self.assertNotIn("publish_workflow.py", text)
+
     def test_only_expected_executor_checkouts_are_present(self):
         workflow = load_workflow(ROOT / ".github/workflows/publish-dataset.yml")
         checkouts = [
@@ -86,7 +106,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(
             set(workflow_triggers(workflow)["workflow_dispatch"]["inputs"]),
-            {"pr_number", "authorization_rehearsal"},
+            {"pr_number", "authorization_rehearsal", "receipt_recovery_run_id", "receipt_recovery_attempt"},
         )
         self.assertIn(
             "github.actor == 'jonaraphael'", workflow["jobs"]["reviewed_pr_plans"]["if"]
