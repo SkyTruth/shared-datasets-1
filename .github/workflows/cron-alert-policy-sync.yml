@@ -87,6 +87,7 @@ jobs:
       block_deletes: true
       targets: |
         google_iam_workload_identity_pool_provider.operational_observer
+        google_project_iam_audit_config.operational_run_data_write
         module.operational_observer_service_account.google_service_account.this
         google_service_account_iam_member.operational_observer_wif
         google_logging_log_view.operational_observations["_Default"]
@@ -100,6 +101,7 @@ jobs:
         google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
       allowed_exact: |
         google_iam_workload_identity_pool_provider.operational_observer
+        google_project_iam_audit_config.operational_run_data_write
         module.operational_observer_service_account.google_service_account.this
         google_service_account_iam_member.operational_observer_wif
         google_logging_log_view.operational_observations["_Default"]

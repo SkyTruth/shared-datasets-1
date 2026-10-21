@@ -21,7 +21,8 @@ class ObserverBoundaryTests(unittest.TestCase):
         self.assertIn("roles/logging.viewAccessor", text)
         for broad in ("roles/logging.viewer", "roles/editor", "roles/owner", "roles/storage.objectViewer", "run.jobs.run", "storage.objects.create"):
             self.assertNotIn(broad, text)
-        self.assertIn("resource.name.endsWith('.translation-notice.json')", text)
+        self.assertIn("resource.type == 'storage.googleapis.com/Object'", text)
+        self.assertIn("/runs/') && resource.name.endsWith('.json')", text)
         self.assertIn("/runs/", text)
         self.assertIn("local.shared_catalog_rows", text)
 
@@ -41,6 +42,12 @@ class ObserverBoundaryTests(unittest.TestCase):
         self.assertIn('resource.labels.project_id="${var.project_id}"', text)
         self.assertIn('resource.labels.location="${var.region}"', text)
         self.assertNotIn("job_name", text)
+        self.assertNotIn("jsonPayload", text)
+        self.assertNotIn("protoPayload", text)
+        self.assertNotIn("severity", text)
+        for log_id in ("run.googleapis.com/stderr", "cloudaudit.googleapis.com/activity", "cloudaudit.googleapis.com/data_access", "cloudscheduler.googleapis.com/executions"):
+            self.assertIn(f'log_id("{log_id}")', text)
+        self.assertNotIn('log_id("run.googleapis.com/stdout")', text)
 
     def test_health_is_independent_30_minute_absence_and_preserves_native_routes(self):
         text = TERRAFORM.read_text()
@@ -56,6 +63,7 @@ class ObserverBoundaryTests(unittest.TestCase):
     def test_observation_setup_uses_protected_exact_saved_plan_boundary(self):
         targets = {
             "google_iam_workload_identity_pool_provider.operational_observer",
+            "google_project_iam_audit_config.operational_run_data_write",
             "module.operational_observer_service_account.google_service_account.this",
             "google_service_account_iam_member.operational_observer_wif",
             'google_logging_log_view.operational_observations["_Default"]',
@@ -100,3 +108,12 @@ class ObserverBoundaryTests(unittest.TestCase):
         caller = yaml.safe_load((ROOT / ".github/workflows/cron-alert-policy-sync.yml").read_text())
         self.assertEqual(caller["jobs"]["sync"]["needs"], ["bootstrap", "observations"])
         self.assertTrue(re.search(r'condition\s*\{[^}]*operational-view-buckets-only', text))
+
+    def test_run_data_write_capture_is_protected_and_unexempted(self):
+        text = TERRAFORM.read_text()
+        body = text.split('resource "google_project_iam_audit_config" "operational_run_data_write"', 1)[1].split('\nresource ', 1)[0]
+        self.assertIn('service = "run.googleapis.com"', body)
+        self.assertIn('log_type = "DATA_WRITE"', body)
+        self.assertNotIn("exempted_members", body)
+        checks = dict(plan_checks(plan(row("google_project_iam_audit_config", ["create"], {"project": PROJECT, "service": "run.googleapis.com", "audit_log_config": [{"log_type": "DATA_WRITE"}]})), project_number="123456789"))
+        self.assertEqual(set(checks[PROJECT_URL]), {"resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"})

@@ -59,23 +59,20 @@ def test_event_data_cannot_override_destination_or_inject_slack_mentions():
             alerts.alert_for_run(event(id=run_id))
 
 
-def test_cli_dry_run_and_delivery_failure(tmp_path, monkeypatch, capsys):
+def test_cli_is_always_preview_and_has_no_webhook_bypass(tmp_path, monkeypatch, capsys):
     path = tmp_path / "event.json"
     path.write_text(json.dumps(event()))
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path), "--dry-run"])
-    with mock.patch.object(alerts, "notify") as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
+    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")), mock.patch.object(alerts, "verify_source_event", return_value=True):
         alerts.main()
-        notify.assert_not_called()
     assert "actions/runs/123" in capsys.readouterr().out
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
-        with pytest.raises(RuntimeError, match="delivery failed"):
-            alerts.main()
-        assert notify.call_args.kwargs["strict"] is True
-    path.write_text(json.dumps(event(event="pull_request")))
-    with mock.patch.object(alerts, "notify") as notify:
+    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")), mock.patch.object(alerts, "verify_source_event", return_value=True):
         alerts.main()
-        notify.assert_not_called()
+    assert "actions/runs/123" in capsys.readouterr().out
+    path.write_text(json.dumps(event(event="pull_request")))
+    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
+        alerts.main()
 
 
 def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
@@ -150,15 +147,13 @@ def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_pat
     path = tmp_path / "event.json"
     path.write_text(json.dumps(payload))
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
         alerts.main()
-    notify.assert_not_called()
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
     api = source_api(payload["workflow_run"], run_attempt=2)
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
         alerts.main()
-    notify.assert_not_called()
     api.pages.assert_not_called()
 
 

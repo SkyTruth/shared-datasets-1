@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.slack_notify import notify
+from scripts.slack_notify import notify, webhook_capability
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -146,7 +146,7 @@ def send_functionality_added_alert(
         summary=summary,
         why_excited=why_excited,
     )
-    return notify(title=title, body=body, emoji=emoji, dry_run=dry_run, strict=strict)
+    return notify(title=title, body=body, emoji=emoji, dry_run=dry_run, strict=strict, capability=webhook_capability("repo_functionality"))
 
 
 @app.command("send-from-github-event")

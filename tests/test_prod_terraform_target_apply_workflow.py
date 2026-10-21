@@ -104,6 +104,20 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertIn("steps.revision.outputs.proceed == 'true'", wait_step["if"])
         self.assertIn('sleep "${WAIT_SECONDS}"', wait_step["run"])
 
+    def test_reviewed_cutover_evidence_is_verified_before_any_deployment_claim(self):
+        names = list(self.steps)
+        gate = "Verify operational route and runtime-secret cutover evidence"
+        self.assertLess(names.index("Enforce resource-change allowlist"), names.index(gate))
+        self.assertLess(names.index("Verify complete saved-plan mutation permissions"), names.index(gate))
+        self.assertLess(names.index(gate), names.index("Claim tested deployment revision"))
+        self.assertEqual(self.steps[gate]["if"], "${{ steps.replay.outputs.proceed == 'true' }}")
+        self.assertIn('--plan-json "$RUNNER_TEMP/target-apply.tfplan.json" --executor-sha "$EXECUTOR_SHA"', self.steps[gate]["run"])
+        recheck = "Recheck operational cutover freshness before apply"
+        self.assertEqual(names[names.index("Terraform apply") - 1], recheck)
+        self.assertEqual(self.steps[recheck]["if"], self.steps["Terraform apply"]["if"])
+        self.assertIn('--recheck "$RUNNER_TEMP/operational-cutover-proof.json"', self.steps[recheck]["run"])
+        self.assertNotIn("continue-on-error", self.steps[gate])
+
 
 class TargetApplyCallerTests(unittest.TestCase):
     def test_scheduled_ingestion_deploy_iam_sync_caller(self):

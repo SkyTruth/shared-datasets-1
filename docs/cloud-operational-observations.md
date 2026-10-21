@@ -14,7 +14,7 @@ The supported facts are:
 
 | Kind | Outcomes | Evidence |
 | --- | --- | --- |
-| `job_outcome` | success, skipped, blocked, failed | Execution context and record count; generic failures have uncertain mutation and unknown published-data state. |
+| `job_outcome` | success, skipped, blocked, failed | Execution context, per-asset/release outcome and generation-pinned run receipt when available; generic failures have uncertain mutation and unknown published-data state. |
 | `identity_decision` | required | Asset/release, case count and canonical case-set digest. Changed cases enrich the same asset/release episode. |
 | `translation_maintenance` | required, already_claimed, delivered, delivery_unknown, failed | Coverage counts and exact manifest/legacy receipt references, without source text. |
 
@@ -32,6 +32,27 @@ to 24 hours, overlaps the previous checkpoint by ten minutes, and leaves a
 two-minute ingestion lag. Delayed ingestion beyond that overlap is a remaining
 coverage limitation; shadow evidence must assess it before cutover.
 
+The view uses only [supported flexible-view
+fields](https://docs.cloud.google.com/logging/docs/logs-views#filters_for_log_views):
+project/region resource labels, resource type and `log_id`. Its access boundary
+contains regional job `run.googleapis.com/stderr`, Cloud Run Admin Activity and
+Data Access audit families, and Scheduler's execution-log family. It excludes
+stdout, services, unrelated resource types, regions and log families. This
+unavoidably permits other stderr text and other methods/severities within those
+bounded families; payload fields and severity are not supported view predicates.
+The collector's `entries:list` query additionally requires the runtime schema,
+exact legacy/v1/v2 RunJob methods or Scheduler errors before retrieving entries.
+Those query checks select observations; they are not an IAM boundary.
+
+RunJob uses `DATA_WRITE` in the [current Run audit
+contract](https://docs.cloud.google.com/run/docs/audit-logging#googlecloudrunv2Jobs).
+The protected observation setup enables `run.googleapis.com` DATA_WRITE capture
+without exempted members. This is required for a job that fails before Python
+can emit stderr. It grants the observer no additional permissions and does not
+enable Run DATA_READ. Keep the native route until real shadow evidence includes
+these cold-start audit observations. The legacy Admin Activity family remains
+in the bounded view for historical/internal `/Jobs.RunJob` entries.
+
 Every page and its authoritative execution/receipt metadata must be read before
 the candidate checkpoint is complete. Safe read retries share the operation's
 single budget and discard a partial snapshot before restarting enumeration.
@@ -45,7 +66,16 @@ executions are checked again even when no new log event arrives. A terminal
 transition adds a distinct evidence identity; a running observation does not
 establish recovery.
 
-The integration entry point is:
+The production entry point is `scripts/operational_reconcile.py`, called by the
+existing main-only notification workflow every five minutes. Collection remains
+opt-in through `SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED=true`, after installing
+the reviewed observer resources and configuring the two identity variables below.
+The rollout defaults to shadow; GitHub incident escalation and recovery continue
+while cloud-only facts cannot acquire a public delivery claim. Dormant unified
+delivery is present in this same tested protocol, so activation does not replace
+the code whose 24-hour shadow history was reviewed.
+
+The collector also exposes a transaction helper for offline callers:
 
 ```python
 reconcile_cycle(
@@ -64,7 +94,7 @@ object. A write acknowledgement alone is insufficient. A failed or uncertain
 save produces no heartbeat; reload authoritative state before retrying. The
 signed v3 notification ledger owns production persistence and supervision.
 
-The production workflow can use separate trusted phases: `collect(...)` returns
+The production workflow uses separate trusted phases: `collect(...)` returns
 a proposal without persistence or heartbeat; `evaluated_collection(proposal,
 policy_result)` returns exact checkpoint/evaluation bytes for signing. After
 persistence, attestation and delivery verification,
@@ -72,6 +102,37 @@ persistence, attestation and delivery verification,
 heartbeat=reader.heartbeat)` compares those exact bytes and refuses unresolved
 gaps. Its metric sample retains the cycle's original timestamp, so replaying old
 verified evidence cannot refresh health.
+
+`cloud_observation_ledger.py` persists the evaluated bundle in bounded compressed
+parts and a final manifest using nonproduction GitHub deployment records. Each
+part and manifest requires exactly one applied status and the exact main
+notification workflow's signed receipt. The manifest binds the actual worker
+revision, policy and collector contract hashes, predecessor, coverage times,
+ordered part identities and content hashes. An unsigned latest manifest blocks
+progress; the reader never silently chooses an older cursor.
+
+The workflow signs incident claims, delivers eligible GitHub changes, signs any
+outcomes, and re-verifies incident state before saving a complete cycle. It then
+signs that cycle and freshly re-reads all its durable bytes before emitting the
+heartbeat. A failed scan, delivery, signature or persistence step cannot advance
+coverage or freshen health. `public_delivery_count` in shadow evidence counts
+cloud operational delivery; GitHub incidents retain their existing independent
+accounting. Local proposal files and deployment write acknowledgements alone
+are never heartbeat evidence.
+
+`catalog/operational-slack-rollout.json` defaults to native routing with no
+cutover or retirement evidence. A config merge alone cannot activate unified
+delivery. The selector requires the latest exact signed successful protected
+policy deployment, its complete managed policy scope, unchanged evidence-gate
+protocol and reviewed immutable evidence. Failed, unsigned or incompatible newer
+attempts cannot be replaced with an older successful receipt. The worker checks
+the same activation before delivery, final persistence and heartbeat.
+
+Cloud action episodes may inherit an active deployment owner only through the
+same authoritative execution, immutable image and signed deployment proof.
+Payload owner names and similar job names confer no ownership. The inherited
+record retains the original activity and fixed deadline; it cannot create a
+fresh two-hour window. Recovery remains specific to the affected target.
 
 Runtime context is checked against the log resource and exact authoritative
 execution. Repository revision or owner claims in a payload are not trusted.
@@ -109,17 +170,23 @@ shared pool from conferring observer impersonation through a generic repository
 binding.
 
 The observer receives view-local `roles/logging.viewAccessor`, execution get/list,
-translation receipt get, and time-series create. It receives no project-wide log
+operational receipt get, and time-series create. It receives no project-wide log
 viewer, dataset write/list, execution start, secret-read, or infrastructure
 mutation permissions. Receipt IAM is restricted to registered asset `runs/`
-prefixes and the `.translation-notice.json` suffix. The client requests metadata
-only; Cloud Storage's `objects.get` permission also allows the contents of those
-specific receipt objects. Google IAM does not constrain time-series create to
+prefixes and JSON receipt objects, with an explicit object resource type and a
+separate prefix/suffix conjunction for every registered asset. The client accepts
+only exact translation notices or dated run receipts. Run recovery reads the
+generation-pinned receipt with bounded bytes and validates its asset, release
+and successful publication state; a healthy execution alone proves no recovery.
+Cloud Storage's `objects.get` permission permits the contents of those scoped
+operational receipts. Google IAM does not constrain time-series create to
 one metric; the observer client emits only the fixed heartbeat metric.
 
 The protected cron policy workflow runs bootstrap, exact allowlisted observation
 setup, then policy sync. Setup blocks deletion/replacement and probes the exact
-saved plan's resource operations. New Terraform-identity grants are limited to
+saved plan's resource operations, including the exact Run DATA_WRITE audit
+configuration under existing protected project IAM authority. New
+Terraform-identity grants are limited to
 two-bucket log-view setup and metric-descriptor create/get/list. Existing
 protected identity/project/bucket IAM authority remains a prerequisite. Missing
 WIF-provider creation authority must be resolved through a reviewed protected
@@ -142,6 +209,14 @@ Before removing direct operational Slack routes, require 24 continuous hours of
 successful shadow reconciliation and verified heartbeat coverage, with no
 unresolved scan/persistence/provenance gaps. Retain source identities, decisions,
 checkpoint and policy timestamps, and the routing audit as operational evidence.
+The immutable cutover document names `audit_setup_deployment_id`: the signed
+successful protected observation setup containing the Run audit resource and
+the exact current observation Terraform boundary. Every eligible shadow sample
+must follow that setup receipt and installation of the current absence policy.
+Later no-op setup runs do not restart this clock. At cutover the gate reads
+only `auditConfigs` through the protected identity's existing get-IAM authority
+and rejects missing Run DATA_WRITE capture, Run exemptions or relevant
+`allServices` exemptions. The observer receives no project IAM read permission.
 Synthetic tests use offline transports or an explicitly isolated destination.
 Independent security and pipeline-health delivery remain available throughout
 cutover and rollback. No routine shadow outcome is posted to the shared channel.

@@ -560,7 +560,7 @@ def notify_identity_ambiguities(
     release: str,
     ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
 ) -> bool:
-    from scripts.slack_notify import notify
+    from ingestion.common.legacy_runtime_notifications import notify
     from ingestion.common.operational_events import emit, stable_digest
 
     count = len(ambiguities)

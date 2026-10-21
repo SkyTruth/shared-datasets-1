@@ -16,13 +16,13 @@ from scripts.slack_incident_api import SlackError
 
 def test_unmocked_best_effort_notification_cannot_swallow_guard():
     with pytest.raises(BaseException, match="test isolation forbids live Slack transport"):
-        slack_notify.notify(title="test", body="test", webhook_url="https://hooks." + "slack.com/services/never/send")
+        slack_notify.notify(title="test", body="test", capability=slack_notify.webhook_capability("new_dataset", webhook_url="https://hooks." + "slack.com/services/never/send"))
 
 
 def test_unmocked_secret_lookup_is_forbidden(monkeypatch):
     monkeypatch.delenv(slack_notify.WEBHOOK_ENV, raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    with pytest.raises(BaseException, match="test isolation forbids production webhook secret"):
+    with pytest.raises(slack_notify.SlackNotificationError, match="Explicit webhook environment"):
         slack_notify.load_webhook_url()
 
 

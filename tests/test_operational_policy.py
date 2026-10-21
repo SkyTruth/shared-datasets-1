@@ -2,6 +2,8 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -28,6 +30,17 @@ def observation(**changes):
     value.update(changes)
     # Exercise the actual JSON representation consumed by the signed ledger.
     return p.OperationalObservation.from_dict(json.loads(json.dumps(value)))
+
+
+def test_unverified_cloud_source_anchor_is_truthful_but_cannot_authorize_a_hold_or_retry():
+    revision = "cloudlog-source:" + "e" * 64
+    value = observation(revision=revision, reason="artifact_provenance_unverified", mutation_status="uncertain", recovery="none")
+    result = p.decide(value, first_failure_at=at(), now=at(), supervision={"forged": True}, ownership_verified=False)
+    assert result.disposition == p.Disposition.ESCALATE and result.freeze_replay and not result.retry_safe
+    for changes in ({"reason": "unknown"}, {"mutation_status": "not_started"}, {"recovery": "read_only_retry"}):
+        with pytest.raises(p.PolicyError):
+            observation(revision=revision, reason=changes.get("reason", "artifact_provenance_unverified"),
+                        mutation_status=changes.get("mutation_status", "uncertain"), recovery=changes.get("recovery", "none"))
 
 
 def transition(previous, command, seconds=0, binding=BINDING, **changes):
@@ -59,7 +72,7 @@ def test_registry_classifies_every_explicit_reason_and_preserves_security_route(
         policy.reasons[p.Reason.UNKNOWN] = "record_only"
 
 
-@pytest.mark.parametrize("change", ["extra", "missing-reason", "unknown-reason", "bool-clock", "duplicate", "security-route"])
+@pytest.mark.parametrize("change", ["extra", "missing-reason", "unknown-reason", "bool-clock", "duplicate", "security-route", "retry-budget-drift"])
 def test_invalid_registry_cannot_hide_unsupported_or_security_observations(tmp_path, change):
     value = json.loads(p.REGISTRY.read_text())
     if change == "extra":
@@ -70,6 +83,8 @@ def test_invalid_registry_cannot_hide_unsupported_or_security_observations(tmp_p
         value["reasons"]["another failure"] = "record_only"
     elif change == "bool-clock":
         value["supervision_seconds"] = True
+    elif change == "retry-budget-drift":
+        value["transient_recovery_seconds"] += 1
     elif change == "security-route":
         value["reasons"]["security_risk"] = "record_only"
     encoded = json.dumps(value)
@@ -79,6 +94,24 @@ def test_invalid_registry_cannot_hide_unsupported_or_security_observations(tmp_p
     path.write_text(encoded)
     with pytest.raises(p.PolicyError):
         p.load_policy(path)
+
+
+def test_retry_reader_remains_importable_without_control_plane_registry(tmp_path):
+    source = p.REGISTRY.parents[1] / "scripts/operational_retry.py"
+    code = f"""
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("standalone_retry", {str(source)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+assert module.UNATTENDED.deadline_seconds == {p.DEFAULT_POLICY.transient_recovery_seconds}
+assert len(module.UNATTENDED.offsets) == 8
+assert "scripts.operational_policy" not in sys.modules
+"""
+    # -I removes checkout import paths; this models a helper copied into an
+    # image that has scripts/ but does not ship the policy catalog directory.
+    subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path, text=True, capture_output=True, check=True, timeout=10)
 
 
 @pytest.mark.parametrize("reason", ["healthy", "unchanged", "superseded", "source_not_ready"])

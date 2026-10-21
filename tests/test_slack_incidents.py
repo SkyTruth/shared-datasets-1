@@ -1030,7 +1030,15 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert "download-artifact" not in str(worker)
     assert "id-token" in worker["permissions"] and "deployments" in worker["permissions"]
-    assert "gcp" not in str(worker).lower()
+    observer = next(step for step in worker["steps"] if step.get("uses") == "google-github-actions/auth@v2")
+    assert observer["if"] == "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}"
+    assert observer["with"] == {
+        "workload_identity_provider": "${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}",
+        "service_account": "${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}",
+        "create_credentials_file": True,
+    }
+    from scripts.deployment_receipt_contracts import notification_boundary
+    assert notification_boundary("unattended-workflow-alert.yml", "incidents", workflow, worker)
     steps = {step.get("id"): step for step in worker["steps"] if step.get("id")}
     assert "steps.attest-claims.outcome == 'success'" in steps["deliver"]["if"]
     assert "always()" in steps["attest-outcomes"]["if"]
