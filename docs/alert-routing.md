@@ -229,15 +229,20 @@ consumer-impacting changes use the reviewed `breaking_changes` plan contract in
 
 Repository functionality notices use fenced commit messages under the
 [repo-alert workflow](../.claude/skills/repo-alert-commit-messages/SKILL.md).
-GitHub webhook notifications use the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions
-secret. During the native bridge stage, runtime FYI notifications use the explicit
-webhook environment mounted from Secret Manager secret
-`shared-datasets-slack-webhook-url`. Domain helpers never discover secrets from
-ambient GCP credentials; the temporary native bridge and reviewed announcement
-entrypoints hold explicit delivery capabilities. Unified runtime mode emits facts
-without public transport. A named approved emergency helper alone can explicitly
-resolve the production secret. To set or rotate it, supply the
-webhook bytes through a local file:
+Approved announcement entrypoints explicitly construct a webhook capability from
+the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions secret. Domain helpers cannot
+discover a production webhook from ambient credentials; the generic Slack CLI
+only previews payloads. Named break-glass delivery holds its own explicit,
+deferred Secret Manager capability.
+
+During shadow collection, the temporary native runtime bridge uses only the
+explicit webhook environment injected into the existing authorized jobs. Unified
+mode constructs no runtime delivery capability. Legacy translation claims stay
+audit evidence and never authorize blind resending. Retiring runtime secret access
+requires verified cutover and old-image drain evidence.
+
+The existing runtime secret is `shared-datasets-slack-webhook-url`. To set or
+rotate it, supply the webhook bytes through a local file:
 
 ```bash
 gcloud secrets versions add shared-datasets-slack-webhook-url \

@@ -8,16 +8,24 @@ resource.labels.location="${var.region}"
   (
     resource.type="cloud_run_job"
     (
-      jsonPayload.schema="shared-datasets-runtime-operation-v1"
-      OR (
-        protoPayload.serviceName="run.googleapis.com"
-        (protoPayload.methodName="/Jobs.RunJob" OR protoPayload.methodName="google.cloud.run.v2.Jobs.RunJob")
-      )
+      log_id("run.googleapis.com/stderr")
+      OR log_id("cloudaudit.googleapis.com/activity")
+      OR log_id("cloudaudit.googleapis.com/data_access")
     )
   )
-  OR (resource.type="cloud_scheduler_job" severity>=ERROR)
+  OR (resource.type="cloud_scheduler_job" log_id("cloudscheduler.googleapis.com/executions"))
 )
 EOT
+}
+
+# RunJob is DATA_WRITE in the current Run API. Without this capture setting a
+# cold startup can fail before runtime stderr exists and disappear from shadow.
+resource "google_project_iam_audit_config" "operational_run_data_write" {
+  project = var.project_id
+  service = "run.googleapis.com"
+  audit_log_config {
+    log_type = "DATA_WRITE"
+  }
 }
 
 # No project-wide Logs Viewer or production mutation role is granted.
@@ -61,9 +69,9 @@ resource "google_logging_log_view" "operational_observations" {
   location    = "global"
   bucket      = each.value
   name        = "shared-datasets-operations"
-  description = "Regional Cloud Run operational facts/execution audit and Scheduler failures, including new jobs."
+  description = "Regional job stderr, Run audit and Scheduler execution families; collector queries select operational facts."
   filter      = local.operational_observer_log_filter
-  depends_on  = [google_project_service.required]
+  depends_on  = [google_project_service.required, google_project_iam_audit_config.operational_run_data_write]
 }
 
 resource "google_logging_log_view_iam_member" "operational_observer" {
@@ -98,7 +106,7 @@ resource "google_project_iam_custom_role" "operational_observer_receipts" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalReceiptReader"
   title       = "Shared Datasets Operational Receipt Reader"
-  description = "Read known translation-notice receipts; no listing or dataset access."
+  description = "Read registered asset run receipts; no listing or dataset artifact access."
   permissions = ["storage.objects.get"]
 }
 
@@ -107,11 +115,11 @@ resource "google_storage_bucket_iam_member" "operational_observer_receipts" {
   role   = google_project_iam_custom_role.operational_observer_receipts.name
   member = module.operational_observer_service_account.member
   condition {
-    title       = "operational-translation-receipts-only"
-    description = "Only operational receipt names obtained from verified logs."
+    title       = "registered-asset-operational-receipts-only"
+    description = "Read JSON receipt objects only inside each catalog-registered asset's runs directory."
     expression = join(" && ", [
-      "resource.name.endsWith('.translation-notice.json')",
-      "(${join(" || ", [for row in local.shared_catalog_rows : "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${dirname(dirname(replace(row.canonical_path, "gs://${var.bucket_name}/", "")))}/runs/')" if startswith(row.canonical_path, "gs://${var.bucket_name}/")])})",
+      "resource.type == 'storage.googleapis.com/Object'",
+      "(${join(" || ", [for row in local.shared_catalog_rows : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${dirname(dirname(replace(row.canonical_path, "gs://${var.bucket_name}/", "")))}/runs/') && resource.name.endsWith('.json'))" if startswith(row.canonical_path, "gs://${var.bucket_name}/")])})",
     ])
   }
 }

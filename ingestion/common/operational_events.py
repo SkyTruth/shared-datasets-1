@@ -47,11 +47,12 @@ def validate(event):
     require(isinstance(event["details"], dict), "invalid detail object")
     # Producers emit counts, hashes and receipt references, never source text,
     # secret values, guessed ownership, or guessed repository revisions.
-    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status", "legacy_delivery_state"}, "unsupported detail field")
+    require(set(event["details"]) <= {"ambiguity_count", "case_set_sha256", "locale_counts", "receipt_uri", "receipt_generation", "manifest_generation", "record_count", "published_data_state", "mutation_status", "run_record_uri", "run_record_generation", "legacy_delivery_state"}, "unsupported detail field")
     detail = event["details"]
     if "legacy_delivery_state" in detail:
-        require(event["kind"] == "translation_maintenance" and event["status"] == "already_claimed" and detail["legacy_delivery_state"] in {"claimed", "delivered", "delivery_unknown"}, "invalid legacy delivery evidence")
-    for field in ("ambiguity_count", "record_count", "receipt_generation", "manifest_generation"):
+        require(event["kind"] == "translation_maintenance" and event["status"] == "already_claimed"
+                and detail["legacy_delivery_state"] in {"claimed", "delivered", "delivery_unknown"}, "invalid legacy delivery report")
+    for field in ("ambiguity_count", "record_count", "receipt_generation", "manifest_generation", "run_record_generation"):
         if field in detail:
             require(type(detail[field]) is int and detail[field] >= (0 if field == "record_count" else 1), "invalid count or generation")
     if "case_set_sha256" in detail:
@@ -62,6 +63,11 @@ def validate(event):
         require(detail["mutation_status"] in {"not_required", "not_started", "in_progress", "completed", "uncertain"}, "invalid mutation state")
     if "receipt_uri" in detail:
         require(isinstance(detail["receipt_uri"], str) and re.fullmatch(r"gs://[a-z0-9_.-]+/[^\r\n]+/runs/[^/]+[.]translation-notice[.]json", detail["receipt_uri"]), "invalid operational receipt URI")
+    require(("run_record_uri" in detail) == ("run_record_generation" in detail), "run-record reference requires an exact generation")
+    if "run_record_uri" in detail:
+        require(event["kind"] == "job_outcome" and event["status"] in {"success", "skipped"}
+                and set(event["subject"]) >= {"asset_slug", "release"}, "run-record proof requires a successful asset outcome")
+        require(isinstance(detail["run_record_uri"], str) and re.fullmatch(r"gs://[a-z0-9_.-]+/[^\r\n]+/runs/\d{4}-\d\d-\d\d[.]json", detail["run_record_uri"]), "invalid canonical run-record URI")
     if "locale_counts" in detail:
         counts = detail["locale_counts"]
         require(isinstance(counts, dict) and bool(counts) and all(isinstance(locale, str) and re.fullmatch(r"[A-Za-z0-9-]{1,32}", locale) and isinstance(value, dict) and all(type(count) is int and count >= 0 for count in value.values()) for locale, value in counts.items()), "invalid translation counts")

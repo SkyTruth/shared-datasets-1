@@ -100,7 +100,7 @@ def test_heartbeat_requires_exact_verified_persistence_and_delivery_and_cannot_r
 
 
 def test_partial_pagination_is_discarded_before_shared_budget_retry(monkeypatch):
-    monkeypatch.setattr("scripts.operational_retry.time.sleep", lambda _: None)
+    monkeypatch.setattr("scripts.operational_retry.sleep", lambda _: None)
     attempts = 0
 
     def entries(view, **kwargs):
@@ -203,6 +203,15 @@ def test_http_pagination_metadata_and_fixed_heartbeat_construct_real_requests():
     calls = session.request.call_args_list
     assert all(call.args == ("POST", "https://logging.googleapis.com/v2/entries:list") for call in calls)
     assert calls[1].kwargs["json"]["pageToken"] == "next"
+    query = calls[0].kwargs["json"]["filter"]
+    assert calls[0].kwargs["json"]["resourceNames"] == [cloud.VIEWS[0]]
+    for required in (f'jsonPayload.schema="{events.SCHEMA}"', 'severity>=ERROR', 'protoPayload.serviceName="run.googleapis.com"',
+                     'log_id("run.googleapis.com/stderr")', 'log_id("cloudscheduler.googleapis.com/executions")',
+                     'log_id("cloudaudit.googleapis.com/activity")', 'log_id("cloudaudit.googleapis.com/data_access")'):
+        assert required in query
+    assert all(f'protoPayload.methodName="{method}"' in query for method in cloud.RUN_METHODS)
+    assert query == calls[1].kwargs["json"]["filter"]
+    assert "stdout" not in query
     api.heartbeat(NOW)
     call = session.request.call_args
     assert call.args == ("POST", f"https://monitoring.googleapis.com/v3/projects/{cloud.PROJECT}/timeSeries")

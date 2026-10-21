@@ -167,6 +167,14 @@ def iam_contract(root):
     observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
     if observations.get("needs") != "bootstrap" or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
         errors.append("operational setup requires ordered bootstrap, permission readiness and blocked deletion")
+    audit_address = "google_project_iam_audit_config.operational_run_data_write"
+    audit_match = re.search(r'resource\s+"google_project_iam_audit_config"\s+"operational_run_data_write"\s*\{(.*?)(?=\nresource |\Z)', operational, re.S)
+    if (audit_match is None or not re.search(r'service\s*=\s*"run.googleapis.com"', audit_match[1])
+            or re.findall(r'log_type\s*=\s*"([^"]+)"', audit_match[1]) != ["DATA_WRITE"] or "exempted_members" in audit_match[1]):
+        errors.append("operational setup must enable exact unexempted Run DATA_WRITE capture")
+    for field in ("targets", "allowed_exact"):
+        if audit_address not in observations["with"].get(field, "").split():
+            errors.append(f"operational {field} omits required Run DATA_WRITE capture")
     # Derive coverage from the declarations so adding a new policy cannot leave
     # it outside the protected saved-plan/permission/receipt boundary.
     declared_policies = {

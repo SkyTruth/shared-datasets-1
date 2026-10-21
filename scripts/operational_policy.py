@@ -17,6 +17,8 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from scripts.operational_retry import UNATTENDED
+
 
 REGISTRY = Path(__file__).resolve().parents[1] / "catalog/alert-routing.json"
 SUPERVISION_SCHEMA = "shared-datasets-operation-supervision-v1"
@@ -25,6 +27,7 @@ WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 SHA = re.compile(r"[0-9a-f]{40}")
 IMMUTABLE_REVISION = re.compile(r"(?:[0-9a-f]{40}|sha256:[0-9a-f]{64})")
 CLOUD_EXECUTION_REVISION = re.compile(r"cloudrun-execution:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+CLOUD_SOURCE_REVISION = re.compile(r"cloudlog-source:[0-9a-f]{64}")
 
 
 class PolicyError(ValueError):
@@ -143,6 +146,11 @@ def load_policy(path: Path = REGISTRY) -> Policy:
     require(isinstance(value, dict) and set(value) == {"schema", "reasons", *limits}
             and value["schema"] == "shared-datasets-alert-routing-v1", "invalid alert policy schema")
     require(all(type(value[key]) is int and value[key] > 0 for key in limits), "invalid alert policy clock")
+    # Safe readers are also packaged without this control-plane registry.
+    # Reject drift here rather than giving those standalone helpers a runtime
+    # dependency on repository catalog files or a silent fallback deadline.
+    require(value["transient_recovery_seconds"] == UNATTENDED.deadline_seconds,
+            "alert policy and unattended worker retry budget must agree")
     require(value["check_in_seconds"] <= value["transient_recovery_seconds"] <= value["supervision_seconds"],
             "invalid alert policy clock ordering")
     reasons = value["reasons"]
@@ -170,7 +178,8 @@ class OperationBinding:
         require(isinstance(self.target, str) and re.fullmatch(r"[a-z][a-zA-Z0-9:._/-]{0,199}", self.target), "invalid operation target")
         require(isinstance(self.revision, str), "invalid exact operation revision")
         execution = CLOUD_EXECUTION_REVISION.fullmatch(self.revision)
-        require(IMMUTABLE_REVISION.fullmatch(self.revision) or execution and UUID(execution[1]).int != 0,
+        require(IMMUTABLE_REVISION.fullmatch(self.revision) or CLOUD_SOURCE_REVISION.fullmatch(self.revision)
+                or execution and UUID(execution[1]).int != 0,
                 "invalid exact operation revision")
         require(self.pr_number is None or type(self.pr_number) is int and self.pr_number > 0, "invalid operation PR")
 
@@ -211,7 +220,7 @@ class OperationalObservation:
         require(isinstance(self.evidence, tuple) and 0 < len(self.evidence) <= 32, "missing bounded operational evidence")
         for reference in self.evidence:
             text(reference, "operational evidence", maximum=2000)
-        if CLOUD_EXECUTION_REVISION.fullmatch(self.revision):
+        if CLOUD_EXECUTION_REVISION.fullmatch(self.revision) or CLOUD_SOURCE_REVISION.fullmatch(self.revision):
             require(self.reason == Reason.ARTIFACT_PROVENANCE_UNVERIFIED,
                     "execution identity cannot establish artifact provenance")
         if self.reason == Reason.ARTIFACT_PROVENANCE_UNVERIFIED:

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import csv
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -17,6 +19,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import quote
+from types import MappingProxyType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common.operational_events import SCHEMA as EVENT_SCHEMA, validate as validate_event
@@ -35,6 +38,51 @@ HISTORY = timedelta(hours=24)
 MAX_EVENTS = 100_000
 NAME = re.compile(r"[a-z][a-z0-9-]{0,62}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+RUN_RECEIPT_SCHEMA = "shared-datasets-cloud-run-receipt-v1"
+RUN_METHODS = ("/Jobs.RunJob", "google.cloud.run.v1.Jobs.RunJob", "google.cloud.run.v2.Jobs.RunJob")
+
+
+def observation_filter():
+    """Payload/severity predicates belong in queries, not log view IAM filters."""
+    methods = " OR ".join(f'protoPayload.methodName="{method}"' for method in RUN_METHODS)
+    return f'''resource.labels.project_id="{PROJECT}" resource.labels.location="{REGION}"
+((resource.type="cloud_run_job" ((log_id("run.googleapis.com/stderr") AND jsonPayload.schema="{EVENT_SCHEMA}")
+OR ((log_id("cloudaudit.googleapis.com/activity") OR log_id("cloudaudit.googleapis.com/data_access"))
+AND protoPayload.serviceName="run.googleapis.com" AND ({methods}))))
+OR (resource.type="cloud_scheduler_job" log_id("cloudscheduler.googleapis.com/executions") severity>=ERROR))'''
+
+
+@lru_cache(maxsize=1)
+def asset_roots():
+    """The catalog is the registered asset boundary, not a bucket-wide grant."""
+    with (Path(__file__).resolve().parents[1] / "catalog/shared-datasets-catalog.csv").open() as stream:
+        rows = csv.DictReader(stream)
+        return MappingProxyType({row["asset_slug"]: row["canonical_path"].removeprefix(f"gs://{BUCKET}/").split("/latest/")[0].split("/releases/")[0]
+                for row in rows if row["canonical_path"].startswith(f"gs://{BUCKET}/")
+                and ("/latest/" in row["canonical_path"] or "/releases/" in row["canonical_path"])})
+
+
+def validate_run_receipt(value):
+    require(isinstance(value, dict) and set(value) == {"schema", "uri", "generation", "size", "sha256", "asset_slug", "run_date", "release_date", "status", "published_paths", "created_at", "updated_at"}
+            and value["schema"] == RUN_RECEIPT_SCHEMA, "invalid canonical run-record proof")
+    root = asset_roots().get(value["asset_slug"])
+    require(root is not None and value["uri"] == f"gs://{BUCKET}/{root}/runs/{value['run_date']}.json", "unregistered run-record identity")
+    require(type(value["generation"]) is int and value["generation"] > 0 and type(value["size"]) is int and 0 < value["size"] <= 1024 * 1024
+            and isinstance(value["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]), "invalid immutable run-record proof")
+    for field in ("run_date", "release_date"):
+        require(isinstance(value[field], str) and re.fullmatch(r"\d{4}-\d\d-\d\d", value[field]), "invalid run-record date")
+        datetime.strptime(value[field], "%Y-%m-%d")
+    require(value["status"] in {"success", "skipped"} and isinstance(value["published_paths"], list) and len(value["published_paths"]) <= 32, "invalid run-record outcome")
+    seen = set()
+    for row in value["published_paths"]:
+        require(isinstance(row, dict) and set(row) == {"path", "generation"} and isinstance(row["path"], str)
+                and row["path"].startswith(f"gs://{BUCKET}/{root}/releases/{value['release_date']}/")
+                and ".." not in row["path"].split("/") and row["path"] not in seen
+                and type(row["generation"]) is int and row["generation"] > 0, "invalid published generation proof")
+        seen.add(row["path"])
+    require(value["status"] != "success" or bool(seen), "successful run record lacks published generations")
+    require(instant(value["created_at"]) <= instant(value["updated_at"]), "invalid authoritative run-record write interval")
+    return value
 
 
 def require(condition, message):
@@ -125,7 +173,7 @@ def authoritative_execution(api, job, execution):
     completed = [row for row in result.get("conditions", []) if row.get("type") == "Completed"]
     success = terminal and len(completed) == 1 and completed[0].get("state") == "CONDITION_SUCCEEDED"
     return {"name": name, "uid": uid, "revision": revision, "coverage_gaps": gaps, "terminal": terminal, "success": success,
-            "completion_time": result.get("completionTime"), "images": images}
+            "completion_time": result.get("completionTime"), "create_time": result.get("createTime"), "start_time": result.get("startTime"), "images": images}
 
 
 def normalize(entry, source, api):
@@ -144,11 +192,13 @@ def normalize(entry, source, api):
         require(payload["context"]["job"] == job and payload["context"]["execution"] == execution, "runtime payload disagrees with authenticated log context")
         result.update(kind="runtime", fact=payload, execution=authoritative_execution(api, job, execution))
         receipt = payload["details"].get("receipt_uri")
-        if receipt:
+        if receipt and payload["details"].get("receipt_generation") is not None:
             result["receipt_metadata"] = api.receipt_metadata(receipt, generation=payload["details"].get("receipt_generation"))
+        if payload["details"].get("run_record_uri"):
+            result["run_receipt"] = api.run_receipt(payload["details"]["run_record_uri"], generation=payload["details"]["run_record_generation"])
     elif kind == "cloud_run_job":
         audit = entry.get("protoPayload", {})
-        require(audit.get("serviceName") == "run.googleapis.com" and audit.get("methodName") in {"/Jobs.RunJob", "google.cloud.run.v2.Jobs.RunJob"}, "unsupported execution observation")
+        require(audit.get("serviceName") == "run.googleapis.com" and audit.get("methodName") in RUN_METHODS, "unsupported execution observation")
         execution = execution_name(entry, required=False)
         if execution is None:
             code = audit.get("status", {}).get("code")
@@ -162,7 +212,7 @@ def normalize(entry, source, api):
     return result
 
 
-def collect(previous, api, *, now):
+def collect(previous, api, *, now, clock=None):
     """Build a complete candidate checkpoint without mutating prior state.
 
     Enumeration and metadata lookups share one safe-read budget. A retry starts
@@ -209,8 +259,10 @@ def collect(previous, api, *, now):
         retained.update(found)
         require(len(retained) <= MAX_EVENTS and len(pending) + len(new) <= MAX_EVENTS, "operational backlog exceeds bounded state")
         gaps = sorted({gap for fact in [*pending, *new, *next_watching.values()] for gap in [*fact.get("coverage_gaps", []), *fact.get("execution", {}).get("coverage_gaps", [])]})
+        completed = clock() if clock is not None else now
+        require(completed >= now, "completion clock moved backwards")
         return validate_checkpoint({"schema": SCHEMA, "covered_through": timestamp(end), "seen": retained,
-                                   "pending": [*deepcopy(pending), *new], "watching": next_watching, "last_cycle": {"start": timestamp(start), "end": timestamp(end), "completed_at": timestamp(now), "new_events": len(new), "views": list(VIEWS), "coverage_gaps": gaps, "overlap_seconds": int(OVERLAP.total_seconds()), "ingestion_lag_seconds": int(INGESTION_LAG.total_seconds())}})
+                                   "pending": [*deepcopy(pending), *new], "watching": next_watching, "last_cycle": {"start": timestamp(start), "end": timestamp(end), "completed_at": timestamp(completed), "new_events": len(new), "views": list(VIEWS), "coverage_gaps": gaps, "overlap_seconds": int(OVERLAP.total_seconds()), "ingestion_lag_seconds": int(INGESTION_LAG.total_seconds())}})
 
     with operation(profile=UNATTENDED):
         return run_read(snapshot, classify=gcp_read_retry.classify, label="cloud operational observation snapshot")
@@ -222,8 +274,10 @@ def evaluated_collection(candidate, evaluation):
     require(isinstance(evaluation, dict) and evaluation.get("complete") is True, "policy evaluation is incomplete")
     resolved = evaluation.get("resolved_source_ids", [])
     require(isinstance(resolved, list) and all(isinstance(source, str) for source in resolved) and len(resolved) == len(set(resolved)) and set(resolved) <= {fact["source_id"] for fact in candidate["pending"]}, "invalid provenance resolution identities")
-    unresolved = [fact for fact in candidate["pending"] if fact["source_id"] not in resolved and (fact.get("coverage_gaps") or fact.get("execution", {}).get("coverage_gaps"))]
-    coverage = {**candidate["last_cycle"], "coverage_gaps": sorted({gap for fact in unresolved for gap in [*fact.get("coverage_gaps", []), *fact.get("execution", {}).get("coverage_gaps", [])]})}
+    policy_gaps = evaluation.get("provenance_gap_source_ids", [])
+    require(isinstance(policy_gaps, list) and len(policy_gaps) == len(set(policy_gaps)) and set(policy_gaps) <= {fact["source_id"] for fact in candidate["pending"]}, "invalid evaluated provenance gap identities")
+    unresolved = [fact for fact in candidate["pending"] if fact["source_id"] not in resolved and (fact["source_id"] in policy_gaps or fact.get("coverage_gaps") or fact.get("execution", {}).get("coverage_gaps"))]
+    coverage = {**candidate["last_cycle"], "coverage_gaps": sorted({gap for fact in unresolved for gap in [*fact.get("coverage_gaps", []), *fact.get("execution", {}).get("coverage_gaps", []), *(["unregistered_or_unverified_cloud_source"] if fact["source_id"] in policy_gaps else [])]})}
     return {"checkpoint": {**candidate, "pending": unresolved, "last_cycle": coverage}, "evaluation": deepcopy(evaluation)}
 
 
@@ -283,7 +337,7 @@ class CloudReader:
         require(view in VIEWS, "unregistered filtered log view")
         page, seen = "", set()
         while True:
-            payload = {"resourceNames": [view], "filter": f'timestamp>="{timestamp(start)}" AND timestamp<"{timestamp(end)}"', "orderBy": "timestamp asc", "pageSize": 1000}
+            payload = {"resourceNames": [view], "filter": f'timestamp>="{timestamp(start)}" AND timestamp<"{timestamp(end)}" AND ({observation_filter()})', "orderBy": "timestamp asc", "pageSize": 1000}
             if page:
                 payload["pageToken"] = page
             value = self.request("POST", "https://logging.googleapis.com/v2/entries:list", payload=payload)
@@ -310,6 +364,39 @@ class CloudReader:
         result = self.request("GET", f"https://storage.googleapis.com/storage/v1/b/{BUCKET}/o/{quote(name, safe='')}", params=params)
         require(result.get("bucket") == BUCKET and result.get("name") == name and (generation is None or str(result.get("generation")) == str(generation)), "receipt metadata does not match requested identity")
         return result
+
+    def run_receipt(self, uri, *, generation):
+        """Read only an existing, exact-generation canonical operational record."""
+        require(isinstance(uri, str) and type(generation) is int and generation > 0, "run-record generation is required")
+        matches = [(slug, root, match[1]) for slug, root in asset_roots().items()
+                   if (match := re.fullmatch(re.escape(f"gs://{BUCKET}/{root}/runs/") + r"(\d{4}-\d\d-\d\d)[.]json", uri))]
+        require(len(matches) == 1, "non-operational run-record read refused")
+        slug, _, run_date = matches[0]
+        name = uri.removeprefix(f"gs://{BUCKET}/")
+        url = f"https://storage.googleapis.com/storage/v1/b/{BUCKET}/o/{quote(name, safe='')}"
+        metadata = self.request("GET", url, params={"generation": str(generation), "fields": "bucket,name,generation,size,timeCreated,updated"})
+        require(metadata.get("bucket") == BUCKET and metadata.get("name") == name and str(metadata.get("generation")) == str(generation), "run-record metadata identity differs")
+        size = int(metadata["size"])
+        require(0 < size <= 1024 * 1024, "run record exceeds bounded read")
+        from google.api_core import exceptions
+        response = self.session.request("GET", url, params={"generation": str(generation), "alt": "media"}, timeout=request_timeout(30), stream=True)
+        try:
+            if response.status_code != 200:
+                raise exceptions.from_http_status(response.status_code, "Canonical run-record read failed")
+            body = bytearray()
+            for chunk in response.iter_content(chunk_size=65536):
+                body.extend(chunk)
+                require(len(body) <= size, "run-record bytes exceed metadata size")
+            require(len(body) == size, "run-record bytes are incomplete")
+        finally:
+            response.close()
+        record = json.loads(body)
+        require(isinstance(record, dict) and record.get("asset_slug") == slug and record.get("run_date") == run_date, "run-record body identity differs")
+        return validate_run_receipt({"schema": RUN_RECEIPT_SCHEMA, "uri": uri, "generation": generation, "size": size,
+            "sha256": hashlib.sha256(body).hexdigest(), "asset_slug": slug, "run_date": run_date,
+            "release_date": record.get("release_date"), "status": record.get("status"),
+            "created_at": metadata.get("timeCreated"), "updated_at": metadata.get("updated"),
+            "published_paths": [{"path": row.get("path"), "generation": row.get("generation")} for row in record.get("release_paths", [])]})
 
     def heartbeat(self, now):
         return self.request("POST", f"https://monitoring.googleapis.com/v3/projects/{PROJECT}/timeSeries", payload={"timeSeries": [{"metric": {"type": METRIC}, "resource": {"type": "global", "labels": {"project_id": PROJECT}}, "points": [{"interval": {"endTime": timestamp(now)}, "value": {"int64Value": "1"}}]}]})

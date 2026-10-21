@@ -41,6 +41,9 @@ RUNTIME_FILES = ("ingestion/common/legacy_runtime_notifications.py", "ingestion/
                  "ingestion/common/feature_metadata.py", "ingestion/common/operational_events.py", "scripts/slack_notify.py")
 RUNTIME_SECRET = "shared-datasets-slack-webhook-url"
 PROOF_SCHEMA = "shared-datasets-operational-cutover-verification-v1"
+AUDIT_ADDRESS = "google_project_iam_audit_config.operational_run_data_write"
+AUDIT_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
+OBSERVER_TF = "terraform/envs/prod/operational_observer.tf"
 
 
 def require(condition, message):
@@ -127,7 +130,7 @@ def baseline_plan(plan):
 
 
 def validate_shadow(evidence, *, load_cycle, contract_hash, policy_hash, policy_ids, policy_changed_at, heartbeat_points, now, revision_allowed):
-    require(isinstance(evidence, dict) and set(evidence) == {"schema", "collector_contract_sha256", "policy_sha256", "policy_ids", "cycles", "runtime_deployments"}
+    require(isinstance(evidence, dict) and set(evidence) == {"schema", "collector_contract_sha256", "policy_sha256", "policy_ids", "cycles", "runtime_deployments", "audit_setup_deployment_id"}
             and evidence["schema"] == SCHEMA and evidence["collector_contract_sha256"] == contract_hash and evidence["policy_sha256"] == policy_hash,
             "evidence differs from the tested collector or policy contract")
     require(evidence["policy_ids"] == policy_ids, "evidence targets different live policies")
@@ -197,7 +200,7 @@ class LiveEvidence:
         return {collector.instant(point["interval"]["endTime"]) for series in values for point in series.get("points", []) if point.get("value", {}).get("int64Value") == "1"}
 
     def verify_views(self, root):
-        text = (root / "terraform/envs/prod/operational_observer.tf").read_text()
+        text = (root / OBSERVER_TF).read_text()
         matches = re.findall(r'operational_observer_log_filter\s*=\s*<<-EOT\n(.*?)\nEOT', text, re.S)
         require(len(matches) == 1, "reviewed filtered-view boundary is missing or ambiguous")
         expected = matches[0].replace("${var.project_id}", collector.PROJECT).replace("${var.region}", collector.REGION)
@@ -208,6 +211,18 @@ class LiveEvidence:
             require(value.get("name") == name and routing.filter_text(value.get("filter")) == normalized,
                     "live filtered-view identity or coverage boundary differs from reviewed Terraform")
         return {"views": list(collector.VIEWS), "filter_sha256": sha256(normalized.encode())}
+
+    def verify_run_audit(self):
+        # Read-only IAM method. Request no bindings, member identities or etag.
+        value = self.reader.request("POST", f"https://cloudresourcemanager.googleapis.com/v1/projects/{collector.PROJECT}:getIamPolicy",
+                                    payload={"options": {"requestedPolicyVersion": 3}}, params={"fields": "auditConfigs"})
+        rows = [row for row in value.get("auditConfigs", []) if row.get("service") == "run.googleapis.com"]
+        require(len(rows) == 1, "Run DATA_WRITE capture is missing or ambiguous")
+        writes = [row for row in rows[0].get("auditLogConfigs", []) if row.get("logType") == "DATA_WRITE"]
+        require(len(writes) == 1 and not writes[0].get("exemptedMembers"), "Run DATA_WRITE capture is disabled or exempts responsible principals")
+        require(not any(log.get("exemptedMembers") for row in value.get("auditConfigs", []) if row.get("service") == "allServices"
+                        for log in row.get("auditLogConfigs", []) if log.get("logType") == "DATA_WRITE"), "allServices DATA_WRITE exemptions can conceal Run execution")
+        return {"service": "run.googleapis.com", "log_type": "DATA_WRITE", "exemptions": []}
 
     def job(self, job):
         return self.reader.request("GET", f"https://run.googleapis.com/v2/projects/{collector.PROJECT}/locations/{collector.REGION}/jobs/{job}")
@@ -269,7 +284,24 @@ def immutable_file(root, executor_sha, reference):
     return strict_json(raw)
 
 
-def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, load_cycle=None, load_deployment=None, contract_hash=None, policy_hash=None, revision_allowed=None, runtime_hash=None, scope=(), prior_activation=None, clock=None):
+def audit_setup_receipt(api, repository, identifier, root, executor_sha):
+    """Verify reviewed enablement time without resetting it on a later no-op."""
+    from scripts import deployment_revision as deployments
+    record = api.get(f"repos/{repository}/deployments/{identifier}")
+    require(record.get("id") == identifier, "protected audit setup identity changed")
+    payload = deployments.verify_record(api, repository, record)
+    statuses = deployments.verified_statuses(api, repository, record)
+    require(payload["target"] == AUDIT_SETUP_TARGET and AUDIT_ADDRESS in payload.get("targets", [])
+            and statuses and statuses[0].get("state") == "success" and statuses[0].get("description") == "applied",
+            "protected setup did not verify complete Run audit capture")
+    require(deployments.git_ancestor(record["sha"], executor_sha)
+            and subprocess.check_output(["git", "show", f"{record['sha']}:{OBSERVER_TF}"], cwd=root) == (root / OBSERVER_TF).read_bytes(),
+            "audit setup used another reviewed observation boundary")
+    collector.instant(statuses[0]["created_at"])
+    return {"deployment_id": record["id"], "status_id": statuses[0]["id"], "completed_at": statuses[0]["created_at"]}
+
+
+def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, load_cycle=None, load_deployment=None, load_setup=None, contract_hash=None, policy_hash=None, revision_allowed=None, runtime_hash=None, scope=(), prior_activation=None, clock=None):
     rollout = config(rollout)
     removals = route_changes(plan)
     require(not removals or rollout["mode"] == "unified", "native mode cannot remove an operational Slack route")
@@ -282,15 +314,23 @@ def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, 
     desired = routing.expected_policies(plan)
     require(all(desired[address]["enabled"] and desired[address]["notification_channels"] for address in REQUIRED_NATIVE), "independent security and pipeline-health delivery must stay enabled")
     require(all(desired[address]["enabled"] and desired[address]["notification_channels"] == [] for address in OPERATIONAL_POLICIES), "unified cutover must preserve detection and clear all registered operational channels")
+    evidence = immutable_file(root, executor_sha, rollout["cutover_evidence"])
+    setup_id = evidence.get("audit_setup_deployment_id")
+    require(type(setup_id) is int and setup_id > 0, "immutable cutover must name the protected audit setup receipt")
     view_proof = live.verify_views(root)
+    audit_proof = live.verify_run_audit()
+    setup = load_setup(setup_id)
+    require(isinstance(setup, dict) and set(setup) == {"deployment_id", "status_id", "completed_at"}
+            and setup["deployment_id"] == setup_id and all(type(setup[key]) is int and setup[key] > 0 for key in ("deployment_id", "status_id")), "invalid protected audit setup receipt")
+    audit_enabled_at = collector.instant(setup["completed_at"])
+    require(audit_enabled_at <= now, "audit setup receipt lies in the future")
     policies, channels = live.pages("alertPolicies", "alertPolicies"), live.pages("notificationChannels", "notificationChannels")
     inventory = routing.audit(baseline_plan(plan), policies, channels)
     require(not inventory["findings"], "fresh live routing audit has discrepancies; review them without disabling unknown policies")
     ids = {address: value.get("name") or value.get("id") for address, value in desired.items()}
     require(all(isinstance(name, str) and re.fullmatch(f"projects/{collector.PROJECT}/alertPolicies/[0-9]+", name) for name in ids.values()), "all exact live policy IDs must be established before cutover")
     health = next(policy for policy in policies if policy["name"] == ids[HEALTH])
-    changed = max(collector.instant(health["creationRecord"]["mutateTime"]), collector.instant(health.get("mutationRecord", health["creationRecord"])["mutateTime"]))
-    evidence = immutable_file(root, executor_sha, rollout["cutover_evidence"])
+    changed = max(audit_enabled_at, collector.instant(health["creationRecord"]["mutateTime"]), collector.instant(health.get("mutationRecord", health["creationRecord"])["mutateTime"]))
     heartbeats = live.heartbeat_points(now=now)
     if removals:
         result = validate_shadow(evidence, load_cycle=load_cycle, contract_hash=contract_hash, policy_hash=policy_hash, policy_ids=ids,
@@ -310,6 +350,7 @@ def verify_plan(plan, rollout, *, now, root=ROOT, executor_sha=None, live=None, 
                 and retirement["schema"] == "shared-datasets-runtime-webhook-retirement-v1" and retirement["cutover_sha256"] == rollout["cutover_evidence"]["sha256"]
                 and retirement["runtime_deployments"] == evidence["runtime_deployments"], "retirement differs from the verified cutover and drained deployments")
     result = {"mode": "unified", "route_removals": sorted(removals), "runtime_secret_removals": sorted(retirements), "drained_images": images, "filtered_view_proof": view_proof,
+              "audit_capture_proof": {**audit_proof, **setup},
               "heartbeat_at": collector.timestamp(max(point for point in heartbeats if point <= now)), "cutover_authorized": True, **result}
     # Signature enumeration and cloud reads may take long enough to age the
     # original proof. Check a fresh wall clock after all those operations.
@@ -356,13 +397,15 @@ def main(argv=None):
             statuses = deployments.verified_statuses(api, repository, record)
             require(statuses and statuses[0].get("state") == "success" and statuses[0].get("description") in {"applied", "verified"}, "runtime deployment has no verified terminal success")
             return record, payload
+        def load_setup(identifier):
+            return audit_setup_receipt(api, repository, identifier, ROOT, args.executor_sha)
         expected_runtime = runtime_contract(ROOT, args.executor_sha)
         def runtime_hash(revision):
             value = runtime_contract(ROOT, revision)
             require(value == expected_runtime, "runtime image uses another bridge protocol")
             return value
         kwargs = {"live": LiveEvidence(AuthorizedSession(credentials, max_refresh_attempts=0, refresh_timeout=30)), "load_cycle": verifier.verify_cycle_id,
-                  "load_deployment": load_deployment, "runtime_hash": runtime_hash, "contract_hash": ledger.contract_hash(ROOT), "policy_hash": ledger.policy_hash(ROOT), "revision_allowed": lambda sha: deployments.git_ancestor(sha, args.executor_sha)}
+                  "load_deployment": load_deployment, "load_setup": load_setup, "runtime_hash": runtime_hash, "contract_hash": ledger.contract_hash(ROOT), "policy_hash": ledger.policy_hash(ROOT), "revision_allowed": lambda sha: deployments.git_ancestor(sha, args.executor_sha)}
         if rollout["mode"] == "unified" and not route_changes(plan):
             kwargs["prior_activation"] = activation(api, repository, ROOT, args.executor_sha)
     result = verify_plan(plan, rollout, now=datetime.now(timezone.utc), executor_sha=args.executor_sha, scope=scope, clock=lambda: datetime.now(timezone.utc), **kwargs)

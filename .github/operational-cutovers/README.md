@@ -18,13 +18,16 @@ The cutover document has schema
 | --- | --- |
 | `collector_contract_sha256` | Current signed cycle protocol hash, including producers, collector, adapter, worker and eligibility gate. |
 | `policy_sha256` | Exact current classification registry hash. |
+| `audit_setup_deployment_id` | Exact signed successful protected Operational observation setup receipt proving the current observer Terraform and unexempted Run DATA_WRITE audit configuration. Shadow history starts after its applied timestamp. |
 | `policy_ids` | Every Terraform policy address and its exact installed `projects/shared-datasets-1/alertPolicies/…` identity. |
 | `cycles` | Ordered `{deployment_id, manifest_sha256}` references to at least 24 elapsed hours of signed, complete, provenance-complete shadow cycles; no public cloud delivery, missing predecessor, coverage gap or interval over ten minutes. |
 | `runtime_deployments` | Exactly `wdpa-monthly`, `eamlis-monthly`, `sea-ice-daily`, `mpatlas-monthly`, each with `{deployment_id, runtime_sha256}` binding a signed applied/verified exact image to the reviewed runtime bridge source. |
 
 The gate reads every referenced signed manifest and part, verifies main ancestry,
-and requires corresponding observed heartbeat samples after creation or last
-mutation of the current absence policy. The final shadow sample must be at most
+and requires at least 24 hours of history after the verified audit setup applied
+timestamp, with corresponding observed heartbeat samples after creation or last
+mutation of the current absence policy. Live Run or all-services DATA_WRITE audit
+capture must also remain enabled without exemptions. The final shadow sample must be at most
 ten minutes old. First seed and verify the heartbeat after installing the absence
 policy; Monitoring cannot establish absence coverage before an initial sample.
 Freshness is checked again after signature enumeration. The worker retains the

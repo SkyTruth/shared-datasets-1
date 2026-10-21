@@ -37,6 +37,7 @@ def shadow():
         heartbeats.add(completed)
     evidence = {"schema": gate.SCHEMA, "collector_contract_sha256": CONTRACT, "policy_sha256": POLICY,
                 "policy_ids": {"exact": "policies/123"}, "cycles": references,
+                "audit_setup_deployment_id": 500,
                 "runtime_deployments": {job: {"deployment_id": 123, "runtime_sha256": "e" * 64} for job in gate.JOBS}}
     return evidence, cycles, heartbeats
 
@@ -284,6 +285,60 @@ def test_live_filtered_views_must_match_the_reviewed_access_boundary(tmp_path, d
         assert proof["filter_sha256"] == gate.sha256(gate.routing.filter_text(expected).encode())
 
 
+@pytest.mark.parametrize("defect", [None, "missing", "exempted", "all_services_exempted", "wrong_type"])
+def test_live_run_write_audit_capture_has_no_exemptions_and_uses_read_only_iam_method(defect):
+    value = {"auditConfigs": [{"service": "run.googleapis.com", "auditLogConfigs": [{"logType": "DATA_WRITE"}]}]}
+    if defect == "missing":
+        value["auditConfigs"] = []
+    elif defect == "exempted":
+        value["auditConfigs"][0]["auditLogConfigs"][0]["exemptedMembers"] = ["serviceAccount:worker@example.test"]
+    elif defect == "all_services_exempted":
+        value["auditConfigs"].append({"service": "allServices", "auditLogConfigs": [{"logType": "DATA_WRITE", "exemptedMembers": ["allUsers"]}]})
+    elif defect == "wrong_type":
+        value["auditConfigs"][0]["auditLogConfigs"][0]["logType"] = "DATA_READ"
+    session = mock.Mock()
+    session.request.return_value.status_code = 200
+    session.request.return_value.json.return_value = value
+    if defect:
+        with pytest.raises(ValueError, match="capture|exemption"):
+            gate.LiveEvidence(session).verify_run_audit()
+    else:
+        assert gate.LiveEvidence(session).verify_run_audit()["log_type"] == "DATA_WRITE"
+    call = session.request.call_args
+    assert call.args == ("POST", "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:getIamPolicy")
+    assert call.kwargs["params"] == {"fields": "auditConfigs"}
+    assert call.kwargs["json"] == {"options": {"requestedPolicyVersion": 3}}
+
+
+@pytest.mark.parametrize("defect", [None, "unsigned", "wrong_scope", "wrong_target", "failed", "source_drift", "not_ancestor"])
+def test_audit_enablement_time_comes_from_exact_signed_setup_receipt(tmp_path, defect):
+    from scripts import deployment_revision as deployments
+    path = tmp_path / gate.OBSERVER_TF
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"reviewed audit+view boundary\n")
+    api = mock.Mock()
+    api.get.return_value = {"id": 500, "sha": "b" * 40}
+    payload = {"target": gate.AUDIT_SETUP_TARGET, "targets": [gate.AUDIT_ADDRESS]}
+    status = {"id": 501, "state": "success", "description": "applied", "created_at": "2026-10-20T00:00:00Z"}
+    if defect == "wrong_scope":
+        payload["targets"] = []
+    elif defect == "wrong_target":
+        payload["target"] = "terraform-other"
+    elif defect == "failed":
+        status["state"] = "failure"
+    raw = b"other audit source" if defect == "source_drift" else path.read_bytes()
+    with mock.patch.object(deployments, "verify_record", return_value=payload, side_effect=ValueError("invalid signature") if defect == "unsigned" else None), \
+         mock.patch.object(deployments, "verified_statuses", return_value=[status]), \
+         mock.patch.object(deployments, "git_ancestor", return_value=defect != "not_ancestor"), \
+         mock.patch.object(gate.subprocess, "check_output", return_value=raw):
+        if defect:
+            with pytest.raises(ValueError):
+                gate.audit_setup_receipt(api, "SkyTruth/shared-datasets-1", 500, tmp_path, "a" * 40)
+        else:
+            assert gate.audit_setup_receipt(api, "SkyTruth/shared-datasets-1", 500, tmp_path, "a" * 40)["completed_at"] == status["created_at"]
+    api.get.assert_called_once_with("repos/SkyTruth/shared-datasets-1/deployments/500")
+
+
 def test_full_plan_gate_audits_current_filters_channels_and_preserves_independent_delivery():
     plan, policies, channels = routing_fixture()
     desired = plan["planned_values"]["root_module"]["resources"]
@@ -304,6 +359,8 @@ def test_full_plan_gate_audits_current_filters_channels_and_preserves_independen
     class Live(Runtime):
         def verify_views(self, root):
             return {"views": list(gate.collector.VIEWS), "filter_sha256": "a" * 64}
+        def verify_run_audit(self):
+            return {"service": "run.googleapis.com", "log_type": "DATA_WRITE", "exemptions": []}
         def pages(self, collection, field):
             return policies if field == "alertPolicies" else channels
         def heartbeat_points(self, **kwargs):
@@ -314,10 +371,14 @@ def test_full_plan_gate_audits_current_filters_channels_and_preserves_independen
         job = gate.JOBS[identity - 1]
         return {"sha": "a" * 40}, {"target": job, "artifact": image(job)}
     kwargs = {"now": NOW, "executor_sha": "a" * 40, "live": Live(), "load_cycle": cycles.__getitem__, "contract_hash": CONTRACT,
-              "policy_hash": POLICY, "revision_allowed": lambda _: True, "load_deployment": deployment, "runtime_hash": lambda _: "e" * 64}
+              "policy_hash": POLICY, "revision_allowed": lambda _: True, "load_deployment": deployment, "runtime_hash": lambda _: "e" * 64,
+              "load_setup": lambda identifier: {"deployment_id": identifier, "status_id": 501, "completed_at": gate.collector.timestamp(NOW - timedelta(hours=25))}}
     with mock.patch.object(gate, "immutable_file", return_value=evidence):
         result = gate.verify_plan(plan, rollout("unified"), **kwargs)
         assert result["cutover_authorized"] is True and len(result["route_removals"]) == 4
+        recent_setup = {**kwargs, "load_setup": lambda identifier: {"deployment_id": identifier, "status_id": 501, "completed_at": gate.collector.timestamp(NOW - timedelta(hours=23))}}
+        with pytest.raises(ValueError, match="predates"):
+            gate.verify_plan(plan, rollout("unified"), **recent_setup)
         with pytest.raises(ValueError, match="final freshness"):
             gate.verify_plan(plan, rollout("unified"), **kwargs, clock=lambda: NOW + timedelta(minutes=6))
         # Later secret retirement uses the verified original policy receipt;
