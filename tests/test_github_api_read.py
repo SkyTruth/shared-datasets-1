@@ -264,6 +264,31 @@ def test_nested_operations_and_later_reads_cannot_replenish_retry_budget(gh):
     assert clock.sleeps == [5, 15, 40, 120, 240, 480, 840]
 
 
+def test_exhaustion_is_sticky_across_operational_helpers_and_preserves_original_failure(gh):
+    clock = Clock()
+    log = gh([outage()])
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.UNATTENDED):
+            with pytest.raises(subprocess.CalledProcessError) as first:
+                transport.read(PATH)
+            with pytest.raises(subprocess.CalledProcessError) as second:
+                emission.ReadOnlyGitHub().get(PATH)
+            assert first.value is second.value
+    assert len(log.read_text().splitlines()) == 8
+    assert clock.sleeps == [5, 15, 40, 120, 240, 480, 840]
+
+
+def test_expired_operation_cannot_start_an_initial_read(gh):
+    clock = Clock()
+    log = gh([{"stdout": "{}"}])
+    with patch.object(retry, "monotonic", clock.monotonic), patch.object(retry, "sleep", clock.sleep):
+        with retry.operation(profile=retry.UNATTENDED):
+            clock.now = 1800
+            with pytest.raises(retry.RetryBudgetExhausted, match="deadline"):
+                transport.read(PATH)
+    assert not log.exists() and clock.sleeps == []
+
+
 def test_slow_requests_cannot_extend_unattended_deadline():
     clock = Clock()
     attempts = []
