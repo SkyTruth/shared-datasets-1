@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from scripts.collect_release_indexes import collect
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 BUCKET = 'skytruth-shared-datasets-1'
 
@@ -16,7 +17,8 @@ def test_exact_stored_generation_is_used_even_if_download_metadata_changes(tmp_p
     client.bucket.return_value.blob.return_value.download_as_bytes.return_value = b'{}'
     collect(client, BUCKET, tmp_path)
     client.bucket.return_value.blob.assert_called_once_with(blob.name, generation=123)
-    client.bucket.return_value.blob.return_value.download_as_bytes.assert_called_once_with(if_generation_match=123, checksum='auto')
+    client.bucket.return_value.blob.return_value.download_as_bytes.assert_called_once_with(
+        if_generation_match=123, checksum='auto', retry=DEFAULT_RETRY, timeout=60)
     assert (tmp_path / 'wdpa-marine.json').read_bytes() == b'{}'
 
 

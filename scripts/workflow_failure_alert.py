@@ -56,13 +56,18 @@ def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
 
 
 def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
-    """Recognize an idle scheduled probe from authoritative same-attempt jobs."""
+    """Recognize a successful idle probe, never an unobserved catalog outage.
+
+    The source worker owns bounded transport recovery. An unsuccessful probe
+    means that recovery was exhausted or the failure was not safe to retry;
+    neither case can be treated as evidence of unchanged catalog inputs.
+    """
     if run["name"] != "Catalog web deploy" or run["event"] != "schedule":
         return False
     probes = [job for job in jobs if job["name"] == "Check for catalog input changes"]
     publishers = [job for job in jobs if job["name"] == "Build and publish catalog web"]
     return (len(probes) == len(publishers) == 1
-            and probes[0]["status"] == "completed"
+            and probes[0]["status"] == "completed" and probes[0]["conclusion"] == "success"
             and publishers[0]["status"] == "completed" and publishers[0]["conclusion"] == "skipped"
             and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
 

@@ -540,16 +540,16 @@ def test_containerd_post_load_substitution_cannot_reach_push(handoff, monkeypatc
 
 
 def test_streamed_download_bounds_bytes_and_stops_only_its_process(tmp_path, monkeypatch):
-    process = Mock(stdout=io.BytesIO(b"more than allowed"))
+    process = Mock(stdout=io.BytesIO(b"more than allowed"), returncode=-9)
     process.__enter__ = Mock(return_value=process)
     process.__exit__ = Mock(return_value=False)
-    process.poll.return_value = None
+    process.poll.side_effect = [None, -9]
     monkeypatch.setattr(consumer.subprocess, "Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr(consumer, "MAX_ARTIFACT", 4)
-    with pytest.raises(DeploymentError, match="download exceeds"):
+    with pytest.raises(ValueError, match="download exceeds"):
         consumer.GitHub().archive_to(REPO, 3, tmp_path / "archive.zip")
     process.kill.assert_called_once()
-    process.wait.assert_called_once()
+    process.wait.assert_any_call(timeout=60)
 
 
 def test_failed_github_stream_command_remains_a_failure(tmp_path, monkeypatch):
@@ -565,5 +565,6 @@ def test_failed_github_stream_command_remains_a_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(consumer.subprocess, "Popen", popen)
     with pytest.raises(subprocess.CalledProcessError):
         consumer.GitHub().archive_to(REPO, 3, tmp_path / "archive.zip")
-    assert commands == [["gh", "api", f"repos/{REPO}/actions/artifacts/3/zip"]]
+    assert commands == [["gh", "api", "--method", "GET", f"repos/{REPO}/actions/artifacts/3/zip"]]
     process.kill.assert_not_called()
+    assert not (tmp_path / "archive.zip").exists()

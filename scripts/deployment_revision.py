@@ -59,6 +59,15 @@ class DeploymentError(RuntimeError):
     pass
 
 
+class DeploymentPrerequisitePending(DeploymentError):
+    """An exact, trusted CI attempt has not produced its gate result yet."""
+
+    def __init__(self, run_id, attempt):
+        super().__init__("exact main CI attempt is still awaiting ci-ready")
+        self.run_id = run_id
+        self.attempt = attempt
+
+
 def require(condition, message):
     if not condition:
         raise DeploymentError(message)
@@ -99,6 +108,11 @@ def verify_ci(api, repository, executor, run_id, attempt):
     require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "source CI repository mismatch")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "jobs")
     ready = [job for job in jobs if job.get("name") == "ci-ready"]
+    pending_states = {"queued", "in_progress", "waiting", "pending", "requested"}
+    if run.get("status") in pending_states and (not ready or (
+            len(ready) == 1 and ready[0].get("status") in pending_states
+            and ready[0].get("conclusion") is None)):
+        raise DeploymentPrerequisitePending(run_id, attempt)
     require(len(ready) == 1 and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success", "ci-ready is missing, ambiguous, cancelled or unsuccessful")
     return run
 

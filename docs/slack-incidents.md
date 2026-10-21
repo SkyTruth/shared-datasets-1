@@ -5,7 +5,8 @@ characters). The first failure creates an **Open** parent message. Additional
 failed attempts go in its thread, with **Also send to channel** always disabled.
 Verified recovery edits the original parent to green **Resolved**, retaining the
 original failure and recovery evidence. It creates no reply or new channel
-message. Healthy runs stay quiet. There is no live synthetic notification test.
+message. Healthy runs stay quiet. Synthetic delivery is restricted to a separately
+configured test channel; it never deliberately fails a production execution.
 
 The `Workflow health and Slack reconciliation` workflow runs on both successful
 and failed workflow completions. Its presence in Actions does not mean a failure
@@ -15,10 +16,10 @@ runs under its former name, `Deployment terminal verification`, remain recognize
 under the same workflow and incident identity.
 
 The hourly catalog input probe is read-only. An unchanged comparison skips the
-catalog deployment job. If only that probe fails (for example, an unavailable
-credential service) and authoritative same-attempt jobs prove the publisher was
-skipped, it remains a failed Actions check without opening or resolving a Slack
-incident. An allocated publisher failure still alerts. Historical catalog runs
+catalog deployment job. Only a successful idle probe stays quiet. Recognized safe
+read outages receive the worker's bounded 30-minute recovery budget; exhausted
+outages and permanent or unknown failures reach the incident engine. A skipped
+publisher cannot establish recovery. An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
 
 ## Recovery contract

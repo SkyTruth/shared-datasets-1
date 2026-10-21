@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
-from time import sleep
+from pathlib import Path
+import tempfile
+import threading
+from scripts.operational_retry import request_timeout, run_read
 
 
-HTTP_ERROR = re.compile(rb"gh: [^\r\n]+ \(HTTP ([0-9]{3})\)")
+HTTP_ERROR = re.compile(rb"gh: (?:HTTP ([0-9]{3})|[^\r\n]+ \(HTTP ([0-9]{3})\))")
 TRANSIENT_STATUSES = {500, 502, 503, 504}
 CONNECTION_ERROR = (
     b"error connecting to api.github.com\n"
@@ -21,27 +23,84 @@ CONNECTION_ERROR = (
 READ_TIMEOUT_SECONDS = 60
 
 
-def read(path: str, *, paginate: bool = False) -> bytes:
+def transport_failure(error: Exception) -> str | None:
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "read timeout"
+    if not isinstance(error, subprocess.CalledProcessError):
+        return None
+    stderr = (error.stderr or b"").strip()
+    status = HTTP_ERROR.fullmatch(stderr)
+    if status:
+        code = int(status[1] or status[2])
+        if code in TRANSIENT_STATUSES:
+            return f"HTTP {code}"
+    if stderr == CONNECTION_ERROR:
+        return "connection failure"
+    return None
+
+
+def read(path: str, *, paginate: bool = False, allow_escape_sequences: bool = False) -> bytes:
     command = ["gh", "api", "--method", "GET"]
     if paginate:
         command += ["--paginate", "--slurp"]
+    if allow_escape_sequences:
+        command.append("--allow-escape-sequences")
     command.append(path)
-    for attempt, delay in enumerate((5, 15, None), 1):
+    return run_read(
+        lambda: subprocess.check_output(command, stderr=subprocess.PIPE, timeout=request_timeout(READ_TIMEOUT_SECONDS)),
+        classify=transport_failure, label=f"GitHub GET {path}",
+    )
+
+
+def download(path: str, destination: Path, *, max_bytes: int) -> None:
+    """Stream one bounded artifact, discarding incomplete bytes before retry.
+
+    The exclusive destination belongs to this operation only. Content/digest
+    validation occurs after this function returns and cannot trigger a retry.
+    """
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("download requires a positive byte limit")
+    command = ["gh", "api", "--method", "GET", path]
+
+    def attempt() -> None:
+        timeout = request_timeout(READ_TIMEOUT_SECONDS)
+        created = False
         try:
-            return subprocess.check_output(command, stderr=subprocess.PIPE, timeout=READ_TIMEOUT_SECONDS)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-            if isinstance(error, subprocess.TimeoutExpired):
-                reason, transient = "read timeout", True
-            else:
-                stderr = (error.stderr or b"").strip()
-                status = HTTP_ERROR.fullmatch(stderr)
-                reason = f"HTTP {int(status[1])}" if status else "GitHub CLI error"
-                transient = bool(status and int(status[1]) in TRANSIENT_STATUSES) or stderr == CONNECTION_ERROR
-                if stderr == CONNECTION_ERROR:
-                    reason = "connection failure"
-            diagnostic = f"GitHub GET {path}: attempt {attempt}/3 failed ({reason})"
-            if not transient or delay is None:
-                print(diagnostic + "; giving up", file=sys.stderr)
-                raise
-            print(diagnostic + f"; retrying in {delay}s", file=sys.stderr)
-            sleep(delay)
+            with destination.open("xb") as stream, tempfile.TemporaryFile() as stderr:
+                created = True
+                with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=stderr) as process:
+                    errors: list[Exception] = []
+
+                    def copy() -> None:
+                        try:
+                            size = 0
+                            while chunk := process.stdout.read(1024 ** 2):
+                                size += len(chunk)
+                                if size > max_bytes:
+                                    raise ValueError("GitHub artifact download exceeds byte limit")
+                                stream.write(chunk)
+                        except Exception as error:
+                            errors.append(error)
+                            if process.poll() is None:
+                                process.kill()
+
+                    reader = threading.Thread(target=copy, daemon=True)
+                    reader.start()
+                    try:
+                        process.wait(timeout=timeout)
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait()
+                        reader.join()
+                    if errors:
+                        raise errors[0]
+                    if process.returncode:
+                        stderr.seek(0)
+                        raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr.read())
+        except BaseException:
+            if created:
+                destination.unlink()
+            raise
+
+    run_read(attempt, classify=transport_failure, label=f"GitHub GET {path}")

@@ -163,6 +163,15 @@ class SavedPlanPermissionTests(unittest.TestCase):
         self.assertNotIn("logging.notificationRules.delete", create)
         self.assertNotIn("monitoring.alertPolicies.delete", create)
 
+    def test_imported_schema_retirement_and_deletion_policy_need_no_channel_write(self):
+        retired = {"project": PROJECT, "enabled": False, "notification_channels": [], "conditions": [{"condition_matched_log": [{"filter": 'jsonPayload.alert_type="dataset_schema_changed"'}]}]}
+        change = row("google_monitoring_alert_policy", ["update"], retired)
+        change["change"]["importing"] = {"id": f"projects/{PROJECT}/alertPolicies/10109535963709095250"}
+        required = permissions(plan(change))
+        self.assertEqual(required, {"monitoring.alertPolicies.update", "monitoring.alertPolicies.get", "logging.notificationRules.create", "logging.notificationRules.delete"})
+        deletion = {**retired, "enabled": True, "notification_channels": [f"projects/{PROJECT}/notificationChannels/123"]}
+        self.assertIn("monitoring.notificationChannels.get", permissions(plan(row("google_monitoring_alert_policy", ["update"], deletion))))
+
     def test_scheduler_provider_pause_and_resume_require_their_actual_operations(self):
         value = {"project": PROJECT, "region": "us-central1", "name": "wdpa-monthly", "paused": True}
         before = {**value, "paused": False}

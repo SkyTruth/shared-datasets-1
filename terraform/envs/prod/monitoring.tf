@@ -500,3 +500,67 @@ EOT
     terraform_data.cron_alert_channel_configured,
   ]
 }
+
+# Keep the exact former schema policy managed. Removing it from configuration
+# left its live Slack route enabled; import and disable it through the protected
+# policy sync instead of deleting its history or creating another policy.
+import {
+  to = google_monitoring_alert_policy.dataset_schema_changed
+  id = "projects/shared-datasets-1/alertPolicies/10109535963709095250"
+}
+
+resource "google_monitoring_alert_policy" "dataset_schema_changed" {
+  project      = var.project_id
+  display_name = "Shared dataset schema changed"
+  combiner     = "OR"
+  enabled      = false
+  severity     = "WARNING"
+
+  notification_channels = []
+
+  conditions {
+    display_name = "Manual publish detected a canonical field/schema delta"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="global"
+logName="projects/${var.project_id}/logs/shared-datasets-alerts"
+severity>=WARNING
+jsonPayload.alert_type="dataset_schema_changed"
+EOT
+
+      label_extractors = {
+        asset_slug = "EXTRACT(jsonPayload.asset_slug)"
+        changes    = "EXTRACT(jsonPayload.changes_text)"
+        new_fields = "EXTRACT(jsonPayload.new_fields_text)"
+        old_fields = "EXTRACT(jsonPayload.old_fields_text)"
+      }
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Schema diagnostics stay quiet"
+    content   = "Retired Slack route. Schema deltas remain structured diagnostics; consumer-impacting changes use the reviewed breaking-change publication contract."
+  }
+
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  user_labels = {
+    component = "dataset-schema"
+    service   = "shared-datasets"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.required]
+}

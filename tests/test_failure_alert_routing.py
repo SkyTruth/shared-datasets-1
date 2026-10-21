@@ -122,13 +122,13 @@ def source_api(run, **updates):
 
 
 @pytest.mark.parametrize("conclusion", ["success", "failure", "timed_out", "cancelled"])
-def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusion):
+def test_only_successful_idle_catalog_probes_are_quiet(conclusion):
     payload = event(name="Catalog web deploy")
     jobs = [
         {"name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
-    assert alerts.alert_for_run(payload, jobs=jobs) is None
+    assert (alerts.alert_for_run(payload, jobs=jobs) is None) == (conclusion == "success")
     # Actual publisher failures and historical jobs without the activity gate
     # still alert. The exception never applies to an explicit action's failure.
     jobs[1]["conclusion"] = "failure"
@@ -142,7 +142,7 @@ def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_pat
     payload = event(name="Catalog web deploy", head_sha="a" * 40, run_attempt=1)
     api = source_api(payload["workflow_run"])
     api.pages.return_value = [
-        {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"},
+        {"name": "Check for catalog input changes", "status": "completed", "conclusion": "success"},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
     path = tmp_path / "event.json"
@@ -343,3 +343,14 @@ def test_live_alert_probe_is_removed_and_wdpa_runs_keep_async_coverage():
         assert "--async" in steps[step_name]["run"]
         assert MARKER not in steps[step_name]["run"]
     assert not (WORKFLOWS / "cron-alert-delivery-test.yml").exists()
+    probe = load_workflow(WORKFLOWS / "notification-rehearsal.yml")
+    assert set(workflow_triggers(probe)) == {"workflow_dispatch"}
+    assert probe["permissions"] == {"contents": "read"}
+    assert "environment" not in probe["jobs"]["probe"]
+    steps = workflow_steps_by_name(probe, "probe")
+    guard = steps["Require trusted main workflow and isolated destination"]["run"]
+    assert "SHARED_DATASETS_SLACK_TEST_CHANNEL_ID" in guard
+    assert "C0B12LDMB1A" in guard
+    assert "Rehearse isolated notification delivery" in steps
+    assert "gcloud" not in str(probe)
+    assert "WDPA_FAIL_BEFORE_WRITES" not in str(probe)

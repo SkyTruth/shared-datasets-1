@@ -159,6 +159,17 @@ def iam_contract(root):
     missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
+    # Derive coverage from the declarations so adding a new policy cannot leave
+    # it outside the protected saved-plan/permission/receipt boundary.
+    declared_policies = {
+        "google_monitoring_alert_policy." + name
+        for path in (root / "terraform/envs/prod").glob("*.tf")
+        for name in re.findall(r'resource\s+"google_monitoring_alert_policy"\s+"([^"]+)"', path.read_text())
+    }
+    policy_sync = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["sync"]["with"]
+    for field in ("targets", "allowed_exact"):
+        if set(policy_sync[field].split()) != declared_policies:
+            errors.append(f"Monitoring {field} must cover exactly every declared alert policy")
     for filename, role, expected in (
         ("artifact_registry_iam.tf", "artifact_registry_iam_policy_manager", {"artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"}),
         ("preview_terraform_iam.tf", "preview_terraform", {"iam.serviceAccounts.actAs", "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.update", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}),
