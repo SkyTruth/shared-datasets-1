@@ -1856,10 +1856,21 @@ def supervise(ledger, identity, request, *, now=None):
         states[scope] = state
     previous = state["supervision"].get(scope)
     latch_escalation(state, now)
-    if (request["command"] == "claim" and previous is not None and previous["first_failure_at"] is not None
-            and state["incident"] is not None and state["incident"]["resolution"] is not None
-            and instant(activity_at) >= instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds)):
-        previous = None  # Its signed historical checkpoint remains audit evidence.
+    if request["command"] == "claim" and previous is not None:
+        require(instant(activity_at) >= instant(previous["updated_at"]), "supervision transition moved backwards")
+        stable_recovery = (state["incident"] is not None and state["incident"]["resolution"] is not None
+                           and instant(activity_at) >= instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds))
+        new_deployment = (kind == "deployment" and binding.pr_number is not None
+                          and previous["status"] == policy.SupervisionStatus.RELEASED.value
+                          and previous["first_failure_at"] is None
+                          and previous["responsible_human"] == request["responsible_human"]
+                          and previous["revision"] != binding.revision and previous["pr_number"] != binding.pr_number
+                          and (state["incident"] is None or stable_recovery))
+        if stable_recovery and previous["first_failure_at"] is not None or new_deployment:
+            # A new verified deployment can follow explicitly released healthy
+            # work. It inherits no activity, source coverage or failure clock;
+            # the old signed checkpoint and episode remain audit evidence.
+            previous = None
     owner = policy.transition_supervision(previous, request["command"], binding, now=activity_at, authority=authority,
         responsible_human=request["responsible_human"], conversation_ref=request["conversation_ref"],
         current_action=request["current_action"], question_ref=request["question_ref"], handoff_ref=request["handoff_ref"],
