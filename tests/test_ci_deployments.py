@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_suites
+from scripts.ci_contract import ALWAYS, DEPLOYMENTS, SUITES, select_deployments, select_suites
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import load_workflow, workflow_triggers
 
@@ -215,10 +215,31 @@ def test_atomic_view_contract_changes_keep_protected_policy_deployment_selected(
 @pytest.mark.parametrize("path", [
     "scripts/cloud_operational_observations.py", "scripts/cloud_observation_ledger.py",
     "scripts/cloud_incident_adapter.py", "scripts/operational_protocol.py",
-    "scripts/monitoring_routing_audit.py",
+    "scripts/monitoring_routing_audit.py", "scripts/operational_cutover.py",
 ])
 def test_cloud_protocol_repairs_install_the_fresh_policy_without_redeploying_data_workers(path):
     assert select_deployments([path]) == ["cron_alert_policy"]
+    assert select_suites([path])[0] == list(SUITES)
+
+
+@pytest.mark.parametrize("path", [
+    "catalog/operational-slack-rollout.json", ".github/operational-cutovers/reviewed-evidence.json",
+])
+def test_actual_rollout_changes_keep_every_runtime_and_its_iam_dependencies(path):
+    assert set(select_deployments([path])) == {
+        "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
+    }
+
+
+@pytest.mark.parametrize("path,targets", [
+    ("ingestion/eamlis_monthly/run.py", {"eamlis"}),
+    ("ingestion/common/runtime.py", {"mpatlas", "eamlis", "wdpa", "sea_ice"}),
+])
+def test_cutover_verifier_does_not_mask_real_runtime_dependencies(path, targets):
+    assert set(select_deployments(["scripts/operational_cutover.py", path])) == targets | {
+        "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
+    }
+    assert select_suites(["scripts/operational_cutover.py", path])[0] == list(SUITES)
 
 
 def test_installed_protocol_registry_is_shared_and_cannot_bypass_broader_deployments():
@@ -227,9 +248,6 @@ def test_installed_protocol_registry_is_shared_and_cannot_bypass_broader_deploym
     assert "scripts/operational_protocol.py" in ci_contract.CONTRACT_FILES
     for path in operational_protocol.PROTOCOL_FILES:
         assert "cron_alert_policy" in select_deployments([path])
-    assert set(select_deployments(["scripts/operational_cutover.py"])) == {
-        "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
-    }
     assert set(select_deployments([".github/workflows/prod-terraform-target-apply.yml"])) == {
         "artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam",
     }

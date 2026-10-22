@@ -122,13 +122,17 @@ selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry reco
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
 selection does not change deployment selection. Changes to the notification
-orchestrator, collector, adapter, notification workflow, routing verifier or
-delivery-activation verifier select only `cron_alert_policy` for deployment.
+orchestrator, collector, adapter, notification workflow, routing verifier,
+delivery-activation verifier or cutover verifier select only `cron_alert_policy`
+for deployment, retaining all seven validation suites.
 The installed file registry in `scripts/operational_protocol.py` is shared with
 activation and participates in both validation and cloud-cycle contract hashes.
 Its protected receipt must cover the current observation and heartbeat protocol;
-these paths do not request ingestion image redeployments. Cutover and runtime
-changes retain their additional production dependencies.
+these paths do not request ingestion image redeployments. Changes to the rollout
+configuration in `catalog/operational-slack-rollout.json` or immutable evidence
+under `.github/operational-cutovers/` retain all four ingestion deployments and
+their IAM dependencies. Mixed verifier and runtime changes retain the runtime's
+normal deployment dependencies.
 Selected runtime deployments use explicit successful CI/IAM prerequisites and a
 cancellation-aware status guard, so skipped optional ancestors cannot silently
 discard selected production work.
