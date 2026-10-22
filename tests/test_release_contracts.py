@@ -27,6 +27,55 @@ class ReleaseContractTests(unittest.TestCase):
     def test_current_reviewed_contracts_pass_without_live_credentials(self):
         self.assertEqual(contracts.check(self.root, {"wdpa", "eamlis", "sea-ice", "wdpa-processing"}), [])
 
+    def test_manual_only_terraform_caller_has_exact_source_inputs_without_reusable_authority(self):
+        value = contracts.workflow(self.root, "monitoring-slack-relay-deploy.yml")
+        self.assertEqual(set(value.get("on", value.get(True))), {"workflow_dispatch"})
+        self.assertEqual(contracts.iam_contract(self.root), [])
+
+    def test_manual_only_terraform_source_inputs_cannot_be_missing_optional_or_numeric(self):
+        path = self.root / ".github/workflows/monitoring-slack-relay-deploy.yml"
+        original = yaml.safe_load(path.read_text())
+        for key in ("executor_sha", "source_run_id", "source_run_attempt"):
+            for defect in ("missing", "optional", "numeric", "truthy-required"):
+                with self.subTest(key=key, defect=defect):
+                    current = deepcopy(original)
+                    inputs = current.get("on", current.get(True))["workflow_dispatch"]["inputs"]
+                    if defect == "missing":
+                        inputs.pop(key)
+                    elif defect == "optional":
+                        inputs[key]["required"] = False
+                    elif defect == "numeric":
+                        inputs[key]["type"] = "number"
+                    else:
+                        inputs[key]["required"] = "true"
+                    path.write_text(yaml.safe_dump(current))
+                    errors = contracts.iam_contract(self.root)
+                    self.assertTrue(any(f"exact tested {key}" in item for item in errors))
+
+    def test_each_declared_supported_trigger_requires_its_own_exact_source_contract(self):
+        path = self.root / ".github/workflows/artifact-registry-iam-sync.yml"
+        original = yaml.safe_load(path.read_text())
+        for event in ("workflow_call", "workflow_dispatch"):
+            with self.subTest(event=event):
+                current = deepcopy(original)
+                current.get("on", current.get(True))[event]["inputs"]["source_run_id"]["type"] = "number"
+                path.write_text(yaml.safe_dump(current))
+                self.assertTrue(any("exact tested source_run_id" in item for item in contracts.iam_contract(self.root)))
+
+    def test_terraform_caller_requires_supported_trigger_and_exact_forwarding(self):
+        path = self.root / ".github/workflows/monitoring-slack-relay-deploy.yml"
+        original = yaml.safe_load(path.read_text())
+        for triggers in ({}, {"push": {}}, {"workflow_dispatch": None}, {"workflow_dispatch": {"inputs": []}}):
+            with self.subTest(triggers=triggers):
+                current = deepcopy(original)
+                current["on" if "on" in current else True] = triggers
+                path.write_text(yaml.safe_dump(current))
+                self.assertTrue(contracts.iam_contract(self.root))
+        current = deepcopy(original)
+        current["jobs"]["bootstrap"]["with"]["executor_sha"] = "refs/heads/main"
+        path.write_text(yaml.safe_dump(current))
+        self.assertTrue(any("exact tested executor_sha" in item for item in contracts.iam_contract(self.root)))
+
     def test_runtime_ci_callers_cannot_inherit_optional_skips_or_bypass_prerequisites(self):
         path = self.root / ".github/workflows/ci.yml"
         original = yaml.safe_load(path.read_text())

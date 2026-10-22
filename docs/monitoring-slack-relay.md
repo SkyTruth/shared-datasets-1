@@ -194,6 +194,12 @@ when every other pinned configuration identity agrees. A redeploy must retain
 the delivery-state binding. Changing the bot version, destination or policy
 identity requires a reviewed migration rather than a new implicit activation.
 
+The collector retains successful relay executions and capability probes as audit
+evidence. Only the exact immutable worker's typed completion event from a normal
+live cycle, after durable acknowledgements and a final check for actionable or
+uncertain work, can establish relay recovery. That event cannot establish native
+security resolution, dataset publication, or the main pipeline heartbeat.
+
 Monitor completed relay passes and pending/uncertain delivery through a path
 that does not depend on this same relay or GitHub. Native Cloud Run/Scheduler
 metrics avoid granting the relay permission to fabricate the monitored pipeline

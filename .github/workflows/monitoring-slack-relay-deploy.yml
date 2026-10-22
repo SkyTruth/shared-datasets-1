@@ -108,20 +108,12 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
-      - name: Validate main ref and exact executor inputs
-        env:
-          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
-          CONFIRMED_SECRET_VERSION: ${{ inputs.confirmed_secret_version }}
+      - name: Validate trusted main workflow
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/main" ||
-                "$GITHUB_WORKFLOW_REF" != "$GITHUB_REPOSITORY/.github/workflows/monitoring-slack-relay-deploy.yml@refs/heads/main" ||
-                ! "$EXECUTOR_SHA" =~ ^[0-9a-f]{40}$ ||
-                ! "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ||
-                ! "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ||
-                ( -n "$CONFIRMED_SECRET_VERSION" && ! "$CONFIRMED_SECRET_VERSION" =~ ^[1-9][0-9]*$ ) ]]; then
-            echo "Relay preparation requires this trusted main workflow and exact tested executor inputs." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/monitoring-slack-relay-deploy.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
 
@@ -131,6 +123,21 @@ jobs:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate exact executor and confirmed-version inputs
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          CONFIRMED_SECRET_VERSION: ${{ inputs.confirmed_secret_version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXECUTOR_SHA" =~ ^[0-9a-f]{40}$ ||
+                ! "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ||
+                ! "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ||
+                ( -n "$CONFIRMED_SECRET_VERSION" && ! "$CONFIRMED_SECRET_VERSION" =~ ^[1-9][0-9]*$ ) ]]; then
+            echo "Relay preparation requires this trusted main workflow and exact tested executor inputs." >&2
+            exit 1
+          fi
 
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
@@ -313,6 +320,15 @@ jobs:
       - name: Export Terraform plan JSON
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/monitoring-slack-relay.tfplan" > "$RUNNER_TEMP/monitoring-slack-relay.tfplan.json"
+
+      - name: Enforce exact generic Terraform resource-change allowlist
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: |
+          set -euo pipefail
+          allowed_exact="$(uv run --no-sync python scripts/monitoring_slack_deploy.py --targets)"
+          python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/monitoring-slack-relay.tfplan.json" \
+            --allowed-exact="$allowed_exact" --block-deletes \
+            --refusal-prefix="Refusing Monitoring Slack relay deploy"
 
       - name: Enforce relay resource and shadow-mode guard
         if: ${{ steps.replay.outputs.proceed == 'true' }}

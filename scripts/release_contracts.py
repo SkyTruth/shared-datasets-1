@@ -45,6 +45,21 @@ def workflow(root, name):
     return yaml.safe_load((root / ".github/workflows" / name).read_text())
 
 
+def required_string_input(triggers, key):
+    """Validate the source contract on every declared supported entry point."""
+    if (not isinstance(triggers, dict) or not triggers
+            or not set(triggers) <= {"workflow_call", "workflow_dispatch"}):
+        return False
+    for event in triggers.values():
+        if not isinstance(event, dict) or not isinstance(event.get("inputs"), dict):
+            return False
+        declaration = event["inputs"].get(key)
+        if (not isinstance(declaration, dict) or declaration.get("required") is not True
+                or declaration.get("type") != "string"):
+            return False
+    return True
+
+
 def role_permissions(text, name):
     match = re.search(r'resource "google_project_iam_custom_role" "' + re.escape(name) + r'"\s*\{(.*?)\n\}', text, re.S)
     if not match:
@@ -352,14 +367,15 @@ def iam_contract(root):
     for name in ("Verify prerequisite deployment permissions", "Verify complete saved-plan mutation permissions"):
         if steps.get(name, {}).get("env", {}).get("LOGGING_SETUP_ACCESS_TOKEN") != "${{ steps.auth.outputs.access_token }}":
             errors.append(f"{name}: Logging grant proof must receive the masked scoped auth token")
-    required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
+    generic_triggers = generic.get("on", generic.get(True))
     for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
-        if not required[key].get("required"):
+        if not required_string_input(generic_triggers, key):
             errors.append(f"generic Terraform apply must require {key}")
     for filename in sorted(set(TERRAFORM_SYNCS.values())):
         caller = workflow(root, filename)
         triggers = caller.get("on", caller.get(True))
-        if set(triggers) != {"workflow_call", "workflow_dispatch"}:
+        if (not isinstance(triggers, dict) or not triggers
+                or not set(triggers) <= {"workflow_call", "workflow_dispatch"}):
             errors.append(f"{filename}: automatic mutation must be called after ci-ready")
         for name, job in caller["jobs"].items():
             if job.get("uses") != "./.github/workflows/prod-terraform-target-apply.yml":
@@ -372,8 +388,9 @@ def iam_contract(root):
             if not inputs.get("readiness_target"):
                 errors.append(f"{filename}/{name}: live permission prerequisite is missing")
             for key in ("executor_sha", "source_run_id", "source_run_attempt"):
-                if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
-                    errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
+                if (inputs.get(key) != "${{ inputs." + key + " }}"
+                        or not required_string_input(triggers, key)):
+                    errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded as a string on every declared trigger")
     for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
         expected = ["bootstrap", "observations"] if filename == "cron-alert-policy-sync.yml" else "bootstrap"
         if workflow(root, filename)["jobs"][child].get("needs") != expected:

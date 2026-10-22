@@ -14,6 +14,7 @@ import google.auth
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
+from ingestion.common import operational_events
 from scripts import gcp_read_retry, operational_retry
 from scripts.slack_incident_api import Slack
 from services.monitoring_slack import model
@@ -184,6 +185,12 @@ def acknowledge(store, config, name, operation, now, *, ts=None, uncertain=False
     raise Conflict("delivery acknowledgement is unresolved; do not replay its claim")
 
 
+def pending_action(episode):
+    return (episode["applied_sha256"] != episode["desired_sha256"]
+            and not (episode["ts"] is None and episode["alert"]["kind"] == "health"
+                     and episode["alert"]["state"] == "CLOSED"))
+
+
 def deliver(reader, store, config, slack, *, clock=model.utc_now):
     model.require(config["mode"] == "live", "public delivery requires explicit live mode")
     model.require(slack.identity() == config.identity, "Slack bot identity differs from the pinned destination")
@@ -194,8 +201,7 @@ def deliver(reader, store, config, slack, *, clock=model.utc_now):
             now = clock()
             snapshot, current = loaded(store, config, now)
             episode = current["episodes"][name]
-            if (episode["operation"] is not None or episode["applied_sha256"] == episode["desired_sha256"]
-                    or episode["ts"] is None and episode["alert"]["kind"] == "health" and episode["alert"]["state"] == "CLOSED"):
+            if episode["operation"] is not None or not pending_action(episode):
                 break
             if episode["recovery"] is not None:
                 # A formerly fresh proof cannot authorize a queued green. Recheck
@@ -235,6 +241,8 @@ def deliver(reader, store, config, slack, *, clock=model.utc_now):
     _, final = loaded(store, config, clock())
     uncertain = sum(episode["operation"] is not None for episode in final["episodes"].values())
     model.require(uncertain == 0, "unconfirmed Slack operation requires authoritative inspection; automatic replay is frozen")
+    model.require(not any(pending_action(episode) for episode in final["episodes"].values()),
+                  "actionable lifecycle work remains; a later complete cycle must reconcile it")
     return sent
 
 
@@ -249,6 +257,10 @@ def cycle(reader, store, config, *, clock=model.utc_now, slack_factory=Slack):
     count = 0
     if config["mode"] == "live":
         count = deliver(reader, store, config, slack_factory(reader.token(), config["slack_channel"]), clock=clock)
+        # Only a complete normal LIVE cycle establishes relay health. API-only
+        # success, shadow evaluation and capability canaries cannot supply it.
+        operational_events.emit("job_outcome", "success", details={
+            "mutation_status": "completed", "published_data_state": "unchanged"})
     return {"observed": len(observations), "public_operations": count, "mode": config["mode"]}
 
 

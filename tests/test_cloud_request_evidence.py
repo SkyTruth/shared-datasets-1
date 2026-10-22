@@ -102,7 +102,11 @@ def test_actual_122_identityless_accepted_requests_preserve_audit_without_execut
     assert evaluation["cloud_counts"]["verified_observer_health"] == 0
     assert evaluation["cloud_counts"]["verified_asset_publications"] == 0
     assert set(candidate["last_cycle"]["execution_inventory"]) == set(cloud.registered_jobs())
-    assert len([call for call in session.calls if call[1].endswith("/executions")]) == 6
+    inventory_calls = [call[1] for call in session.calls if call[1].endswith("/executions")]
+    assert len(inventory_calls) == len(cloud.registered_jobs())
+    assert set(inventory_calls) == {
+        f"https://run.googleapis.com/v2/{cloud.job_parent(job)}/executions" for job in cloud.registered_jobs()
+    }
     heartbeat = Mock()
     assert cloud.confirm_heartbeat(bundle, json.loads(json.dumps(bundle)), delivery_verified=True, heartbeat=heartbeat)
     heartbeat.assert_called_once_with(NOW)  # Collection visibility, never request/execution completion.

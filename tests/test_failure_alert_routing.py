@@ -261,12 +261,20 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
             for step in job.get("steps", []):
                 run = step.get("run", "")
                 if MARKER in run:
+                    if (path.name, step["name"]) == (
+                        "monitoring-slack-relay-deploy.yml", "Verify live shadow configuration and no active execution"
+                    ):
+                        # Read the execution's marker as evidence; this step
+                        # neither assigns it nor starts/updates a workload.
+                        assert "--update-env-vars" not in run and "gcloud " not in run
+                        assert "session.post(" not in run and "session.patch(" not in run
+                        continue
                     marked_steps.append(step["name"])
                     assert "--wait" in run and "--async" not in run
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
+    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Execute read-only capability canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path

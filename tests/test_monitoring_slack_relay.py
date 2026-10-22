@@ -16,6 +16,7 @@ from google.api_core import exceptions as api_errors
 import pytest
 import requests
 
+from ingestion.common import operational_events
 from scripts import operational_retry
 from scripts.slack_incident_api import Slack, SlackError
 from services.monitoring_slack import model, run
@@ -347,7 +348,7 @@ def test_unknown_update_retains_exact_known_timestamp_and_no_later_stale_writer_
     assert len(slack.updates) == 1
 
 
-def test_cas_contention_cannot_allocate_a_second_post_and_ack_preserves_newer_closure():
+def test_cas_contention_cannot_allocate_a_second_post_and_ack_preserves_newer_closure(capsys):
     store, slack, reader = MemoryStore(), FakeSlack(), Reader(fixture())
     entered, finish = Event(), Event()
     def blocking_post(payload):
@@ -364,13 +365,42 @@ def test_cas_contention_cannot_allocate_a_second_post_and_ack_preserves_newer_cl
         with pytest.raises(model.Invalid, match="inspection"):
             execute(reader, store, slack=slack)
         finish.set()
-        first.result()
+        with pytest.raises(model.Invalid, match="lifecycle work remains"):
+            first.result()
     # First sender acknowledges only its original payload, preserving newer desired recovery.
     episode = store.load().value["episodes"][fixture()["name"]]
     assert episode["alert"]["state"] == "CLOSED" and episode["recovery"]
     assert episode["desired_sha256"] != episode["applied_sha256"]
+    assert '"kind":"job_outcome"' not in capsys.readouterr().err
     execute(reader, store, slack=slack)
     assert len(slack.posts) == len(slack.updates) == 1
+    assert capsys.readouterr().err.count('"kind":"job_outcome"') == 1
+
+
+def test_new_actionable_cas_successor_after_ack_blocks_completion_event(capsys):
+    store, reader, slack = MemoryStore(), Reader(fixture()), FakeSlack()
+    actual_save, injected = store.save, []
+    def after_ack(value, generation, name=STATE_OBJECT):
+        saved = actual_save(value, generation, name)
+        episode = saved.value.get("episodes", {}).get(fixture()["name"])
+        if not injected and episode and episode["ts"] and episode["operation"] is None:
+            injected.append(True)
+            # A second completed discovery wins CAS strictly after this ACK.
+            current = saved.value
+            raw = fixture("security-closed")
+            alert = model.normalize(raw, config(), NOW)
+            successor = model.merge(current, {alert["name"]: alert}, {}, config(), NOW, now=NOW)
+            actual_save(successor, saved.generation)
+            reader.current[raw["name"]] = raw
+        return saved
+    store.save = after_ack
+    with pytest.raises(model.Invalid, match="lifecycle work remains"):
+        execute(reader, store, slack=slack)
+    assert injected and '"kind":"job_outcome"' not in capsys.readouterr().err
+    assert len(slack.posts) == 1
+    execute(reader, store, slack=slack)
+    assert len(slack.posts) == 2
+    assert capsys.readouterr().err.count('"kind":"job_outcome"') == 1
 
 
 def test_cas_failure_before_claim_cannot_send_or_advance_coverage():
@@ -624,6 +654,59 @@ def test_capability_guard_precedes_any_live_read_or_private_write(context):
     assert not reader.queries and not reader.exact and reader.tokens == 0 and not store.writes
 
 
+def test_real_live_success_event_is_serialized_only_after_durable_delivery_ack(monkeypatch):
+    store, reader, slack = MemoryStore(), Reader(fixture()), FakeSlack()
+    for key, value in {"CLOUD_RUN_JOB": "monitoring-slack-relay", "CLOUD_RUN_EXECUTION": "monitoring-slack-relay-abc12",
+                       "CLOUD_RUN_TASK_INDEX": "0", "CLOUD_RUN_TASK_ATTEMPT": "0"}.items():
+        monkeypatch.setenv(key, value)
+    class AfterAck(io.StringIO):
+        def write(self, body):
+            if body.startswith('{"context"'):
+                episode = store.load().value["episodes"][fixture()["name"]]
+                assert episode["operation"] is None and episode["ts"] is not None
+                assert episode["desired_sha256"] == episode["applied_sha256"]
+            return super().write(body)
+    stream = AfterAck()
+    monkeypatch.setattr(sys, "stderr", stream)
+    execute(reader, store, slack=slack)
+    event = operational_events.validate(json.loads(stream.getvalue()))
+    assert event["kind"] == "job_outcome" and event["status"] == "success" and event["subject"] == {}
+    assert event["details"] == {"mutation_status": "completed", "published_data_state": "unchanged"}
+    assert event["context"] == {"job": "monitoring-slack-relay", "execution": "monitoring-slack-relay-abc12",
+                                "task_index": "0", "task_attempt": "0"}
+
+
+@pytest.mark.parametrize("mode", ["shadow", "capability", "selftest"])
+def test_nonlive_entrypoints_never_emit_live_completion(mode, capsys):
+    reader, store, slack = Reader(fixture()), MemoryStore(), FakeSlack()
+    if mode == "shadow":
+        execute(reader, store, cfg=config(mode="shadow"), slack=slack)
+    elif mode == "capability":
+        run.verify_capabilities(reader, store, config(mode="shadow"), clock=lambda: NOW,
+                                slack_factory=lambda *args: slack, environ=CONTEXT)
+    else:
+        assert run.main(["--self-test"]) == 0
+    assert '"kind":"job_outcome"' not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("frontier", ["discovery", "persistence", "delivery", "retained_uncertainty"])
+def test_failed_or_uncertain_live_cycle_cannot_emit_recovery(frontier, capsys):
+    reader, store, slack = Reader(fixture()), MemoryStore(), FakeSlack()
+    if frontier == "discovery":
+        reader.fail = api_errors.Forbidden("synthetic denied read")
+    elif frontier == "persistence":
+        store.before_save = lambda *args: (_ for _ in ()).throw(OSError("synthetic persistence failure"))
+    else:
+        slack.failure = SlackError("synthetic unconfirmed delivery")
+        if frontier == "retained_uncertainty":
+            with pytest.raises(SlackError):
+                execute(reader, store, slack=slack)
+            slack.failure = None
+    with pytest.raises((api_errors.Forbidden, OSError, SlackError, model.Invalid)):
+        execute(reader, store, slack=slack)
+    assert '"kind":"job_outcome"' not in capsys.readouterr().err
+
+
 @pytest.fixture
 def http_boundary():
     calls, replies = [], []
@@ -767,6 +850,7 @@ def test_offline_immutable_image_cli_selftest_without_credentials_or_configurati
     assert "RUN uv sync --locked --no-dev --no-install-project" in dockerfile
     assert 'ENTRYPOINT ["python", "-m", "services.monitoring_slack.run"]' in dockerfile
     assert "pip install" not in dockerfile
+    assert "COPY ingestion/common/__init__.py ingestion/common/operational_events.py /app/ingestion/common/" in dockerfile
     for line in dockerfile.splitlines():
         if line.startswith("COPY ") and not line.startswith("COPY --from="):
             for source in line.split()[1:-1]:

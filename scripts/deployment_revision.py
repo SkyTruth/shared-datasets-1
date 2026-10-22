@@ -41,6 +41,12 @@ AUXILIARY_CLOUD_JOBS = {
     "wdpa-execution-observer": {
         "deployment_target": "wdpa-monthly",
         "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+        "completion_evidence": "execution",
+    },
+    "monitoring-slack-relay": {
+        "deployment_target": "monitoring-slack-relay",
+        "resource": "module.monitoring_slack_job[0].google_cloud_run_v2_job.this",
+        "completion_evidence": "normal_live_cycle",
     },
 }
 TERRAFORM_SYNCS = {
