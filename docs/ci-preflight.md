@@ -121,7 +121,10 @@ Documentation-only component paths and proven script exceptions use the single
 selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry records
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
-selection does not change deployment selection.
+selection does not change deployment selection. Changes to the notification
+orchestrator, notification workflow or delivery-activation verifier select only
+`cron_alert_policy` for deployment. Its protected receipt must cover the current
+phase-ordering protocol; these paths do not request ingestion image redeployments.
 Selected runtime deployments use explicit successful CI/IAM prerequisites and a
 cancellation-aware status guard, so skipped optional ancestors cannot silently
 discard selected production work.

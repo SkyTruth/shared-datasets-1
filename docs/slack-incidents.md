@@ -12,12 +12,15 @@ message. Healthy runs and failures recovered before escalation stay quiet. Retai
 an episode through thirty minutes of stable recovery so brief flapping reuses its
 parent. Synthetic tests must use offline transports or a separate test channel.
 
-The `Workflow health and Slack reconciliation` workflow runs on both successful
-and failed workflow completions, and reconsiders pending episodes every five
-minutes. Schedule delivery can be delayed or dropped; a deadline establishes
+The `Workflow health and Slack reconciliation` workflow runs on failed workflow
+completions, observer completions and explicit owner requests. Ordinary healthy
+completions allocate no reconciliation worker. Every five-minute scheduled tick
+first replays the last 24 hours of verified main workflow observations and
+reconsiders pending episodes, including recovery and owner deadlines. Schedule
+delivery can be delayed or dropped; a deadline establishes
 eligibility, not a guaranteed message timestamp. Its presence in Actions does not mean a failure
 occurred or a Slack message was sent. `Deployment completion check` runs hourly;
-its completion also triggers the incident replay described below. Historical
+its completion also retains an independent incident replay. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
 under the same workflow and incident identity.
 
@@ -199,12 +202,22 @@ parent's green update is acknowledged. They remain in the signed deferred queue
 and replay on a later reconciliation, preserving both incident parents.
 
 The serialized worker uses `queue: max` and never cancels an active send.
-GitHub's queue is bounded and completion order can vary. Completions of the
-existing hourly terminal verifier also reconcile the last 24 hours of main runs,
-starting no earlier than the explicit activation timestamp. Complete API
+GitHub's queue is bounded and completion order can vary. Scheduled ticks and
+completions of the hourly terminal verifier reconcile the last 24 hours of main
+runs, starting no earlier than the explicit activation timestamp. Complete API
 enumeration and authoritative source-attempt checks are required. Longer
 GitHub outages require reviewed replay of the missing interval; blanket
 production retries are never a notification recovery mechanism.
+
+Each tick completes the GitHub claims, delivery outcomes and durable signature
+verification in `github-incidents/` before requesting observer credentials.
+Optional cloud collection uses a separate `slack-incidents/` plan after that
+barrier and does not repeat the GitHub replay. A failed observer authentication
+or scan cannot undo completed GitHub recovery, and cannot advance cloud coverage
+or emit a heartbeat. Independent GitHub escalation and quiet edits of known bot
+parents remain available for mixed incidents without cloud credentials. A
+canonical translation green still requires a fresh manifest read in the cloud
+phase. Uncertain sends retain the existing inspection requirement in both phases.
 
 After complete ledger enumeration, up to four independent receipt proofs are
 verified concurrently. Every proof still requires current complete statuses,

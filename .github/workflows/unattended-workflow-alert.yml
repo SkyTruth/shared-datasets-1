@@ -84,6 +84,10 @@ jobs:
         (
           github.event.workflow_run.status == 'completed' &&
           contains(fromJSON('["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
+          (
+            github.event.workflow_run.conclusion != 'success' ||
+            contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name)
+          ) &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           (
@@ -131,8 +135,45 @@ jobs:
         run: uv sync --locked --no-dev
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
+      - name: Prepare scheduled GitHub reconciliation
+        id: github-prepare
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+          SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
+        run: uv run --no-sync python scripts/operational_reconcile.py prepare-github --work-dir "$RUNNER_TEMP/github-incidents"
+      - name: Attest scheduled GitHub claims
+        id: github-attest-claims
+        if: ${{ always() && steps.github-prepare.outputs.claims == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/github-incidents/claims/*.json
+          create-storage-record: false
+      - name: Deliver scheduled GitHub incident changes
+        id: github-deliver
+        if: ${{ always() && steps.github-prepare.outputs.claims == 'true' && steps.github-attest-claims.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+        run: uv run --no-sync python scripts/operational_reconcile.py deliver-github --work-dir "$RUNNER_TEMP/github-incidents"
+      - name: Attest scheduled GitHub delivery outcomes
+        id: github-attest-outcomes
+        if: ${{ always() && steps.github-deliver.outputs.outcomes == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/github-incidents/outcomes/*.json
+          create-storage-record: false
+      - name: Verify scheduled GitHub checkpoints before cloud authentication
+        id: github-verify
+        if: ${{ always() && github.event_name == 'schedule' && (steps.github-prepare.outcome == 'success' || steps.github-attest-claims.outcome == 'success' || steps.github-attest-outcomes.outcome == 'success') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/github-incidents"
       - name: Authenticate read-only cloud observer
-        if: ${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}
+        if: ${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}
@@ -140,6 +181,7 @@ jobs:
           create_credentials_file: true
       - name: Prepare incident changes and claim posts
         id: prepare
+        if: ${{ success() && (github.event_name != 'schedule' || (vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success')) }}
         env:
           GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}

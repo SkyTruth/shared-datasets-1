@@ -1031,7 +1031,7 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     assert "download-artifact" not in str(worker)
     assert "id-token" in worker["permissions"] and "deployments" in worker["permissions"]
     observer = next(step for step in worker["steps"] if step.get("uses") == "google-github-actions/auth@v2")
-    assert observer["if"] == "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}"
+    assert observer["if"] == "${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}"
     assert observer["with"] == {
         "workload_identity_provider": "${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}",
         "service_account": "${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}",

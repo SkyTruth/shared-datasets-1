@@ -246,7 +246,7 @@ def test_failed_prepare_retains_exact_partial_delivery_plan_without_a_cycle_prop
         assert actual_ledger is ledger and identity == {"bot": "B1"} and proposal is candidate
         assert shadow is True and now == candidate["last_cycle"]["completed_at"]
         assert github_api is ledger.api and callable(recovery_verifier)
-        assert github_observations == []
+        assert github_observations == ()
         assert callable(translation_reader)
         on_saved(record)
         raise RuntimeError("next claim persistence failed")
@@ -402,7 +402,7 @@ def test_delivery_auth_capability_uses_the_exact_protected_workflow_condition():
                  and any(step.get("id") == "deliver" for step in job["steps"]))
     auth = next(step for step in steps if step.get("name") == "Authenticate read-only cloud observer")
     delivery = next(step for step in steps if step.get("id") == "deliver")
-    assert auth["if"] == "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}"
+    assert auth["if"] == "${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}"
     assert delivery["env"]["SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED"] == "${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}"
 
 

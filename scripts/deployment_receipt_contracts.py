@@ -80,6 +80,9 @@ def notification_boundary(filename, identifier, workflow, job):
     terms = top_level_conjuncts(job.get("if", ""))
     if "github.ref == 'refs/heads/main'" not in terms or "vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED == 'true'" not in terms:
         return False
+    admission = 'vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED == \'true\' && github.ref == \'refs/heads/main\' && (\n  github.event_name == \'workflow_dispatch\' ||\n  github.event_name == \'schedule\' ||\n  (\n    github.event.workflow_run.status == \'completed\' &&\n    contains(fromJSON(\'["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]\'), github.event.workflow_run.conclusion) &&\n    (\n      github.event.workflow_run.conclusion != \'success\' ||\n      contains(fromJSON(\'["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]\'), github.event.workflow_run.name)\n    ) &&\n    github.event.workflow_run.head_branch == \'main\' &&\n    github.event.workflow_run.head_repository.full_name == github.repository &&\n    (\n      github.event.workflow_run.event == \'schedule\' ||\n      github.event.workflow_run.event == \'workflow_run\' ||\n      github.event.workflow_run.event == \'workflow_dispatch\' ||\n      (github.event.workflow_run.event == \'push\' && github.event.workflow_run.name == \'CI\')\n    )\n  )\n)'
+    if job.get("if", "") != admission:
+        return False
     if workflow.get("permissions") != {"contents": "read", "actions": "read"} or workflow.get("env") or "defaults" in workflow:
         return False
     if job.get("permissions") != NOTIFICATION_PERMISSIONS or any(key in job for key in ("environment", "uses", "env", "defaults", "container", "services", "strategy")):
@@ -136,6 +139,24 @@ fi'''
         "finalize-cycle": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
         "verify-heartbeat": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
     }
+    github_prepare_environment = {key: value for key, value in environment.items() if key != "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED"}
+    github_steps = [
+        {"id": "github-prepare", "if": "${{ github.event_name == 'schedule' }}", "env": github_prepare_environment,
+         "run": 'uv run --no-sync python scripts/operational_reconcile.py prepare-github --work-dir "$RUNNER_TEMP/github-incidents"'},
+        {"id": "github-attest-claims", "if": "${{ always() && steps.github-prepare.outputs.claims == 'true' }}", "uses": NOTIFICATION_ATTEST,
+         "with": {"subject-path": "${{ runner.temp }}/github-incidents/claims/*.json", "create-storage-record": False}},
+        {"id": "github-deliver", "if": "${{ always() && steps.github-prepare.outputs.claims == 'true' && steps.github-attest-claims.outcome == 'success' }}",
+         "env": {key: github_prepare_environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_SLACK_BOT_TOKEN", "SHARED_DATASETS_SLACK_CHANNEL_ID")},
+         "run": 'uv run --no-sync python scripts/operational_reconcile.py deliver-github --work-dir "$RUNNER_TEMP/github-incidents"'},
+        {"id": "github-attest-outcomes", "if": "${{ always() && steps.github-deliver.outputs.outcomes == 'true' }}", "uses": NOTIFICATION_ATTEST,
+         "with": {"subject-path": "${{ runner.temp }}/github-incidents/outcomes/*.json", "create-storage-record": False}},
+        {"id": "github-verify", "if": "${{ always() && github.event_name == 'schedule' && (steps.github-prepare.outcome == 'success' || steps.github-attest-claims.outcome == 'success' || steps.github-attest-outcomes.outcome == 'success') }}",
+         "env": {"GH_TOKEN": environment["GH_TOKEN"]},
+         "run": 'uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/github-incidents"'},
+    ]
+    if [{key: value for key, value in step.items() if key != "name"} for step in steps[6:11]] != github_steps:
+        return False  # Complete the signed GitHub phase before observer credentials exist.
+    steps = steps[:6] + steps[11:]
     if [step.get("uses") for step in steps[1:4]] != list(actions)[:3]:
         return False
     seen_runs, seen_actions, signers = [], [], {}
@@ -151,7 +172,10 @@ fi'''
             phase = next((name for name in command_environments if f"operational_reconcile.py {name} " in run), None)
             if step.get("env", {}) != command_environments.get(phase, {}):
                 return False
-            if phase not in {"deliver", "verify", "finalize-cycle", "verify-heartbeat"} and "if" in step:
+            if phase == "prepare":
+                if step.get("if") != "${{ success() && (github.event_name != 'schedule' || (vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success')) }}":
+                    return False
+            elif phase not in {"deliver", "verify", "finalize-cycle", "verify-heartbeat"} and "if" in step:
                 return False
             seen_runs.append(run)
         elif step.get("uses") == NOTIFICATION_ATTEST:
@@ -166,7 +190,7 @@ fi'''
             action = step.get("uses")
             if action not in actions or step.get("with") != actions[action] or step.get("env") or "id" in step:
                 return False
-            expected_if = "${{ github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' }}" if action == "google-github-actions/auth@v2" else None
+            expected_if = "${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}" if action == "google-github-actions/auth@v2" else None
             if step.get("if") != expected_if:
                 return False
             seen_actions.append(action)

@@ -235,6 +235,9 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("ingestion_iam")
         if path in {"catalog/operational-slack-rollout.json", "scripts/operational_cutover.py"} or path.startswith(".github/operational-cutovers/"):
             selected.update(ingestion | {"ingestion_iam", "cron_alert_policy"})
+        if path in {"scripts/operational_reconcile.py", "scripts/operational_delivery_activation.py",
+                    ".github/workflows/unattended-workflow-alert.yml"}:
+            selected.add("cron_alert_policy")
         if path == "terraform/envs/prod/translation_notices.tf":
             selected.update({"ingestion_iam", "eamlis", "wdpa"})
         if path == "terraform/envs/prod/wdpa_validation_retirement_iam.tf":
