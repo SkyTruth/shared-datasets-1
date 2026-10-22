@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from copy import deepcopy
 import json
 import os
 import re
@@ -16,8 +17,8 @@ from google.cloud import storage
 
 from ingestion.common import operational_events
 from scripts import gcp_read_retry, operational_retry
-from scripts.slack_incident_api import Slack
-from services.monitoring_slack import model
+from scripts.slack_incident_api import ReadOnlySlack, Slack
+from services.monitoring_slack import model, receipts
 from services.monitoring_slack.store import CAPABILITY_OBJECT, Conflict, Store
 
 MAX_PAGES = 100
@@ -28,10 +29,11 @@ class Monitoring:
     def __init__(self, session, config):
         self.session, self.config = session, config
 
-    def _read(self, path, params=None, *, secret=False):
-        host = "secretmanager.googleapis.com" if secret else "monitoring.googleapis.com"
-
-        response = self.session.get(f"https://{host}/v3/{path}" if not secret else f"https://{host}/v1/{path}",
+    def _read(self, path, params=None, *, api="monitoring"):
+        model.require(api in {"monitoring", "secret", "run"}, "unsupported relay read API")
+        host, version = {"monitoring": ("monitoring.googleapis.com", "v3"),
+                         "secret": ("secretmanager.googleapis.com", "v1"), "run": ("run.googleapis.com", "v2")}[api]
+        response = self.session.get(f"https://{host}/{version}/{path}",
                                         params=params, timeout=operational_retry.request_timeout(15),
                                         allow_redirects=False, stream=True)
         try:
@@ -48,8 +50,8 @@ class Monitoring:
         finally:
             response.close()
 
-    def read(self, path, params=None, *, secret=False):
-        return operational_retry.run_read(lambda: self._read(path, params, secret=secret),
+    def read(self, path, params=None, *, api="monitoring"):
+        return operational_retry.run_read(lambda: self._read(path, params, api=api),
                                          classify=gcp_read_retry.classify, label="Monitoring relay read")
 
     def pages(self, path, params, field, allowed):
@@ -79,6 +81,10 @@ class Monitoring:
         raise model.Invalid("Monitoring pagination exceeds reviewed bound")
 
     def alerts(self, policy, cutoff, *, open_only=False):
+        model.instant(cutoff)
+        # Alerts filter literals accept whole UTC seconds, unlike response and
+        # heartbeat timestamps. Flooring widens the overlap without losing facts.
+        cutoff = cutoff[:19] + "Z"
         predicate = "state=OPEN" if open_only else (
             f'(state=OPEN OR open_time>="{cutoff}" OR close_time>="{cutoff}")')
         return self.pages(f"projects/{self.config['project']}/alerts",
@@ -96,7 +102,7 @@ class Monitoring:
             "view": "FULL", "pageSize": 1000}, "timeSeries", {"timeSeries", "nextPageToken", "unit", "executionErrors"})
 
     def token(self):
-        value = self.read(self.config["slack_secret_version"] + ":access", secret=True)
+        value = self.read(self.config["slack_secret_version"] + ":access", api="secret")
         model.require(isinstance(value, dict) and value.get("name") == self.config["slack_secret_version"]
                       and value.keys() <= {"name", "payload"} and isinstance(value.get("payload"), dict)
                       and isinstance(value["payload"].get("data"), str), "wrong Slack secret version")
@@ -106,6 +112,11 @@ class Monitoring:
             raise model.Invalid("invalid Slack bot secret") from error
         model.require(token.startswith("xoxb-") and token.strip() == token and len(token) < 1000, "expected explicit Slack bot secret")
         return token
+
+    def execution(self, name):
+        model.require(isinstance(name, str) and re.fullmatch(re.escape(self.config["relay_job"])
+                      + r"/executions/monitoring-slack-relay-[a-z0-9]{5}", name), "execution GET escaped the relay's own job")
+        return self.read(name, api="run")
 
 
 def loaded(store, config, now):
@@ -166,17 +177,15 @@ def persist_scan(store, config, observations, proofs, through, now):
     raise Conflict("complete scan could not persist; cursor was not advanced by this worker")
 
 
-def acknowledge(store, config, name, operation, now, *, ts=None, uncertain=False):
+def acknowledge(store, config, name, operation, now, *, ts=None):
     for _ in range(8):
         snapshot, state = loaded(store, config, now)
         episode = state["episodes"][name]
         model.require(episode["operation"] == operation, "delivery claim changed before acknowledgement")
-        if uncertain:
-            episode["operation"]["uncertain"] = True
-        else:
-            episode["ts"] = ts if operation["kind"] == "post" else episode["ts"]
-            episode["applied_sha256"] = operation["sha256"]
-            episode["operation"] = None
+        model.require(operation["phase"] == "sending", "unstarted claim cannot be acknowledged as delivered")
+        episode["ts"] = ts if operation["kind"] == "post" else episode["ts"]
+        episode["applied_sha256"] = operation["sha256"]
+        episode["operation"] = None
         model.validate_state(state, config, now)
         try:
             return store.save(state, snapshot.generation).value
@@ -191,7 +200,8 @@ def pending_action(episode):
                      and episode["alert"]["state"] == "CLOSED"))
 
 
-def deliver(reader, store, config, slack, *, clock=model.utc_now):
+def deliver(reader, store, config, slack, *, clock=model.utc_now, environment=None):
+    environment = os.environ if environment is None else environment
     model.require(config["mode"] == "live", "public delivery requires explicit live mode")
     model.require(slack.identity() == config.identity, "Slack bot identity differs from the pinned destination")
     _, state = loaded(store, config, clock())
@@ -203,6 +213,9 @@ def deliver(reader, store, config, slack, *, clock=model.utc_now):
             episode = current["episodes"][name]
             if episode["operation"] is not None or not pending_action(episode):
                 break
+            writer_name = model.execution_name(config, environment)
+            with operational_retry.operation(profile=operational_retry.OBSERVER_READ):
+                writer = receipts.execution_proof(reader.execution(writer_name), config, writer_name, clock(), args=[])
             if episode["recovery"] is not None:
                 # A formerly fresh proof cannot authorize a queued green. Recheck
                 # exact closure and point before claiming its public update.
@@ -218,21 +231,24 @@ def deliver(reader, store, config, slack, *, clock=model.utc_now):
                 episode = current["episodes"][name]
             payload = model.render(episode["alert"], episode["recovery"])
             operation = {"id": uuid4().hex, "kind": "post" if episode["ts"] is None else "update",
-                         "sha256": model.digest(payload), "payload": payload, "started_at": now, "uncertain": False}
+                         "sha256": model.digest(payload), "payload": payload, "started_at": clock(), "phase": "claimed", "writer": writer}
             episode["operation"] = operation
-            model.validate_state(current, config, now)
+            model.validate_state(current, config, clock())
             try:
-                store.save(current, snapshot.generation)
+                claimed = store.save(current, snapshot.generation)
             except Conflict:
                 continue  # No transport was attempted; a new read must win the claim.
-            try:
-                ts = slack.post(payload) if operation["kind"] == "post" else None
-                if operation["kind"] == "update":
-                    slack.update(episode["ts"], payload)
-            except Exception:
-                # No post/update takeover: the old process might still finish its call.
-                acknowledge(store, config, name, operation, clock(), uncertain=True)
-                raise
+            # A distinct CAS is the only authority to start this exact send.
+            # Losing it leaves a provably pre-send claim; never adopt another.
+            current = deepcopy(claimed.value)
+            operation = {**operation, "phase": "sending"}
+            current["episodes"][name]["operation"] = operation
+            model.validate_state(current, config, clock())
+            store.save(current, claimed.generation)
+            # Any exception/crash now leaves durable 'sending' uncertainty.
+            ts = slack.post(payload) if operation["kind"] == "post" else None
+            if operation["kind"] == "update":
+                slack.update(episode["ts"], payload)
             acknowledge(store, config, name, operation, clock(), ts=ts)
             sent += 1
             break
@@ -246,7 +262,7 @@ def deliver(reader, store, config, slack, *, clock=model.utc_now):
     return sent
 
 
-def cycle(reader, store, config, *, clock=model.utc_now, slack_factory=Slack):
+def cycle(reader, store, config, *, clock=model.utc_now, slack_factory=Slack, environment=None):
     now = clock()
     _, state = loaded(store, config, now)
     with operational_retry.operation(profile=operational_retry.OBSERVER_READ):
@@ -256,7 +272,7 @@ def cycle(reader, store, config, *, clock=model.utc_now, slack_factory=Slack):
     persist_scan(store, config, observations, proofs, now, clock())
     count = 0
     if config["mode"] == "live":
-        count = deliver(reader, store, config, slack_factory(reader.token(), config["slack_channel"]), clock=clock)
+        count = deliver(reader, store, config, slack_factory(reader.token(), config["slack_channel"]), clock=clock, environment=environment)
         # Only a complete normal LIVE cycle establishes relay health. API-only
         # success, shadow evaluation and capability canaries cannot supply it.
         operational_events.emit("job_outcome", "success", details={
@@ -277,23 +293,29 @@ def capability_context(environ):
     return {"execution_name": execution, "github_run_url": github_run}
 
 
-def verify_capabilities(reader, store, config, *, clock=model.utc_now, slack_factory=Slack, environ=None):
-    context = capability_context(os.environ if environ is None else environ)
+def verify_capabilities(reader, store, config, *, clock=model.utc_now, slack_factory=ReadOnlySlack, environ=None):
+    environment = os.environ if environ is None else environ
+    context = capability_context(environment)
+    execution = model.execution_name(config, environment)
     now = clock()
     _, state = loaded(store, config, now)
     with operational_retry.operation(profile=operational_retry.OBSERVER_READ):
+        receipts.execution_proof(reader.execution(execution), config, execution, clock(),
+                                 args=["--verify-capabilities"], github_run_url=context["github_run_url"])
         observations, _ = discover(reader, state, config, now)
         reader.points(now)
         slack = slack_factory(reader.token(), config["slack_channel"])
         model.require(slack.identity() == config.identity, "Slack capability identity mismatch")
+        model.require(slack.history_capability() is True, "Slack history capability is unverified")
+    verified = {"own_execution_verified": True, "history_read_verified": True}
     marker = store.load(CAPABILITY_OBJECT)
     if marker.value is not None:
         model.require(marker.value.get("binding") == config.binding, "capability marker belongs to another configuration")
     saved = store.save({"schema": "monitoring-slack-capability-v1", "binding": config.binding,
-                        "checked_at": now, "nonce": uuid4().hex, **context}, marker.generation, CAPABILITY_OBJECT)
+                        "checked_at": clock(), "nonce": uuid4().hex, **context, **verified}, marker.generation, CAPABILITY_OBJECT)
     model.require(store.load(CAPABILITY_OBJECT) == saved, "capability CAS marker readback changed")
     return {"verified": True, "observed": len(observations), "public_operations": 0,
-            "binding": config.binding, **context}
+            "binding": config.binding, **context, **verified}
 
 
 def self_test():
@@ -311,6 +333,7 @@ def main(argv=None):
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--self-test", action="store_true")
     group.add_argument("--verify-capabilities", action="store_true")
+    group.add_argument("--reconcile-receipt-json")
     args = parser.parse_args(argv)
     if args.self_test:
         print(json.dumps(self_test(), sort_keys=True))
@@ -319,7 +342,10 @@ def main(argv=None):
     credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     reader = Monitoring(AuthorizedSession(credentials), config)
     store = Store(storage.Client(project=config["project"], credentials=credentials), config["state_bucket"])
-    result = verify_capabilities(reader, store, config) if args.verify_capabilities else cycle(reader, store, config)
+    if args.reconcile_receipt_json is not None:
+        result = receipts.reconcile(reader, store, config, args.reconcile_receipt_json, slack_factory=ReadOnlySlack)
+    else:
+        result = verify_capabilities(reader, store, config) if args.verify_capabilities else cycle(reader, store, config)
     print(json.dumps(result, sort_keys=True))
     return 0
 

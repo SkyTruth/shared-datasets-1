@@ -14,6 +14,10 @@ locals {
   monitoring_slack_config = var.monitoring_slack_relay == null ? null : {
     schema  = "monitoring-slack-config-v1"
     project = var.project_id
+
+    relay_job   = "projects/${var.project_id}/locations/${var.region}/jobs/${local.monitoring_slack_job_name}"
+    relay_image = var.monitoring_slack_relay.image
+
     policies = [
       { name = var.monitoring_slack_relay.health_policy_name, kind = "health" },
       { name = var.monitoring_slack_relay.unapproved_write_policy_name, kind = "security" },
@@ -168,6 +172,17 @@ resource "google_project_iam_custom_role" "monitoring_slack_state" {
   permissions = ["storage.objects.get", "storage.objects.create", "storage.objects.delete"]
 }
 
+# Receipt controls inspect the exact original sender execution before changing
+# private delivery evidence. This role is bound on this Job alone, not on the
+# project; it cannot enumerate executions, start jobs or supply overrides.
+resource "google_project_iam_custom_role" "monitoring_slack_execution_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsMonitoringSlackExecutionReader"
+  title       = "Monitoring Slack Own Execution Reader"
+  description = "Inspect an exact relay sender execution for receipt-only recovery; no list or execution authority."
+  permissions = ["run.executions.get"]
+}
+
 resource "google_storage_bucket_iam_member" "monitoring_slack_state" {
   bucket = google_storage_bucket.monitoring_slack_state.name
   role   = "projects/${var.project_id}/roles/${google_project_iam_custom_role.monitoring_slack_state.role_id}"
@@ -236,6 +251,15 @@ resource "google_cloud_run_v2_job_iam_member" "monitoring_slack_scheduler" {
   role       = "roles/run.invoker"
   member     = "serviceAccount:${local.monitoring_slack_scheduler_email}"
   depends_on = [module.monitoring_slack_scheduler_service_account]
+}
+
+resource "google_cloud_run_v2_job_iam_member" "monitoring_slack_execution_reader" {
+  count    = var.monitoring_slack_relay == null ? 0 : 1
+  project  = var.project_id
+  location = var.region
+  name     = module.monitoring_slack_job[0].name
+  role     = "projects/${var.project_id}/roles/${google_project_iam_custom_role.monitoring_slack_execution_reader.role_id}"
+  member   = "serviceAccount:${local.monitoring_slack_runtime_email}"
 }
 
 module "monitoring_slack_scheduler" {

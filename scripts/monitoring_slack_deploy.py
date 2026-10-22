@@ -34,12 +34,14 @@ RESOURCES = frozenset(
         "google_project_iam_custom_role.monitoring_slack_reader",
         "google_project_iam_member.monitoring_slack_reader",
         "google_project_iam_custom_role.monitoring_slack_state",
+        "google_project_iam_custom_role.monitoring_slack_execution_reader",
         "google_storage_bucket_iam_member.monitoring_slack_state",
         "google_service_account_iam_member.monitoring_slack_deployer",
         "google_service_account_iam_member.monitoring_slack_scheduler_deployer",
         "google_secret_manager_secret_iam_member.monitoring_slack_bot_token[0]",
         "module.monitoring_slack_job[0].google_cloud_run_v2_job.this",
         "google_cloud_run_v2_job_iam_member.monitoring_slack_scheduler[0]",
+        "google_cloud_run_v2_job_iam_member.monitoring_slack_execution_reader[0]",
         "module.monitoring_slack_scheduler[0].google_cloud_scheduler_job.this",
     }
 )
@@ -267,6 +269,8 @@ def preserve_activation(api, prepared):
     expected = {
         "schema": "monitoring-slack-config-v1",
         "project": PROJECT,
+        "relay_job": parent,
+        "relay_image": installed["relay_image"],
         "policies": [
             {
                 "name": prepared[key + "_policy_name"],
@@ -295,7 +299,8 @@ def preserve_activation(api, prepared):
         "credential identity change requires reviewed state migration",
     )
     require(
-        installed.value == Config.parse(expected).value
+        container.get("image") == installed["relay_image"]
+        and installed.value == Config.parse(expected).value
         and instant(installed["activated_at"]) <= instant(prepared["activated_at"]),
         "installed relay identity changed; preserve state through a reviewed migration",
     )
@@ -453,19 +458,20 @@ def validate_plan(plan, image, *, root=ROOT):
             "required preparation values are unknown",
         )
         if kind == "google_project_iam_custom_role":
-            permissions = (
-                READ_PERMISSIONS
-                if row["address"].endswith("monitoring_slack_reader")
-                else STATE_PERMISSIONS
-            )
+            role_id, permissions = {
+                "google_project_iam_custom_role.monitoring_slack_reader": (
+                    "sharedDatasetsMonitoringSlackReader", READ_PERMISSIONS
+                ),
+                "google_project_iam_custom_role.monitoring_slack_state": (
+                    "sharedDatasetsMonitoringSlackState", STATE_PERMISSIONS
+                ),
+                "google_project_iam_custom_role.monitoring_slack_execution_reader": (
+                    "sharedDatasetsMonitoringSlackExecutionReader", {"run.executions.get"}
+                ),
+            }[row["address"]]
             require(
                 value["project"] == PROJECT
-                and value["role_id"]
-                == (
-                    "sharedDatasetsMonitoringSlackReader"
-                    if row["address"].endswith("monitoring_slack_reader")
-                    else "sharedDatasetsMonitoringSlackState"
-                )
+                and value["role_id"] == role_id
                 and set(value["permissions"]) == permissions,
                 "runtime role identity or exact read/state capability changed",
             )
@@ -617,6 +623,9 @@ def validate_plan(plan, image, *, root=ROOT):
             require(
                 config["mode"] == "shadow"
                 and config["project"] == PROJECT
+                and config["relay_job"]
+                == f"projects/{PROJECT}/locations/{REGION}/jobs/monitoring-slack-relay"
+                and config["relay_image"] == image
                 and config["state_bucket"] == BUCKET,
                 "preparation cannot enable public delivery",
             )
@@ -633,13 +642,23 @@ def validate_plan(plan, image, *, root=ROOT):
                 "worker routing differs from reviewed registry",
             )
         elif kind == "google_cloud_run_v2_job_iam_member":
+            member, role = {
+                "google_cloud_run_v2_job_iam_member.monitoring_slack_scheduler[0]": (
+                    "serviceAccount:" + SCHEDULER, "roles/run.invoker"
+                ),
+                "google_cloud_run_v2_job_iam_member.monitoring_slack_execution_reader[0]": (
+                    "serviceAccount:" + RUNTIME,
+                    f"projects/{PROJECT}/roles/sharedDatasetsMonitoringSlackExecutionReader",
+                ),
+            }[row["address"]]
             require(
                 value["project"] == PROJECT
                 and value["location"] == REGION
                 and value["name"] == "monitoring-slack-relay"
-                and value["member"] == "serviceAccount:" + SCHEDULER
-                and value["role"] == "roles/run.invoker",
-                "scheduler can invoke only the relay job",
+                and value["member"] == member
+                and value["role"] == role
+                and not value.get("condition"),
+                "relay Job grants must retain their exact reader/invoker identity and scope",
             )
         elif kind == "google_cloud_scheduler_job":
             require(

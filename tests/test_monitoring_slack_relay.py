@@ -25,7 +25,14 @@ from services.monitoring_slack.store import CAPABILITY_OBJECT, STATE_OBJECT, Con
 FIXTURES = Path(__file__).parent / "fixtures" / "monitoring-slack"
 NOW = "2026-10-22T13:05:00Z"
 CONTEXT = {"CLOUD_RUN_EXECUTION": "monitoring-slack-relay-abc12",
-           "SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/12345"}
+           "SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/12345",
+           "CLOUD_RUN_JOB": "monitoring-slack-relay", "CLOUD_RUN_TASK_INDEX": "0", "CLOUD_RUN_TASK_ATTEMPT": "0"}
+
+
+@pytest.fixture(autouse=True)
+def managed_runtime(monkeypatch):
+    for key, value in CONTEXT.items():
+        monkeypatch.setenv(key, value)
 
 
 def config(**changes):
@@ -37,6 +44,8 @@ def config(**changes):
              "health_policy_created_at": "2026-10-22T11:00:00Z", "state_bucket": "relay-private-test-state",
              "slack_secret_version": "projects/shared-datasets-1/secrets/synthetic-relay-test/versions/1",
              "slack_channel": "C12345678", "slack_team": "T12345678", "slack_user": "U12345678",
+             "relay_job": "projects/shared-datasets-1/locations/us-central1/jobs/monitoring-slack-relay",
+             "relay_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/monitoring-slack-relay@sha256:" + "a" * 64,
              "activated_at": "2026-10-22T12:00:00Z", "mode": "live"}
     return model.Config.parse({**value, **changes})
 
@@ -103,6 +112,15 @@ class Reader:
         self.tokens += 1
         return "xoxb-synthetic-test"
 
+    def execution(self, name):
+        cfg = config()
+        return {"name": name, "job": cfg["relay_job"].rsplit("/", 1)[-1], "uid": "11111111-1111-4111-8111-111111111111",
+                "createTime": "2026-10-22T12:00:00Z", "startTime": "2026-10-22T12:01:00Z",
+                "taskCount": 1, "parallelism": 1, "conditions": [{"type": "Completed", "state": "CONDITION_PENDING"}],
+                "template": {"serviceAccount": "monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com", "maxRetries": 0,
+                             "containers": [{"image": cfg["relay_image"], "command": ["python", "-m", "services.monitoring_slack.run"],
+                                             "env": [{"name": "MONITORING_SLACK_CONFIG", "value": model.canonical(cfg.value).decode()}]}]}}
+
 
 class FakeSlack:
     def __init__(self, cfg=None):
@@ -113,11 +131,14 @@ class FakeSlack:
     def identity(self):
         return self.cfg.identity
 
+    def history_capability(self):
+        return True
+
     def post(self, payload):
         self.posts.append(deepcopy(payload))
         if self.failure:
             raise self.failure
-        return "1000000000.000001"
+        return f"1000000000.{len(self.posts):06d}"
 
     def update(self, ts, payload):
         self.updates.append((ts, deepcopy(payload)))
@@ -308,7 +329,7 @@ def test_network_uncertainty_after_post_is_never_blindly_resent_even_after_years
     with pytest.raises(SlackError):
         execute(reader, store, slack=slack)
     operation = store.load().value["episodes"][fixture()["name"]]["operation"]
-    assert operation["uncertain"] is True
+    assert operation["phase"] == "sending"
     slack.failure = None
     with pytest.raises(model.Invalid, match="inspection"):
         execute(reader, store, slack=slack, now="2027-10-22T13:05:00Z")
@@ -325,7 +346,7 @@ def test_crash_after_slack_ok_before_ack_retains_claim_and_cannot_repost():
     store.before_save = fail_ack
     with pytest.raises(OSError):
         execute(reader, store, slack=slack)
-    assert store.load().value["episodes"][fixture()["name"]]["operation"]["uncertain"] is False
+    assert store.load().value["episodes"][fixture()["name"]]["operation"]["phase"] == "sending"
     store.before_save = None
     with pytest.raises(model.Invalid, match="inspection"):
         execute(reader, store, slack=slack)
@@ -633,8 +654,23 @@ def test_actual_gcs_adapter_serialization_generation_cas_and_no_listing():
         store.load("dataset/latest/rows.csv")
 
 
+class CapabilityReader(Reader):
+    def __init__(self, *alerts):
+        super().__init__(*alerts)
+        self.metadata = Reader().execution(model.execution_name(config(), CONTEXT))
+        self.metadata["creator"] = "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com"
+        container = self.metadata["template"]["containers"][0]
+        container["args"] = ["--verify-capabilities"]
+        container["env"] = [{"name": "MONITORING_SLACK_CONFIG", "value": model.canonical(config(mode="shadow").value).decode()},
+                            {"name": "SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL", "value": CONTEXT["SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"]}]
+
+    def execution(self, name):
+        assert name == self.metadata["name"]
+        return deepcopy(self.metadata)
+
+
 def test_capabilities_real_readback_marker_has_zero_public_delivery():
-    store, slack, reader = Store(FakeStorage(), config()["state_bucket"]), FakeSlack(), Reader(fixture())
+    store, slack, reader = Store(FakeStorage(), config()["state_bucket"]), FakeSlack(), CapabilityReader(fixture())
     result = run.verify_capabilities(reader, store, config(mode="shadow"), clock=lambda: NOW,
                                      slack_factory=lambda *args: slack, environ=CONTEXT)
     assert result["verified"] and result["public_operations"] == 0
@@ -642,6 +678,9 @@ def test_capabilities_real_readback_marker_has_zero_public_delivery():
     assert store.load(CAPABILITY_OBJECT).generation == 1
     assert store.load(CAPABILITY_OBJECT).value["execution_name"] == CONTEXT["CLOUD_RUN_EXECUTION"]
     assert result["github_run_url"] == CONTEXT["SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"]
+    assert result["own_execution_verified"] is result["history_read_verified"] is True
+    assert store.load(CAPABILITY_OBJECT).value["own_execution_verified"] is True
+    assert store.load(CAPABILITY_OBJECT).value["history_read_verified"] is True
     assert not slack.posts and not slack.updates
 
 
@@ -652,6 +691,25 @@ def test_capability_guard_precedes_any_live_read_or_private_write(context):
     with pytest.raises(model.Invalid, match="requires"):
         run.verify_capabilities(reader, store, config(), environ=context)
     assert not reader.queries and not reader.exact and reader.tokens == 0 and not store.writes
+
+
+@pytest.mark.parametrize("frontier", ["execution_get", "wrong_image", "normal_args", "history_scope"])
+def test_capability_missing_execution_or_history_permission_cannot_write_verified_marker(frontier):
+    reader, store, slack = CapabilityReader(fixture()), MemoryStore(), FakeSlack()
+    if frontier == "execution_get":
+        reader.execution = lambda name: (_ for _ in ()).throw(api_errors.Forbidden("missing exact get"))
+    elif frontier == "wrong_image":
+        reader.metadata["template"]["containers"][0]["image"] = config()["relay_image"].replace("a" * 64, "b" * 64)
+    elif frontier == "normal_args":
+        reader.metadata["template"]["containers"][0]["args"] = []
+    else:
+        slack.history_capability = lambda: (_ for _ in ()).throw(SlackError("missing_scope"))
+    with pytest.raises((model.Invalid, api_errors.Forbidden, SlackError)):
+        run.verify_capabilities(reader, store, config(mode="shadow"), clock=lambda: NOW,
+                                slack_factory=lambda *args: slack, environ=CONTEXT)
+    assert not store.writes and not slack.posts and not slack.updates
+    if frontier != "history_scope":
+        assert not reader.queries and reader.tokens == 0
 
 
 def test_real_live_success_event_is_serialized_only_after_durable_delivery_ack(monkeypatch):
@@ -678,7 +736,7 @@ def test_real_live_success_event_is_serialized_only_after_durable_delivery_ack(m
 
 @pytest.mark.parametrize("mode", ["shadow", "capability", "selftest"])
 def test_nonlive_entrypoints_never_emit_live_completion(mode, capsys):
-    reader, store, slack = Reader(fixture()), MemoryStore(), FakeSlack()
+    reader, store, slack = CapabilityReader(fixture()), MemoryStore(), FakeSlack()
     if mode == "shadow":
         execute(reader, store, cfg=config(mode="shadow"), slack=slack)
     elif mode == "capability":
@@ -748,6 +806,16 @@ def test_actual_http_filters_full_pagination_and_estimated_size(http_boundary):
     query = parse_qs(urlsplit(calls[0][0]).query)
     assert query["filter"] == ['policy.name="projects/shared-datasets-1/alertPolicies/1980534029880229379" AND (state=OPEN OR open_time>="2026-10-22T12:50:00Z" OR close_time>="2026-10-22T12:50:00Z")']
     assert parse_qs(urlsplit(calls[1][0]).query)["pageToken"] == ["second"]
+
+
+def test_alert_filter_floors_fractional_cutoff_without_losing_internal_precision(http_boundary):
+    reader, replies, calls = http_boundary
+    replies.append((200, {}))
+    cutoff = "2026-10-22T12:50:00.999999999Z"
+    reader.alerts(config()["policies"][0]["name"], cutoff)
+    query = parse_qs(urlsplit(calls[0][0]).query)["filter"][0]
+    assert 'open_time>="2026-10-22T12:50:00Z"' in query and 'close_time>="2026-10-22T12:50:00Z"' in query
+    assert model.instant(cutoff) - model.instant("2026-10-22T12:50:00Z") == 999999999
 
 
 def test_partial_pagination_is_discarded_before_recognized_retry(http_boundary, monkeypatch):

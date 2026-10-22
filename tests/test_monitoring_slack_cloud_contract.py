@@ -104,12 +104,14 @@ def ingest(ledger, api, value, now):
 def test_explicit_completion_contract_preserves_existing_observer_behavior():
     contracts = deployments.AUXILIARY_CLOUD_JOBS
     assert contracts["wdpa-execution-observer"]["completion_evidence"] == "execution"
+    assert contracts["wdpa-execution-observer"]["delivery_route"] == "incident"
     assert contracts[JOB] == {"deployment_target": JOB,
                               "resource": "module.monitoring_slack_job[0].google_cloud_run_v2_job.this",
-                              "completion_evidence": "normal_live_cycle"}
+                              "completion_evidence": "normal_live_cycle", "delivery_route": "logs",
+                              "control_workflows": ("monitoring-slack-relay-receipt.yml",)}
 
 
-def test_persisted_failure_requires_full_live_completion_and_edits_same_parent(monkeypatch, tmp_path):
+def test_persisted_logs_only_failure_still_requires_full_live_completion_for_internal_recovery(monkeypatch, tmp_path):
     monkeypatch.setattr(emissions, "verify", lambda *_args, **_kwargs: None)  # External signing authority only.
     api, ledger, slack = Authority(), PersistedLedger(), FakeSlack()
     failure = fact()
@@ -138,7 +140,7 @@ def test_persisted_failure_requires_full_live_completion_and_edits_same_parent(m
     current = ledger.states[scope]["incident"]
     assert current["id"] == original["id"] and current["posts"] == original["posts"]
     assert current["failures"] == original["failures"] and current["resolution"] is not None
-    assert [call[0] for call in slack.calls] == ["post", "update"]
+    assert slack.calls == []
     assert evaluation["cloud_counts"]["verified_observer_health"] == 1
     assert evaluation["cloud_counts"]["verified_asset_publications"] == 0
     assert current["resolution"]["kind"] == "job" and adapter.domain(completed) is None

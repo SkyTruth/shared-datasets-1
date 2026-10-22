@@ -1,0 +1,143 @@
+name: Monitoring Slack relay receipt control
+
+on:
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact installed and CI-tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+      receipt_request_json:
+        description: Reviewed canonical monitoring-slack-receipt-request-v1 JSON for one exact claim and state generation
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  deployments: read
+  contents: read
+  id-token: write
+
+env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+  RECEIPT_REQUEST_JSON: ${{ inputs.receipt_request_json }}
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  UV_VERSION: 0.11.8
+
+jobs:
+  reconcile:
+    name: Verify one existing Monitoring Slack receipt
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require immutable main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/monitoring-slack-relay-receipt.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate exact source inputs
+        run: |
+          set -euo pipefail
+          [[ "$EXECUTOR_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ -n "$RECEIPT_REQUEST_JSON" && -n "$TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" && -n "$TERRAFORM_SERVICE_ACCOUNT" ]]
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync trusted dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Verify immutable tested main controller
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          uv run --no-sync python scripts/monitoring_slack_receipt_control.py admit --bootstrap \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Authenticate protected receipt controller
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Review exact installed deployment and terminal claim owner
+        id: receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-sync python scripts/monitoring_slack_receipt_control.py prepare \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --request-json "$RECEIPT_REQUEST_JSON" --prepared-proof "$RUNNER_TEMP/monitoring-slack-receipt-prepared.json"
+
+      - name: Execute only the exact receipt request
+        env:
+          CONTROL_REQUEST_JSON: ${{ steps.receipt.outputs.request_json }}
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute monitoring-slack-relay --region=us-central1 --project=shared-datasets-1 --wait \
+            --args="^|^--reconcile-receipt-json|${CONTROL_REQUEST_JSON}" \
+            --update-env-vars="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --format=json > "$RUNNER_TEMP/monitoring-slack-receipt-execution.json"
+
+      - name: Verify terminal controller and durable accepted receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/monitoring_slack_receipt_control.py verify \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --request-json "$RECEIPT_REQUEST_JSON" --prepared-proof "$RUNNER_TEMP/monitoring-slack-receipt-prepared.json" \
+            > "$RUNNER_TEMP/monitoring-slack-receipt-verified.json"
+          cat "$RUNNER_TEMP/monitoring-slack-receipt-verified.json"
+
+      - name: Retain receipt metadata for inspection
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-slack-receipt-evidence
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/monitoring-slack-receipt-*.json

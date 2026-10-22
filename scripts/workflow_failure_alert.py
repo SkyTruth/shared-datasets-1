@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.dataset_mutation_authorization import GitHub
+from scripts import deployment_revision as deployments
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
@@ -25,6 +26,7 @@ VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integratio
 OBSERVER_WORKFLOWS = {"Deployment completion check", "Deployment terminal verification", "Deployment read-only reconciliation"}
 WORKFLOW_PATHS = {
     "Monitoring Slack relay deploy": "monitoring-slack-relay-deploy.yml",
+    "Monitoring Slack relay receipt control": "monitoring-slack-relay-receipt.yml",
     "CI": "ci.yml", "Bucket hygiene audit": "bucket-hygiene-audit.yml",
     "Scratch cleanup audit": "scratch-cleanup-audit.yml", "Catalog web deploy": "catalog-web-deploy.yml",
     "Catalog viewer deploy": "catalog-viewer-deploy.yml", "PMTiles CDN sync": "pmtiles-cdn-sync.yml",
@@ -74,6 +76,8 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
 
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
     run = event["workflow_run"]
+    if WORKFLOW_PATHS.get(run["name"]) in deployments.LOGS_ONLY_WORKFLOWS:
+        return None
     # Maintenance and automatic follow-ups are unattended. CI's main-push
     # publication jobs share that coverage; other supervised checks stay in GitHub.
     if (

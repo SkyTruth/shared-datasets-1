@@ -15,6 +15,7 @@ from html import escape
 import json
 import re
 from urllib.parse import urlencode
+from uuid import UUID
 
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP
 from scripts.slack_notify import build_slack_payload
@@ -25,6 +26,7 @@ FRESH_SECONDS = 600
 OVERLAP_SECONDS = 600
 MAX_BYTES = 2 * 1024 * 1024
 MAX_EPISODES = 2000
+MAX_RECEIPTS = 200
 STAMP = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?Z")
 
 
@@ -80,6 +82,42 @@ def before(value, seconds):
         timespec="microseconds").replace("+00:00", "Z")
 
 
+def uuid4(value):
+    require(isinstance(value, str), "expected canonical UUID4")
+    try:
+        parsed = UUID(value)
+    except ValueError as error:
+        raise Invalid("expected canonical UUID4") from error
+    require(str(parsed) == value and parsed.version == 4, "expected canonical UUID4")
+    return value
+
+
+def image(value, config):
+    region = config["relay_job"].split("/")[3]
+    prefix = f"{region}-docker.pkg.dev/{config['project']}/shared-datasets-jobs/monitoring-slack-relay@sha256:"
+    require(isinstance(value, str) and re.fullmatch(re.escape(prefix) + r"[0-9a-f]{64}", value), "relay image must be an exact immutable reference")
+    return value
+
+
+def execution_name(config, environment):
+    require(environment.get("CLOUD_RUN_JOB") == "monitoring-slack-relay"
+            and environment.get("CLOUD_RUN_TASK_INDEX") == "0" and environment.get("CLOUD_RUN_TASK_ATTEMPT") == "0",
+            "relay writer must be the managed single task without retries")
+    short = environment.get("CLOUD_RUN_EXECUTION")
+    require(isinstance(short, str) and re.fullmatch(r"monitoring-slack-relay-[a-z0-9]{5}", short), "invalid managed relay execution")
+    return config["relay_job"] + "/executions/" + short
+
+
+def validate_writer(writer, config, now):
+    require(isinstance(writer, dict) and writer.keys() == {"execution", "uid", "image", "config_binding", "created_at", "started_at"}, "invalid writer proof")
+    require(isinstance(writer["execution"], str) and re.fullmatch(re.escape(config["relay_job"]) + r"/executions/monitoring-slack-relay-[a-z0-9]{5}", writer["execution"]), "writer belongs to another job")
+    uuid4(writer["uid"])
+    image(writer["image"], config)
+    require(writer["config_binding"] == config.binding, "writer configuration changed")
+    require(instant(writer["created_at"]) <= instant(writer["started_at"]) <= instant(now), "invalid writer chronology")
+    return writer
+
+
 @dataclass(frozen=True)
 class Config:
     value: dict
@@ -87,7 +125,7 @@ class Config:
     @classmethod
     def parse(cls, value):
         required = {"schema", "project", "policies", "health_metric", "health_policy_created_at",
-                    "state_bucket", "slack_secret_version", "slack_channel", "slack_team", "slack_user", "activated_at"}
+                    "state_bucket", "slack_secret_version", "slack_channel", "slack_team", "slack_user", "activated_at", "relay_job", "relay_image"}
         require(isinstance(value, dict) and required <= value.keys()
                 and value.keys() <= required | {"mode"}, "invalid relay configuration fields")
         value = deepcopy(value)
@@ -95,6 +133,9 @@ class Config:
         require(value["schema"] == CONFIG_SCHEMA and value["mode"] in {"shadow", "live"}, "invalid relay configuration")
         project = value["project"]
         require(isinstance(project, str) and re.fullmatch(r"[a-z][a-z0-9-]{4,61}[a-z0-9]", project), "invalid project")
+        require(isinstance(value["relay_job"], str) and re.fullmatch(
+            r"projects/" + re.escape(project) + r"/locations/[a-z]+-[a-z0-9]+/jobs/monitoring-slack-relay", value["relay_job"]), "invalid relay job resource")
+        image(value["relay_image"], value)
         require(isinstance(value["state_bucket"], str) and re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]", value["state_bucket"]), "invalid state bucket")
         require(isinstance(value["slack_secret_version"], str) and re.fullmatch(
             r"projects/(?:" + re.escape(project) + r"|[1-9][0-9]*)/secrets/[A-Za-z0-9_-]+/versions/[1-9][0-9]*",
@@ -125,8 +166,9 @@ class Config:
 
     @property
     def binding(self):
-        # A reviewed shadow->live switch does not replace delivery history.
-        return digest({key: value for key, value in self.value.items() if key != "mode"})
+        # Deployment image and mode are not episode identity. Claims retain their
+        # own verified image; an upgrade cannot erase parents or grant takeover.
+        return digest({key: value for key, value in self.value.items() if key not in {"mode", "relay_image"}})
 
     @property
     def identity(self):
@@ -239,7 +281,7 @@ def render(alert, proof):
 
 
 def new_state(config):
-    return {"schema": SCHEMA, "binding": config.binding, "covered_through": config["activated_at"], "episodes": {}}
+    return {"schema": SCHEMA, "binding": config.binding, "covered_through": config["activated_at"], "episodes": {}, "receipts": {}}
 
 
 def merge(state, observations, proofs, config, through, *, now):
@@ -273,7 +315,7 @@ def merge(state, observations, proofs, config, through, *, now):
 
 
 def validate_state(state, config, now):
-    require(isinstance(state, dict) and state.keys() == {"schema", "binding", "covered_through", "episodes"}
+    require(isinstance(state, dict) and state.keys() == {"schema", "binding", "covered_through", "episodes", "receipts"}
             and state["schema"] == SCHEMA and state["binding"] == config.binding, "state configuration/schema mismatch")
     require(instant(config["activated_at"]) <= instant(state["covered_through"]) <= instant(now), "invalid coverage checkpoint")
     require(isinstance(state["episodes"], dict) and len(state["episodes"]) <= MAX_EPISODES, "invalid episode inventory")
@@ -297,14 +339,55 @@ def validate_state(state, config, now):
         require((ts is None) == (applied is None), "parent/applied identity mismatch")
         require(applied is None or isinstance(applied, str) and re.fullmatch(r"[0-9a-f]{64}", applied), "invalid applied rendering")
         if operation is not None:
-            require(isinstance(operation, dict) and operation.keys() == {"id", "kind", "sha256", "payload", "started_at", "uncertain"}
+            require(isinstance(operation, dict) and operation.keys() == {"id", "kind", "sha256", "payload", "started_at", "phase", "writer"}
                     and re.fullmatch(r"[0-9a-f]{32}", str(operation["id"]))
                     and operation["kind"] == ("post" if ts is None else "update")
-                    and type(operation["uncertain"]) is bool
+                    and operation["phase"] in {"claimed", "sending"}
                     and operation["sha256"] == digest(operation["payload"]), "invalid durable Slack claim")
             require(instant(operation["started_at"]) <= instant(now), "future delivery claim")
+            writer = validate_writer(operation["writer"], config, now)
+            require(instant(writer["started_at"]) <= instant(operation["started_at"]), "claim predates its writer")
             payload = operation["payload"]
             require(isinstance(payload, dict) and payload.keys() == {"text", "blocks"}
                     and isinstance(payload["text"], str) and isinstance(payload["blocks"], list), "invalid claimed payload")
+    require(isinstance(state["receipts"], dict) and len(state["receipts"]) <= MAX_RECEIPTS, "receipt audit requires explicit retention review")
+    for request_id, receipt in state["receipts"].items():
+        validate_receipt(receipt, config, now)
+        require(receipt["request"]["request_id"] == request_id and receipt["request"]["alert_name"] in state["episodes"], "miskeyed receipt audit")
+        if receipt["request"]["outcome"] == "confirm_message":
+            require(state["episodes"][receipt["request"]["alert_name"]]["ts"] == receipt["request"]["message_ts"], "confirmed parent identity changed")
     require(len(canonical(state)) <= MAX_BYTES, "relay state is full; explicit retention review required")
     return state
+
+
+def receipt_request(value, config):
+    require(isinstance(value, dict) and value.keys() == {"schema", "request_id", "config_binding", "alert_name",
+            "operation_id", "operation_sha256", "expected_generation", "outcome", "message_ts"}, "invalid receipt request fields")
+    require(value["schema"] == "monitoring-slack-receipt-request-v1" and value["config_binding"] == config.binding, "receipt request configuration mismatch")
+    uuid4(value["request_id"])
+    require(isinstance(value["alert_name"], str) and re.fullmatch(r"projects/" + re.escape(config["project"]) + r"/alerts/[A-Za-z0-9._-]+", value["alert_name"]), "invalid receipt alert")
+    require(isinstance(value["operation_id"], str) and re.fullmatch(r"[0-9a-f]{32}", value["operation_id"])
+            and isinstance(value["operation_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", value["operation_sha256"]), "invalid exact claim identity")
+    require(type(value["expected_generation"]) is int and value["expected_generation"] > 0, "receipt needs an exact state generation")
+    require(value["outcome"] in {"confirm_message", "confirm_not_delivered"}, "unsupported receipt outcome")
+    require(value["message_ts"] is None if value["outcome"] == "confirm_not_delivered" else
+            isinstance(value["message_ts"], str) and TIMESTAMP.fullmatch(value["message_ts"]), "invalid receipt timestamp")
+    return value
+
+
+def validate_receipt(receipt, config, now):
+    require(isinstance(receipt, dict) and receipt.keys() == {"request", "request_sha256", "operation_kind", "phase",
+            "writer", "writer_completed_at", "controller", "github_run_url", "confirmed_at"}, "invalid receipt audit")
+    request = receipt_request(receipt["request"], config)
+    require(receipt["request_sha256"] == digest(request) and receipt["operation_kind"] in {"post", "update"}
+            and receipt["phase"] in {"claimed", "sending"}, "invalid receipt claim evidence")
+    writer = validate_writer(receipt["writer"], config, now)
+    controller = validate_writer(receipt["controller"], config, now)
+    require(writer["execution"] != controller["execution"]
+            and writer["image"] == controller["image"]
+            and instant(controller["started_at"]) <= instant(receipt["confirmed_at"])
+            and instant(writer["started_at"]) <= instant(receipt["writer_completed_at"]) <= instant(receipt["confirmed_at"]) <= instant(now), "invalid terminal receipt chronology")
+    require(isinstance(receipt["github_run_url"], str) and re.fullmatch(
+        r"https://github\.com/SkyTruth/shared-datasets-1/actions/runs/[1-9][0-9]*", receipt["github_run_url"]), "invalid protected receipt run")
+    require(receipt["phase"] == ("claimed" if request["outcome"] == "confirm_not_delivered" else "sending"), "receipt phase cannot establish its outcome")
+    return receipt

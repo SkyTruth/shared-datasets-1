@@ -22,6 +22,15 @@ Security and pipeline-health detectors remain independent. Their direct native S
 No real cutover, heartbeat seed or runtime secret retirement is established by
 offline tests. A config merge alone does not activate cloud delivery.
 
+The relay's own failure backstop is GitHub Actions or GCP logs: failed protected
+steps, exact Cloud Run execution outcomes and Scheduler dispatch evidence remain
+available for operator inspection. Pending or uncertain delivery stays in its
+private state for receipt-only recovery. Relay and receipt-control failures must
+not create recursive public Slack alerts. This selected backstop does not page;
+the responsible operator continues recovery in the originating chat. Independent
+security and pipeline-health detection and the existing native routes remain
+until the replacement is verified.
+
 | Execution | Failure reporting |
 | --- | --- |
 | PR CI, build checks, manual GitHub checks | GitHub |
@@ -31,6 +40,7 @@ offline tests. A config merge alone does not activate cloud delivery.
 | Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub evidence; one Slack parent when action is eligible |
 | Explicit notification transport rehearsal | Separate configured test channel only |
+| Independent Monitoring relay and its receipt-only controls | GitHub Actions or GCP logs; no recursive public Slack alert |
 
 The Cloud Run policy retains the project/region-wide failure condition and
 `protoPayload.status.code>0`, including OOM/system failures. The frequent WDPA

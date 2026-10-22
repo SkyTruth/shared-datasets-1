@@ -3,8 +3,8 @@
 The fixture is a projection of an offline mock-provider plan of the actual
 monitoring_slack_relay*.tf and unchanged Run/Scheduler/identity modules. Only
 provider bookkeeping and unrelated bootstrap rows were removed. No API values
-or role/member strings were repaired in the fixture. Source SHA256 at capture:
-bf37bf33a17fe962faaf5cdb61c4cce7ce0311d42611c3df7c4c05dea65b59d5
+or role/member strings were repaired in the fixture. Relay Terraform SHA256 at capture:
+beefbc0e3f7119cd30a434263d37d1e7df89b6d52e4102559386e35277506d0e
 """
 from copy import deepcopy
 import json
@@ -19,10 +19,32 @@ JOB = "module.monitoring_slack_job[0].google_cloud_run_v2_job.this"
 SCHEDULE = "module.monitoring_slack_scheduler[0].google_cloud_scheduler_job.this"
 SECRET = "google_secret_manager_secret_iam_member.monitoring_slack_bot_token[0]"
 STATE = "google_storage_bucket_iam_member.monitoring_slack_state"
+EXECUTION_READER = "google_cloud_run_v2_job_iam_member.monitoring_slack_execution_reader[0]"
+EXECUTION_ROLE = "google_project_iam_custom_role.monitoring_slack_execution_reader"
 
 _ACTUAL_HCL_PLAN = json.loads(r'''{
   "format_version": "1.2",
   "resource_changes": [
+    {
+      "address": "google_cloud_run_v2_job_iam_member.monitoring_slack_execution_reader[0]",
+      "type": "google_cloud_run_v2_job_iam_member",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "condition": [],
+          "location": "us-central1",
+          "member": "serviceAccount:monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com",
+          "name": "monitoring-slack-relay",
+          "project": "shared-datasets-1",
+          "role": "projects/shared-datasets-1/roles/sharedDatasetsMonitoringSlackExecutionReader"
+        },
+        "after_unknown": {
+          "condition": []
+        }
+      }
+    },
     {
       "address": "google_cloud_run_v2_job_iam_member.monitoring_slack_scheduler[0]",
       "type": "google_cloud_run_v2_job_iam_member",
@@ -38,7 +60,30 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "project": "shared-datasets-1",
           "role": "roles/run.invoker"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.monitoring_slack_execution_reader",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "permissions": [
+            "run.executions.get"
+          ],
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsMonitoringSlackExecutionReader"
+        },
+        "after_unknown": {
+          "permissions": [
+            false
+          ]
+        }
       }
     },
     {
@@ -58,7 +103,14 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "project": "shared-datasets-1",
           "role_id": "sharedDatasetsMonitoringSlackReader"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "permissions": [
+            false,
+            false,
+            false,
+            false
+          ]
+        }
       }
     },
     {
@@ -77,7 +129,13 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "project": "shared-datasets-1",
           "role_id": "sharedDatasetsMonitoringSlackState"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "permissions": [
+            false,
+            false,
+            false
+          ]
+        }
       }
     },
     {
@@ -93,7 +151,9 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "project": "shared-datasets-1",
           "role": "projects/shared-datasets-1/roles/sharedDatasetsMonitoringSlackReader"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": []
+        }
       }
     },
     {
@@ -106,7 +166,9 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
         "after": {
           "condition": [
             {
-              "expression": "resource.name == 'projects/shared-datasets-1/secrets/shared-datasets-slack-incident-bot-token/versions/7' || resource.name == 'projects/12695949518/secrets/shared-datasets-slack-incident-bot-token/versions/7'"
+              "description": "Access only the exact numeric bot-token version selected after protected seeding.",
+              "expression": "resource.name == 'projects/shared-datasets-1/secrets/shared-datasets-slack-incident-bot-token/versions/7' || resource.name == 'projects/12695949518/secrets/shared-datasets-slack-incident-bot-token/versions/7'",
+              "title": "monitoring-slack-pinned-bot-version"
             }
           ],
           "member": "serviceAccount:monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com",
@@ -114,7 +176,11 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "role": "roles/secretmanager.secretAccessor",
           "secret_id": "shared-datasets-slack-incident-bot-token"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": [
+            {}
+          ]
+        }
       }
     },
     {
@@ -130,7 +196,9 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "role": "roles/iam.serviceAccountUser",
           "service_account_id": "projects/shared-datasets-1/serviceAccounts/monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": []
+        }
       }
     },
     {
@@ -146,7 +214,9 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "role": "roles/iam.serviceAccountUser",
           "service_account_id": "projects/shared-datasets-1/serviceAccounts/monitoring-slack-scheduler@shared-datasets-1.iam.gserviceaccount.com"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": []
+        }
       }
     },
     {
@@ -168,7 +238,11 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
             }
           ]
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "versioning": [
+            {}
+          ]
+        }
       }
     },
     {
@@ -182,13 +256,19 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "bucket": "skytruth-shared-datasets-1-monitoring-slack-state",
           "condition": [
             {
-              "expression": "resource.type == 'storage.googleapis.com/Object' && (resource.name == 'projects/_/buckets/skytruth-shared-datasets-1-monitoring-slack-state/objects/monitoring-slack/state-v1.json' || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1-monitoring-slack-state/objects/monitoring-slack/capabilities-v1.json')"
+              "description": "Only the independent incident ledger and its private capability marker.",
+              "expression": "resource.type == 'storage.googleapis.com/Object' && (resource.name == 'projects/_/buckets/skytruth-shared-datasets-1-monitoring-slack-state/objects/monitoring-slack/state-v1.json' || resource.name == 'projects/_/buckets/skytruth-shared-datasets-1-monitoring-slack-state/objects/monitoring-slack/capabilities-v1.json')",
+              "title": "monitoring-slack-exact-state-objects"
             }
           ],
           "member": "serviceAccount:monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com",
           "role": "projects/shared-datasets-1/roles/sharedDatasetsMonitoringSlackState"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "condition": [
+            {}
+          ]
+        }
       }
     },
     {
@@ -206,29 +286,31 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "project": "shared-datasets-1",
           "template": [
             {
-              "task_count": 1,
+              "annotations": null,
+              "labels": null,
               "parallelism": 1,
+              "task_count": 1,
               "template": [
                 {
-                  "service_account": "monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com",
-                  "max_retries": 0,
-                  "timeout": "240s",
                   "containers": [
                     {
-                      "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/monitoring-slack-relay@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "args": null,
                       "command": [
                         "python",
                         "-m",
                         "services.monitoring_slack.run"
                       ],
-                      "args": null,
+                      "depends_on": null,
                       "env": [
                         {
                           "name": "MONITORING_SLACK_CONFIG",
-                          "value": "{\"activated_at\":\"2026-10-22T14:00:00Z\",\"health_metric\":\"custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2\",\"health_policy_created_at\":\"2026-10-22T04:59:54.149734439Z\",\"mode\":\"shadow\",\"policies\":[{\"kind\":\"health\",\"name\":\"projects/shared-datasets-1/alertPolicies/1980534029880229379\"},{\"kind\":\"security\",\"name\":\"projects/shared-datasets-1/alertPolicies/16639688203190432625\"},{\"kind\":\"security\",\"name\":\"projects/shared-datasets-1/alertPolicies/9766115247324033694\"}],\"project\":\"shared-datasets-1\",\"schema\":\"monitoring-slack-config-v1\",\"slack_channel\":\"CEXAMPLE1\",\"slack_secret_version\":\"projects/12695949518/secrets/shared-datasets-slack-incident-bot-token/versions/7\",\"slack_team\":\"TEXAMPLE\",\"slack_user\":\"UEXAMPLE\",\"state_bucket\":\"skytruth-shared-datasets-1-monitoring-slack-state\"}",
+                          "value": "{\"activated_at\":\"2026-10-22T14:00:00Z\",\"health_metric\":\"custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2\",\"health_policy_created_at\":\"2026-10-22T04:59:54.149734439Z\",\"mode\":\"shadow\",\"policies\":[{\"kind\":\"health\",\"name\":\"projects/shared-datasets-1/alertPolicies/1980534029880229379\"},{\"kind\":\"security\",\"name\":\"projects/shared-datasets-1/alertPolicies/16639688203190432625\"},{\"kind\":\"security\",\"name\":\"projects/shared-datasets-1/alertPolicies/9766115247324033694\"}],\"project\":\"shared-datasets-1\",\"relay_image\":\"us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/monitoring-slack-relay@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"relay_job\":\"projects/shared-datasets-1/locations/us-central1/jobs/monitoring-slack-relay\",\"schema\":\"monitoring-slack-config-v1\",\"slack_channel\":\"CEXAMPLE1\",\"slack_secret_version\":\"projects/12695949518/secrets/shared-datasets-slack-incident-bot-token/versions/7\",\"slack_team\":\"TEXAMPLE\",\"slack_user\":\"UEXAMPLE\",\"state_bucket\":\"skytruth-shared-datasets-1-monitoring-slack-state\"}",
                           "value_source": []
                         }
                       ],
+                      "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/monitoring-slack-relay@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "name": null,
+                      "ports": [],
                       "resources": [
                         {
                           "limits": {
@@ -236,15 +318,61 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
                             "memory": "512Mi"
                           }
                         }
-                      ]
+                      ],
+                      "startup_probe": [],
+                      "volume_mounts": [],
+                      "working_dir": null
                     }
-                  ]
+                  ],
+                  "encryption_key": null,
+                  "gpu_zonal_redundancy_disabled": null,
+                  "max_retries": 0,
+                  "node_selector": [],
+                  "service_account": "monitoring-slack-relay@shared-datasets-1.iam.gserviceaccount.com",
+                  "timeout": "240s",
+                  "volumes": [],
+                  "vpc_access": []
                 }
               ]
             }
           ]
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "template": [
+            {
+              "template": [
+                {
+                  "containers": [
+                    {
+                      "command": [
+                        false,
+                        false,
+                        false
+                      ],
+                      "env": [
+                        {
+                          "value_source": []
+                        }
+                      ],
+                      "ports": [],
+                      "resources": [
+                        {
+                          "limits": {}
+                        }
+                      ],
+                      "startup_probe": [],
+                      "volume_mounts": []
+                    }
+                  ],
+                  "execution_environment": true,
+                  "node_selector": [],
+                  "volumes": [],
+                  "vpc_access": []
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     {
@@ -287,7 +415,27 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "schedule": "*/5 * * * *",
           "time_zone": "UTC"
         },
-        "after_unknown": {}
+        "after_unknown": {
+          "app_engine_http_target": [],
+          "http_target": [
+            {
+              "headers": {},
+              "oauth_token": [
+                {}
+              ],
+              "oidc_token": []
+            }
+          ],
+          "pubsub_target": [],
+          "retry_config": [
+            {
+              "max_backoff_duration": true,
+              "max_doublings": true,
+              "max_retry_duration": true,
+              "min_backoff_duration": true
+            }
+          ]
+        }
       }
     },
     {
@@ -301,9 +449,7 @@ _ACTUAL_HCL_PLAN = json.loads(r'''{
           "account_id": "monitoring-slack-scheduler",
           "project": "shared-datasets-1"
         },
-        "after_unknown": {
-          "member": true
-        }
+        "after_unknown": {}
       }
     }
   ]
@@ -352,6 +498,7 @@ def test_real_hcl_plan_and_noop_remain_accepted(prepared):
     "google_service_account_iam_member.monitoring_slack_deployer",
     "google_service_account_iam_member.monitoring_slack_scheduler_deployer",
     "google_cloud_run_v2_job_iam_member.monitoring_slack_scheduler[0]",
+    EXECUTION_READER,
 ])
 def test_initial_hcl_plan_has_known_authority_names(prepared, address):
     plan, _ = prepared
@@ -375,6 +522,16 @@ def test_destructive_plan_cannot_pass(prepared, actions):
      ["storage.objects.get", "storage.objects.create", "storage.objects.delete", "storage.objects.list"]),
     ("google_project_iam_custom_role.monitoring_slack_reader", "role_id", "unreviewedRole"),
     ("google_project_iam_custom_role.monitoring_slack_reader", "project", "foreign-project"),
+    (EXECUTION_ROLE, "permissions", ["run.executions.get", "run.executions.list"]),
+    (EXECUTION_ROLE, "permissions", ["run.executions.get", "run.jobs.run"]),
+    (EXECUTION_ROLE, "permissions", ["run.executions.get", "run.jobs.runWithOverrides"]),
+    (EXECUTION_ROLE, "role_id", "unreviewedReader"),
+    (EXECUTION_READER, "name", "wdpa-monthly"),
+    (EXECUTION_READER, "location", "us-east1"),
+    (EXECUTION_READER, "project", "another-project"),
+    (EXECUTION_READER, "member", "serviceAccount:" + deploy.SCHEDULER),
+    (EXECUTION_READER, "role", "roles/run.admin"),
+    (EXECUTION_READER, "condition", [{"expression": "false"}]),
     (SECRET, "secret_id", "another-secret"),
     ("google_storage_bucket.monitoring_slack_state", "name", "skytruth-shared-datasets-1"),
     ("google_storage_bucket.monitoring_slack_state", "public_access_prevention", "inherited"),
@@ -418,6 +575,8 @@ def test_scope_and_unknown_authority_cannot_pass(prepared, which):
     ("slack_secret_version", "projects/12695949518/secrets/shared-datasets-slack-incident-bot-token/versions/8"),
     ("health_metric", "custom.googleapis.com/unrelated/heartbeat"),
     ("health_policy_created_at", "invalid-timestamp"),
+    ("relay_job", "projects/shared-datasets-1/locations/us-east1/jobs/monitoring-slack-relay"),
+    ("relay_image", IMAGE[:-1] + "b"),
 ])
 def test_config_is_the_strict_consumers_contract_and_version_matches_iam(prepared, field, value):
     plan, root = prepared
@@ -459,3 +618,21 @@ def test_scheduler_never_adds_overrides_or_dispatch_retry(prepared, which):
         value["retry_config"][0]["retry_count"] = 3
     with pytest.raises(ValueError):
         deploy.validate_plan(plan, IMAGE, root=root)
+
+
+def test_reader_install_permission_probe_is_bound_to_actual_existing_job(prepared):
+    from scripts.terraform_plan_permissions import plan_checks
+
+    plan, _ = prepared
+    # The custom role is project metadata; the binding is a policy mutation on
+    # this existing Job. A project-wide Run permission probe is insufficient.
+    row = deepcopy(resource(plan, EXECUTION_READER))
+    row["change"]["actions"] = ["update"]
+    row["change"]["before"] = deepcopy(row["change"]["after"])
+    assert plan_checks(
+        {"format_version": "1.2", "resource_changes": [row]},
+        project_number="12695949518",
+    ) == [(
+        "https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/jobs/monitoring-slack-relay:testIamPermissions",
+        ("run.jobs.getIamPolicy", "run.jobs.setIamPolicy"),
+    )]

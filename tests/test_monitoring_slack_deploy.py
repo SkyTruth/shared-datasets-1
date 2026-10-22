@@ -225,6 +225,7 @@ def installed_job():
             "template": {
                 "containers": [
                     {
+                        "image": value["relay_image"],
                         "env": [
                             {
                                 "name": "MONITORING_SLACK_CONFIG",
@@ -245,6 +246,24 @@ def test_redeploy_preserves_exact_persisted_activation():
     )
     assert value["activated_at"] == "2026-10-22T14:00:00Z"
     assert api.posts == []
+
+
+def test_compatible_new_image_keeps_existing_activation_and_delivery_identity():
+    api = API(installed=Response(installed_job()))
+    newer = IMAGE[:-1] + "b"
+    value = deploy.prepare_config(
+        api, newer, "7", now=datetime(2026, 10, 22, 15, 0, tzinfo=timezone.utc)
+    )
+    assert value["image"] == newer
+    assert value["activated_at"] == "2026-10-22T14:00:00Z"
+    assert api.posts == []
+
+
+def test_installed_configuration_cannot_impersonate_another_sender_image():
+    job = installed_job()
+    job["template"]["template"]["containers"][0]["image"] = IMAGE[:-1] + "b"
+    with pytest.raises(ValueError, match="installed relay identity changed"):
+        deploy.prepare_config(API(installed=Response(job)), IMAGE, "7")
 
 
 @pytest.mark.parametrize(

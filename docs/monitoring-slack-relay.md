@@ -33,8 +33,9 @@ route for those same operational failures. Curated announcements are unchanged.
    Neither a closed security incident nor a quiet log proves data repair.
 6. No partial enumeration or failed persistence advances the discovery checkpoint
    or establishes relay health. Missing rows and HTTP 404 do not prove recovery.
-7. The runtime can read alerts and its exact secret, and read/write its dedicated
-   operational state. It cannot mutate datasets, start ingestion executions,
+7. The runtime can read alerts, its exact secret and an exact sender execution
+   on its own Job, and read/write its dedicated operational state. It cannot
+   enumerate executions, start jobs, mutate datasets,
    alter infrastructure, or write the reconciliation heartbeat.
 
 ## Provider boundary and discovery
@@ -108,15 +109,33 @@ observation cannot overwrite a known later closure.
 
 A timeout, connection failure, crash after claim, or ambiguous Slack response
 does not authorize another post. Preserve the uncertain claim and expose it to
-the responsible operator and independent relay-health backstop. The operator
+the responsible operator through GitHub Actions or GCP execution logs. The operator
 must inspect the exact channel and bot identity, then explicitly record either
 the exact confirmed message timestamp or authoritative non-delivery. Never
 adopt another app's native message or infer non-delivery from a search miss.
-This preparation freezes both posts and known-parent updates after a surviving
-claim or uncertain acknowledgement. An old sender could still finish after a
-replacement writer and overwrite newer lifecycle evidence. There is no automatic
-takeover or implemented manual receipt-only control yet; that control and its
-authoritative inspection procedure are prerequisites for public cutover.
+Posts and known-parent updates freeze after a surviving claim or uncertain
+acknowledgement. An old sender could still finish after a replacement writer
+and overwrite newer lifecycle evidence. There is no automatic takeover.
+
+Use `monitoring-slack-relay-receipt.yml` for explicit receipt-only reconciliation.
+Its required inputs are the exact `executor_sha`, `source_run_id`,
+`source_run_attempt`, and canonical `receipt_request_json`. The request binds a
+new UUID to the configuration binding, alert, operation ID and digest, current
+state generation, outcome and message timestamp. Protected admission verifies
+the current signed deployment and exact installed image/configuration before
+invoking only `--reconcile-receipt-json`; it does not seed credentials, apply
+infrastructure, change Scheduler, run normal discovery, or write the heartbeat.
+
+The runtime reads both the original sender and controller execution by exact
+resource name. It requires matching immutable image/configuration/identity and
+authoritative terminal proof for the original sender. `confirm_not_delivered`
+is permitted only while the durable operation is still `claimed`, before the
+separate `sending` checkpoint. A `sending` operation requires
+`confirm_message` and exact bot-owned parent/content evidence. A terminal
+execution or absent search result alone cannot clear a `sending` operation.
+The control changes only private receipt state; it makes no Slack post or edit.
+Its terminal verification rereads the generation-pinned request receipt and
+preserves the original sender, claim and protected controller evidence.
 
 Use the existing Slack Web API client. Supply the bot secret explicitly from
 its dedicated Secret Manager access grant and pin the configured channel and
@@ -193,6 +212,12 @@ For an existing relay, preparation must preserve the deployed activation time
 when every other pinned configuration identity agrees. A redeploy must retain
 the delivery-state binding. Changing the bot version, destination or policy
 identity requires a reviewed migration rather than a new implicit activation.
+The runtime configuration binds the full `relay_job` resource and immutable
+`relay_image` reference to the deployed Job. An image update preserves delivery
+history; it does not authorize adopting an older sender's unresolved claim.
+The runtime's `run.executions.get` custom role is bound only on this Job. It has
+no execution-list, start or override permission. Scheduler remains an exact-Job
+invoker; only the separately protected operator path may request control args.
 
 The collector retains successful relay executions and capability probes as audit
 evidence. Only the exact immutable worker's typed completion event from a normal
@@ -200,13 +225,38 @@ live cycle, after durable acknowledgements and a final check for actionable or
 uncertain work, can establish relay recovery. That event cannot establish native
 security resolution, dataset publication, or the main pipeline heartbeat.
 
-Monitor completed relay passes and pending/uncertain delivery through a path
-that does not depend on this same relay or GitHub. Native Cloud Run/Scheduler
-metrics avoid granting the relay permission to fabricate the monitored pipeline
-heartbeat. The final backstop needs an independent recipient/transport, or an
-explicit retained break-glass native route. Slack itself failing cannot be
-reported reliably through another Slack sender alone. Never silence security
-or pipeline-health coverage to remove duplicate messages.
+The selected relay-failure backstop is **GitHub Actions or GCP logs**. Inspect
+failed protected steps, Cloud Run execution outcomes and logs, Scheduler dispatch
+logs, and pending or uncertain claims in the private operational state. GCP
+execution evidence remains available when GitHub is unavailable. Missing logs or
+a quiet channel do not establish a successful scan, delivery, or recovery.
+
+This is an operator-inspection backstop; it does not page. Relay and receipt-only
+control failures must not open recursive public Slack alerts or send another
+message about their own failed transport. Record the failed boundary and the
+responsible operator in the originating chat and operational evidence. Continue
+to preserve independent security and pipeline-health detection and the existing
+native routes until replacement delivery is verified. The relay cannot fabricate
+the main pipeline heartbeat or use its own successful process exit as that proof.
+
+The central auxiliary-worker registry assigns this relay a `logs` delivery route;
+the WDPA execution observer retains its `incident` route. The incident engine
+keeps the relay's exact failed source, signed image correlation and original
+clock, but classifies it as `logs_only` without creating a public parent.
+Deployment and receipt-control workflow failures follow that same exact route,
+including future CI jobs mapped to those deployment targets. An unknown job,
+dataset/domain action, or independent security finding cannot acquire this route
+from its display name. Unverified provenance remains a coverage gap, and uncertain
+mutation still freezes replay; logs-only classification proves neither recovery
+nor heartbeat eligibility.
+An independent generic deployment-observer failure remains normally observable
+when its authenticated source does not establish a relay-specific target. A
+job title or matrix-looking text cannot extend the relay's quiet route.
+The native Cloud Run and Scheduler operational filters also exclude only this
+exact relay Job/Scheduler name, alongside the existing WDPA observer exception.
+Their protected policy sync must verify those two installed filters before
+unpausing the relay. Other future jobs, both security policies and the primary
+pipeline-health absence policy retain their detection and notification routes.
 
 The current `47408aad6aa0d1cb2773bca42acc0528687237ca763ab624c8420757edeba631`
 qualification window belongs to the installed observation protocol. This

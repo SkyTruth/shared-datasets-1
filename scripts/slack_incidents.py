@@ -103,10 +103,13 @@ def operational_fact(observation, value=None):
     source_id = "github:" + observation_key(observation)
     if value is None:
         failed = observation["conclusion"] != "success"
-        mutation = observation["kind"] in {"deployment", "publication"}
+        logs_only = (binding.target in deployments.LOGS_ONLY_TARGETS
+                     or binding.operation_id in deployments.LOGS_ONLY_WORKFLOW_SCOPES)
+        mutation = (observation["kind"] in {"deployment", "publication"}
+                    or binding.operation_id in deployments.LOGS_ONLY_WORKFLOW_SCOPES)
         value = {**binding.to_dict(), "source_id": source_id, "observed_at": observation["time"],
                  "phase": "verification" if mutation else "validation",
-                 "reason": "unknown" if failed else "healthy",
+                 "reason": ("logs_only" if logs_only else "unknown") if failed else "healthy",
                  "mutation_status": "uncertain" if failed and mutation else "not_required",
                  "recovery": "none",
                  "required_action": "Inspect the exact source evidence and establish the mutation outcome before recovery."
@@ -272,6 +275,8 @@ def source_observations(api, event, targets):
     if run["conclusion"] not in alerts.FAILED_CONCLUSIONS | {"success"}:
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
+    if alerts.WORKFLOW_PATHS[run["name"]] in deployments.LOGS_ONLY_WORKFLOWS:
+        return [from_workflow(run)]  # Authenticated source audit; the pure policy keeps transport failures in logs.
     if alerts.catalog_probe_only(run, jobs):
         # A complete read-only probe can resolve only its own observation
         # failure. It supplies no proof that a catalog deployment recovered.

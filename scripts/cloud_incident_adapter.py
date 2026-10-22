@@ -381,6 +381,10 @@ def operational(value):
                   if event["status"] in {"already_claimed", "delivery_unknown"} else "Review translation maintenance for the named asset/release using its existing receipt; do not replay publication.")
     elif fact["kind"] == "execution_request" and cloud.request_outcome(fact["request"], fact["job"])[0] == "permission_denied":
         reason = "artifact_provenance_unverified"  # No execution/artifact can be established.
+    if (value["conclusion"] != "success" and value["scope"] in deployments.LOGS_ONLY_CLOUD_SCOPES
+            and reason not in {"security_risk", "data_integrity_risk", "unapproved_mutation"}):
+        reason = "logs_only"
+        action = "Inspect this relay's exact GCP execution and protected GitHub Actions logs; reconcile uncertain delivery receipts without resending."
     return policy.OperationalObservation.from_dict({**binding(value).to_dict(), "source_id": fact["source_id"], "observed_at": value["time"],
         "phase": phase, "reason": reason, "mutation_status": mutation,
         "recovery": "read_only_retry" if auxiliary and reason == "transient_transport" else "none", "required_action": action,

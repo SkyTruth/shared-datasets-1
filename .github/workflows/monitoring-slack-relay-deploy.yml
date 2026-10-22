@@ -424,6 +424,7 @@ jobs:
               "health_metric": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2",
               "health_policy_created_at": selected["health_policy_created_at"],
               "state_bucket": BUCKET, "slack_secret_version": f"{secret['name']}/versions/{selected['secret_version']}",
+              "relay_job": parent, "relay_image": image,
               "slack_channel": reviewed["slack_channel"], "slack_team": reviewed["slack_team"],
               "slack_user": reviewed["slack_user"], "activated_at": selected["activated_at"], "mode": "shadow",
           })
@@ -494,6 +495,7 @@ jobs:
               assert len(marker_body) == blob.size
               marker = model.parse_json(marker_body)
               assert marker["schema"] == "monitoring-slack-capability-v1" and marker["binding"] == config.binding
+              assert marker["history_read_verified"] is True and marker["own_execution_verified"] is True
               assert marker["execution_name"] == execution["name"].rsplit("/", 1)[1] and marker["github_run_url"] == run_url
               assert model.instant(started) <= model.instant(execution["createTime"]) <= model.instant(marker["checked_at"]) <= model.instant(execution["completionTime"]) <= model.instant(model.utc_now())
               proof.update(capability_execution=execution, capability_marker=marker, capability_marker_generation=generation)

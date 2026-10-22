@@ -65,6 +65,21 @@ class IndependentRelayInfrastructureTests(unittest.TestCase):
         for permission in ("monitoring.timeSeries.create", "run.jobs.run", "storage.objects.list", "iam.serviceAccounts.getAccessToken"):
             self.assertNotIn(permission, TEXT)
 
+    def test_runtime_can_read_only_its_own_exact_sender_execution(self):
+        self.assertEqual(release_contracts.role_permissions(TEXT, "monitoring_slack_execution_reader"), {"run.executions.get"})
+        value = block('resource "google_cloud_run_v2_job_iam_member"', "monitoring_slack_execution_reader")
+        self.assertRegex(value, r'count\s*= var.monitoring_slack_relay == null \? 0 : 1')
+        self.assertRegex(value, r'project\s*= var.project_id')
+        self.assertRegex(value, r'location\s*= var.region')
+        self.assertRegex(value, r'name\s*= module.monitoring_slack_job\[0\].name')
+        self.assertRegex(value, r'member\s*= "serviceAccount:\$\{local.monitoring_slack_runtime_email\}"')
+        self.assertIn('role_id}"', value)
+        self.assertNotIn('resource "google_project_iam_member" "monitoring_slack_execution_reader"', TEXT)
+        # Binding this role must depend on the Job, never the reverse.
+        self.assertNotIn("monitoring_slack_execution_reader", block("module", "monitoring_slack_job"))
+        for permission in ("run.executions.list", "run.jobs.run", "run.jobs.runWithOverrides"):
+            self.assertNotIn(permission, TEXT)
+
     def test_state_is_private_and_authority_is_two_exact_objects(self):
         bucket = block('resource "google_storage_bucket"', "monitoring_slack_state")
         for required in ('uniform_bucket_level_access = true', 'public_access_prevention    = "enforced"',
@@ -99,6 +114,8 @@ class IndependentRelayInfrastructureTests(unittest.TestCase):
         self.assertNotIn("bootstrap-required", TEXT + VARIABLES)
         self.assertIn("@sha256:[0-9a-f]{64}$", VARIABLES)
         self.assertIn('^[1-9][0-9]*$', VARIABLES)
+        self.assertIn('relay_job   = "projects/${var.project_id}/locations/${var.region}/jobs/${local.monitoring_slack_job_name}"', TEXT)
+        self.assertIn('relay_image = var.monitoring_slack_relay.image', TEXT)
 
     def test_scheduler_is_paused_and_can_only_invoke_the_exact_job(self):
         value = block("module", "monitoring_slack_scheduler")

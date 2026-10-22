@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from scripts.operational_retry import UNATTENDED
+from scripts import deployment_revision as deployments
 
 
 REGISTRY = Path(__file__).resolve().parents[1] / "catalog/alert-routing.json"
@@ -64,6 +65,7 @@ class Reason(StrEnum):
     UNCHANGED = "unchanged"
     SUPERSEDED = "superseded"
     SOURCE_NOT_READY = "source_not_ready"
+    LOGS_ONLY = "logs_only"
     TRANSIENT_TRANSPORT = "transient_transport"
     PREREQUISITE_PENDING = "prerequisite_pending"
     ARTIFACT_VISIBILITY_PENDING = "artifact_visibility_pending"
@@ -159,6 +161,7 @@ def load_policy(path: Path = REGISTRY) -> Policy:
                 for category in reasons.values()), "unsupported alert policy reason disposition")
     require(all(reasons[reason] == "independent_security" for reason in (
         Reason.SECURITY_RISK, Reason.DATA_INTEGRITY_RISK, Reason.UNAPPROVED_MUTATION)), "security reasons require independent delivery")
+    require(reasons[Reason.LOGS_ONLY] == "record_only", "transport failures must retain their reviewed logs-only route")
     return Policy(**{key: value[key] for key in limits}, reasons=MappingProxyType({Reason(key): item for key, item in reasons.items()}))
 
 
@@ -221,8 +224,21 @@ class OperationalObservation:
         for reference in self.evidence:
             text(reference, "operational evidence", maximum=2000)
         if CLOUD_EXECUTION_REVISION.fullmatch(self.revision) or CLOUD_SOURCE_REVISION.fullmatch(self.revision):
-            require(self.reason == Reason.ARTIFACT_PROVENANCE_UNVERIFIED,
+            require(self.reason in {Reason.ARTIFACT_PROVENANCE_UNVERIFIED, Reason.LOGS_ONLY},
                     "execution identity cannot establish artifact provenance")
+        if self.reason == Reason.LOGS_ONLY:
+            cloud_scope = self.operation_id in deployments.LOGS_ONLY_CLOUD_SCOPES
+            github_scope = (
+                self.operation_id == "deployment:" + self.target and self.target in deployments.LOGS_ONLY_TARGETS
+                or self.operation_id == self.target
+                and self.target in deployments.LOGS_ONLY_WORKFLOW_SCOPES
+            )
+            require(self.recovery == Recovery.NONE
+                    and (cloud_scope and self.target == self.operation_id
+                         and re.fullmatch(r"cloud(?:api|exec|log):[0-9a-f]{64}", self.source_id)
+                         or github_scope and SHA.fullmatch(self.revision)
+                         and re.fullmatch(r"github:[1-9][0-9]*:[1-9][0-9]*:[0-9]+:[0-9]+", self.source_id)),
+                    "logs-only routing requires an exact registered transport source and cannot authorize replay")
         if self.reason == Reason.ARTIFACT_PROVENANCE_UNVERIFIED:
             require(self.mutation_status == MutationStatus.UNCERTAIN and self.recovery == Recovery.NONE,
                     "unverified artifact provenance must freeze replay")
@@ -482,7 +498,7 @@ def decide(observation: OperationalObservation, *, first_failure_at: str, now: s
         return Decision(Disposition.ESCALATE, first_failure_at, False, True, None, "artifact_provenance_unverified")
     freeze_replay = observation.mutation_status == MutationStatus.UNCERTAIN
     if category == "record_only":
-        return Decision(Disposition.RECORD_ONLY, None, False, False, None, observation.reason.value)
+        return Decision(Disposition.RECORD_ONLY, None, False, freeze_replay, None, observation.reason.value)
     retry_safe = category == "safe_recovery" and safe_recovery(observation)
     # Existing public parents remain public; a late claim cannot retract an
     # escalation or create a second parent. Delivery/update is ledger-owned.
