@@ -23,7 +23,9 @@ def bundle():
     checkpoint = {"schema": cloud.SCHEMA, "covered_through": "2026-10-21T12:00:00.000000Z", "seen": {}, "pending": [], "watching": {},
                   "last_cycle": {"start": "2026-10-21T11:50:00.000000Z", "end": "2026-10-21T12:00:00.000000Z",
                                  "completed_at": "2026-10-21T12:02:00.000000Z", "new_events": 0, "views": list(cloud.VIEWS),
-                                 "coverage_gaps": [], "overlap_seconds": 600, "ingestion_lag_seconds": 120}}
+                                 "coverage_gaps": [], "overlap_seconds": 600, "ingestion_lag_seconds": 120,
+                                 "execution_inventory": {job: {"parent": cloud.job_parent(job), "retained_count": 0,
+                                                               "active_count": 0, "sha256": cloud.digest([])} for job in cloud.registered_jobs()}}}
     return checkpoint, {"complete": True, "provenance_complete": True, "public_delivery_count": 0, "decisions": []}
 
 
@@ -367,6 +369,8 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
     "scripts/setup_grant_proof.py",
     "catalog/operational-log-views.json",
     "scripts/operational_log_views.py",
+    "scripts/operational_protocol.py",
+    "scripts/monitoring_routing_audit.py",
 ])
 def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
     assert relative in cycles.CONTRACT_FILES
@@ -382,6 +386,11 @@ def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relati
 def test_shadow_contract_covers_every_runtime_source_required_by_cutover():
     from scripts import operational_cutover
     assert set(operational_cutover.RUNTIME_FILES) <= set(cycles.CONTRACT_FILES)
+
+
+def test_shadow_contract_covers_every_installed_policy_protocol_source():
+    from scripts.operational_protocol import PROTOCOL_FILES
+    assert set(PROTOCOL_FILES) <= set(cycles.CONTRACT_FILES)
 
 
 def test_contract_hash_follows_registered_reusable_workflow_graph_and_refuses_missing_children(ledger):

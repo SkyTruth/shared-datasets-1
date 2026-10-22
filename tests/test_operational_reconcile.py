@@ -242,10 +242,11 @@ def test_failed_prepare_retains_exact_partial_delivery_plan_without_a_cycle_prop
     monkeypatch.setattr(worker.incidents, "replay_observations", Mock(return_value=[]))
     record = {"id": 77, "payload": {"execution_run_id": 50, "execution_run_attempt": 1}}
 
-    def fail_after_claim(actual_ledger, identity, proposal, *, shadow, now, on_saved, github_api, github_observations, recovery_verifier, clock, translation_reader):
+    def fail_after_claim(actual_ledger, identity, proposal, *, shadow, now, on_saved, github_api, github_observations, recovery_verifier, clock, translation_reader, image_proofs):
         assert actual_ledger is ledger and identity == {"bot": "B1"} and proposal is candidate
         assert shadow is True and now == candidate["last_cycle"]["completed_at"]
         assert github_api is ledger.api and callable(recovery_verifier)
+        assert isinstance(image_proofs, worker.incidents.AuxiliaryImageProofs)
         assert github_observations == ()
         assert callable(translation_reader)
         on_saved(record)
@@ -258,6 +259,40 @@ def test_failed_prepare_retains_exact_partial_delivery_plan_without_a_cycle_prop
     assert not (ledger.directory / worker.PROPOSAL).exists()
     collect.assert_called_once_with({"original": "checkpoint"}, reader, now="scan-clock", clock=clock)
     cycles.save.assert_not_called()
+
+
+def test_prepare_cycle_shares_one_image_proof_context_with_recovery_and_rebuilds_next_phase(cycle, monkeypatch):
+    from test_cloud_observation_ledger import bundle
+
+    _, ledger, cycles = cycle
+    candidate, evaluation = bundle()
+    cycles.load.return_value = {"manifest_id": 10, "checkpoint": deepcopy(candidate)}
+    monkeypatch.setattr(worker.cloud, "collect", Mock(side_effect=lambda *_args, **_kwargs: deepcopy(candidate)))
+    factory = Mock(wraps=worker.incidents.AuxiliaryImageProofs)
+    monkeypatch.setattr(worker.incidents, "AuxiliaryImageProofs", factory)
+    verify = Mock(return_value=True)
+    monkeypatch.setattr(worker.incidents, "reverify_saved_cloud_success", verify)
+    contexts, observations = [], [object(), object()]
+    source = SimpleNamespace(translation_manifest=Mock())
+
+    def clock():
+        return worker.cloud.instant(candidate["last_cycle"]["completed_at"])
+
+    def prepare(actual_ledger, _identity, _proposal, *, image_proofs, recovery_verifier, **_kwargs):
+        assert actual_ledger is ledger
+        contexts.append(image_proofs)
+        observation = observations[len(contexts) - 1]
+        assert recovery_verifier(observation) is True
+        verify.assert_called_with(source, observation, github_api=ledger.api, clock=clock, image_proofs=image_proofs)
+        assert verify.call_args.kwargs["image_proofs"] is image_proofs
+        return [], deepcopy(evaluation)
+
+    monkeypatch.setattr(worker.incidents, "prepare_cloud", prepare)
+    for _ in range(2):
+        worker.prepare_cycle(ledger, cycles, {"bot": "B1"}, source, now=clock(), clock=clock)
+    assert contexts[0] is not contexts[1]
+    assert factory.call_count == 2
+    assert all(call.args == (ledger.api,) for call in factory.call_args_list)
 
 
 def test_failure_before_collection_cannot_reuse_a_prior_local_proposal_or_plan(cycle):
@@ -513,6 +548,7 @@ def test_serialized_full_cycle_verifies_real_policy_receipts_outcomes_and_heartb
     cycles = cycle_records.CycleLedger(api, run, workdir, root=protocol)
     fact = source()
     raw_execution = {"name": fact["execution"]["name"], "uid": fact["execution"]["uid"],
+                     "createTime": fact["execution"]["create_time"], "startTime": fact["execution"]["start_time"],
                      "template": {"containers": [{"image": fact["execution"]["images"][0]}]},
                      "completionTime": fact["execution"]["completion_time"],
                      "conditions": [{"type": "Completed", "state": "CONDITION_FAILED"}]}
@@ -520,6 +556,7 @@ def test_serialized_full_cycle_verifies_real_policy_receipts_outcomes_and_heartb
              "resource": {"type": "cloud_run_job", "labels": {"project_id": worker.cloud.PROJECT, "location": worker.cloud.REGION, "job_name": fact["job"]}},
              "labels": {"run.googleapis.com/execution_name": fact["execution"]["name"].rsplit("/", 1)[-1]}, "jsonPayload": fact["fact"]}
     reader = SimpleNamespace(entries=lambda view, **_: iter([deepcopy(entry)] if view == worker.cloud.VIEWS[0] else []),
+                             executions=lambda job: iter([deepcopy(raw_execution)] if job == fact["job"] else []),
                              execution=lambda _: deepcopy(raw_execution), heartbeat=Mock())
     now = datetime(2026, 10, 21, 12, 12, tzinfo=timezone.utc)
     finished = datetime(2026, 10, 21, 12, 13, tzinfo=timezone.utc)
@@ -533,7 +570,12 @@ def test_serialized_full_cycle_verifies_real_policy_receipts_outcomes_and_heartb
     assert worker.verify_heartbeat(ledger, cycles, reader, clock=lambda: finished)
     durable = cycles.verify_cycle_id(saved["manifest_id"])
     assert durable["evaluation"]["public_delivery_count"] == int(initial_mode == "unified")
-    assert durable["evaluation"]["cloud_counts"]["actionable"] == 1
+    # The exact runtime failure and independent API execution are two pieces
+    # of evidence for one episode, not two public incidents.
+    assert durable["evaluation"]["cloud_counts"]["actionable"] == 2
+    references = durable["evaluation"]["incident_refs"]
+    assert len({item["scope"] for item in references}) == 1
+    assert {item["source_id"].split(":", 1)[0] for item in references} == {"cloudlog", "cloudapi"}
     assert durable["manifest"]["mode"] == initial_mode
     assert len(slack.calls) == int(initial_mode == "unified")
     assert proposal["bundle"]["checkpoint"]["covered_through"] == worker.cloud.timestamp(now - worker.cloud.INGESTION_LAG)

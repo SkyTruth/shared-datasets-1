@@ -1327,10 +1327,70 @@ def verified_auxiliary_artifact(api, fact, *, expected=None):
     return result
 
 
-def verified_cloud_correlation(api, fact, *, expected=None):
+class AuxiliaryImageProofs:
+    """Reuse signed image-only receipts within one read-only CLI phase.
+
+    Executions remain independently fetched and compared. The memo never
+    crosses an API context or substitutes another receipt for saved evidence.
+    It is not serialized and cannot confer dataset or execution authority.
+    """
+
+    def __init__(self, api):
+        self._api = api
+        self._selected = {}
+        self._receipts = {}
+
+    @staticmethod
+    def _receipt_key(proof):
+        return cloud.digest({key: value for key, value in proof.items() if key != "execution"})
+
+    def verify(self, api, fact, *, expected=None):
+        require(api is self._api, "image proof context belongs to another API phase")
+        cloud_adapter.validate_fact(fact)
+        require(fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact.get("execution") is not None,
+                "image-only proof requires an exact auxiliary execution")
+        if api is None or not cloud.DIGEST.fullmatch(cloud_adapter.revision(fact)):
+            require(expected is None, "auxiliary artifact provenance cannot be reverified")
+            return None
+        identity = fact["job"], tuple(fact["execution"]["images"])
+        if expected is not None:
+            cloud_adapter.validate_correlation(expected)
+            require(expected.get("kind") == "auxiliary_artifact" and expected["execution"] == fact["execution"]["name"]
+                    and expected["artifact"] in fact["execution"]["images"], "saved image proof differs from exact execution")
+            key = identity, self._receipt_key(expected)
+            if key not in self._receipts:
+                # Another expected receipt is a fresh verification, never a
+                # fallback to the current latest image receipt.
+                verified = verified_auxiliary_artifact(api, fact, expected=expected)
+                require(verified == expected, "saved auxiliary receipt changed")
+                self._receipts[key] = copy.deepcopy(verified)
+            proof = self._receipts[key]
+        else:
+            if identity not in self._selected:
+                verified = verified_auxiliary_artifact(api, fact)
+                if verified is None:
+                    return None  # Missing/unverified evidence never enters the memo.
+                self._selected[identity] = copy.deepcopy(verified)
+                self._receipts[identity, self._receipt_key(verified)] = copy.deepcopy(verified)
+            proof = self._selected[identity]
+        result = cloud_adapter.validate_correlation({**copy.deepcopy(proof), "execution": fact["execution"]["name"]})
+        require(expected is None or result == expected, "saved auxiliary image proof differs from verified receipt")
+        return result
+
+
+def verified_cloud_correlation(api, fact, *, expected=None, image_proofs=None):
     """Bind only an exact signed deployment/execution and complete source attempt."""
     cloud_adapter.validate_fact(fact)
+    if fact["kind"] in {"execution_request", "scheduler_dispatch"}:
+        require(expected is None, "API request acceptance cannot establish execution correlation")
+        return None
+    if (fact["kind"] == "execution" and fact["execution"]["success"]
+            and fact["job"] not in deployments.AUXILIARY_CLOUD_JOBS):
+        require(expected is None, "execution success alone cannot establish publication recovery")
+        return None
     if fact["job"] in deployments.AUXILIARY_CLOUD_JOBS:
+        if image_proofs is not None:
+            return image_proofs.verify(api, fact, expected=expected)
         return verified_auxiliary_artifact(api, fact, expected=expected)
     if (api is None or cloud_adapter.provenance_gap(fact)
             or fact["job"] not in cloud_adapter.registered_jobs()):
@@ -1377,7 +1437,7 @@ def verified_cloud_correlation(api, fact, *, expected=None):
     return result
 
 
-def reverify_saved_cloud_success(reader, observation, *, github_api=None, clock=None):
+def reverify_saved_cloud_success(reader, observation, *, github_api=None, clock=None, image_proofs=None):
     """Re-fetch exact resources; a caller cannot turn local green JSON into proof."""
     cloud_adapter.validate_observation(observation)
     require(observation["conclusion"] == "success", "cloud recovery is not a successful publication")
@@ -1394,7 +1454,7 @@ def reverify_saved_cloud_success(reader, observation, *, github_api=None, clock=
     require(actual == expected and actual["terminal"] and actual["success"], "cloud recovery execution changed or lacks terminal proof")
     correlation = observation["proof"]["correlation"]
     if correlation is not None and correlation.get("kind") == "auxiliary_artifact":
-        verified_auxiliary_artifact(github_api, fact, expected=correlation)
+        verified_cloud_correlation(github_api, fact, expected=correlation, image_proofs=image_proofs)
         return True  # Observer health only; no canonical data receipt is implied.
     receipt = fact.get("run_receipt")
     require(receipt is not None and reader.run_receipt(receipt["uri"], generation=receipt["generation"]) == receipt,
@@ -1491,8 +1551,9 @@ def poll_translation_manifests(states, observations, reader, *, now, clock=None)
     return facts
 
 
-def normalize_cloud_collection(proposal, github_api=None, *, shadow=True, states=None):
+def normalize_cloud_collection(proposal, github_api=None, *, shadow=True, states=None, image_proofs=None):
     cloud.validate_checkpoint(proposal)
+    image_proofs = image_proofs if image_proofs is not None else AuxiliaryImageProofs(github_api)
     observations, audits, seen, deferred, deferred_proofs = [], [], {}, [], {}
     for fact in proposal["pending"]:
         cloud_adapter.validate_fact(fact)
@@ -1507,7 +1568,7 @@ def normalize_cloud_collection(proposal, github_api=None, *, shadow=True, states
                 or fact["fact"]["details"].get("legacy_delivery_state") == "delivered"):
             audits.append(fact)
             continue
-        correlation = verified_cloud_correlation(github_api, fact)
+        correlation = verified_cloud_correlation(github_api, fact, image_proofs=image_proofs)
         if (correlation is not None and correlation.get("kind") == "auxiliary_artifact"
                 and not cloud_adapter.provenance_gap(fact, correlation)
                 and fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact["kind"] == "execution"
@@ -1626,12 +1687,12 @@ def verify_cloud_evaluation(checkpoint, evaluation, states, *, shadow, worker):
 
 def prepare_cloud(ledger, identity, proposal, *, shadow=True, now=None, github_api=None,
                   recovery_verifier=None, on_saved=lambda _: None, github_observations=(), clock=None,
-                  translation_reader=None):
+                  translation_reader=None, image_proofs=None):
     """One load/fold/save transaction: cloud shadow plus normal GitHub sweep."""
     now = policy.timestamp(cloud.instant(now)) if now is not None else policy.timestamp(datetime.now(timezone.utc))
     states = ledger.load()
     original = copy.deepcopy(states)
-    normalized = normalize_cloud_collection(proposal, github_api=github_api, shadow=shadow, states=states)
+    normalized = normalize_cloud_collection(proposal, github_api=github_api, shadow=shadow, states=states, image_proofs=image_proofs)
     if translation_reader is not None:
         checks = poll_translation_manifests(states, normalized["observations"], translation_reader, now=now, clock=clock)
         checked_at = (clock or (lambda: policy.instant(now)))()

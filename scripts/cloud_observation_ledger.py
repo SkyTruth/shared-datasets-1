@@ -52,6 +52,7 @@ CONTRACT_FILES = tuple(sorted({
     "scripts/translation_recovery.py", "scripts/release_feature_model.py", "scripts/catalog_csv.py",
     "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
     "scripts/operational_cutover.py", "scripts/operational_delivery_activation.py",
+    "scripts/operational_protocol.py", "scripts/monitoring_routing_audit.py",
     ".github/workflows/prod-terraform-target-apply.yml",
     "terraform/envs/prod/operational_observer.tf",
     "terraform/envs/prod/github_readonly_iam.tf",
@@ -147,7 +148,7 @@ def validate_bundle(checkpoint, evaluation, mode):
     require(mode in {"shadow", "unified"}, "unsupported collection mode")
     collector.validate_checkpoint(checkpoint)
     cycle = checkpoint["last_cycle"]
-    require(set(cycle) == {"start", "end", "completed_at", "new_events", "views", "coverage_gaps", "overlap_seconds", "ingestion_lag_seconds"},
+    require(set(cycle) == {"start", "end", "completed_at", "new_events", "views", "execution_inventory", "coverage_gaps", "overlap_seconds", "ingestion_lag_seconds"},
             "incomplete cycle coverage evidence")
     start, end, completed = (collector.instant(cycle[key]) for key in ("start", "end", "completed_at"))
     require(start <= end <= completed and cycle["end"] == checkpoint["covered_through"], "inconsistent coverage clock")

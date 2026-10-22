@@ -28,6 +28,7 @@ def event_entry(identifier="first", *, time=None, kind="job_outcome", status="su
 
 def execution(*, terminal=True, image=IMAGE):
     return {"name": f"projects/{cloud.PROJECT}/locations/{cloud.REGION}/jobs/{JOB}/executions/{EXECUTION}", "uid": UID,
+            "createTime": "2026-10-21T11:55:00Z",
             "template": {"containers": [{"image": image}]}, "completionTime": "2026-10-21T11:57:00Z" if terminal else None,
             "conditions": [{"type": "Completed", "state": "CONDITION_SUCCEEDED" if terminal else "CONDITION_PENDING"}]}
 
@@ -35,6 +36,7 @@ def execution(*, terminal=True, image=IMAGE):
 def reader(entries=(), *, result=None):
     api = Mock()
     api.entries.side_effect = lambda view, **kwargs: iter(deepcopy(entries)) if view == cloud.VIEWS[0] else iter(())
+    api.executions.side_effect = lambda job: iter(())
     api.execution.return_value = execution() if result is None else result
     return api
 
@@ -254,6 +256,9 @@ def test_real_collection_cli_serialization_reloads_checkpoint_without_mutation_o
             view = kwargs["json"]["resourceNames"]
             assert len(view) == 1 and view[0] in cloud.VIEWS
             return Response({"entries": [event_entry()]} if view == [cloud.VIEWS[0]] else {})
+        if url.endswith("/executions"):
+            assert method == "GET" and kwargs["params"]["showDeleted"] == "true"
+            return Response({})
         assert method == "GET" and url.endswith(f"/jobs/{JOB}/executions/{EXECUTION}")
         return Response(execution())
     session.request.side_effect = respond
@@ -299,6 +304,9 @@ def test_last_atomic_view_partial_http_page_restarts_entire_snapshot_without_par
         def request(self, method, url, **kwargs):
             nonlocal last_pages
             if method == "GET":
+                if url.endswith("/executions"):
+                    assert kwargs["params"]["showDeleted"] == "true"
+                    return Response({})
                 return Response(execution())
             assert url == "https://logging.googleapis.com/v2/entries:list"
             body = kwargs["json"]

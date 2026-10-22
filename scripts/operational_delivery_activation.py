@@ -17,13 +17,10 @@ from copy import deepcopy
 from scripts import deployment_revision as deployments
 from scripts import monitoring_routing_audit as routing
 from scripts import operational_cutover as cutover
+from scripts.operational_protocol import PROTOCOL_FILES
 
 POLICY_TARGET = "terraform-" + hashlib.sha256(b"Cron alert policy sync").hexdigest()[:16]
-PROTOCOL_FILES = ("scripts/operational_cutover.py", "scripts/operational_delivery_activation.py", ".github/workflows/prod-terraform-target-apply.yml",
-                  ".github/workflows/unattended-workflow-alert.yml",
-                  "scripts/operational_reconcile.py", "scripts/cloud_observation_ledger.py", "scripts/cloud_operational_observations.py",
-                  "scripts/deployment_revision.py", "scripts/github_api_read.py", "terraform/envs/prod/operational_observer.tf",
-                  "catalog/operational-log-views.json", "scripts/operational_log_views.py")
+
 
 
 def source_file(root, revision, path):

@@ -214,10 +214,13 @@ def deliver_messages(ledger, cycles, slack, *, cloud_reader=None, github_only=Fa
                               or parent and parent["state"] == "delivered" or github_escalation(state),
                               "cloud delivery requires verified unified activation or independent GitHub escalation")
         current_records.append(current)
+    image_proofs = incidents.AuxiliaryImageProofs(ledger.api)
+
     def reverify(observation):
         nonlocal cloud_reader
         cloud_reader = cloud_reader or reader()
-        return incidents.reverify_saved_cloud_success(cloud_reader, observation, github_api=ledger.api, clock=utc_now)
+        return incidents.reverify_saved_cloud_success(cloud_reader, observation, github_api=ledger.api, clock=utc_now,
+                                                     image_proofs=image_proofs)
     incidents.deliver(ledger, current_records, slack, recovery_verifier=None if github_only else reverify)
 
 
@@ -256,12 +259,13 @@ def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
         records.append(record)
         plan.write_text(json.dumps(records, sort_keys=True) + "\n")
 
+    image_proofs = incidents.AuxiliaryImageProofs(ledger.api)
     prepared, evaluation = incidents.prepare_cloud(
         ledger, identity, proposal, shadow=selected["mode"] == "shadow", now=proposal["last_cycle"]["completed_at"], on_saved=retain,
         github_api=ledger.api, github_observations=(), clock=clock,
-        translation_reader=lambda uri: cloud_reader.translation_manifest(uri),
+        translation_reader=lambda uri: cloud_reader.translation_manifest(uri), image_proofs=image_proofs,
         recovery_verifier=lambda observation: incidents.reverify_saved_cloud_success(
-            cloud_reader, observation, github_api=ledger.api, clock=clock or utc_now))
+            cloud_reader, observation, github_api=ledger.api, clock=clock or utc_now, image_proofs=image_proofs))
     plan.write_text(json.dumps(prepared, sort_keys=True) + "\n")
     # Shadow has no cloud public delivery capability. GitHub episodes can still
     # escalate in the same worker; those are outside cloud cutover evidence.
