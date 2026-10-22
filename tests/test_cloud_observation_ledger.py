@@ -16,7 +16,8 @@ from scripts import deployment_emission as emissions
 
 SHA = "a" * 40
 RUN = {"id": 100, "run_attempt": 1, "head_sha": SHA, "head_branch": "main", "path": cycles.WORKFLOW,
-       "event": "schedule", "repository": {"full_name": cycles.REPOSITORY}, "head_repository": {"full_name": cycles.REPOSITORY}}
+       "event": "schedule", "workflow_id": 42, "repository": {"id": 17, "full_name": cycles.REPOSITORY},
+       "head_repository": {"id": 17, "full_name": cycles.REPOSITORY}}
 
 
 def bundle():
@@ -32,12 +33,17 @@ def bundle():
 class API:
     def __init__(self):
         self.records, self.statuses, self.signatures, self.writes = {}, {}, {}, []
+        self.proofs, self.signature_calls, self.status_reads = {}, [], []
         self.fail_task = self.fail_status_task = None
         self.duplicate = False
         self.enumeration_failure = False
         self.runs = {(RUN["id"], RUN["run_attempt"]): deepcopy(RUN)}
 
     def get(self, path):
+        if path == f"repos/{cycles.REPOSITORY}":
+            return {"id": 17, "full_name": cycles.REPOSITORY}
+        if "/actions/workflows/" in path:
+            return {"id": 42, "path": cycles.WORKFLOW}
         if "/actions/runs/" in path:
             run_id, _, attempt = path.split("/actions/runs/")[1].split("/")
             return deepcopy(self.runs[int(run_id), int(attempt)])
@@ -47,6 +53,7 @@ class API:
         if self.enumeration_failure:
             raise subprocess.CalledProcessError(1, ["gh", "api"], output=b"partial enumeration")
         if "/statuses?" in path:
+            self.status_reads.append(int(path.split("/deployments/")[1].split("/")[0]))
             return deepcopy(self.statuses.get(int(path.split("/deployments/")[1].split("/")[0]), []))
         assert "environment=operational-observation-cycle" in path and "task=operational-observation-cycle" in path and "per_page=100" in path
         records = [deepcopy(record) for record in self.records.values() if record["task"] == cycles.TASK]
@@ -73,17 +80,44 @@ class API:
         return status
 
     def sign(self):
+        groups = {}
         for identifier, record in self.records.items():
             if len(self.statuses.get(identifier, [])) == 1:
-                self.signatures[identifier] = cycles.digest(emissions.canonical(emissions.receipt(cycles.REPOSITORY, record, self.statuses[identifier][0])))
+                value = emissions.receipt(cycles.REPOSITORY, record, self.statuses[identifier][0])
+                self.signatures[identifier] = cycles.digest(emissions.canonical(value))
+                if "cycle_nonce" in value["payload"]:
+                    groups.setdefault(value["payload"]["cycle_nonce"], []).append(value)
+        for values in groups.values():
+            subjects = [{"name": emissions.name(value), "digest": {"sha256": cycles.digest(emissions.canonical(value))}} for value in values]
+            for value in values:
+                run = self.runs[value["payload"]["execution_run_id"], value["payload"]["execution_run_attempt"]]
+                self.proofs[value["deployment_id"]] = [{"verificationResult": {
+                    "signature": {"certificate": emissions.policy(cycles.REPOSITORY, 17, value, run, cycles.WORKFLOW)},
+                    "verifiedTimestamps": [{"type": "tlog", "timestamp": "2026-10-21T12:03:00Z"}],
+                    "statement": {"_type": "https://in-toto.io/Statement/v1", "predicateType": emissions.PREDICATE, "subject": deepcopy(subjects)},
+                }}]
 
     def verify_signature(self, api, repository, record, status, *, original_signer, batch):
+        # Existing incident-ledger integration fixtures use this separate
+        # transport seam; cycle tests below exercise the real batch/CLI path.
         from scripts.slack_incidents import _ProofReads
         assert api is self or isinstance(api, _ProofReads) and api.api is self
         assert repository == cycles.REPOSITORY and original_signer == cycles.WORKFLOW and batch is True
         actual = cycles.digest(emissions.canonical(emissions.receipt(repository, record, status)))
         if self.signatures.get(record["id"]) != actual:
             raise emissions.EmissionError("signature rejected")
+
+    def signature_output(self, command, *, text, stderr):
+        # Replace only gh's external signature service. Receipt serialization,
+        # CLI construction, batch matching and persisted reconstruction run real.
+        assert command[:3] == ["gh", "attestation", "verify"]
+        assert "--deny-self-hosted-runners" in command and "--source-ref" in command
+        value = json.loads(Path(command[3]).read_bytes())
+        identifier = value["deployment_id"]
+        self.signature_calls.append(identifier)
+        if self.signatures.get(identifier) != cycles.digest(emissions.canonical(value)):
+            raise emissions.EmissionError("signature rejected")
+        return json.dumps(self.proofs[identifier])
 
 
 @pytest.fixture
@@ -94,7 +128,8 @@ def ledger(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("jobs: {}\n" if relative.endswith((".yml", ".yaml")) else "checked in protocol: " + relative + "\n")
     api = API()
-    monkeypatch.setattr(emissions, "verify", api.verify_signature)
+    monkeypatch.setattr(emissions.subprocess, "check_output", api.signature_output)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
     return cycles.CycleLedger(api, deepcopy(RUN), tmp_path / "work", root=root)
 
@@ -135,6 +170,43 @@ def test_save_then_fresh_load_round_trips_complete_bundle_and_exact_receipts(led
             assert value["required_contexts"] == []
         else:
             assert value["auto_inactive"] is False
+
+
+def test_shared_attestation_is_verified_once_per_cycle_with_fresh_statuses(ledger, monkeypatch):
+    monkeypatch.setattr(cycles, "CHUNK_BYTES", 256)
+    proposal, checkpoint, evaluation = saved(ledger)
+    expected = {proposal["manifest_id"], *(ref["id"] for ref in proposal["manifest"]["parts"])}
+    assert len(expected) > 2
+    verified = ledger.verify_cycle_id(proposal["manifest_id"])
+    assert verified["checkpoint"] == checkpoint and verified["evaluation"] == evaluation
+    assert ledger.api.signature_calls == [proposal["manifest_id"]]
+    assert set(ledger.api.status_reads) == expected
+    ledger.api.status_reads.clear()
+    # Even the same manifest in a later phase needs a new cryptographic proof.
+    assert ledger.verify_cycle_id(proposal["manifest_id"]) == verified
+    assert ledger.api.signature_calls == [proposal["manifest_id"]] * 2
+    assert set(ledger.api.status_reads) == expected
+    part = proposal["manifest"]["parts"][0]["id"]
+    ledger.api.statuses[part][0]["id"] += 1
+    with pytest.raises(emissions.EmissionError):
+        ledger.verify_cycle_id(proposal["manifest_id"])
+
+
+@pytest.mark.parametrize("defect", ["missing_subject", "duplicate_subject", "wrong_digest"])
+def test_signed_manifest_without_exact_part_subjects_never_establishes_a_checkpoint(ledger, defect):
+    proposal, _, _ = saved(ledger)
+    manifest_id = proposal["manifest_id"]
+    subjects = ledger.api.proofs[manifest_id][0]["verificationResult"]["statement"]["subject"]
+    part = next(subject for subject in subjects if subject["name"] != emissions.name(
+        emissions.receipt(cycles.REPOSITORY, ledger.api.records[manifest_id], ledger.api.statuses[manifest_id][0])))
+    if defect == "missing_subject":
+        subjects.remove(part)
+    elif defect == "duplicate_subject":
+        subjects.append(deepcopy(part))
+    else:
+        part["digest"]["sha256"] = "0" * 64
+    with pytest.raises(emissions.EmissionError):
+        ledger.verify_cycle_id(manifest_id)
 
 
 def test_empty_registry_and_duplicate_complete_pages_do_not_invent_cycles(ledger):

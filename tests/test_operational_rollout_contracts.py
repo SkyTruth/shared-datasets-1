@@ -1,8 +1,9 @@
 """The default reviewable cutover is dormant and cannot weaken native safety."""
+from datetime import timedelta
 import json
 from pathlib import Path
 
-from scripts import ci_contract, deployment_permissions, release_contracts
+from scripts import ci_contract, deployment_permissions, operational_cutover, release_contracts
 
 ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / "terraform/envs/prod"
@@ -27,6 +28,8 @@ def test_only_operational_policies_have_gated_native_routes():
         assert "notification_channels = local.cron_alert_notification_channels" in body
     health = (PROD / "operational_observer.tf").read_text().split('resource "google_monitoring_alert_policy" "operational_reconciliation_unhealthy"', 1)[1]
     assert 'duration = "1800s"' in health
+    assert operational_cutover.MAX_CYCLE_GAP + timedelta(minutes=5) == timedelta(seconds=1800)
+    assert operational_cutover.FRESHNESS == timedelta(minutes=10)
     assert "notification_channels = local.cron_alert_notification_channels" in health
 
 

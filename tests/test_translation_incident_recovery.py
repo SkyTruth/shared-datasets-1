@@ -345,6 +345,8 @@ def test_manual_fix_roundtrips_signed_cycle_and_offline_gcs_http_without_runtime
         path.write_text("jobs: {}\n" if relative.endswith((".yml", ".yaml")) else "protocol fixture: " + relative)
     api, run = CompleteAPI(), deepcopy(RUN)
     monkeypatch.setattr(emissions, "verify", api.verify_signature)
+    monkeypatch.setattr(emissions.subprocess, "check_output", api.signature_output)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "output"))
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", at(-60))
     monkeypatch.setattr(worker, "routing", lambda *_: {"mode": "unified", "policy_deployment_id": 77, "policy_status_id": 88, "config_sha256": "d" * 64})

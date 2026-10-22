@@ -1,6 +1,7 @@
 """Offline cutover counterexamples exercise persisted JSON and real GETs."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from unittest import mock
 
 import pytest
@@ -19,13 +20,14 @@ def rollout(mode="native", retire=False):
             "retire_runtime_webhook_access": retire, "retirement_evidence": {**reference, "path": ".github/operational-cutovers/drain.json"} if retire else None}
 
 
-def shadow():
+def shadow(interval=timedelta(minutes=5)):
     cycles, references, heartbeats = {}, [], set()
-    for index in range(289):
-        completed = NOW - timedelta(hours=24, minutes=5) + timedelta(minutes=5 * index)
+    count = ceil(timedelta(hours=24) / interval) + 1
+    for index in range(count):
+        completed = NOW - timedelta(minutes=5) - interval * (count - 1 - index)
         instant = gate.collector.timestamp(completed)
         covered = gate.collector.timestamp(completed - timedelta(minutes=2))
-        coverage = {"start": gate.collector.timestamp(completed - timedelta(minutes=12)), "end": covered,
+        coverage = {"start": gate.collector.timestamp(completed - interval - timedelta(minutes=7)), "end": covered,
                     "completed_at": instant, "views": list(gate.collector.VIEWS), "coverage_gaps": []}
         manifest = {"mode": "shadow", "collector_contract_sha256": CONTRACT, "policy_sha256": POLICY,
                     "source_sha": "d" * 40, "completed_at": instant, "covered_through": covered, "previous_cycle_id": index if index else None}
@@ -58,6 +60,41 @@ def test_full_day_requires_observed_post_policy_samples_and_signed_continuity():
         gate.validate_shadow(evidence, load_cycle=cycles.__getitem__, load_latest=lambda: cycles[max(cycles)], contract_hash=CONTRACT, policy_hash=POLICY,
             policy_ids=evidence["policy_ids"], policy_changed_at=NOW - timedelta(hours=23), heartbeat_points=heartbeats,
             now=NOW, revision_allowed=lambda _: True)
+
+
+@pytest.mark.parametrize("interval", [timedelta(seconds=841.134997), timedelta(minutes=25)])
+def test_delayed_schedule_preserves_full_day_with_exact_overlap_and_real_samples(interval):
+    # Replay the signed production successor gap, plus the last eligible bound.
+    # These are complete scans, not missing runs or invented heartbeat samples.
+    evidence, cycles, points = shadow(interval)
+    assert verify(evidence, cycles, points)["hours"] >= 24
+    assert gate.FRESHNESS == timedelta(minutes=10)
+
+
+@pytest.mark.parametrize("interval", [timedelta(minutes=25, microseconds=1), timedelta(minutes=30)])
+def test_completion_gap_must_leave_margin_before_independent_absence_alarm(interval):
+    evidence, cycles, points = shadow(interval)
+    with pytest.raises(ValueError, match="delayed reconciliation cycle"):
+        verify(evidence, cycles, points)
+
+
+@pytest.mark.parametrize("defect", ["coverage", "missing_sample", "stale", "missing_predecessor"])
+def test_healthy_completion_cadence_does_not_authorize_missing_coverage_or_stale_proof(defect):
+    evidence, cycles, points = shadow(timedelta(seconds=841.134997))
+    if defect == "coverage":
+        cycles[2]["checkpoint"]["last_cycle"]["start"] = gate.collector.timestamp(
+            gate.collector.instant(cycles[1]["checkpoint"]["covered_through"]) + timedelta(microseconds=1))
+    elif defect == "missing_sample":
+        points.remove(gate.collector.instant(cycles[2]["manifest"]["completed_at"]))
+    elif defect == "stale":
+        with pytest.raises(ValueError, match="stale"):
+            verify(evidence, cycles, points, now=NOW + timedelta(minutes=5, microseconds=1))
+        return
+    else:
+        cycles[2]["manifest"]["previous_cycle_id"] = None
+        evidence["cycles"][1]["manifest_sha256"] = gate.sha256(gate.canonical(cycles[2]["manifest"]))
+    with pytest.raises(ValueError):
+        verify(evidence, cycles, points)
 
 
 @pytest.mark.parametrize("defect", [None, "within_window", "future", "unregistered", "unresolved", "tagged", "missing_proof"])

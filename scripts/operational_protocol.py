@@ -17,6 +17,7 @@ PROTOCOL_FILES = (
     "scripts/cloud_operational_observations.py",
     "scripts/cloud_incident_adapter.py",
     "scripts/deployment_revision.py",
+    "scripts/deployment_emission.py",
     "scripts/github_api_read.py",
     "terraform/envs/prod/operational_observer.tf",
     "catalog/operational-log-views.json",

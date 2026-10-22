@@ -32,7 +32,10 @@ OPERATIONAL_POLICIES = {"google_monitoring_alert_policy." + name for name in (
 HEALTH = "google_monitoring_alert_policy.operational_reconciliation_unhealthy"
 REQUIRED_NATIVE = routing.SECURITY_ADDRESSES | {HEALTH}
 MIN_SHADOW = timedelta(hours=24)
-MAX_CYCLE_GAP = timedelta(minutes=10)
+# Reserve a nominal five-minute scheduling interval before the independent
+# thirty-minute absence alarm. Agent check-ins and final evidence freshness
+# have separate ten-minute deadlines; coverage still requires exact overlap.
+MAX_CYCLE_GAP = timedelta(minutes=25)
 FRESHNESS = timedelta(minutes=10)
 SHA = re.compile(r"[0-9a-f]{40}")
 HASH = re.compile(r"[0-9a-f]{64}")

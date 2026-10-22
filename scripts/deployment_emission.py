@@ -112,14 +112,24 @@ def policy(repository, repo_id, value, run, signer):
     }
 
 
-def verify_result(results, value, expected, *, batch=False):
+def _subject(value):
+    return {"name": name(value), "digest": {"sha256": hashlib.sha256(canonical(value)).hexdigest()}}
+
+
+def _matching_statements(results, value, expected, *, batch=False):
+    """Yield only authenticated statements binding this exact anchor/context."""
     require(isinstance(results, list) and results, "no cryptographically verified receipt")
-    digest = hashlib.sha256(canonical(value)).hexdigest()
+    subject = _subject(value)
     for result in results:
+        if not isinstance(result, dict):
+            continue
         verified = result.get("verificationResult", {})
+        if not isinstance(verified, dict) or not isinstance(verified.get("signature", {}), dict):
+            continue
         cert = verified.get("signature", {}).get("certificate", {})
         statement = verified.get("statement", {})
-        subject = {"name": name(value), "digest": {"sha256": digest}}
+        if not isinstance(cert, dict) or not isinstance(statement, dict):
+            continue
         subjects = statement.get("subject")
         subjects_match = subjects == [subject]
         if batch:
@@ -134,8 +144,12 @@ def verify_result(results, value, expected, *, batch=False):
             and statement.get("predicateType") == PREDICATE
             and subjects_match
         ):
-            return
-    raise EmissionError("DEPLOYMENT_EMISSION: signed receipt does not bind the exact record, phase and protected emitter")
+            yield statement
+
+
+def verify_result(results, value, expected, *, batch=False):
+    require(next(_matching_statements(results, value, expected, batch=batch), None) is not None,
+            "signed receipt does not bind the exact record, phase and protected emitter")
 
 
 def verified_output(command, repository, digest):
@@ -157,7 +171,7 @@ def verified_output(command, repository, digest):
             time.sleep(delay)
 
 
-def verify(api, repository, record, status, *, original_signer, batch=False):
+def _verification_context(api, repository, record, status, original_signer):
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
     require(match is not None, "receipt lacks exact run/attempt identity")
@@ -174,6 +188,10 @@ def verify(api, repository, record, status, *, original_signer, batch=False):
     workflow = api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")
     require(workflow.get("id") == run.get("workflow_id") and workflow.get("path") == run["path"], "emitter workflow identity mismatch")
     expected = policy(repository, repo["id"], value, run, signer)
+    return value, expected, signer
+
+
+def _verified_results(repository, value, expected, signer):
     receipts = Path(os.environ["RUNNER_TEMP"]) / "deployment-receipts"
     receipts.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="verify-", dir=receipts) as directory:
@@ -188,8 +206,43 @@ def verify(api, repository, record, status, *, original_signer, batch=False):
         ]
         # Only a confirmed transient service outage retries this same read.
         # A final nonzero exit is fatal; raw bundles never become evidence.
-        results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
+        return json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
+
+
+def verify(api, repository, record, status, *, original_signer, batch=False):
+    value, expected, signer = _verification_context(api, repository, record, status, original_signer)
+    results = _verified_results(repository, value, expected, signer)
     verify_result(results, value, expected, batch=batch)
+
+
+def verify_batch(api, repository, pairs, *, original_signer):
+    """Verify one co-signed manifest/part group with a single anchor invocation.
+
+    Every durable pair derives its own authoritative emitter policy. Only the
+    cryptographically authenticated statement returned for the canonical first
+    receipt can prove its siblings; separate statements are never combined.
+    """
+    require(isinstance(pairs, (list, tuple)) and 1 <= len(pairs) <= 513,
+            "receipt batch must contain 1..513 record/status pairs")
+    require(all(isinstance(pair, (list, tuple)) and len(pair) == 2 for pair in pairs),
+            "receipt batch requires record/status pairs")
+    contexts = [_verification_context(api, repository, record, status, original_signer) for record, status in pairs]
+    anchor, expected, signer = contexts[0]
+    require(all(candidate_expected == expected and candidate_signer == signer
+                for _, candidate_expected, candidate_signer in contexts),
+            "receipt batch mixes protected emitter provenance")
+    subjects = [_subject(value) for value, _, _ in contexts]
+    require(len({subject["name"] for subject in subjects}) == len(subjects),
+            "receipt batch contains duplicate receipt names")
+    results = _verified_results(repository, anchor, expected, signer)
+    for statement in _matching_statements(results, anchor, expected, batch=True):
+        members = statement["subject"]
+        names = [member.get("name") if isinstance(member, dict) else None for member in members]
+        if (all(isinstance(item, str) and item for item in names)
+                and len(set(names)) == len(names)
+                and all(members.count(subject) == 1 for subject in subjects)):
+            return
+    raise EmissionError("DEPLOYMENT_EMISSION: no authenticated statement binds the complete exact receipt batch")
 
 
 def rehearsal(api, repository):

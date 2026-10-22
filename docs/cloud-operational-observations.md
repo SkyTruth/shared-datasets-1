@@ -431,9 +431,13 @@ successful shadow reconciliation and verified heartbeat coverage, with no
 unresolved scan/persistence/provenance gaps. Retain source identities, decisions,
 checkpoint and policy timestamps, and the routing audit as operational evidence.
 The fenced protocol requires a fresh 24-hour window; pre-fence cycles and samples
-do not count. Queue delays and stale supervision check-ins remain evidence gaps
-or expired ownership under their existing deadlines, never permission to relax
-the rollout gate.
+do not count. Consecutive successful completion times must be at most 25 minutes
+apart, reserving a nominal five-minute scheduling interval before the independent
+30-minute absence alarm. Scheduling delays can meet that bound only with every
+signed predecessor, overlapping observation intervals, complete inventories and
+corresponding real heartbeat samples intact. Final evidence freshness remains
+ten minutes. An agent's separate ten-minute check-in rule is unchanged; delayed
+scheduling cannot renew ownership or waive missing observation evidence.
 The immutable cutover document names `audit_setup_deployment_id`: the signed
 successful protected observation setup containing the Run audit resource and
 the exact current observation Terraform boundary. Every eligible shadow sample
@@ -457,7 +461,12 @@ cloud public deliveries, and an observed heartbeat after the audit setup and
 current absence-policy installation. A failed, unsigned, stale or incompatible
 latest record cannot be replaced by the historical reviewed day. The runner's
 proof records both the reviewed tail and the current verified window IDs/hash;
-heartbeat inventory and eligibility time are read after signature enumeration,
+each cycle's manifest and parts share one cryptographically verified attestation.
+Every exact canonical receipt name and digest must occur once in that statement,
+with the same protected emitter certificate. Mutable statuses and authoritative
+worker identities are still read for every part; no proof survives the cycle
+verification call. Missing membership fails without a raw-bundle fallback.
+Heartbeat inventory and eligibility time are read after signature enumeration,
 so a cycle completing during verification is compared with the actual clock.
 It rechecks wall-clock freshness immediately before applying the saved plan.
 
