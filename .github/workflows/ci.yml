@@ -165,7 +165,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ci-results/geospatial-integration"
           docker run --rm --platform linux/amd64 \
             -v "$PWD:/workspace" -v "$RUNNER_TEMP:/evidence" -w /workspace \
-            -e UV_CACHE_DIR=/evidence/native-uv-cache -e UV_LINK_MODE=copy \
+            -e UV_CACHE_DIR=/opt/uv-cache -e UV_LINK_MODE=copy \
             -e UV_PROJECT_ENVIRONMENT=/evidence/native-venv \
             -e SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1 \
             -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \

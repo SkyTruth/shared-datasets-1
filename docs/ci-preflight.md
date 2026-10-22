@@ -46,7 +46,14 @@ Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require
-network access. Tool versions are owned by the dependency-free
+network access. The validation images prepare the locked Python dependency cache
+in a Docker layer keyed by pyproject.toml, uv.lock, the image recipe and its
+pinned runtime. Fresh lint, Python and native containers install from that image
+cache into their own environments; native CI uses the same cache. Locked sync,
+interpreter verification and every suite still run. This caches dependencies,
+not validation evidence. Browser downloads keep their disposable cache, and
+production-image checks keep their isolated host environment.
+Tool versions are owned by the dependency-free
 `scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
 CI setup and image pins are checked against that contract.
 The production-image suite uses the host Docker client and an isolated host

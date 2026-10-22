@@ -50,4 +50,14 @@ COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
 
 RUN pip install --no-cache-dir "uv==${UV_VERSION}"
 
+ENV UV_CACHE_DIR=/opt/uv-cache
+
+# Lockfile-dependent wheels, including native builds, survive across fresh suite
+# containers. Each suite still installs its own environment with locked sync.
+COPY pyproject.toml uv.lock /opt/ci-dependencies/
+RUN cd /opt/ci-dependencies \
+    && UV_CACHE_DIR=/opt/uv-cache UV_PROJECT_ENVIRONMENT=/opt/ci-dependencies/venv \
+       UV_LINK_MODE=copy uv sync --locked --all-groups --extra wdpa-native \
+    && rm -rf /opt/ci-dependencies
+
 WORKDIR /workspace

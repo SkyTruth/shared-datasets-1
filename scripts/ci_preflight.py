@@ -160,7 +160,7 @@ def run_container(root: Path, work: Path, suite: str, image: str, platform: str)
     if image_platform != platform:
         raise ValueError(f"{suite}: image platform {image_platform} differs from native runtime {platform}")
     command = ["docker", "create", "--platform", platform, "-w", "/workspace",
-               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache",
+               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/opt/uv-cache",
                "-e", "UV_LINK_MODE=copy"]
     environment = {"CI": "true"}
     if platform == "linux/arm64":
