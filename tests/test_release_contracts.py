@@ -122,7 +122,7 @@ class ReleaseContractTests(unittest.TestCase):
         for before, after in (
             ('permissions = ["iam.workloadIdentityPoolProviders.update"]',
              'permissions = ["iam.workloadIdentityPoolProviders.update", "iam.workloadIdentityPoolProviders.delete"]'),
-            ("2026-10-22T02:00:00Z", "2099-01-01T00:00:00Z"),
+            ("2026-10-22T06:00:00Z", "2099-01-01T00:00:00Z"),
             ('"sharedDatasetsReadonlyTrustUpdater"', '"otherRole"'),
             ("assertion.workflow == 'Dataset breaking change alert'", "assertion.workflow == 'Other workflow'"),
             ('issuer_uri = "https://token.actions.githubusercontent.com"', 'issuer_uri = "https://other.invalid"'),

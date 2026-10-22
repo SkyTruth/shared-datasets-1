@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
@@ -20,9 +20,12 @@ from scripts import wif_setup_permissions as wif
 from scripts.terraform_plan_permissions import plan_checks
 from test_logging_setup_permissions import PRINCIPAL, TOKEN
 from test_terraform_plan_permissions import plan, row
-from test_wif_setup_permissions import BEFORE, EXPIRY, NUMBER, POOL, WifHttp
+from test_wif_setup_permissions import NUMBER, POOL, WifHttp
 
 PROVIDER = POOL + "/providers/" + trust.PROVIDER_ID
+CREATE_EXPIRY = datetime(2026, 10, 22, 2, tzinfo=timezone.utc)
+TRUST_EXPIRY = datetime(2026, 10, 22, 6, tzinfo=timezone.utc)
+TRUST_BEFORE = TRUST_EXPIRY - timedelta(seconds=1)
 
 
 def provider(condition=None):
@@ -72,7 +75,7 @@ class TrustHttp(WifHttp):
 
 
 class ReadonlyTrustTests(unittest.TestCase):
-    def verify(self, transport, *, now=BEFORE, permissions=(wif.GET,)):
+    def verify(self, transport, *, now=TRUST_BEFORE, permissions=(wif.GET,)):
         with (patch.dict(os.environ, {"TERRAFORM_SERVICE_ACCOUNT": PRINCIPAL}),
               patch.object(live.urllib.request, "urlopen", transport)):
             return trust.verify_provider(trust.PROVIDER_URL, permissions, TOKEN,
@@ -91,7 +94,7 @@ class ReadonlyTrustTests(unittest.TestCase):
         transport.provider = provider(trust.trust_condition())
         transport.roles = {}
         transport.policy = {}
-        self.assertEqual(self.verify(transport, now=EXPIRY + timedelta(days=365)), [])
+        self.assertEqual(self.verify(transport, now=TRUST_EXPIRY + timedelta(days=365)), [])
         self.assertFalse(any(call.full_url == proof.TOKENINFO for call in transport.calls))
         with self.assertRaisesRegex(ValueError, "stale"):
             self.verify(transport, permissions=(wif.GET, trust.UPDATE))
@@ -106,9 +109,32 @@ class ReadonlyTrustTests(unittest.TestCase):
         self.assertNotIn(trust.UPDATE, {p for _, permissions in live.checks("iam-bootstrap") for p in permissions})
 
     def test_fixed_expiry_does_not_slide(self):
-        for now in (EXPIRY, EXPIRY + timedelta(seconds=1)):
+        self.assertEqual(trust.EXPIRES, "2026-10-22T06:00:00Z")
+        self.assertEqual(self.verify(TrustHttp(), now=TRUST_EXPIRY - timedelta(microseconds=1)), [])
+        for now in (TRUST_EXPIRY, TRUST_EXPIRY + timedelta(seconds=1)):
             with self.subTest(now=now), self.assertRaisesRegex(ValueError, "expired"):
                 self.verify(TrustHttp(), now=now)
+
+    def test_old_update_grant_cannot_authorize_new_proposal_even_before_old_expiry(self):
+        for now in (CREATE_EXPIRY - timedelta(seconds=1), CREATE_EXPIRY + timedelta(hours=1)):
+            transport = TrustHttp()
+            transport.policy["bindings"][-1]["condition"] = {
+                "title": "readonly-trust-update-expires",
+                "description": "Expire temporary read-only provider update authority at 2026-10-22 02:00 UTC.",
+                "expression": "request.time < timestamp('2026-10-22T02:00:00Z')",
+            }
+            with self.subTest(now=now), self.assertRaisesRegex(RuntimeError, "live binding does not exactly match"):
+                self.verify(transport, now=now)
+
+    def test_update_window_does_not_extend_original_provider_create_cap(self):
+        self.assertEqual(wif.EXPIRES, "2026-10-22T02:00:00Z")
+        self.assertEqual(self.verify(TrustHttp(), now=CREATE_EXPIRY), [])
+        transport = WifHttp()
+        with (patch.dict(os.environ, {"TERRAFORM_SERVICE_ACCOUNT": PRINCIPAL}),
+              patch.object(live.urllib.request, "urlopen", transport),
+              self.assertRaisesRegex(RuntimeError, "expired")):
+            wif.verify_provider(wif.PROVIDER_URL, (wif.GET,), TOKEN,
+                                lambda url, **kwargs: live.read_json(url, TOKEN, **kwargs), now=CREATE_EXPIRY)
 
     def test_actual_child_identity_and_unchanged_configuration_are_required(self):
         for mutation in (
@@ -192,7 +218,7 @@ class ReadonlyTrustTests(unittest.TestCase):
                   patch.object(live.subprocess, "check_output", return_value=NUMBER) as command,
                   patch("sys.argv", ["deployment_permissions.py", "--target", "readonly-wif-trust", "--plan-json", str(path)]),
                   patch.object(trust, "datetime") as clock):
-                clock.now.return_value = BEFORE
+                clock.now.return_value = TRUST_BEFORE
                 clock.fromisoformat.side_effect = __import__("datetime").datetime.fromisoformat
                 self.assertIsNone(live.main())
                 command.assert_called_once_with(["gcloud", "projects", "describe", trust.PROJECT,

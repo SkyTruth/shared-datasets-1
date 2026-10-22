@@ -17,7 +17,7 @@ ADDRESS = "google_iam_workload_identity_pool_provider.github_readonly"
 PROVIDER_URL = wif.POOL_URL + "/providers/" + PROVIDER_ID
 UPDATE = "iam.workloadIdentityPoolProviders.update"
 ROLE = f"projects/{PROJECT}/roles/sharedDatasetsReadonlyTrustUpdater"
-EXPIRES = "2026-10-22T02:00:00Z"
+EXPIRES = "2026-10-22T06:00:00Z"
 WORKFLOWS = ("Catalog drift guard", "Bucket hygiene audit", "Dataset breaking change alert")
 MAPPING = {"google.subject": "assertion.sub", **{"attribute." + name: "assertion." + name
            for name in ("actor", "repository", "repository_owner", "workflow")}}
@@ -33,7 +33,7 @@ def trust_condition(workflows=WORKFLOWS):
 
 def condition():
     return {"title": "readonly-trust-update-expires",
-            "description": "Expire temporary read-only provider update authority at 2026-10-22 02:00 UTC.",
+            "description": "Expire temporary read-only provider update authority at 2026-10-22 06:00 UTC.",
             "expression": "request.time < timestamp('" + EXPIRES + "')"}
 
 
