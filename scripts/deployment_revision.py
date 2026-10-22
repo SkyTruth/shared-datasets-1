@@ -24,6 +24,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
+    "monitoring-slack-relay": "monitoring-slack-relay-deploy.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
@@ -40,9 +41,20 @@ AUXILIARY_CLOUD_JOBS = {
     "wdpa-execution-observer": {
         "deployment_target": "wdpa-monthly",
         "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+        "completion_evidence": "execution",
+        "delivery_route": "incident",
+    },
+    "monitoring-slack-relay": {
+        "deployment_target": "monitoring-slack-relay",
+        "resource": "module.monitoring_slack_job[0].google_cloud_run_v2_job.this",
+        "completion_evidence": "normal_live_cycle",
+        "delivery_route": "logs",
+        "control_workflows": ("monitoring-slack-relay-receipt.yml",),
     },
 }
 TERRAFORM_SYNCS = {
+    "Monitoring Slack relay secret authority bootstrap": "monitoring-slack-relay-deploy.yml",
+    "Monitoring Slack relay secret setup": "monitoring-slack-relay-deploy.yml",
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
@@ -64,6 +76,29 @@ TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
     for name, workflow in TERRAFORM_SYNCS.items()
 }
+
+# A transport's own failures must not recursively use that same public route.
+# Scope comes from exact resource/workflow identities, never display text.
+LOGS_ONLY_WORKFLOWS = frozenset(
+    workflow
+    for contract in AUXILIARY_CLOUD_JOBS.values()
+    if contract["delivery_route"] == "logs"
+    for workflow in (
+        TARGET_WORKFLOWS[contract["deployment_target"]],
+        *contract.get("control_workflows", ()),
+    )
+)
+LOGS_ONLY_TARGETS = frozenset(
+    target for target, workflow in {**TARGET_WORKFLOWS, **TERRAFORM_WORKFLOWS}.items()
+    if workflow in LOGS_ONLY_WORKFLOWS
+)
+LOGS_ONLY_WORKFLOW_SCOPES = frozenset("workflow:" + path for path in LOGS_ONLY_WORKFLOWS)
+LOGS_ONLY_CLOUD_SCOPES = frozenset(
+    f"cloud:{resource}:{job}"
+    for job, contract in AUXILIARY_CLOUD_JOBS.items()
+    if contract["delivery_route"] == "logs"
+    for resource in ("cloud_run_job", "cloud_scheduler_job")
+)
 
 
 class DeploymentError(RuntimeError):
@@ -224,7 +259,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
+        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "monitoring-slack-relay"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             prior_artifact = record_payload(latest)["artifact"]

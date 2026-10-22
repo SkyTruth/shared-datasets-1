@@ -126,6 +126,7 @@ resource.type="cloud_run_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
+NOT resource.labels.job_name="${local.monitoring_slack_job_name}"
 severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
@@ -335,6 +336,7 @@ resource.type="cloud_scheduler_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"
+NOT resource.labels.job_id="${local.monitoring_slack_job_name}"
 severity>=ERROR
 EOT
     }

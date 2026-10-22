@@ -110,6 +110,11 @@ def request(url, permissions, token):
 def checks(target):
     secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}:testIamPermissions", SECRET_PERMISSIONS)
     project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
+    if target == "monitoring-slack-secret-setup":
+        # The exact saved-plan probe below requires secrets.create only when
+        # creation is actually planned. Existing metadata must remain usable
+        # after the fixed bootstrap write grant expires.
+        return [(project_url, ("resourcemanager.projects.get", "serviceusage.services.list"))]
     if target == "readonly-wif-trust":
         return [(readonly_wif_trust.PROVIDER_URL, (wif_setup.GET,))]
     if target == "iam-bootstrap":
@@ -186,7 +191,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "readonly-wif-trust", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "readonly-wif-trust", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage", "monitoring-slack-relay", "monitoring-slack-secret-setup"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):

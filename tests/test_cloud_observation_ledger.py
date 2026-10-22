@@ -443,6 +443,15 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
     "scripts/operational_log_views.py",
     "scripts/operational_protocol.py",
     "scripts/monitoring_routing_audit.py",
+    "catalog/monitoring-slack-relay.json",
+    "scripts/monitoring_slack_deploy.py",
+    "scripts/monitoring_slack_receipt_control.py",
+    "services/monitoring_slack/__init__.py",
+    "services/monitoring_slack/run.py",
+    "services/monitoring_slack/model.py",
+    "services/monitoring_slack/receipts.py",
+    "services/monitoring_slack/store.py",
+    "services/monitoring_slack/Dockerfile",
 ])
 def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
     assert relative in cycles.CONTRACT_FILES
@@ -453,6 +462,12 @@ def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relati
     assert cycles.contract_hash(ledger.root) != before
     path.write_bytes(original)
     assert cycles.contract_hash(ledger.root) == before
+
+
+def test_shadow_contract_requires_relay_receipt_producer_source(ledger):
+    (ledger.root / "services/monitoring_slack/receipts.py").unlink()
+    with pytest.raises(FileNotFoundError):
+        cycles.contract_hash(ledger.root)
 
 
 def test_shadow_contract_covers_every_runtime_source_required_by_cutover():

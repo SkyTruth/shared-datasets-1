@@ -9,6 +9,7 @@
     "unchanged": "record_only",
     "superseded": "record_only",
     "source_not_ready": "record_only",
+    "logs_only": "record_only",
     "transient_transport": "safe_recovery",
     "prerequisite_pending": "safe_recovery",
     "artifact_visibility_pending": "safe_recovery",

@@ -261,12 +261,20 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
             for step in job.get("steps", []):
                 run = step.get("run", "")
                 if MARKER in run:
+                    if (path.name, step["name"]) == (
+                        "monitoring-slack-relay-deploy.yml", "Verify live shadow configuration and no active execution"
+                    ):
+                        # Read the execution's marker as evidence; this step
+                        # neither assigns it nor starts/updates a workload.
+                        assert "--update-env-vars" not in run and "gcloud " not in run
+                        assert "session.post(" not in run and "session.patch(" not in run
+                        continue
                     marked_steps.append(step["name"])
                     assert "--wait" in run and "--async" not in run
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
+    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Execute read-only capability canary", "Execute only the exact receipt request"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -281,14 +289,16 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
   protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
-    # The frequent observer has persistent-health coverage. Every other job,
-    # including future jobs, retains the immediate failure policy.
-    assert filter_text.count("resource.labels.job_name") == 1
+    # The observer has persistent-health coverage; the transport's own failure
+    # uses GHA/GCP logs. Other jobs, including future jobs, remain observable.
+    assert filter_text.count("resource.labels.job_name") == 2
     assert 'NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in filter_text
+    assert 'NOT resource.labels.job_name="${local.monitoring_slack_job_name}"' in filter_text
     scheduler = text.split('"scheduled_ingestion_scheduler_failure"', 1)[1].split("\nresource ", 1)[0]
     scheduler_filter = scheduler.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
-    assert scheduler_filter.count("resource.labels.job_id") == 1
+    assert scheduler_filter.count("resource.labels.job_id") == 2
     assert 'NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"' in scheduler_filter
+    assert 'NOT resource.labels.job_id="${local.monitoring_slack_job_name}"' in scheduler_filter
     health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
     assert 'enabled      = var.cron_alerts_enabled' in health
     assert 'notification_channels = local.operational_alert_notification_channels' in health

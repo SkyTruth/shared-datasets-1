@@ -12,6 +12,7 @@ import pytest
 from scripts import ci_preflight as preflight
 from scripts import ci_source_proof as proof
 from scripts.ci_contract import SUITES, expected_tools
+from scripts.tested_image_bundle import TARGETS
 from ci_result_fixtures import production_images
 from test_ci_preflight import fixture_repo
 from workflow_helpers import load_workflow
@@ -161,7 +162,9 @@ def test_gate_packages_only_results_and_verifier_retains_original_bundle_identit
     retained = transport["uploaded"]["ci-result-production-images-attempt1"]
     with zipfile.ZipFile(retained) as bundle:
         assert "images/manifest.json" in bundle.namelist()
-        assert len([name for name in bundle.namelist() if name.endswith(".docker.tar")]) == 5
+        assert {name for name in bundle.namelist() if name.endswith(".docker.tar")} == {
+            f"images/{target}.docker.tar" for target in TARGETS
+        }
         assert "runner.log" in bundle.namelist()
     for node in (22, 24):
         with zipfile.ZipFile(transport["uploaded"][f"ci-result-sdk-node{node}-attempt1"]) as bundle:

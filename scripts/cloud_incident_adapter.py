@@ -193,12 +193,37 @@ def provenance_gap(fact, correlation=None):
                and (correlation is None or correlation.get("kind") != "auxiliary_artifact"))
 
 
-def observational_success(fact, correlation):
+def auxiliary_terminal_success(fact, correlation):
+    """An exact signed execution outcome, distinct from recovery evidence."""
     execution = fact.get("execution", {})
     return bool(correlation is not None and correlation.get("kind") == "auxiliary_artifact"
                 and not provenance_gap(fact, correlation) and execution.get("terminal") and execution.get("success")
                 and (fact["kind"] == "execution" or fact["kind"] == "runtime" and fact["fact"]["kind"] == "job_outcome"
                      and fact["fact"]["status"] in {"success", "skipped"}))
+
+
+def observational_success(fact, correlation):
+    if not auxiliary_terminal_success(fact, correlation):
+        return False
+    completion = deployments.AUXILIARY_CLOUD_JOBS[fact["job"]]["completion_evidence"]
+    require(completion in {"execution", "normal_live_cycle"}, "unsupported operational completion evidence")
+    if completion == "execution":
+        return True
+    # This event is emitted only after the reviewed relay's normal LIVE cycle
+    # finishes delivery/ACK and checks that no uncertain operation remains.
+    # API greens, capability probes and shadow cycles do not establish that.
+    event = fact.get("fact", {})
+    execution = fact["execution"]
+    started = execution["start_time"] or execution["create_time"]
+    return bool(fact["kind"] == "runtime" and event.get("kind") == "job_outcome"
+                and event.get("status") == "success" and event.get("subject") == {}
+                and event.get("details") == {"mutation_status": "completed", "published_data_state": "unchanged"}
+                # The shared emitter records whole seconds; compare the lower
+                # execution boundary at that same precision, without allowing a
+                # completion fact after terminal execution or log observation.
+                and started is not None and cloud.instant(seconds(started)) <= cloud.instant(event["observed_at"])
+                <= cloud.instant(execution["completion_time"])
+                and cloud.instant(event["observed_at"]) <= cloud.instant(fact["observed_at"]))
 
 
 def accepted_request(fact):
@@ -232,7 +257,7 @@ def normalize(fact, *, correlation=None, promote=False):
     family = domain(fact)
     if not gap and family == "translation" and fact["kind"] == "runtime" and (event["status"] == "delivered" or event["details"].get("legacy_delivery_state") == "delivered"):
         return None
-    success = recoverable(fact) or observational_success(fact, correlation) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"])
+    success = recoverable(fact) or auxiliary_terminal_success(fact, correlation) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"])
     if not gap and not family and not success and (
             fact["kind"] == "runtime" and event["status"] in {"success", "skipped"} and not success
             or fact["kind"] == "execution" and fact["execution"]["success"]):
@@ -296,7 +321,7 @@ def validate_observation(value):
         "asset": fact["fact"]["subject"]["asset_slug"], "release": fact["fact"]["subject"]["release"]}))
     require((value["scope"] == expected_scope or identity_recovery) and (value["kind"] != "deployment" or correlated
             and proof["correlation"].get("kind") != "auxiliary_artifact" and domain(fact) is None), "cloud scope lacks exact provenance")
-    require(value["conclusion"] == ("success" if recoverable(fact) or observational_success(fact, proof["correlation"]) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"]) else "failure"),
+    require(value["conclusion"] == ("success" if recoverable(fact) or auxiliary_terminal_success(fact, proof["correlation"]) or fact["kind"] == "translation_manifest" and translations.complete(fact["manifest"]) else "failure"),
             "cloud outcome differs from canonical proof")
     operational(value)
     return value
@@ -320,15 +345,20 @@ def operational(value):
     if provenance_gap(fact, value["proof"]["correlation"]):
         reason = "artifact_provenance_unverified"
         action = "Resolve the execution image/UID or dispatch provenance gap; inspect writes before any replay."
-    elif auxiliary and value["conclusion"] == "success":
+    elif auxiliary and observational_success(fact, value["proof"]["correlation"]):
         reason, mutation = "healthy", "not_required"
         data = "Only execution-observation health is verified; canonical dataset and deployment outcomes remain separate."
-        impact = "The read-only execution observer completed successfully."
-        action = "No action for observer health; retain any independent data or deployment incident."
+        impact = "The operational worker completed its required health verification."
+        action = "No action for this worker's health; retain any independent data or deployment incident."
+    elif auxiliary and value["conclusion"] == "success":
+        reason, mutation = "unchanged", "not_required"
+        data = "Only an execution or probe outcome is verified; normal live delivery and canonical publication remain unverified."
+        impact = "The operational execution completed, without the required normal live-cycle completion evidence."
+        action = "Retain any unresolved worker incident; this audit outcome cannot establish recovery."
     elif auxiliary and event.get("kind") == "job_outcome" and event.get("status") == "failed" and event.get("details", {}).get("failure_reason"):
         reason, phase, mutation = event["details"]["failure_reason"], "read", "not_started"
         data = "The observation read failed before status-document writes; canonical data is outside this observer's authority."
-        impact = "WDPA execution visibility is delayed; this does not establish a dataset failure or recovery."
+        impact = "Operational observation is delayed; this does not establish a dataset failure or recovery."
         action = "Inspect observer read credentials/configuration if scheduled safe read recovery does not succeed."
     elif fact["kind"] == "translation_manifest":
         reason, phase, mutation = ("healthy" if value["conclusion"] == "success" else "translation_maintenance_required"), "notification", "not_required"
@@ -351,6 +381,10 @@ def operational(value):
                   if event["status"] in {"already_claimed", "delivery_unknown"} else "Review translation maintenance for the named asset/release using its existing receipt; do not replay publication.")
     elif fact["kind"] == "execution_request" and cloud.request_outcome(fact["request"], fact["job"])[0] == "permission_denied":
         reason = "artifact_provenance_unverified"  # No execution/artifact can be established.
+    if (value["conclusion"] != "success" and value["scope"] in deployments.LOGS_ONLY_CLOUD_SCOPES
+            and reason not in {"security_risk", "data_integrity_risk", "unapproved_mutation"}):
+        reason = "logs_only"
+        action = "Inspect this relay's exact GCP execution and protected GitHub Actions logs; reconcile uncertain delivery receipts without resending."
     return policy.OperationalObservation.from_dict({**binding(value).to_dict(), "source_id": fact["source_id"], "observed_at": value["time"],
         "phase": phase, "reason": reason, "mutation_status": mutation,
         "recovery": "read_only_retry" if auxiliary and reason == "transient_transport" else "none", "required_action": action,

@@ -317,3 +317,17 @@ class ImageOperationPermissionTests(unittest.TestCase):
             live.main()
         request.assert_called_once_with(*live.checks("artifact-registry-images")[0], "token")
         output.assert_called_once_with("artifact-registry-images: deployment permission prerequisites verified.")
+
+
+class SecretResourcePermissionTests(unittest.TestCase):
+    def test_secret_creation_probes_parent_and_existing_update_probes_exact_secret(self):
+        value = {"project": PROJECT, "secret_id": "shared-datasets-slack-incident-bot-token"}
+        create = dict(plan_checks(plan(row("google_secret_manager_secret", ["create"], value)), project_number=NUMBER))
+        self.assertEqual(create, {PROJECT_URL: ("secretmanager.secrets.create",)})
+        update = dict(plan_checks(plan(row("google_secret_manager_secret", ["update"], value)), project_number=NUMBER))
+        self.assertEqual(update, {f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{value['secret_id']}:testIamPermissions": ("secretmanager.secrets.get", "secretmanager.secrets.update")})
+
+    def test_foreign_or_unknown_secret_cannot_authorize_mutation(self):
+        for value in ({"project": "foreign", "secret_id": "bot"}, {"project": PROJECT, "secret_id": None}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                plan_checks(plan(row("google_secret_manager_secret", ["create"], value)), project_number=NUMBER)
