@@ -11,7 +11,6 @@ import yaml
 
 from scripts import ci_preflight
 from scripts import terraform_target_contracts as contracts
-from test_operational_log_filter import serialized_views
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,26 +189,3 @@ def test_historical_negative_control_is_exact_failed_source_not_a_cached_graph()
     # Graphs are produced from the active configuration and both failed-source
     # variants by the shared lint command, rather than replayed as a DOT fixture.
     assert not list(directory.glob('*.dot'))
-
-
-def test_operational_view_filters_are_read_from_real_console_serialization(tmp_path):
-    value = serialized_views()
-    output = json.dumps(json.dumps(value)) + '\n'
-    completed = mock.Mock(returncode=0, stdout=output, stderr='')
-    environment = {'HOME': str(tmp_path / 'home'), 'TF_INPUT': '0'}
-    with mock.patch.object(contracts.subprocess, 'run', return_value=completed) as run:
-        proof = contracts.operational_views(tmp_path / 'prod', 'pinned-terraform', environment, tmp_path, ROOT)
-    run.assert_called_once_with(['pinned-terraform', '-chdir=' + str(tmp_path / 'prod'), 'console', '-no-color'],
-                                input='jsonencode(local.operational_observer_log_views)\n', env=environment,
-                                text=True, stdout=contracts.subprocess.PIPE, stderr=contracts.subprocess.PIPE, timeout=120)
-    assert len(proof['views']) == 8
-    assert json.loads((tmp_path / 'operational-views.json').read_text()) == value
-    source = (ROOT / 'scripts/terraform_target_contracts.py').read_text()
-    assert "'operational_log_views': operational_views(prod, executable, environment, positive, root)" in source
-
-
-def test_failed_console_cannot_supply_cached_or_partial_filter_evidence(tmp_path):
-    completed = mock.Mock(returncode=1, stdout=json.dumps(json.dumps(serialized_views())), stderr='invalid Terraform expression')
-    with mock.patch.object(contracts.subprocess, 'run', return_value=completed), pytest.raises(ValueError, match='serialization failed'):
-        contracts.operational_views(tmp_path / 'prod', 'pinned-terraform', {}, tmp_path, ROOT)
-    assert not (tmp_path / 'operational-views.json').exists()

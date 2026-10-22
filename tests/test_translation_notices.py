@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import PreconditionFailed
 
 from ingestion.common import feature_metadata, translation_notices as notices
 from scripts import feature_metadata_localization as loc, gcs_asset, release_feature_model as model, translation_local_io
@@ -24,8 +24,6 @@ class Bucket:
         bucket = self
         class Blob:
             def reload(self):
-                if name not in bucket.objects:
-                    raise NotFound("missing fixture object")
                 self.generation = bucket.objects[name][0]
 
             def download_as_bytes(self, *, if_generation_match):
@@ -142,27 +140,6 @@ def test_unknown_delivery_is_not_reported_as_delivered_or_retried(tmp_path, monk
     marker = next(json.loads(data) for name, (_, data) in bucket.objects.items() if name.endswith("translation-notice.json"))
     assert marker["status"] == "delivery_unknown"
     assert "delivery unconfirmed" in caplog.text
-
-
-@pytest.mark.parametrize("state", [None, "claimed", "delivered", "delivery_unknown"])
-def test_unified_emits_facts_without_public_delivery_or_legacy_claim_mutation(tmp_path, monkeypatch, state):
-    monkeypatch.setenv("SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE", "unified")
-    client, bucket, uri, row = fixture(tmp_path)
-    name = "category/group/example-asset/runs/2026-05-01.translation-notice.json"
-    if state:
-        manifest_name = uri.removeprefix("gs://bucket/")
-        marker = {"schema_version": 1, "asset_slug": "example-asset", "release": "2026-05-01", "manifest": {"path": uri, "generation": bucket.objects[manifest_name][0]}, "status": state}
-        bucket.blob(name).upload_from_string(json.dumps(marker), content_type="application/json", if_generation_match=0)
-    before = dict(bucket.objects)
-    with mock.patch.object(notices.catalog_csv, "catalog_row", return_value=row), mock.patch.object(notices.slack_notify, "notify", side_effect=AssertionError("unified public delivery")), mock.patch.object(notices, "emit") as event:
-        assert notices.notify_release(client, uri) == ("already_claimed" if state else "observed")
-    assert bucket.objects == before
-    assert bucket.downloads == []
-    assert event.call_args.args == ("translation_maintenance", "already_claimed" if state else "required")
-    if state:
-        assert event.call_args.kwargs["details"]["legacy_delivery_state"] == state
-    else:
-        assert "receipt_uri" not in event.call_args.kwargs["details"]
 
 
 def test_prompt_csv_roundtrips_through_machine_and_expert_review(tmp_path, monkeypatch):

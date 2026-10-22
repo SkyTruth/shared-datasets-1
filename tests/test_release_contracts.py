@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
-import csv
 from pathlib import Path
 import shutil
 import tempfile
@@ -26,184 +24,6 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_current_reviewed_contracts_pass_without_live_credentials(self):
         self.assertEqual(contracts.check(self.root, {"wdpa", "eamlis", "sea-ice", "wdpa-processing"}), [])
-
-    def test_manual_only_terraform_caller_has_exact_source_inputs_without_reusable_authority(self):
-        value = contracts.workflow(self.root, "monitoring-slack-relay-deploy.yml")
-        self.assertEqual(set(value.get("on", value.get(True))), {"workflow_dispatch"})
-        self.assertEqual(contracts.iam_contract(self.root), [])
-
-    def test_manual_only_terraform_source_inputs_cannot_be_missing_optional_or_numeric(self):
-        path = self.root / ".github/workflows/monitoring-slack-relay-deploy.yml"
-        original = yaml.safe_load(path.read_text())
-        for key in ("executor_sha", "source_run_id", "source_run_attempt"):
-            for defect in ("missing", "optional", "numeric", "truthy-required"):
-                with self.subTest(key=key, defect=defect):
-                    current = deepcopy(original)
-                    inputs = current.get("on", current.get(True))["workflow_dispatch"]["inputs"]
-                    if defect == "missing":
-                        inputs.pop(key)
-                    elif defect == "optional":
-                        inputs[key]["required"] = False
-                    elif defect == "numeric":
-                        inputs[key]["type"] = "number"
-                    else:
-                        inputs[key]["required"] = "true"
-                    path.write_text(yaml.safe_dump(current))
-                    errors = contracts.iam_contract(self.root)
-                    self.assertTrue(any(f"exact tested {key}" in item for item in errors))
-
-    def test_each_declared_supported_trigger_requires_its_own_exact_source_contract(self):
-        path = self.root / ".github/workflows/artifact-registry-iam-sync.yml"
-        original = yaml.safe_load(path.read_text())
-        for event in ("workflow_call", "workflow_dispatch"):
-            with self.subTest(event=event):
-                current = deepcopy(original)
-                current.get("on", current.get(True))[event]["inputs"]["source_run_id"]["type"] = "number"
-                path.write_text(yaml.safe_dump(current))
-                self.assertTrue(any("exact tested source_run_id" in item for item in contracts.iam_contract(self.root)))
-
-    def test_terraform_caller_requires_supported_trigger_and_exact_forwarding(self):
-        path = self.root / ".github/workflows/monitoring-slack-relay-deploy.yml"
-        original = yaml.safe_load(path.read_text())
-        for triggers in ({}, {"push": {}}, {"workflow_dispatch": None}, {"workflow_dispatch": {"inputs": []}}):
-            with self.subTest(triggers=triggers):
-                current = deepcopy(original)
-                current["on" if "on" in current else True] = triggers
-                path.write_text(yaml.safe_dump(current))
-                self.assertTrue(contracts.iam_contract(self.root))
-        current = deepcopy(original)
-        current["jobs"]["bootstrap"]["with"]["executor_sha"] = "refs/heads/main"
-        path.write_text(yaml.safe_dump(current))
-        self.assertTrue(any("exact tested executor_sha" in item for item in contracts.iam_contract(self.root)))
-
-    def test_runtime_ci_callers_cannot_inherit_optional_skips_or_bypass_prerequisites(self):
-        path = self.root / ".github/workflows/ci.yml"
-        original = yaml.safe_load(path.read_text())
-        for target in contracts.DEPLOYS:
-            condition = original["jobs"][target]["if"]
-            for unsafe in (
-                condition.replace("!cancelled() && ", ""),
-                condition.replace("!cancelled()", "always()"),
-                condition.replace("needs.ingestion-iam.result == 'success' && ", ""),
-                condition.replace("needs.artifact-registry-iam.result == 'success' && ", ""),
-                condition.replace("needs.ci-ready.result == 'success'", "needs.ci-ready.result != 'failure'"),
-            ):
-                with self.subTest(target=target, condition=unsafe):
-                    current = deepcopy(original)
-                    current["jobs"][target]["if"] = unsafe
-                    path.write_text(yaml.safe_dump(current))
-                    errors = contracts.deployment_contract(self.root, target)
-                    self.assertTrue(any("CI caller must bypass skipped ancestors" in item for item in errors))
-            for needs in (
-                [name for name in original["jobs"][target]["needs"] if name != "ingestion-iam"],
-                original["jobs"][target]["needs"] + ["preview-terraform-iam"],
-            ):
-                current = deepcopy(original)
-                current["jobs"][target]["needs"] = needs
-                path.write_text(yaml.safe_dump(current))
-                self.assertTrue(any("CI caller must bypass skipped ancestors" in item
-                                    for item in contracts.deployment_contract(self.root, target)))
-        path.write_text(yaml.safe_dump(original))
-
-    def test_logging_identity_proof_wiring_cannot_change_principal_scope_or_delegate(self):
-        path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
-        original = yaml.safe_load(path.read_text())
-        for field, changed in (
-            ("service_account", "other@shared-datasets-1.iam.gserviceaccount.com"),
-            ("token_format", "access_token"),
-            ("access_token_scopes", "https://www.googleapis.com/auth/cloud-platform"),
-            ("access_token_subject", "delegate@example.com"),
-            ("delegates", "other@shared-datasets-1.iam.gserviceaccount.com"),
-            ("create_credentials_file", False),
-        ):
-            current = deepcopy(original)
-            auth = next(step for step in current["jobs"]["sync"]["steps"] if step.get("id") == "auth")
-            auth["with"][field] = changed
-            path.write_text(yaml.safe_dump(current))
-            self.assertTrue(any("explicit scoped identity token" in item for item in contracts.iam_contract(self.root)))
-        for name in ("Verify prerequisite deployment permissions", "Verify complete saved-plan mutation permissions"):
-            current = deepcopy(original)
-            step = next(step for step in current["jobs"]["sync"]["steps"] if step.get("name") == name)
-            step["env"].pop("LOGGING_SETUP_ACCESS_TOKEN")
-            path.write_text(yaml.safe_dump(current))
-            self.assertTrue(any("masked scoped auth token" in item for item in contracts.iam_contract(self.root)))
-        current = deepcopy(original)
-        current["env"]["TERRAFORM_SERVICE_ACCOUNT"] = "different-principal"
-        path.write_text(yaml.safe_dump(current))
-        self.assertTrue(any("explicit scoped identity token" in item for item in contracts.iam_contract(self.root)))
-
-    def test_logging_installed_grant_proof_tracks_exact_terraform_scope(self):
-        path = self.root / "terraform/envs/prod/operational_observer.tf"
-        original = path.read_text()
-        for before, after in (
-            ('toset(["_Default", "_Required"])', 'toset(["_Default", "_Required", "other"])'),
-            ('role_id     = "sharedDatasetsOperationalLogViewManager"', 'role_id     = "otherLogRole"'),
-            ('title       = "operational-view-buckets-only"', 'title       = "different-scope"'),
-            ("resource.name.startsWith('projects/${var.project_id}/locations/global/buckets/${bucket}/views/')", "resource.name.startsWith('projects/${var.project_id}/')"),
-        ):
-            self.assertIn(before, original)
-            path.write_text(original.replace(before, after, 1))
-            self.assertTrue(any("Logging installed-grant proof" in item for item in contracts.iam_contract(self.root)))
-        path.write_text(original)
-
-    def test_provider_setup_proposal_has_fixed_expiry_exact_roles_and_bootstrap(self):
-        path = self.root / "terraform/envs/prod/operational_observer.tf"
-        original = path.read_text()
-        for before, after in (
-            ("request.time < timestamp('2026-10-22T02:00:00Z')", "request.time < timestamp('2099-01-01T00:00:00Z')"),
-            ('"sharedDatasetsOperationalProviderCreator"', '"otherCreator"'),
-            ('permissions = ["iam.workloadIdentityPoolProviders.create"]', 'permissions = ["iam.workloadIdentityPoolProviders.create", "iam.workloadIdentityPoolProviders.update"]'),
-            ('title       = "operational-provider-create-expires"', 'title       = "changed"'),
-        ):
-            self.assertIn(before, original)
-            path.write_text(original.replace(before, after, 1))
-            self.assertTrue(any("operational provider" in item or "operational_provider_creator" in item for item in contracts.iam_contract(self.root)))
-        path.write_text(original)
-        workflow_path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
-        workflow = yaml.safe_load(workflow_path.read_text())
-        workflow["jobs"]["bootstrap"]["with"]["allowed_exact"] = workflow["jobs"]["bootstrap"]["with"]["allowed_exact"].replace("google_project_iam_member.github_actions_operational_provider_creator", "")
-        workflow_path.write_text(yaml.safe_dump(workflow))
-        self.assertTrue(any("exact protected bootstrap allowed_exact" in item for item in contracts.iam_contract(self.root)))
-
-    def test_readonly_trust_repair_preserves_exact_provider_and_separate_update_scope(self):
-        path = self.root / "terraform/envs/prod/github_readonly_iam.tf"
-        original = path.read_text()
-        for before, after in (
-            ('permissions = ["iam.workloadIdentityPoolProviders.update"]',
-             'permissions = ["iam.workloadIdentityPoolProviders.update", "iam.workloadIdentityPoolProviders.delete"]'),
-            ("2026-10-22T06:00:00Z", "2099-01-01T00:00:00Z"),
-            ('"sharedDatasetsReadonlyTrustUpdater"', '"otherRole"'),
-            ("assertion.workflow == 'Dataset breaking change alert'", "assertion.workflow == 'Other workflow'"),
-            ('issuer_uri = "https://token.actions.githubusercontent.com"', 'issuer_uri = "https://other.invalid"'),
-            ('"google.subject"             = "assertion.sub"', '"google.subject"             = "assertion.actor"'),
-        ):
-            with self.subTest(before=before):
-                self.assertIn(before, original)
-                path.write_text(original.replace(before, after, 1))
-                self.assertTrue(contracts.readonly_trust_contract(self.root))
-        path.write_text(original)
-        workflow_path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
-        original_workflow = yaml.safe_load(workflow_path.read_text())
-        for job, field, value in (
-            ("readonly-bootstrap", "needs", "readonly-trust"),
-            ("readonly-trust", "needs", "bootstrap"),
-            ("readonly-trust", "readiness_target", "operational-observer-setup"),
-            ("readonly-trust", "allowed_exact", "google_iam_workload_identity_pool.github"),
-            ("readonly-bootstrap", "targets", "google_iam_workload_identity_pool_provider.github_readonly"),
-        ):
-            with self.subTest(job=job, field=field):
-                value_workflow = deepcopy(original_workflow)
-                current = value_workflow["jobs"][job]
-                (current if field == "needs" else current["with"])[field] = value
-                workflow_path.write_text(yaml.safe_dump(value_workflow))
-                self.assertTrue(contracts.readonly_trust_contract(self.root))
-        workflow_path.write_text(yaml.safe_dump(original_workflow))
-        changed = deepcopy(original_workflow)
-        changed["jobs"]["observations"]["needs"] = "bootstrap"
-        workflow_path.write_text(yaml.safe_dump(changed))
-        self.assertTrue(any("operational setup requires ordered bootstrap" in item
-                            for item in contracts.iam_contract(self.root)))
-        workflow_path.write_text(yaml.safe_dump(original_workflow))
 
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
@@ -235,23 +55,6 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("runWithOverrides" in item for item in errors))
         self.assertTrue(any("bootstrap" in item for item in errors))
 
-    def test_observer_catalog_growth_cannot_exceed_reviewed_iam_chunk_scope(self):
-        path = self.root / "catalog/shared-datasets-catalog.csv"
-        with path.open() as stream:
-            reader = csv.DictReader(stream)
-            fields, rows = reader.fieldnames, list(reader)
-        while len(rows) <= 30:
-            additional = {**rows[0], "asset_slug": "additional-asset-" + str(len(rows))}
-            rows.append(additional)
-        with path.open("w") as stream:
-            writer = csv.DictWriter(stream, fieldnames=fields)
-            writer.writeheader()
-            writer.writerows(rows)
-        caller = contracts.workflow(self.root, "cron-alert-policy-sync.yml")["jobs"]["observations"]["with"]
-        text = (self.root / "terraform/envs/prod/operational_observer.tf").read_text()
-        errors = contracts.operational_storage_contract(self.root, text, caller)
-        self.assertTrue(any("exceeds the reviewed five IAM chunks" in item for item in errors))
-
     def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
         path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
         text = path.read_text().replace("      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: true", "      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: false")
@@ -261,25 +64,6 @@ class ReleaseContractTests(unittest.TestCase):
         errors = contracts.iam_contract(self.root)
         self.assertTrue(any("must require source_run_id" in item for item in errors))
         self.assertTrue(any("ci-ready" in item for item in errors))
-
-    def test_every_policy_including_deletion_and_retired_schema_has_protected_coverage(self):
-        path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
-        original = path.read_text()
-        for name in ("dataset_object_deleted", "dataset_schema_changed"):
-            with self.subTest(name=name):
-                path.write_text(original.replace("        google_monitoring_alert_policy." + name + "\n", "", 1))
-                self.assertTrue(any("every declared alert policy" in error for error in contracts.iam_contract(self.root)))
-        path.write_text(original)
-        (self.root / "terraform/envs/prod/new_alert.tf").write_text('resource "google_monitoring_alert_policy" "future_job" {}\n')
-        self.assertTrue(any("every declared alert policy" in error for error in contracts.iam_contract(self.root)))
-
-    def test_protected_setup_retains_legacy_and_fenced_heartbeat_descriptors(self):
-        path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
-        original = path.read_text()
-        for suffix in ("", "_v2"):
-            with self.subTest(suffix=suffix):
-                path.write_text(original.replace("        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat" + suffix + "\n", "", 1))
-                self.assertTrue(any("retain the legacy heartbeat descriptor" in error for error in contracts.iam_contract(self.root)))
 
     def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
         for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):

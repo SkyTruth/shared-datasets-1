@@ -608,8 +608,7 @@ def main() -> int:
                 attempts = {plan["source"]["run_attempt"], *(result.get("source", {}).get("run_attempt") for result in results)}
                 if any(type(attempt) is not int or not 1 <= attempt <= current_attempt for attempt in attempts):
                     raise ValueError("invalid result source attempt")
-                proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan,
-                                        current_attempt=current_attempt, results=results, needs=jobs)
+                proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
                 if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
                     raise ValueError("selected plan has no successful source selection job")
             chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id, run_attempt=current_attempt)

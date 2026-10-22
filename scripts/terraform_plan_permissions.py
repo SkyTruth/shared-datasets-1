@@ -11,11 +11,6 @@ from collections import defaultdict
 import re
 from urllib.parse import quote, urlencode
 
-from scripts import logging_setup_permissions as logging_setup
-from scripts import operational_log_views as log_views
-from scripts import wif_setup_permissions as wif_setup
-from scripts import readonly_wif_trust
-
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 PROJECT_URL = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
@@ -116,8 +111,6 @@ def plan_checks(plan, *, project_number, target=None):
     require(re.fullmatch(r"[1-9][0-9]*", str(project_number)), "project number unavailable")
     rows = plan.get("resource_changes", [])
     require(isinstance(rows, list), "resource change enumeration unavailable")
-    if target == "readonly-wif-trust":
-        readonly_wif_trust.validate_plan_rows(rows)
     probes = defaultdict(set)
     created = defaultdict(set)
     created_addresses = defaultdict(set)
@@ -136,8 +129,6 @@ def plan_checks(plan, *, project_number, target=None):
                 created[kind].add(text(value.get("name"), "job name"))
             elif kind == "google_storage_managed_folder":
                 created[kind].add((bucket_name(value.get("bucket")), value.get("name")))
-            elif kind == "google_logging_log_view":
-                created[kind].add((value.get("parent"), value.get("location"), value.get("bucket"), value.get("name")))
 
     def add(url, permissions):
         probes[url].update(permissions)
@@ -259,36 +250,6 @@ def plan_checks(plan, *, project_number, target=None):
                 project(current)
                 text(current.get("name"), "logging exclusion name")
                 add(PROJECT_URL, ("logging.exclusions.get", "logging.exclusions." + action))
-            elif kind in {"google_logging_log_view", "google_logging_log_view_iam_member"}:
-                require(current.get("parent") in {f"projects/{PROJECT}", f"projects/{project_number}"} and current.get("location") == "global", "foreign operational log-view parent")
-                bucket = current.get("bucket")
-                require(bucket in log_views.BUCKETS and current.get("name") in log_views.VIEW_NAMES, "unexpected operational log-view identity")
-                resource = f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/"
-                # Bucket creation authority cannot be tested on a view or a
-                # project: the installed grant is conditioned on bucket names.
-                # Use the same exact parent metadata/grant proof as readiness.
-                future = (kind == "google_logging_log_view" and action == "create") or (current.get("parent"), current.get("location"), bucket, current.get("name")) in created["google_logging_log_view"] or future_unknown(row, "google_logging_log_view")
-                resource += "_AllLogs" if future else current["name"]
-                if kind == "google_logging_log_view" and action == "create":
-                    add(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS)
-                    needed = ("logging.views.get",)
-                else:
-                    needed = ("logging.views.getIamPolicy", "logging.views.setIamPolicy") if kind.endswith("iam_member") else ("logging.views.get", "logging.views." + action)
-                add("https://logging.googleapis.com/v2/" + resource + ":testIamPermissions", needed)
-            elif kind == "google_monitoring_metric_descriptor":
-                project(current)
-                require(current.get("type") in {"custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat",
-                                                 "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"}, "unexpected operational metric descriptor")
-                add(PROJECT_URL, ("monitoring.metricDescriptors.get", "monitoring.metricDescriptors." + ("create" if action == "update" else action)))
-            elif kind == "google_iam_workload_identity_pool_provider":
-                project(current)
-                if target == "readonly-wif-trust":
-                    add(readonly_wif_trust.PROVIDER_URL, (wif_setup.GET, readonly_wif_trust.UPDATE))
-                    continue
-                require(current.get("workload_identity_pool_id") == "github" and current.get("workload_identity_pool_provider_id") == "github-operational-observer", "unexpected operational WIF provider")
-                require(action == "create", "operational WIF provider updates and deletes require separately reviewed authority")
-                add(f"https://iam.googleapis.com/v1/{wif_setup.POOL}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules"))
-                add(wif_setup.PROVIDER_URL, (wif_setup.GET, wif_setup.CREATE))
             elif kind == "google_project_iam_member":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
@@ -325,14 +286,6 @@ def plan_checks(plan, *, project_number, target=None):
                     require(future_unknown(row, "google_storage_managed_folder"), "unknown managed folder lacks creation dependency")
                 future = folder is None or (bucket, folder) in created["google_storage_managed_folder"]
                 add(storage_url(bucket, needed, None if future else folder), needed)
-            elif kind == "google_secret_manager_secret":
-                project(current)
-                secret = text(current.get("secret_id"), "secret_id")
-                if action == "create":
-                    add(PROJECT_URL, ("secretmanager.secrets.create",))
-                else:
-                    needed = ("secretmanager.secrets.get", "secretmanager.secrets." + action)
-                    add(f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{secret}:testIamPermissions", needed)
             elif kind == "google_secret_manager_secret_iam_member":
                 project(current)
                 secret = current.get("secret_id")

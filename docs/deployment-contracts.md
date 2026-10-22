@@ -57,51 +57,6 @@ account creation and bindings. Read-only probes check the actual registry or
 bucket policy resource and the declared project permissions before planning.
 These checks grant no additional authority and retain the existing allowlists.
 
-Operational observer setup uses an exact provider metadata GET, not a fabricated
-provider `testIamPermissions` endpoint or a parent test presented as child proof.
-An absent provider additionally requires the reviewed fixed-expiry project
-create grant and a real create-permission test on its existing parent pool.
-The proposed broader create scope requires human approval before merge/apply;
-see the [scope and expiry contract](cloud-operational-observations.md).
-An existing provider does not require creation permission after expiry.
-
-Operational observation setup owns 35 exact targets, including eight atomic log
-views and eight matching accessors across the same two Logging buckets. Each view
-admits one reviewed project/region/resource/log-family conjunction. The shared
-registry defines their exact union; neither project-wide log access nor new
-setup permissions are added. The pinned offline Terraform gate serializes and
-checks the actual filters. Protected setup blocks deletes and must verify every
-created view and accessor before policy installation or collection proceeds.
-
-The separate read-only provider trust repair owns only
-`google_iam_workload_identity_pool_provider.github_readonly`. Its two-resource
-IAM bootstrap proposes a project-wide **update-only** grant to the same protected
-Terraform identity, expiring at `2026-10-22T06:00:00Z` (02:00 EDT); the approved observer
-create grant does not authorize this proposal. Separate explicit human approval
-is required before merge/apply. The next protected stage permits only an in-place
-`attribute_condition` change from the exact existing two-workflow condition to
-the existing declared condition adding `Dataset breaking change alert`.
-Issuer, audience, mappings, identity, enabled state and every other field must
-remain unchanged. Creation, replacement, deletion and additional mutations fail
-before apply. Actual child metadata, scoped-token principal and the exact
-installed update-only allow grant establish readiness without an unsupported
-provider permission-test endpoint. Google's [provider patch contract](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers/patch)
-requires this exact child-update permission. Its read-only permission metadata
-identifies the legacy spelling as an alias of
-`iam.googleapis.com/workloadIdentityPoolProviders.update`, supported in custom
-roles. An already-correct no-op uses only metadata
-reads and does not require the expired update grant. This proof does not bypass
-independent deny policies.
-
-This new fixed UPDATE window is a separate review proposal. Main CI
-`39706344866/1` failed validation before any of its five protected IAM callers
-ran, so the updater role and binding were never created. The existing
-two-resource bootstrap still creates them; this proposal requires no replacement
-of an installed conditional binding. Approval of the earlier UPDATE window
-ending at 02:00 UTC does not authorize the new 06:00 UTC window. The original
-observer CREATE deadline remains 02:00 UTC and its permanent GET-only reader is
-unchanged. No deadline renews automatically.
-
 Immediately before each saved-plan apply, trusted code runs
 `python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`
 after the resource allowlist. It derives permission probes from every changed

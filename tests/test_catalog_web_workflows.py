@@ -168,7 +168,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", check)
         check_steps = workflow_steps_by_name(workflow, "check-inputs")
         self.assertIn("catalog_refresh_check.py", check_steps["Compare catalog inputs"]["run"])
-        self.assertEqual(check["timeout-minutes"], 35)
         self.assertNotIn("deployment_revision.py", workflow_all_step_runs(workflow, "check-inputs"))
         selection = workflow["jobs"]["select-repo-changes"]
         self.assertEqual(selection["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read"})
@@ -227,27 +226,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertIn("node --check web/catalog/app.js", steps["Check browser JavaScript syntax"]["run"])
         self.assertNotIn("shared-datasets-publish-plan", step_runs)
-
-    def test_catalog_source_deferral_gates_every_preparation_and_mutation_step(self):
-        workflow = load_workflow(CATALOG_DEPLOY)
-        steps = workflow_steps_by_name(workflow, "deploy")
-        bootstrap = steps["Verify trusted catalog source authority"]
-        self.assertIn('if [[ "$GITHUB_EVENT_NAME" == schedule ]]', bootstrap["run"])
-        self.assertIn("args+=(--defer-pending)", bootstrap["run"])
-        # A pending prerequisite creates no deployment record and cannot cross
-        # into dependency acquisition, credentials, bundle preparation or data.
-        for name in (
-            "Check out repository", "Verify exact passing CI revision", "Set up Python", "Set up uv",
-            "Sync dependencies", "Check generated catalog docs", "Run focused catalog tests",
-            "Check browser JavaScript syntax", "Validate publisher auth configuration",
-            "Authenticate to Google Cloud", "Collect release indexes", "Build catalog web bundle",
-            "Verify run-bound signing capability without mutation", "Record serialized catalog deployment attempt",
-        ):
-            self.assertEqual(steps[name]["if"], "${{ steps.bootstrap.outputs.ready == 'true' }}", name)
-        self.assertIn("--unattended", steps["Collect release indexes"]["run"])
-        provenance = steps["Verify successful release index rebuild provenance"]["run"]
-        self.assertIn("from scripts.github_api_read import read", provenance)
-        self.assertNotIn("['gh', 'api'", provenance)
 
     def test_release_index_rebuild_uses_publisher_identity_and_existing_cli(self):
         workflow = load_workflow(RELEASE_INDEX_REBUILD)

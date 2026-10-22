@@ -560,13 +560,9 @@ def notify_identity_ambiguities(
     release: str,
     ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
 ) -> bool:
-    from ingestion.common.legacy_runtime_notifications import notify
-    from ingestion.common.operational_events import emit, stable_digest
+    from scripts.slack_notify import notify
 
     count = len(ambiguities)
-    cases = sorted((release_feature_model.identity_ambiguity_to_dict(item) for item in ambiguities), key=lambda item: json.dumps(item, sort_keys=True))
-    emit("identity_decision", "required", subject={"asset_slug": asset_slug, "release": release},
-         details={"ambiguity_count": count, "case_set_sha256": stable_digest(cases), "published_data_state": "unchanged", "mutation_status": "not_started"})
     return notify(
         title=f"Decision needed: {asset_slug} release {release}",
         body=identity_ambiguity_alert_body(asset_slug=asset_slug, release=release, ambiguities=ambiguities),

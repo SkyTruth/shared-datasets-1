@@ -137,21 +137,6 @@ def verify_candidate(candidate, package, manifest, sha):
     require(candidate.get("integrity") == "sha512-" + base64.b64encode(hashlib.sha512(package).digest()).decode(), "tested package integrity mismatch")
 
 
-def local_candidate(path: Path, root: Path) -> dict:
-    """Recheck the retained CI bytes before read-only propagation polling."""
-    candidate = json.loads(path.read_text())
-    require(isinstance(candidate, dict), "invalid retained SDK candidate")
-    tarball = Path(candidate["tarball"])
-    require(tarball.is_absolute(), "retained SDK tarball path must be absolute")
-    with tarball.open("rb") as stream:
-        package = stream.read(MAX_ARCHIVE + 1)
-    require(0 < len(package) <= MAX_ARCHIVE, "retained SDK tarball is empty or oversized")
-    manifest = json.loads((root / "api/typescript/package.json").read_text())
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    verify_candidate({**candidate, "tarball": tarball.name}, package, manifest, sha)
-    return candidate
-
-
 def execution_time(value):
     require(isinstance(value, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z", value), "missing or invalid gate execution timestamp")
     return datetime.fromisoformat(value.replace("Z", "+00:00"))

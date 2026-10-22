@@ -1,4 +1,4 @@
-"""Run an approved retained publication."""
+"""Run an approved retained publication or a controlled pre-write failure."""
 
 import os
 
@@ -9,7 +9,8 @@ from ingestion.wdpa_monthly import run as wdpa
 
 def run():
     p.require(
-        "WDPA_PROMOTION_BUNDLE" in os.environ,
+        "WDPA_PROMOTION_BUNDLE" in os.environ
+        or os.environ.get("WDPA_FAIL_BEFORE_WRITES") == "true",
         "publication requires a reviewed retained bundle; source rebuilding is disabled",
     )
     return wdpa.run()

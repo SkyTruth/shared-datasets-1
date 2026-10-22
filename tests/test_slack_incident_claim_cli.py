@@ -100,11 +100,8 @@ def test_deliver_cli_accepts_status_write_timestamp_change_and_verifies_current_
     context = deliver_cli
     context.invoke()
     assert len(context.fetched) == 1
-    proof_api = context.signature.call_args.args[0]
-    assert isinstance(proof_api, incidents._ProofReads) and proof_api.api is context.api
-    assert not hasattr(proof_api, "post")
     context.signature.assert_called_once_with(
-        proof_api, incidents.REPOSITORY, context.fetched[0], context.status,
+        context.api, incidents.REPOSITORY, context.fetched[0], context.status,
         original_signer=incidents.WORKFLOW, batch=True,
     )
     assert context.signature.call_args.args[2] is context.fetched[0]

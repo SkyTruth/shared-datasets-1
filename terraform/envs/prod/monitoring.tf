@@ -12,13 +12,6 @@ locals {
     local.cron_alert_created_slack_channel,
   )
 
-  operational_slack_rollout = jsondecode(file("${path.module}/../../../catalog/operational-slack-rollout.json"))
-  operational_alert_notification_channels = (
-    local.operational_slack_rollout.mode == "unified"
-    ? []
-    : local.cron_alert_notification_channels
-  )
-
   dataset_delete_excluded_prefix_filter = join(" AND ", [
     for prefix in var.dataset_delete_alert_excluded_prefixes :
     "NOT protoPayload.resourceName=~\"/objects/${replace(prefix, "/", "\\/")}\""
@@ -65,14 +58,6 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
   lifecycle {
     precondition {
-      condition     = local.operational_slack_rollout.schema == "shared-datasets-operational-slack-rollout-v1" && contains(["native", "unified"], local.operational_slack_rollout.mode)
-      error_message = "Operational routing requires an explicit reviewed native/unified rollout configuration."
-    }
-    precondition {
-      condition     = local.operational_slack_rollout.mode != "unified" || local.operational_slack_rollout.cutover_evidence != null
-      error_message = "Unified operational routing requires checked-in immutable cutover evidence verified by the protected saved-plan gate."
-    }
-    precondition {
       condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
       error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
     }
@@ -115,7 +100,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_cloud_run_failure
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.operational_alert_notification_channels
+  notification_channels = local.cron_alert_notification_channels
 
   conditions {
     display_name = "Cloud Run Job execution failed"
@@ -126,7 +111,6 @@ resource.type="cloud_run_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
-NOT resource.labels.job_name="${local.monitoring_slack_job_name}"
 severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
@@ -189,7 +173,7 @@ resource "google_monitoring_alert_policy" "wdpa_execution_observer_unhealthy" {
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.operational_alert_notification_channels
+  notification_channels = local.cron_alert_notification_channels
 
   conditions {
     display_name = "No successful WDPA observer completion for 15 minutes"
@@ -266,7 +250,7 @@ resource "google_monitoring_alert_policy" "release_awaiting_identity_decision" {
   enabled      = var.cron_alerts_enabled
   severity     = "WARNING"
 
-  notification_channels = local.operational_alert_notification_channels
+  notification_channels = local.cron_alert_notification_channels
 
   conditions {
     display_name = "Release paused for a feature identity decision"
@@ -325,7 +309,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_scheduler_failure
   enabled      = var.cron_alerts_enabled
   severity     = "ERROR"
 
-  notification_channels = local.operational_alert_notification_channels
+  notification_channels = local.cron_alert_notification_channels
 
   conditions {
     display_name = "Cloud Scheduler failed to start a scheduled ingestion job"
@@ -336,7 +320,6 @@ resource.type="cloud_scheduler_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"
-NOT resource.labels.job_id="${local.monitoring_slack_job_name}"
 severity>=ERROR
 EOT
     }
@@ -516,68 +499,4 @@ EOT
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
   ]
-}
-
-# Keep the exact former schema policy managed. Removing it from configuration
-# left its live Slack route enabled; import and disable it through the protected
-# policy sync instead of deleting its history or creating another policy.
-import {
-  to = google_monitoring_alert_policy.dataset_schema_changed
-  id = "projects/shared-datasets-1/alertPolicies/10109535963709095250"
-}
-
-resource "google_monitoring_alert_policy" "dataset_schema_changed" {
-  project      = var.project_id
-  display_name = "Shared dataset schema changed"
-  combiner     = "OR"
-  enabled      = false
-  severity     = "WARNING"
-
-  notification_channels = []
-
-  conditions {
-    display_name = "Manual publish detected a canonical field/schema delta"
-
-    condition_matched_log {
-      filter = <<-EOT
-resource.type="global"
-logName="projects/${var.project_id}/logs/shared-datasets-alerts"
-severity>=WARNING
-jsonPayload.alert_type="dataset_schema_changed"
-EOT
-
-      label_extractors = {
-        asset_slug = "EXTRACT(jsonPayload.asset_slug)"
-        changes    = "EXTRACT(jsonPayload.changes_text)"
-        new_fields = "EXTRACT(jsonPayload.new_fields_text)"
-        old_fields = "EXTRACT(jsonPayload.old_fields_text)"
-      }
-    }
-  }
-
-  documentation {
-    mime_type = "text/markdown"
-    subject   = "Schema diagnostics stay quiet"
-    content   = "Retired Slack route. Schema deltas remain structured diagnostics; consumer-impacting changes use the reviewed breaking-change publication contract."
-  }
-
-  alert_strategy {
-    auto_close           = "604800s"
-    notification_prompts = ["OPENED"]
-
-    notification_rate_limit {
-      period = "3600s"
-    }
-  }
-
-  user_labels = {
-    component = "dataset-schema"
-    service   = "shared-datasets"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-
-  depends_on = [google_project_service.required]
 }

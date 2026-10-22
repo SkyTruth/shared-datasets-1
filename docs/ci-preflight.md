@@ -59,8 +59,8 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests all seven actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. Its evidence retains the six deployable
+tests all six actual Linux AMD64 deployment recipes on every host without mounting the Docker
+socket into a validation container. Its evidence retains the five deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these
@@ -100,11 +100,7 @@ valid prerequisites; that policy does not add any resource to an apply allowlist
 New managed ancestors fail before pushing, including references inside disabled
 dynamic blocks. Retained evidence includes the graph, each target closure and
 negative controls from failed main revision `ffe2dd53`: the telemetry bucket
-dependency must be rejected with collection both disabled and enabled. The same
-isolated module evaluates the operational log views with Terraform console and
-retains their serialized filters. All eight identities and flat conjunctions must
-match the shared reviewed contract; this checks the Terraform producer, while
-protected creation and live readback remain the service acceptance checks. The usage
+dependency must be rejected with collection both disabled and enabled. The usage
 owner provisions its private raw bucket with collection disabled before a later
 reviewed activation may enable shared-bucket logging.
 Browser validation removes its process-owned uv download cache after installing
@@ -121,21 +117,7 @@ Documentation-only component paths and proven script exceptions use the single
 selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry records
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
-selection does not change deployment selection. Changes to the notification
-orchestrator, collector, adapter, notification workflow, routing verifier,
-delivery-activation verifier or cutover verifier select only `cron_alert_policy`
-for deployment, retaining all seven validation suites.
-The installed file registry in `scripts/operational_protocol.py` is shared with
-activation and participates in both validation and cloud-cycle contract hashes.
-Its protected receipt must cover the current observation and heartbeat protocol;
-these paths do not request ingestion image redeployments. Changes to the rollout
-configuration in `catalog/operational-slack-rollout.json` or immutable evidence
-under `.github/operational-cutovers/` retain all four ingestion deployments and
-their IAM dependencies. Mixed verifier and runtime changes retain the runtime's
-normal deployment dependencies.
-Selected runtime deployments use explicit successful CI/IAM prerequisites and a
-cancellation-aware status guard, so skipped optional ancestors cannot silently
-discard selected production work.
+selection does not change deployment selection.
 The standard Python run permits only the six named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.

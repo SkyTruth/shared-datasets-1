@@ -6,10 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from google.api_core.exceptions import Forbidden, ServiceUnavailable
 
 from scripts import catalog_drift_guard as guard, catalog_refresh_check as probe, catalog_site
-from scripts import operational_retry
 from test_catalog_site import DOC
 
 
@@ -60,7 +58,7 @@ def workspace(tmp_path, monkeypatch):
         def blob(name, generation=None):
             value = Mock()
             value.generation, value.updated, value.size = 7, None, len(objects[name])
-            value.download_as_text.side_effect = lambda **_: objects[name].decode()
+            value.download_as_text.side_effect = lambda: objects[name].decode()
             value.download_as_bytes.side_effect = lambda **_: objects[name]
             return value
         client.bucket.return_value.blob.side_effect = blob
@@ -122,69 +120,3 @@ def test_outages_and_invalid_snapshots_never_emit_a_selection(workspace, tmp_pat
         probe.main(["--work-dir", str(tmp_path / "probe")])
     assert not state.output.exists()
     assert not state.summary.exists()
-
-
-@pytest.fixture
-def fake_clock(monkeypatch):
-    now = [0.0]
-    monkeypatch.setattr(operational_retry, "monotonic", lambda: now[0])
-    monkeypatch.setattr(operational_retry, "sleep", lambda delay: now.__setitem__(0, now[0] + delay))
-    return now
-
-
-def test_persistent_transport_outage_exhausts_one_bounded_window(workspace, tmp_path, fake_clock):
-    state = workspace(1)
-    attempts = []
-
-    def unavailable(*args, **kwargs):
-        attempts.append(fake_clock[0])
-        raise ServiceUnavailable("unavailable")
-
-    state.client.list_blobs.side_effect = unavailable
-    with pytest.raises(ServiceUnavailable):
-        probe.main(["--work-dir", str(tmp_path / "probe")])
-    assert attempts == [0, 5, 20, 60, 180, 420, 900, 1740]
-    assert not state.output.exists() and not state.summary.exists()
-    assert list((tmp_path / "probe").iterdir()) == []
-
-
-def test_permission_failure_is_actionable_without_waiting(workspace, tmp_path, fake_clock):
-    state = workspace(1)
-    state.client.list_blobs.side_effect = Forbidden("denied")
-    with pytest.raises(Forbidden):
-        probe.main(["--work-dir", str(tmp_path / "probe")])
-    assert state.client.list_blobs.call_count == 1
-    assert fake_clock[0] == 0
-    assert not state.output.exists()
-
-
-def test_retry_discards_partial_snapshot_and_validates_complete_new_bytes(workspace, tmp_path, fake_clock, monkeypatch):
-    state = workspace(2)
-    original_blob = state.client.bucket.return_value.blob.side_effect
-    failed = [False]
-    collected = []
-    original_collect = probe.collect
-
-    def blob(name, generation=None):
-        value = original_blob(name, generation)
-        if name == "_catalog/releases/example-1.json" and not failed[0]:
-            def download(**kwargs):
-                failed[0] = True
-                raise ServiceUnavailable("download interrupted")
-            value.download_as_bytes.side_effect = download
-        return value
-
-    def collect(client, bucket_name, destination, **kwargs):
-        collected.append(destination)
-        assert not destination.exists()
-        return original_collect(client, bucket_name, destination, **kwargs)
-
-    state.client.bucket.return_value.blob.side_effect = blob
-    monkeypatch.setattr(probe, "collect", collect)
-    probe.main(["--work-dir", str(tmp_path / "probe")])
-    assert state.output.read_text() == "changed=false\n"
-    assert fake_clock[0] == 5 and state.client.list_blobs.call_count == 2
-    assert len(set(collected)) == 2 and all(not path.exists() for path in collected)
-    assert list((tmp_path / "probe").iterdir()) == []
-    for call in state.client.list_blobs.call_args_list:
-        assert call.kwargs["retry"] is None

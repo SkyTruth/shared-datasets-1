@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.ci_contract import ALWAYS, DEPLOYMENTS, SUITES, select_deployments, select_suites
+from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_suites
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import load_workflow, workflow_triggers
 
@@ -45,12 +45,6 @@ def test_ingestion_release_selects_its_shared_bootstrap_dependency_once(path, ta
 
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
     assert select_deployments(["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"]) == ["ingestion_iam"]
-
-
-@pytest.mark.parametrize("path", ["terraform/envs/prod/github_readonly_iam.tf", "scripts/readonly_wif_trust.py"])
-def test_readonly_trust_repair_selects_only_its_protected_policy_owner(path):
-    assert select_deployments([path]) == ["cron_alert_policy"]
-    assert ALWAYS <= set(select_suites([path])[0])
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
@@ -204,75 +198,3 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     }).static_order())
     assert order.index('pmtiles-cdn') < order.index('dataset-usage')
     assert 'needs.dataset-usage' not in jobs['pmtiles-cdn']['if']
-
-
-def test_atomic_view_contract_changes_keep_protected_policy_deployment_selected():
-    from scripts import ci_contract
-    for path in ("catalog/operational-log-views.json", "scripts/operational_log_views.py"):
-        assert ci_contract.select_deployments([path]) == ["cron_alert_policy"]
-
-
-@pytest.mark.parametrize("path", [
-    "scripts/cloud_operational_observations.py", "scripts/cloud_observation_ledger.py",
-    "scripts/cloud_incident_adapter.py", "scripts/operational_protocol.py",
-    "scripts/monitoring_routing_audit.py", "scripts/operational_cutover.py",
-    "scripts/deployment_emission.py",
-])
-def test_cloud_protocol_repairs_install_the_fresh_policy_without_redeploying_data_workers(path):
-    assert select_deployments([path]) == ["cron_alert_policy"]
-    assert select_suites([path])[0] == list(SUITES)
-
-
-def test_cutover_guide_cannot_request_production_runtime_deployments():
-    guide = ".github/operational-cutovers/README.md"
-    assert select_deployments([guide]) == []
-    assert select_suites([guide])[0] == list(SUITES)
-    # The actual gate repair also changes this guide. Its documentation must
-    # not expand the verifier's protected deployment into four canary jobs.
-    assert select_deployments([guide, "scripts/operational_cutover.py", "scripts/cloud_observation_ledger.py",
-                               "scripts/deployment_emission.py", "scripts/operational_protocol.py"]) == ["cron_alert_policy"]
-    assert set(select_deployments([guide, "ingestion/eamlis_monthly/run.py"])) == {
-        "eamlis", "ingestion_iam", "artifact_registry_iam",
-    }
-
-
-@pytest.mark.parametrize("path", [
-    "catalog/operational-slack-rollout.json", ".github/operational-cutovers/reviewed-evidence.json",
-    ".github/operational-cutovers/README.md.json",
-])
-def test_actual_rollout_changes_keep_every_runtime_and_its_iam_dependencies(path):
-    assert set(select_deployments([path])) == {
-        "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
-    }
-
-
-@pytest.mark.parametrize("path,targets", [
-    ("ingestion/eamlis_monthly/run.py", {"eamlis"}),
-    ("ingestion/common/runtime.py", {"mpatlas", "eamlis", "wdpa", "sea_ice"}),
-])
-def test_cutover_verifier_does_not_mask_real_runtime_dependencies(path, targets):
-    assert set(select_deployments(["scripts/operational_cutover.py", path])) == targets | {
-        "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
-    }
-    assert select_suites(["scripts/operational_cutover.py", path])[0] == list(SUITES)
-
-
-def test_installed_protocol_registry_is_shared_and_cannot_bypass_broader_deployments():
-    from scripts import ci_contract, operational_delivery_activation, operational_protocol
-    assert operational_delivery_activation.PROTOCOL_FILES is operational_protocol.PROTOCOL_FILES
-    assert "scripts/operational_protocol.py" in ci_contract.CONTRACT_FILES
-    for path in operational_protocol.PROTOCOL_FILES:
-        assert "cron_alert_policy" in select_deployments([path])
-    assert set(select_deployments([".github/workflows/prod-terraform-target-apply.yml"])) == {
-        "artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam",
-    }
-
-
-def test_protocol_registry_remains_dependency_free_and_self_fenced():
-    from scripts import operational_protocol
-    source = ROOT / "scripts/operational_protocol.py"
-    tree = ast.parse(source.read_text())
-    assert not any(isinstance(node, (ast.Import, ast.ImportFrom, ast.Call)) for node in ast.walk(tree))
-    assert len(operational_protocol.PROTOCOL_FILES) == len(set(operational_protocol.PROTOCOL_FILES))
-    assert source.relative_to(ROOT).as_posix() in operational_protocol.PROTOCOL_FILES
-    assert all((ROOT / path).is_file() for path in operational_protocol.PROTOCOL_FILES)

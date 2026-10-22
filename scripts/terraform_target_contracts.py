@@ -22,7 +22,6 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
-from scripts import operational_log_views
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLER = './.github/workflows/prod-terraform-target-apply.yml'
@@ -182,44 +181,6 @@ def graph(prod: Path, executable: str, environment: dict[str, str], directory: P
     return dot
 
 
-def validate_operational_views(value: dict, root: Path) -> dict:
-    """Validate Terraform's serialized API filter inputs, not parenthesis depth."""
-    expected = operational_log_views.expected_filters(root)
-    if not isinstance(value, dict) or len(value) != len(expected):
-        raise ValueError('Operational log views must contain every exact bucket/family')
-    actual = {}
-    for key, view in value.items():
-        if (not isinstance(view, dict) or set(view) != {'bucket', 'name', 'filter'}
-                or view['bucket'] not in operational_log_views.BUCKETS
-                or view['name'] not in operational_log_views.VIEW_NAMES
-                or not isinstance(view['filter'], str)):
-            raise ValueError('Unexpected serialized operational log-view identity')
-        family = view['name'].removeprefix('shared-datasets-operations-')
-        if key != view['bucket'] + '-' + family:
-            raise ValueError('Operational log-view key differs from the protected target')
-        name = f"projects/{operational_log_views.PROJECT}/locations/global/buckets/{view['bucket']}/views/{view['name']}"
-        actual[name] = ' '.join(view['filter'].split())
-    if actual != expected:
-        raise ValueError('Operational log-view filters differ from the exact flat conjunction contract')
-    return actual
-
-
-def operational_views(prod: Path, executable: str, environment: dict[str, str], directory: Path, root: Path) -> dict:
-    # The prepared module has an empty local backend and no cloud credentials.
-    # Console evaluates the real jsondecode/for/join producer without refresh,
-    # plan or apply. No hand-written Python substitute renders the HCL.
-    completed = subprocess.run([executable, '-chdir=' + str(prod), 'console', '-no-color'],
-                               input='jsonencode(local.operational_observer_log_views)\n', env=environment,
-                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-    (directory / 'operational-views.stderr.log').write_text(completed.stderr)
-    if completed.returncode:
-        raise ValueError('Offline Terraform operational view serialization failed:\n' + completed.stdout + completed.stderr)
-    value = json.loads(json.loads(completed.stdout))
-    actual = validate_operational_views(value, root)
-    (directory / 'operational-views.json').write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
-    return {'views': actual, 'sha256': hashlib.sha256(json.dumps(actual, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}
-
-
 def verify(root: Path, output: Path, *, executable='terraform', providers: Path | None = None) -> dict:
     version = json.loads(subprocess.check_output([executable, 'version', '-json'], text=True))['terraform_version']
     if version != TOOLCHAIN['terraform']:
@@ -231,8 +192,7 @@ def verify(root: Path, output: Path, *, executable='terraform', providers: Path 
     prod = prepare(root, positive, providers)
     environment = isolated_environment(positive)
     dot = graph(prod, executable, environment, positive)
-    evidence = {'terraform': version, 'graph_sha256': hashlib.sha256(dot.encode()).hexdigest(), 'jobs': check_graph(root, parse_graph(dot)),
-                'operational_log_views': operational_views(prod, executable, environment, positive, root), 'negative_controls': []}
+    evidence = {'terraform': version, 'graph_sha256': hashlib.sha256(dot.encode()).hexdigest(), 'jobs': check_graph(root, parse_graph(dot)), 'negative_controls': []}
     fixture_dir = root / 'tests/fixtures/terraform_targets'
     failure = json.loads((fixture_dir / 'failed-main.json').read_text())
     raw = (fixture_dir / failure['fixture']).read_bytes()

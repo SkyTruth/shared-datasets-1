@@ -18,9 +18,6 @@ resource "google_project_iam_custom_role" "monitoring_alert_policy_manager" {
     "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get",
     "monitoring.notificationChannels.list",
-    # Read observed heartbeat points before protected channel removal. No
-    # metric write permission is granted to the policy-management identity.
-    "monitoring.timeSeries.list",
   ]
 
   depends_on = [google_project_service.required]

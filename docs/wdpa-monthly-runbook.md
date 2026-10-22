@@ -127,10 +127,10 @@ deliberately interrupting the production observer.
 Verify each asset's `_catalog/releases/{asset}.json` (`latest_release` and
 `latest_run`), owned receipts, manifest generations and `latest/` byte metadata
 under `100-geographic-reference/130-protected-areas/{asset}/`. Worker success,
-asset publication and observer freshness are separate checks. Verify worker
-alert coverage through live filters and channel configuration; use genuine
-incident evidence for delivery confirmation. Do not inject production failures.
-Observer-health verification follows the recovery-window contract.
+asset publication and observer freshness are separate checks. Test immediate
+worker alert delivery separately with protected `cron-alert-delivery-test.yml`
+and actual Slack delivery; routine deployments do not require an injected
+failure probe. Observer-health verification follows the recovery-window contract.
 
 ## Recovery and evidence
 

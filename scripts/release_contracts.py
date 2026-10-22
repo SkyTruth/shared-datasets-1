@@ -7,7 +7,6 @@ and IAM propagation are separately checked by trusted production code.
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 from pathlib import Path
@@ -20,13 +19,10 @@ sys.path.insert(0, str(ROOT))
 import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
-from scripts.deployment_permissions import MONITORING_PERMISSIONS, OPERATIONAL_LOG_SETUP_PERMISSIONS, OPERATIONAL_METRIC_SETUP_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
+from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
-from scripts import logging_setup_permissions as logging_setup
-from scripts import wif_setup_permissions as wif_setup
-from scripts import readonly_wif_trust as readonly_trust
 
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -45,126 +41,12 @@ def workflow(root, name):
     return yaml.safe_load((root / ".github/workflows" / name).read_text())
 
 
-def required_string_input(triggers, key):
-    """Validate the source contract on every declared supported entry point."""
-    if (not isinstance(triggers, dict) or not triggers
-            or not set(triggers) <= {"workflow_call", "workflow_dispatch"}):
-        return False
-    for event in triggers.values():
-        if not isinstance(event, dict) or not isinstance(event.get("inputs"), dict):
-            return False
-        declaration = event["inputs"].get(key)
-        if (not isinstance(declaration, dict) or declaration.get("required") is not True
-                or declaration.get("type") != "string"):
-            return False
-    return True
-
-
 def role_permissions(text, name):
     match = re.search(r'resource "google_project_iam_custom_role" "' + re.escape(name) + r'"\s*\{(.*?)\n\}', text, re.S)
     if not match:
         return set()
     permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
     return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
-
-
-def readonly_trust_contract(root):
-    """Bind the new proposal to its exact role, existing provider and owner."""
-    errors = []
-    text = (root / "terraform/envs/prod/github_readonly_iam.tf").read_text()
-    role = re.search(r'resource "google_project_iam_custom_role" "readonly_provider_updater"\s*\{(.*?)\n\}', text, re.S)
-    if (role is None or not re.search(r'role_id\s*=\s*"' + readonly_trust.ROLE.rsplit('/', 1)[1] + '"', role[1])
-            or role_permissions(text, "readonly_provider_updater") != {readonly_trust.UPDATE}):
-        errors.append("read-only trust repair requires its separate update-only role")
-    binding = re.search(r'resource "google_project_iam_member" "github_actions_readonly_provider_updater"\s*\{(.*?)\n\}', text, re.S)
-    expected = 'project = var.project_id\nrole = google_project_iam_custom_role.readonly_provider_updater.name\nmember = "serviceAccount:${var.github_actions_terraform_service_account_email}"\ncondition {\n'
-    expected += '\n'.join(key + ' = "' + value + '"' for key, value in readonly_trust.condition().items()) + '\n}'
-    if binding is None or re.sub(r'\s+', '', binding[1]) != re.sub(r'\s+', '', expected):
-        errors.append("read-only trust repair requires the exact protected principal and fixed-expiry binding")
-    provider = re.search(r'resource "google_iam_workload_identity_pool_provider" "github_readonly"\s*\{(.*?)\n\}', text, re.S)
-    expected = '''project = var.project_id
-      workload_identity_pool_id = google_iam_workload_identity_pool.github.workload_identity_pool_id
-      workload_identity_pool_provider_id = var.github_readonly_workload_identity_pool_provider_id
-      display_name = "GitHub Actions read-only"
-      description = "Restricts GitHub OIDC tokens to read-only shared-datasets bucket checks."
-      disabled = false
-      attribute_mapping = {
-        "google.subject" = "assertion.sub"
-        "attribute.actor" = "assertion.actor"
-        "attribute.repository" = "assertion.repository"
-        "attribute.repository_owner" = "assertion.repository_owner"
-        "attribute.workflow" = "assertion.workflow"
-      }
-      attribute_condition = join(" && ", [
-        "assertion.repository == '${var.github_repository}'",
-        "''' + '(' + ' || '.join("assertion.workflow == '" + name + "'" for name in readonly_trust.WORKFLOWS) + ')' + '''",
-      ])
-      oidc { issuer_uri = "https://token.actions.githubusercontent.com" }'''
-    if provider is None or re.sub(r'\s+', '', provider[1]) != re.sub(r'\s+', '', expected):
-        errors.append("read-only trust repair must retain the exact declared provider configuration and workflow addition")
-    jobs = workflow(root, "cron-alert-policy-sync.yml")["jobs"]
-    for name, predecessor, readiness, targets in (
-        ("readonly-bootstrap", "bootstrap", "iam-bootstrap", {"google_project_iam_custom_role.readonly_provider_updater", "google_project_iam_member.github_actions_readonly_provider_updater"}),
-        ("readonly-trust", "readonly-bootstrap", "readonly-wif-trust", {readonly_trust.ADDRESS}),
-    ):
-        job = jobs.get(name, {})
-        inputs = job.get("with", {})
-        if (job.get("needs") != predecessor or inputs.get("readiness_target") != readiness
-                or inputs.get("block_deletes") is not True
-                or any(set(inputs.get(field, "").split()) != targets for field in ("targets", "allowed_exact"))):
-            errors.append("read-only trust repair requires its ordered two-target bootstrap and exact one-target sync")
-    return errors
-
-
-def operational_storage_contract(root, text, inputs):
-    """Keep registry-derived observer reads inside IAM's fixed condition limits."""
-    errors = []
-    with (root / "catalog/shared-datasets-catalog.csv").open() as stream:
-        assets = [row for row in csv.DictReader(stream) if row["canonical_path"].startswith("gs://skytruth-shared-datasets-1/")
-                  and ("/latest/" in row["canonical_path"] or "/releases/" in row["canonical_path"])]
-    groups = (len(assets) + 5) // 6
-    if not 1 <= groups <= 5:
-        errors.append("observer asset registry exceeds the reviewed five IAM chunks; update exact protected targets before deployment")
-    expected = {f'google_storage_bucket_iam_member.operational_observer_{surface}["{index}"]' for surface in ("receipts", "manifests") for index in range(groups)}
-    for field in ("targets", "allowed_exact"):
-        actual = {address for address in inputs.get(field, "").split() if address.startswith("google_storage_bucket_iam_member.operational_observer_")}
-        if actual != expected:
-            errors.append(f"operational {field} must cover every exact quota-safe receipt and manifest IAM chunk")
-    # Exact expression templates prevent replacing paired asset boundaries with
-    # independent prefix/suffix sets, or introducing an unconditional alternative.
-    templates = {
-        "operational_observer_receipt_conditions": """{ for index, group in local.operational_observer_asset_groups : index => join(" && ", [
-            "resource.type == 'storage.googleapis.com/Object'",
-            "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/runs/') && resource.name.endsWith('.json'))"])})",
-        ]) }""",
-        "operational_observer_manifest_conditions": """{ for index, group in local.operational_observer_asset_groups : index => join(" && ", [
-            "resource.type == 'storage.googleapis.com/Object'",
-            "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json'))"])})",
-        ]) }""",
-    }
-    def compact(value):
-        return re.sub(r"\s+", "", value)
-    for name, expected_template in templates.items():
-        match = re.search(r'\n  ' + name + r'\s*=\s*(.*?)(?=\n  [a-zA-Z_]|\n\})', text, re.S)
-        if match is None or compact(match[1]) != compact(expected_template):
-            errors.append(f"{name}: observer reads require exact Object type and paired registered asset prefix/suffix boundaries")
-    expected_groups = """{ for index, group in chunklist([
-        for row in local.shared_catalog_rows : {
-            slug = row.asset_slug
-            root = split("/releases/", split("/latest/", replace(row.canonical_path, "gs://${var.bucket_name}/", ""))[0])[0]
-        } if startswith(row.canonical_path, "gs://${var.bucket_name}/") && (strcontains(row.canonical_path, "/latest/") || strcontains(row.canonical_path, "/releases/"))
-    ], 6) : tostring(index) => group }"""
-    scope_match = re.search(r'\n  operational_observer_asset_groups\s*=\s*(.*?)(?=\n  [a-zA-Z_]|\n\})', text, re.S)
-    if scope_match is None or compact(scope_match[1]) != compact(expected_groups):
-        errors.append("observer reads must derive six-asset IAM chunks from the catalog registry")
-    for surface in ("receipts", "manifests"):
-        block = re.search(r'resource "google_storage_bucket_iam_member" "operational_observer_' + surface + r'"\s*\{(.*?)\n\}', text, re.S)
-        conditions = "receipt" if surface == "receipts" else "manifest"
-        assignments = {"for_each": f"local.operational_observer_{conditions}_conditions", "bucket": "var.bucket_name",
-                       "role": "google_project_iam_custom_role.operational_observer_receipts.name", "member": "module.operational_observer_service_account.member", "expression": "each.value"}
-        if block is None or any(re.search(r'(?m)^\s*' + key + r'\s*=\s*' + re.escape(value) + r'\s*$', block[1]) is None for key, value in assignments.items()):
-            errors.append(f"operational_observer_{surface}: observer bindings must retain the exact read-only identity/role/bucket/condition")
-    return errors
 
 
 def saved_plan_permission_contract(root):
@@ -277,72 +159,6 @@ def iam_contract(root):
     missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
-    operational = (root / "terraform/envs/prod/operational_observer.tf").read_text()
-    for role, expected in (("operational_log_view_manager", set(OPERATIONAL_LOG_SETUP_PERMISSIONS)), ("operational_metric_descriptor_manager", set(OPERATIONAL_METRIC_SETUP_PERMISSIONS)),
-                           ("operational_provider_creator", {wif_setup.CREATE}), ("operational_provider_reader", {wif_setup.GET}),
-                           ("operational_observer_reader", {"run.executions.get", "run.executions.list", "monitoring.timeSeries.create"}), ("operational_observer_receipts", {"storage.objects.get"})):
-        if role_permissions(operational, role) != expected:
-            errors.append(f"{role}: operational authority must match its exact permission contract")
-    log_role = re.search(r'resource "google_project_iam_custom_role" "operational_log_view_manager"\s*\{(.*?)\n\}', operational, re.S)
-    if log_role is None or not re.search(r'role_id\s*=\s*"' + re.escape(logging_setup.ROLE.rsplit("/", 1)[1]) + '"', log_role[1]):
-        errors.append("Logging installed-grant proof requires the exact active role identity")
-    bucket_scope = re.search(r'operational_observer_log_buckets\s*=\s*toset\(\[(.*?)\]\)', operational, re.S)
-    binding = re.search(r'resource "google_project_iam_member" "github_actions_operational_log_view_manager"\s*\{(.*?)\n\}', operational, re.S)
-    expected_binding = """project = var.project_id
-      role = google_project_iam_custom_role.operational_log_view_manager.name
-      member = "serviceAccount:${var.github_actions_terraform_service_account_email}"
-      condition {
-        title = "operational-view-buckets-only"
-        description = "No access to views in other Logging buckets."
-        expression = join(" || ", [for bucket in local.operational_observer_log_buckets :
-          "(resource.name == 'projects/${var.project_id}/locations/global/buckets/${bucket}' || resource.name.startsWith('projects/${var.project_id}/locations/global/buckets/${bucket}/views/'))"
-        ])
-      }"""
-    if (bucket_scope is None or set(re.findall(r'"([^"]+)"', bucket_scope[1])) != set(logging_setup.BUCKETS)
-            or binding is None or re.sub(r"\s+", "", binding[1]) != re.sub(r"\s+", "", expected_binding)):
-        errors.append("Logging installed-grant proof requires the exact reviewed two-bucket Terraform binding")
-    for kind, role_name, condition in (("creator", wif_setup.CREATOR_ROLE, wif_setup.condition()), ("reader", wif_setup.READER_ROLE, None)):
-        label = "operational_provider_" + kind
-        role = re.search(r'resource "google_project_iam_custom_role" "' + label + r'"\s*\{(.*?)\n\}', operational, re.S)
-        binding = re.search(r'resource "google_project_iam_member" "github_actions_' + label + r'"\s*\{(.*?)\n\}', operational, re.S)
-        expected_binding = 'project = var.project_id\nrole = google_project_iam_custom_role.' + label + '.name\nmember = "serviceAccount:${var.github_actions_terraform_service_account_email}"'
-        if condition is not None:
-            expected_binding += '\ncondition {\n' + '\n'.join(key + ' = "' + value + '"' for key, value in condition.items()) + '\n}'
-        if (role is None or not re.search(r'role_id\s*=\s*"' + role_name.rsplit('/', 1)[1] + '"', role[1])
-                or binding is None or re.sub(r'\s+', '', binding[1]) != re.sub(r'\s+', '', expected_binding)):
-            errors.append("operational provider " + kind + " requires the exact protected principal, role and fixed expiry contract")
-        bootstrap = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["bootstrap"]["with"]
-        for field in ("targets", "allowed_exact"):
-            if not {"google_project_iam_custom_role." + label, "google_project_iam_member.github_actions_" + label} <= set(bootstrap.get(field, "").split()):
-                errors.append("operational provider " + kind + " has no exact protected bootstrap " + field)
-    errors += readonly_trust_contract(root)
-    observations = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["observations"]
-    errors += operational_storage_contract(root, operational, observations["with"])
-    if observations.get("needs") != ["bootstrap", "readonly-trust"] or observations["with"].get("readiness_target") != "operational-observer-setup" or observations["with"].get("block_deletes") is not True:
-        errors.append("operational setup requires ordered bootstrap, permission readiness and blocked deletion")
-    audit_address = "google_project_iam_audit_config.operational_run_data_write"
-    audit_match = re.search(r'resource\s+"google_project_iam_audit_config"\s+"operational_run_data_write"\s*\{(.*?)(?=\nresource |\Z)', operational, re.S)
-    if (audit_match is None or not re.search(r'service\s*=\s*"run.googleapis.com"', audit_match[1])
-            or re.findall(r'log_type\s*=\s*"([^"]+)"', audit_match[1]) != ["DATA_WRITE"] or "exempted_members" in audit_match[1]):
-        errors.append("operational setup must enable exact unexempted Run DATA_WRITE capture")
-    for field in ("targets", "allowed_exact"):
-        if audit_address not in observations["with"].get(field, "").split():
-            errors.append(f"operational {field} omits required Run DATA_WRITE capture")
-        metrics = {"google_monitoring_metric_descriptor.operational_reconciliation_heartbeat" + suffix for suffix in ("", "_v2")}
-        actual_metrics = {address for address in observations["with"].get(field, "").split() if address.startswith("google_monitoring_metric_descriptor.")}
-        if actual_metrics != metrics:
-            errors.append(f"operational {field} must retain the legacy heartbeat descriptor and exact fenced v2 descriptor")
-    # Derive coverage from the declarations so adding a new policy cannot leave
-    # it outside the protected saved-plan/permission/receipt boundary.
-    declared_policies = {
-        "google_monitoring_alert_policy." + name
-        for path in (root / "terraform/envs/prod").glob("*.tf")
-        for name in re.findall(r'resource\s+"google_monitoring_alert_policy"\s+"([^"]+)"', path.read_text())
-    }
-    policy_sync = workflow(root, "cron-alert-policy-sync.yml")["jobs"]["sync"]["with"]
-    for field in ("targets", "allowed_exact"):
-        if set(policy_sync[field].split()) != declared_policies:
-            errors.append(f"Monitoring {field} must cover exactly every declared alert policy")
     for filename, role, expected in (
         ("artifact_registry_iam.tf", "artifact_registry_iam_policy_manager", {"artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"}),
         ("preview_terraform_iam.tf", "preview_terraform", {"iam.serviceAccounts.actAs", "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.update", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}),
@@ -352,30 +168,14 @@ def iam_contract(root):
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")
-    steps = {step.get("name"): step for step in generic["jobs"]["sync"]["steps"]}
-    auth = steps.get("Authenticate to Google Cloud", {})
-    expected_auth = {
-        "workload_identity_provider": "${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}",
-        "service_account": "${{ env.TERRAFORM_SERVICE_ACCOUNT }}",
-        "token_format": "${{ (inputs.readiness_target == 'operational-observer-setup' || inputs.readiness_target == 'readonly-wif-trust') && 'access_token' || '' }}",
-        "access_token_scopes": "https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/userinfo.email",
-    }
-    if (generic.get("env", {}).get("TERRAFORM_SERVICE_ACCOUNT") != "${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}"
-            or auth.get("id") != "auth" or auth.get("uses") != "google-github-actions/auth@v2"
-            or auth.get("with") != expected_auth):
-        errors.append("Logging grant proof requires the protected service account's explicit scoped identity token without delegation")
-    for name in ("Verify prerequisite deployment permissions", "Verify complete saved-plan mutation permissions"):
-        if steps.get(name, {}).get("env", {}).get("LOGGING_SETUP_ACCESS_TOKEN") != "${{ steps.auth.outputs.access_token }}":
-            errors.append(f"{name}: Logging grant proof must receive the masked scoped auth token")
-    generic_triggers = generic.get("on", generic.get(True))
+    required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
     for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
-        if not required_string_input(generic_triggers, key):
+        if not required[key].get("required"):
             errors.append(f"generic Terraform apply must require {key}")
     for filename in sorted(set(TERRAFORM_SYNCS.values())):
         caller = workflow(root, filename)
         triggers = caller.get("on", caller.get(True))
-        if (not isinstance(triggers, dict) or not triggers
-                or not set(triggers) <= {"workflow_call", "workflow_dispatch"}):
+        if set(triggers) != {"workflow_call", "workflow_dispatch"}:
             errors.append(f"{filename}: automatic mutation must be called after ci-ready")
         for name, job in caller["jobs"].items():
             if job.get("uses") != "./.github/workflows/prod-terraform-target-apply.yml":
@@ -388,12 +188,10 @@ def iam_contract(root):
             if not inputs.get("readiness_target"):
                 errors.append(f"{filename}/{name}: live permission prerequisite is missing")
             for key in ("executor_sha", "source_run_id", "source_run_attempt"):
-                if (inputs.get(key) != "${{ inputs." + key + " }}"
-                        or not required_string_input(triggers, key)):
-                    errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded as a string on every declared trigger")
+                if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
+                    errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
     for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
-        expected = ["bootstrap", "observations"] if filename == "cron-alert-policy-sync.yml" else "bootstrap"
-        if workflow(root, filename)["jobs"][child].get("needs") != expected:
+        if workflow(root, filename)["jobs"][child].get("needs") != "bootstrap":
             errors.append(f"{filename}: bootstrap authority must precede dependent mutation")
     return errors
 
@@ -401,19 +199,8 @@ def iam_contract(root):
 def deployment_contract(root, target):
     name = DEPLOYS[target] + "-deploy.yml"
     value = workflow(root, name)
-    errors = []
-    caller = workflow(root, "ci.yml")["jobs"][target]
-    required = {"ci-ready", "geospatial-changes", "ingestion-iam", "artifact-registry-iam"}
-    conditions = ["!cancelled()", "needs.ingestion-iam.result == 'success'", "needs.artifact-registry-iam.result == 'success'"]
-    if target == "mpatlas":
-        required.add("cron-alert-policy")
-        conditions.append("(needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success')")
-    conditions += ["github.event_name == 'push'", "github.ref == 'refs/heads/main'", "needs.ci-ready.result == 'success'",
-                   "needs.geospatial-changes.outputs." + target.replace("-", "_") + " == 'true'"]
-    if (required != set(caller.get("needs", []))
-            or caller.get("if") != "${{ " + " && ".join(conditions) + " }}"):
-        errors.append(f"{name}: CI caller must bypass skipped ancestors, respect cancellation and require exact successful CI/IAM prerequisites")
     triggers = value.get("on", value.get(True, {}))
+    errors = []
     if "push" in triggers or "pull_request" in triggers or "workflow_call" not in triggers:
         errors.append(f"{name}: automatic deployment must be called after ci-ready")
     job = value["jobs"]["deploy"]

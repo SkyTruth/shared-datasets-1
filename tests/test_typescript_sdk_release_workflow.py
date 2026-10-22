@@ -1,4 +1,6 @@
 """The npm trusted publisher identity consumes immutable CI bytes."""
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,7 +10,6 @@ import sys
 import pytest
 
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
-from test_npm_visibility import publication  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,12 +54,7 @@ def test_sdk_release_does_not_rebuild_and_registry_verifies_tested_bytes():
     assert receipt['uses'] == './.github/actions/deployment-receipt'
     assert receipt['if'] == "${{ steps.deployment.outputs.proceed == 'true' }}"
     assert receipt['with'] == {'mode': 'receipt', 'receipt-path': '${{ steps.deployment.outputs.receipt_path }}'}
-    confirmation = steps['Verify registry retained the tested bytes']
-    assert 'npm_visibility.py --accepted-publication --candidate "$CANDIDATE"' in confirmation['run']
-    assert "steps.publish-package.outcome == 'success'" in confirmation['if']
-    assert "steps.registry.outputs.should_publish == 'false'" in confirmation['if']
-    assert publish['id'] == 'publish-package'
-    assert workflow['jobs']['publish']['timeout-minutes'] == 40
+    assert 'should_publish=false' in steps['Verify registry retained the tested bytes']['run']
     assert workflow['env']['NODE_VERSION'] == '24.13.1'
 
 
@@ -88,53 +84,80 @@ def test_verified_nonready_ci_stops_before_strict_authorization_and_mutation():
 
 @pytest.mark.parametrize(('visible_after', 'error', 'succeeds', 'expected_elapsed'), [
     (0, '', True, 0),
-    (90, '', True, 180),
-    (600, '', True, 900),
-    (None, '', False, 1740),
-    (0, 'wrong_integrity', False, 0),
-    (0, 'verifier_failure', False, 0),
+    (90, '', True, 90),
+    (600, '', True, 600),
+    (None, '', False, 600),
+    (0, 'different or missing integrity', False, 0),
+    (0, 'ECONNRESET', False, 0),
 ])
 def test_registry_confirmation_waits_only_for_missing_version(
-    publication, monkeypatch, visible_after, error, succeeds, expected_elapsed,  # noqa: F811
+    tmp_path, visible_after, error, succeeds, expected_elapsed,
 ):
-    """Run the checked-in workflow command and real HTTP verifier offline."""
+    """Run the workflow shell and real verifier with virtual npm transport/time."""
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     step = workflow_steps_by_name(workflow, 'publish')['Verify registry retained the tested bytes']
-    candidate, _, state_path = publication
-    # Replace only Python's wall clock in the child. The exact workflow argv,
-    # candidate verifier, JSON serialization and HTTP construction still run.
-    executable = candidate.parent / 'python'
-    executable.write_text(f'#!{sys.executable}\n' + '''
+    state_path = tmp_path / 'registry.json'
+    state_path.write_text(json.dumps({'elapsed': 0, 'checks': 0}))
+    package = {'name': '@skytruth/shared-datasets', 'version': '0.9.0'}
+    (tmp_path / 'package.json').write_text(json.dumps(package))
+    (tmp_path / 'package-lock.json').write_text(json.dumps({**package, 'packages': {'': package}}))
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/release-policy.mjs').write_bytes(
+        (ROOT / 'api/typescript/scripts/release-policy.mjs').read_bytes(),
+    )
+    tarball = tmp_path / 'tested.tgz'
+    tarball.write_bytes(b'exact tested package')
+    integrity = 'sha512-' + base64.b64encode(hashlib.sha512(tarball.read_bytes()).digest()).decode()
+    (tmp_path / 'candidate.json').write_text(json.dumps({
+        **package, 'tarball': str(tarball), 'integrity': integrity,
+    }))
+    transport = f'#!{sys.executable}\n' + '''
 import json
 import os
 from pathlib import Path
-import runpy
 import sys
-state_path = Path(os.environ['NPM_TEST_STATE'])
-def sleep(seconds):
-    state = json.loads(state_path.read_text())
-    state['elapsed'] += seconds
+
+state_path = Path(os.environ['REGISTRY_STATE'])
+state = json.loads(state_path.read_text())
+if Path(sys.argv[0]).name == 'sleep':
+    state['elapsed'] += int(sys.argv[1])
     state_path.write_text(json.dumps(state))
-sys.argv = sys.argv[1:]
-sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
-from scripts import operational_retry
-operational_retry.sleep = sleep
-operational_retry.monotonic = lambda: json.loads(state_path.read_text())['elapsed']
-runpy.run_path(sys.argv[0], run_name='__main__')
-''')
-    executable.chmod(0o755)
+else:
+    args = sys.argv[1:]
+    assert args[0] == 'view'
+    assert '--prefer-online' in args
+    assert os.environ['GITHUB_OUTPUT'] == ''
+    if args[2] == 'versions':
+        state['checks'] += 1
+        state_path.write_text(json.dumps(state))
+    if os.environ['REGISTRY_ERROR'] == 'ECONNRESET':
+        print(os.environ['REGISTRY_ERROR'], file=sys.stderr)
+        sys.exit(1)
+    if args[2] == 'versions':
+        visible_after = json.loads(os.environ['VISIBLE_AFTER'])
+        pending = visible_after is None or state['elapsed'] < visible_after
+        print(json.dumps(['0.8.0'] if pending else ['0.8.0', '0.9.0']))
+    else:
+        assert args[1:3] == ['@skytruth/shared-datasets@0.9.0', 'dist.integrity']
+        print(json.dumps('wrong integrity' if os.environ['REGISTRY_ERROR'] else os.environ['INTEGRITY']))
+'''
+    for name in ('npm', 'sleep'):
+        executable = tmp_path / name
+        executable.write_text(transport)
+        executable.chmod(0o755)
     result = subprocess.run(
-        ['bash', '-e', '-c', step['run']], cwd=ROOT / 'api/typescript',
+        ['bash', '-e', '-c', step['run']], cwd=tmp_path,
         capture_output=True, text=True, timeout=30,
-        env={**os.environ, 'PATH': f'{candidate.parent}{os.pathsep}{os.environ["PATH"]}',
-             'CANDIDATE': str(candidate), 'NPM_TEST_VISIBLE_AFTER': json.dumps(visible_after),
-             'NPM_TEST_MODE': error or 'normal'},
+        env={**os.environ, 'PATH': f'{tmp_path}{os.pathsep}{os.environ["PATH"]}',
+             'CANDIDATE': str(tmp_path / 'candidate.json'), 'REGISTRY_STATE': str(state_path),
+             'VISIBLE_AFTER': json.dumps(visible_after), 'REGISTRY_ERROR': error,
+             'INTEGRITY': integrity},
     )
     assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
     state = json.loads(state_path.read_text())
     assert state['elapsed'] == expected_elapsed
     if error:
-        assert len(state['requests']) <= 1
-        assert 'NPM_VISIBILITY_NOT_VERIFIED' in result.stderr
+        assert state['checks'] == 1
+        assert error in result.stderr
     if visible_after is None:
         assert 'Registry has not confirmed the exact tested package integrity' in result.stderr

@@ -42,7 +42,7 @@ def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sour
     'publish-dataset.yml', 'catalog-web-deploy.yml', 'catalog-viewer-deploy.yml',
     'pmtiles-cdn-sync.yml', 'prod-terraform-target-apply.yml',
     'publish-typescript-sdk.yml', 'deployment-verification.yml',
-    'deployment-recovery.yml',
+    'deployment-recovery.yml', 'cron-alert-delivery-test.yml',
 ])
 def test_production_workers_keep_their_noncancelling_queues(filename):
     workflow = load_workflow(ROOT / '.github/workflows' / filename)
@@ -78,20 +78,17 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     assert set(workflow_triggers(announcement)) == {'workflow_call'}
 
 
-def test_signed_reconciler_accepts_terminal_recovery_without_legacy_failure_sender():
+def test_successful_or_skipped_upstream_events_cannot_allocate_failure_alert_worker():
     workflow = load_workflow(ROOT / '.github/workflows/unattended-workflow-alert.yml')
-    assert set(workflow['jobs']) == {'incidents'}
-    condition = workflow['jobs']['incidents']['if']
+    condition = workflow['jobs']['notify']['if']
     match = re.search(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.conclusion\)", condition)
     assert match is not None
     import json
     conclusions = json.loads(match[1])
-    assert {'success', 'failure', 'timed_out', 'cancelled'} <= set(conclusions)
-    assert not {'skipped', 'neutral'} & set(conclusions)
+    assert {'failure', 'timed_out', 'cancelled'} <= set(conclusions)
+    assert not {'success', 'skipped', 'neutral'} & set(conclusions)
     assert "github.event.workflow_run.status == 'completed'" in condition
     assert 'github.event.workflow_run.head_repository.full_name == github.repository' in condition
-    from scripts.deployment_receipt_contracts import notification_boundary
-    assert notification_boundary('unattended-workflow-alert.yml', 'incidents', workflow, workflow['jobs']['incidents'])
 
 
 def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or_selected_main_ci():

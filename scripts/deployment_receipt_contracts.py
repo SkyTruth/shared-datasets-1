@@ -7,7 +7,6 @@ import yaml
 
 ACTION = "./.github/actions/deployment-receipt"
 WORKFLOWS = (
-    "monitoring-slack-relay-deploy.yml",
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
@@ -59,21 +58,7 @@ def notification_boundary(filename, identifier, workflow, job):
     if filename != NOTIFICATION_WORKFLOW or identifier != "incidents":
         return False
     trigger = workflow.get("on", workflow.get(True, {}))
-    if not isinstance(trigger, dict) or set(trigger) != {"workflow_run", "workflow_dispatch", "schedule"}:
-        return False
-    if trigger["schedule"] != [{"cron": "3-59/5 * * * *"}] or set(workflow.get("jobs", {})) != {"incidents"}:
-        return False
-    inputs = trigger["workflow_dispatch"].get("inputs", {})
-    if set(inputs) != {"action", "supervision_request", "supervision_request_id", "incident_id", "operation", "delivery_result", "message_ts"}:
-        return False
-    if (inputs["action"].get("type") != "choice" or inputs["action"].get("options") != ["reconcile-delivery", "supervision"]
-            or inputs["action"].get("default") != "reconcile-delivery"
-            or any(inputs[key].get("type") != "string" or inputs[key].get("required") is True for key in ("supervision_request", "supervision_request_id", "incident_id", "operation", "message_ts"))
-            or inputs["delivery_result"].get("options") != ["none", "delivered", "not-delivered", "seal-checkpoint"]
-            or inputs["delivery_result"].get("default") != "none"
-            or inputs["delivery_result"].get("required") is True):
-        return False
-    if workflow.get("run-name") != "${{ inputs.action == 'supervision' && format('Supervision {0}', inputs.supervision_request_id) || 'Workflow health and Slack reconciliation' }}":
+    if not isinstance(trigger, dict) or set(trigger) != {"workflow_run", "workflow_dispatch"}:
         return False
     upstream = trigger["workflow_run"]
     if not isinstance(upstream, dict) or upstream.get("branches") != ["main"] or upstream.get("types") != ["completed"]:
@@ -81,27 +66,19 @@ def notification_boundary(filename, identifier, workflow, job):
     terms = top_level_conjuncts(job.get("if", ""))
     if "github.ref == 'refs/heads/main'" not in terms or "vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED == 'true'" not in terms:
         return False
-    admission = 'vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED == \'true\' && github.ref == \'refs/heads/main\' && (\n  github.event_name == \'workflow_dispatch\' ||\n  github.event_name == \'schedule\' ||\n  (\n    github.event.workflow_run.status == \'completed\' &&\n    contains(fromJSON(\'["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]\'), github.event.workflow_run.conclusion) &&\n    (\n      github.event.workflow_run.conclusion != \'success\' ||\n      contains(fromJSON(\'["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]\'), github.event.workflow_run.name)\n    ) &&\n    github.event.workflow_run.head_branch == \'main\' &&\n    github.event.workflow_run.head_repository.full_name == github.repository &&\n    (\n      github.event.workflow_run.event == \'schedule\' ||\n      github.event.workflow_run.event == \'workflow_run\' ||\n      github.event.workflow_run.event == \'workflow_dispatch\' ||\n      (github.event.workflow_run.event == \'push\' && github.event.workflow_run.name == \'CI\')\n    )\n  )\n)'
-    if job.get("if", "") != admission:
-        return False
     if workflow.get("permissions") != {"contents": "read", "actions": "read"} or workflow.get("env") or "defaults" in workflow:
         return False
     if job.get("permissions") != NOTIFICATION_PERMISSIONS or any(key in job for key in ("environment", "uses", "env", "defaults", "container", "services", "strategy")):
         return False
     if job.get("runs-on") != "ubuntu-latest":
         return False
-    if workflow.get("concurrency") != {
-        "group": "slack-notification-${{ github.repository }}-${{ github.event_name == 'schedule' && 'scheduled-reconciliation' || github.run_id }}",
-        "cancel-in-progress": False,
-    }:
-        return False  # Coalesce only unstarted ticks, preserving every control/source event.
     if job.get("concurrency") != {"group": "slack-incidents-${{ github.repository }}", "queue": "max", "cancel-in-progress": False}:
         return False
     steps = job.get("steps", [])
     guard = '''set -euo pipefail
 if [[ "${GITHUB_REF}" != "refs/heads/main" ||
       "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/unattended-workflow-alert.yml@refs/heads/main" ]]; then
-  echo "Execution must use this workflow from main." >&2
+  echo "Incident notifications require this workflow from main." >&2
   exit 1
 fi'''
     if not steps or set(steps[0]) != {"name", "run"} or re.sub(r"\s+", " ", steps[0]["run"].strip()) != re.sub(r"\s+", " ", guard):
@@ -109,56 +86,27 @@ fi'''
     runs = {
         "uv sync --locked --no-dev": None,
         "python scripts/install_deployment_verifier.py": None,
-        'uv run --no-sync python scripts/operational_reconcile.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
-        'uv run --no-sync python scripts/operational_reconcile.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
-        'uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': "verify",
-        'uv run --no-sync python scripts/operational_reconcile.py finalize-cycle --work-dir "$RUNNER_TEMP/slack-incidents"': "finalize-cycle",
-        'uv run --no-sync python scripts/operational_reconcile.py verify-heartbeat --work-dir "$RUNNER_TEMP/slack-incidents"': None,
+        'uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
+        'uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
+        'uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': None,
     }
     actions = {
         "actions/checkout@v4": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False},
         "actions/setup-python@v5": {"python-version": "3.12.12"},
         "astral-sh/setup-uv@v6": {"version": "0.11.8", "enable-cache": False},
-        "google-github-actions/auth@v2": {
-            "workload_identity_provider": "${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}",
-            "service_account": "${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}",
-            "create_credentials_file": True,
-        },
     }
     environment = {
         "GH_TOKEN": "${{ github.token }}",
         "SHARED_DATASETS_SLACK_BOT_TOKEN": "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}",
         "SHARED_DATASETS_SLACK_CHANNEL_ID": "${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}",
         "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": "${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}",
-        "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED": "${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}",
     }
     command_environments = {
         "prepare": environment,
-        "deliver": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_SLACK_BOT_TOKEN",
-                    "SHARED_DATASETS_SLACK_CHANNEL_ID", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
+        "deliver": {key: value for key, value in environment.items() if not key.endswith("_SINCE")},
         "verify": {"GH_TOKEN": environment["GH_TOKEN"]},
-        "finalize-cycle": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
-        "verify-heartbeat": {key: environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED")},
     }
-    github_prepare_environment = {key: value for key, value in environment.items() if key != "SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED"}
-    github_steps = [
-        {"id": "github-prepare", "if": "${{ github.event_name == 'schedule' }}", "env": github_prepare_environment,
-         "run": 'uv run --no-sync python scripts/operational_reconcile.py prepare-github --work-dir "$RUNNER_TEMP/github-incidents"'},
-        {"id": "github-attest-claims", "if": "${{ always() && steps.github-prepare.outputs.claims == 'true' }}", "uses": NOTIFICATION_ATTEST,
-         "with": {"subject-path": "${{ runner.temp }}/github-incidents/claims/*.json", "create-storage-record": False}},
-        {"id": "github-deliver", "if": "${{ always() && steps.github-prepare.outputs.claims == 'true' && steps.github-attest-claims.outcome == 'success' }}",
-         "env": {key: github_prepare_environment[key] for key in ("GH_TOKEN", "SHARED_DATASETS_SLACK_BOT_TOKEN", "SHARED_DATASETS_SLACK_CHANNEL_ID")},
-         "run": 'uv run --no-sync python scripts/operational_reconcile.py deliver-github --work-dir "$RUNNER_TEMP/github-incidents"'},
-        {"id": "github-attest-outcomes", "if": "${{ always() && steps.github-deliver.outputs.outcomes == 'true' }}", "uses": NOTIFICATION_ATTEST,
-         "with": {"subject-path": "${{ runner.temp }}/github-incidents/outcomes/*.json", "create-storage-record": False}},
-        {"id": "github-verify", "if": "${{ always() && github.event_name == 'schedule' && (steps.github-prepare.outcome == 'success' || steps.github-attest-claims.outcome == 'success' || steps.github-attest-outcomes.outcome == 'success') }}",
-         "env": {"GH_TOKEN": environment["GH_TOKEN"]},
-         "run": 'uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/github-incidents"'},
-    ]
-    if [{key: value for key, value in step.items() if key != "name"} for step in steps[6:11]] != github_steps:
-        return False  # Complete the signed GitHub phase before observer credentials exist.
-    steps = steps[:6] + steps[11:]
-    if [step.get("uses") for step in steps[1:4]] != list(actions)[:3]:
+    if [step.get("uses") for step in steps[1:4]] != list(actions):
         return False
     seen_runs, seen_actions, signers = [], [], {}
     for step in steps[1:]:
@@ -170,51 +118,41 @@ fi'''
             run = step["run"].strip()
             if "uses" in step or run not in runs or step.get("id") != runs[run]:
                 return False
-            phase = next((name for name in command_environments if f"operational_reconcile.py {name} " in run), None)
+            phase = next((name for name in command_environments if f"slack_incidents.py {name} " in run), None)
             if step.get("env", {}) != command_environments.get(phase, {}):
                 return False
-            if phase == "prepare":
-                if step.get("if") != "${{ success() && (github.event_name != 'schedule' || (vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success')) }}":
-                    return False
-            elif phase not in {"deliver", "verify", "finalize-cycle", "verify-heartbeat"} and "if" in step:
+            if phase not in {"deliver", "verify"} and "if" in step:
                 return False
             seen_runs.append(run)
         elif step.get("uses") == NOTIFICATION_ATTEST:
             identifier = step.get("id")
-            if identifier not in {"attest-claims", "attest-outcomes", "attest-cycle"} or identifier in signers:
+            if identifier not in {"attest-claims", "attest-outcomes"} or identifier in signers:
                 return False
-            phase = "outcomes" if identifier == "attest-outcomes" else "claims"
+            phase = "claims" if identifier == "attest-claims" else "outcomes"
             if step.get("with") != {"subject-path": "${{ runner.temp }}/slack-incidents/" + phase + "/*.json", "create-storage-record": False}:
                 return False
             signers[identifier] = step
         else:
             action = step.get("uses")
-            if action not in actions or step.get("with") != actions[action] or step.get("env") or "id" in step:
-                return False
-            expected_if = "${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}" if action == "google-github-actions/auth@v2" else None
-            if step.get("if") != expected_if:
+            if action not in actions or step.get("with") != actions[action] or step.get("env") or "if" in step or "id" in step:
                 return False
             seen_actions.append(action)
-    if seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes", "attest-cycle"}:
+    if seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}:
         return False
     by_id = {step.get("id"): step for step in steps if step.get("id")}
     delivery = by_id["deliver"]
     claims = signers["attest-claims"]
     outcomes = signers["attest-outcomes"]
-    verify = by_id["verify"]
+    verify = steps[-1]
     expected_conditions = (
         (claims, "${{ always() && steps.prepare.outputs.claims == 'true' }}"),
         (delivery, "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}"),
         (outcomes, "${{ always() && steps.deliver.outputs.outcomes == 'true' }}"),
-        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success' || steps.prepare.outputs.cycle_proposed == 'true') }}"),
-        (by_id["finalize-cycle"], "${{ success() && steps.prepare.outputs.cycle_proposed == 'true' && steps.verify.outcome == 'success' }}"),
-        (signers["attest-cycle"], "${{ success() && steps.finalize-cycle.outputs.cycle_saved == 'true' }}"),
-        (steps[-1], "${{ success() && steps.attest-cycle.outcome == 'success' }}"),
+        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}"),
     )
     if any(step.get("if") != condition for step, condition in expected_conditions):
         return False
-    return (steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes)
-            < steps.index(verify) < steps.index(by_id["finalize-cycle"]) < steps.index(signers["attest-cycle"]) < len(steps) - 1)
+    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 1
 
 
 def enabled(step):

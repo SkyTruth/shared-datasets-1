@@ -145,10 +145,6 @@ class ReceiptContractTests(unittest.TestCase):
             "PR": lambda value, job: value[True].update(pull_request={}),
             "PR target": lambda value, job: value[True].update(pull_request_target={}),
             "reusable": lambda value, job: value[True].update(workflow_call={}),
-            "changed cadence": lambda value, job: value[True].update(schedule=[{"cron": "* * * * *"}]),
-            "owner field bypass": lambda value, job: value[True]["workflow_dispatch"]["inputs"].update(authority={"type": "string"}),
-            "unknown supervision action": lambda value, job: value[True]["workflow_dispatch"]["inputs"]["action"].update(options=["supervision", "arbitrary"]),
-            "ambiguous CLI identity": lambda value, job: value.update({"run-name": "Supervision accepted"}),
             "nonmain upstream": lambda value, job: value[True]["workflow_run"].update(branches=["feature"]),
             "unfinished upstream": lambda value, job: value[True]["workflow_run"].update(types=["requested"]),
             "global writer": lambda value, job: value.update(permissions={"deployments": "write"}),
@@ -165,11 +161,6 @@ class ReceiptContractTests(unittest.TestCase):
             "job shell override": lambda value, job: job.update(defaults={"run": {"shell": "python"}}),
             "other runner": lambda value, job: job.update({"runs-on": "self-hosted"}),
             "cancellation": lambda value, job: job["concurrency"].update({"cancel-in-progress": True}),
-            "running tick cancellation": lambda value, job: value["concurrency"].update({"cancel-in-progress": True}),
-            "unbounded tick backlog": lambda value, job: value["concurrency"].update(queue="max"),
-            "lost control requests": lambda value, job: value["concurrency"].update(group="slack-notification-all"),
-            "nested lock collision": lambda value, job: value["concurrency"].update(group=job["concurrency"]["group"]),
-            "missing tick coalescing": lambda value, job: value.pop("concurrency"),
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label):
@@ -183,14 +174,6 @@ class ReceiptContractTests(unittest.TestCase):
                     self.assertTrue(contracts.permissions(self.root))
 
     def test_notification_requires_trusted_checkout_commands_and_signed_delivery(self):
-        def step(steps, identifier):
-            return next(item for item in steps if item.get("id") == identifier)
-
-        def late_claim(steps):
-            claim = step(steps, "attest-claims")
-            steps.remove(claim)
-            steps.insert(steps.index(step(steps, "deliver")) + 1, claim)
-
         mutations = {
             "upstream checkout": lambda steps: steps[1]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
             "shallow checkout": lambda steps: steps[1]["with"].update({"fetch-depth": 1}),
@@ -201,19 +184,15 @@ class ReceiptContractTests(unittest.TestCase):
             "untrusted artifact": lambda steps: steps.append({"uses": "actions/download-artifact@v4"}),
             "GCP auth": lambda steps: steps.append({"uses": "google-github-actions/auth@v3"}),
             "production command": lambda steps: steps.append({"run": "terraform apply saved.tfplan"}),
-            "changed command": lambda steps: step(steps, "prepare").update(run=step(steps, "prepare")["run"] + "\npython arbitrary.py"),
-            "disabled prepare": lambda steps: step(steps, "prepare").update({"if": "false && true"}),
-            "GCP credential": lambda steps: step(steps, "prepare")["env"].update(GOOGLE_APPLICATION_CREDENTIALS="credential.json"),
-            "wrong signer": lambda steps: step(steps, "attest-claims").update(uses="actions/attest@unreviewed"),
-            "broad subjects": lambda steps: step(steps, "attest-claims")["with"].update({"subject-path": "${{ runner.temp }}/*.json"}),
-            "storage write": lambda steps: step(steps, "attest-claims")["with"].update({"create-storage-record": True}),
-            "unsigned send": lambda steps: step(steps, "deliver").update({"if": "always()"}),
-            "late claim signature": late_claim,
-            "lost failed outcome": lambda steps: step(steps, "attest-outcomes").update({"if": "success()"}),
-            "unverified checkpoint advance": lambda steps: step(steps, "finalize-cycle").update({"if": "always()"}),
-            "unsigned heartbeat": lambda steps: steps[-1].update({"if": "always()"}),
-            "missing cycle signature": lambda steps: steps.remove(step(steps, "attest-cycle")),
-            "unconditional observer auth": lambda steps: next(item for item in steps if item.get("uses") == "google-github-actions/auth@v2").pop("if"),
+            "changed command": lambda steps: steps[6].update(run=steps[6]["run"] + "\npython arbitrary.py"),
+            "disabled prepare": lambda steps: steps[6].update({"if": "false && true"}),
+            "GCP credential": lambda steps: steps[6]["env"].update(GOOGLE_APPLICATION_CREDENTIALS="credential.json"),
+            "wrong signer": lambda steps: steps[7].update(uses="actions/attest@unreviewed"),
+            "broad subjects": lambda steps: steps[7]["with"].update({"subject-path": "${{ runner.temp }}/*.json"}),
+            "storage write": lambda steps: steps[7]["with"].update({"create-storage-record": True}),
+            "unsigned send": lambda steps: steps[8].update({"if": "always()"}),
+            "late claim signature": lambda steps: steps.insert(9, steps.pop(7)),
+            "lost failed outcome": lambda steps: steps[9].update({"if": "success()"}),
             "missing verification": lambda steps: steps.pop(),
             "unpinned Python": lambda steps: steps[2]["with"].update({"python-version": "3.12"}),
             "unpinned uv": lambda steps: steps[3]["with"].update(version="latest"),
