@@ -210,3 +210,36 @@ def test_atomic_view_contract_changes_keep_protected_policy_deployment_selected(
     from scripts import ci_contract
     for path in ("catalog/operational-log-views.json", "scripts/operational_log_views.py"):
         assert ci_contract.select_deployments([path]) == ["cron_alert_policy"]
+
+
+@pytest.mark.parametrize("path", [
+    "scripts/cloud_operational_observations.py", "scripts/cloud_observation_ledger.py",
+    "scripts/cloud_incident_adapter.py", "scripts/operational_protocol.py",
+    "scripts/monitoring_routing_audit.py",
+])
+def test_cloud_protocol_repairs_install_the_fresh_policy_without_redeploying_data_workers(path):
+    assert select_deployments([path]) == ["cron_alert_policy"]
+
+
+def test_installed_protocol_registry_is_shared_and_cannot_bypass_broader_deployments():
+    from scripts import ci_contract, operational_delivery_activation, operational_protocol
+    assert operational_delivery_activation.PROTOCOL_FILES is operational_protocol.PROTOCOL_FILES
+    assert "scripts/operational_protocol.py" in ci_contract.CONTRACT_FILES
+    for path in operational_protocol.PROTOCOL_FILES:
+        assert "cron_alert_policy" in select_deployments([path])
+    assert set(select_deployments(["scripts/operational_cutover.py"])) == {
+        "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy",
+    }
+    assert set(select_deployments([".github/workflows/prod-terraform-target-apply.yml"])) == {
+        "artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam",
+    }
+
+
+def test_protocol_registry_remains_dependency_free_and_self_fenced():
+    from scripts import operational_protocol
+    source = ROOT / "scripts/operational_protocol.py"
+    tree = ast.parse(source.read_text())
+    assert not any(isinstance(node, (ast.Import, ast.ImportFrom, ast.Call)) for node in ast.walk(tree))
+    assert len(operational_protocol.PROTOCOL_FILES) == len(set(operational_protocol.PROTOCOL_FILES))
+    assert source.relative_to(ROOT).as_posix() in operational_protocol.PROTOCOL_FILES
+    assert all((ROOT / path).is_file() for path in operational_protocol.PROTOCOL_FILES)

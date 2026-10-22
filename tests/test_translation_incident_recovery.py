@@ -358,6 +358,7 @@ def test_manual_fix_roundtrips_signed_cycle_and_offline_gcs_http_without_runtime
     session = Session()
     reader = cloud.CloudReader(session)
     reader.entries = lambda *_args, **_kwargs: iter(())  # No completion event exists in Cloud Run.
+    reader.executions = lambda job: iter(())
     reader.heartbeat = Mock()
     def clock():
         return incidents.policy.instant(at(13))

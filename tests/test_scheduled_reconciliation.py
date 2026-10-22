@@ -143,7 +143,7 @@ def test_actual_scheduled_commands_resolve_github_before_optional_cloud_failure(
     assert [call[0] for call in phase.slack.calls] == ["update"]
     if cloud_enabled == "true" and failure == "scan":
         monkeypatch.setattr(worker, "routing", lambda *_: deepcopy(SHADOW))
-        source = SimpleNamespace(entries=Mock(side_effect=RuntimeError("complete cloud scan failed")))
+        source = SimpleNamespace(entries=Mock(side_effect=RuntimeError("complete cloud scan failed")), executions=lambda job: iter(()))
         monkeypatch.setattr(worker, "reader", lambda: source)
         with pytest.raises(RuntimeError, match="complete cloud scan failed"):
             phase.command("prepare")
@@ -163,7 +163,7 @@ def test_normal_two_phase_cli_cycle_replays_github_once_and_signs_before_cloud_h
     seed_github_failure(phase)
     monkeypatch.setenv("SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED", "true")
     finish_github(phase)
-    cloud_reader = SimpleNamespace(entries=lambda *_args, **_kwargs: iter([]), heartbeat=Mock(), translation_manifest=Mock())
+    cloud_reader = SimpleNamespace(entries=lambda *_args, **_kwargs: iter([]), executions=lambda job: iter(()), heartbeat=Mock(), translation_manifest=Mock())
     monkeypatch.setattr(worker, "routing", lambda *_: deepcopy(SHADOW))
     monkeypatch.setattr(worker, "reader", lambda: cloud_reader)
     assert phase.command("prepare")["cycle_proposed"] == "true"
@@ -235,7 +235,7 @@ def test_mixed_parent_new_github_failure_remains_actionable_without_cloud_creden
     assert counts[field] == 1
     # Both phases share a worker identity: cloud audit must count the earlier
     # GitHub transport exactly once, despite the distinct local work directories.
-    cloud_reader = SimpleNamespace(entries=lambda *_args, **_kwargs: iter([]), heartbeat=Mock(), translation_manifest=Mock())
+    cloud_reader = SimpleNamespace(entries=lambda *_args, **_kwargs: iter([]), executions=lambda job: iter(()), heartbeat=Mock(), translation_manifest=Mock())
     monkeypatch.setattr(worker, "routing", lambda *_: deepcopy(SHADOW))
     monkeypatch.setattr(worker, "reader", lambda: cloud_reader)
     assert phase.command("prepare")["cycle_proposed"] == "true"

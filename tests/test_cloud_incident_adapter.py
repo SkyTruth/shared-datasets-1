@@ -56,13 +56,15 @@ def source(identifier="first", *, kind="job_outcome", status="failed", subject=N
     return adapter.validate_fact(value)
 
 
-def proposal(*facts):
+def proposal(*facts, completed_at=None):
     return {"schema": cloud.SCHEMA, "covered_through": at(8), "seen": {}, "pending": list(facts), "watching": {},
-            "last_cycle": {"start": at(-60), "end": at(8), "completed_at": at(10), "coverage_gaps": []}}
+            "last_cycle": {"start": at(-60), "end": at(8), "completed_at": completed_at or at(10), "coverage_gaps": [],
+                           "execution_inventory": {job: {"parent": cloud.job_parent(job), "retained_count": 0,
+                                                         "active_count": 0, "sha256": cloud.digest([])} for job in cloud.registered_jobs()}}}
 
 
-def ingest(ledger, *facts, shadow=True, now=None, **kwargs):
-    return incidents.prepare_cloud(ledger, IDENTITY, proposal(*facts), shadow=shadow, now=now or at(10), **kwargs)
+def ingest(ledger, *facts, shadow=True, now=None, collection_completed_at=None, **kwargs):
+    return incidents.prepare_cloud(ledger, IDENTITY, proposal(*facts, completed_at=collection_completed_at), shadow=shadow, now=now or at(10), **kwargs)
 
 
 def published(identifier="success", *, time=None):
@@ -144,7 +146,8 @@ def test_scheduler_and_unallocated_execution_failures_use_truthful_source_anchor
         value = {key: fact[key] for key in ("source_id", "observed_at", "resource_type", "job", "evidence")}
         value.update(kind=kind, mutation_status="uncertain", coverage_gaps=["execution_request_outcome_unverified" if kind == "execution_request" else "scheduler_dispatch_outcome_unverified"])
         if kind == "execution_request":
-            value.update(reason="permission_denied", status_code=7)
+            value["request"] = {"method": "google.cloud.run.v1.Jobs.RunJob", "resource_name": cloud.job_parent(JOB),
+                                "request_name": cloud.job_parent(JOB), "status": {"code": 7}}
         else:
             value["resource_type"] = "cloud_scheduler_job"
         observation = adapter.normalize(value)
@@ -236,7 +239,7 @@ def test_verified_deployment_owner_holds_identity_clarification_without_renewing
     later["observed_at"] = at(30)
     later["fact"]["observed_at"] = at(30)
     with patch.object(incidents, "verified_cloud_correlation", return_value=correlation()):
-        records, evaluation = ingest(ledger, later, shadow=False, now=at(31))
+        records, evaluation = ingest(ledger, later, shadow=False, now=at(31), collection_completed_at=at(31))
     assert records == [] and evaluation["cloud_counts"]["clarification_wait"] == 1
     assert ledger.states[scope]["supervision"][scope]["deadline"] == at(120)
     assert ledger.states[scope]["supervision"][scope]["question_ref"] == request["question_ref"]
@@ -566,7 +569,7 @@ def test_typed_observer_read_failure_has_one_thirty_minute_window_and_quiet_heal
     raw = auxiliary_source("raw", audit=True)
     typed = auxiliary_source("typed")
     ledger = PersistedLedger()
-    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact: auxiliary_proof(fact)):
+    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact, *, image_proofs=None: auxiliary_proof(fact)):
         records, evaluation = ingest(ledger, raw, typed, shadow=False, now=at(2))
     assert records == [] and evaluation["cloud_counts"]["actionable"] == 0
     scope = adapter.source_scope(raw)
@@ -575,7 +578,7 @@ def test_typed_observer_read_failure_has_one_thirty_minute_window_and_quiet_heal
     assert incidents.episode_decisions(state, now=at(29))[0][1].disposition == policy.Disposition.RECOVER
     healed = auxiliary_source("healthy", status="success", success=True, time=at(3), audit=True)
     healed["execution"].update(create_time=at(2), start_time=at(2), completion_time=at(4))
-    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact: auxiliary_proof(fact)):
+    with patch.object(incidents, "verified_cloud_correlation", side_effect=lambda _api, fact, *, image_proofs=None: auxiliary_proof(fact)):
         records, evaluation = ingest(ledger, healed, shadow=False, now=at(5), recovery_verifier=lambda _: True)
     assert records == [] and evaluation["cloud_counts"]["verified_asset_publications"] == 0
     assert evaluation["cloud_counts"]["verified_observer_health"] == 1
@@ -673,6 +676,7 @@ def test_readonly_run_record_transport_pins_generation_and_rejects_dataset_reads
 def test_heartbeat_finish_time_is_after_complete_enumeration_without_advancing_scan_end():
     api = Mock()
     api.entries.return_value = []
+    api.executions.side_effect = lambda job: iter(())
     started = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
     finished = started + timedelta(minutes=29)
     result = cloud.collect(None, api, now=started, clock=lambda: finished)

@@ -122,9 +122,13 @@ selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry reco
 its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
 `uv.lock`, unknown paths and unavailable comparisons select all suites. Test
 selection does not change deployment selection. Changes to the notification
-orchestrator, notification workflow or delivery-activation verifier select only
-`cron_alert_policy` for deployment. Its protected receipt must cover the current
-phase-ordering protocol; these paths do not request ingestion image redeployments.
+orchestrator, collector, adapter, notification workflow, routing verifier or
+delivery-activation verifier select only `cron_alert_policy` for deployment.
+The installed file registry in `scripts/operational_protocol.py` is shared with
+activation and participates in both validation and cloud-cycle contract hashes.
+Its protected receipt must cover the current observation and heartbeat protocol;
+these paths do not request ingestion image redeployments. Cutover and runtime
+changes retain their additional production dependencies.
 Selected runtime deployments use explicit successful CI/IAM prerequisites and a
 cancellation-aware status guard, so skipped optional ancestors cannot silently
 discard selected production work.

@@ -21,15 +21,17 @@ import sys
 from urllib.parse import quote
 from types import MappingProxyType
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common.operational_events import SCHEMA as EVENT_SCHEMA, validate as validate_event
-from scripts import gcp_read_retry, operational_log_views
+from scripts import deployment_revision, gcp_read_retry, operational_log_views
 from scripts.operational_retry import UNATTENDED, operation, request_timeout, run_read
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 BUCKET = "skytruth-shared-datasets-1"
-SCHEMA = "shared-datasets-cloud-observation-checkpoint-v1"
+SCHEMA = "shared-datasets-cloud-observation-checkpoint-v2"
 METRIC = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
 VIEWS = operational_log_views.VIEWS
 OVERLAP = timedelta(minutes=10)
@@ -40,6 +42,31 @@ NAME = re.compile(r"[a-z][a-z0-9-]{0,62}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 RUN_RECEIPT_SCHEMA = "shared-datasets-cloud-run-receipt-v1"
 RUN_METHODS = ("/Jobs.RunJob", "google.cloud.run.v1.Jobs.RunJob", "google.cloud.run.v2.Jobs.RunJob")
+
+
+@lru_cache(maxsize=1)
+def registered_jobs():
+    """The existing deployment graph owns the observation job boundary."""
+    root = Path(__file__).resolve().parents[1] / ".github/workflows"
+    return frozenset({name for name, workflow in deployment_revision.TARGET_WORKFLOWS.items()
+                      if yaml.safe_load((root / workflow).read_text()).get("env", {}).get("JOB_NAME") == name}
+                     | set(deployment_revision.AUXILIARY_CLOUD_JOBS))
+
+
+def job_parent(job):
+    require(isinstance(job, str) and NAME.fullmatch(job), "invalid execution job")
+    return f"projects/{PROJECT}/locations/{REGION}/jobs/{job}"
+
+
+def validate_inventory(value):
+    require(isinstance(value, dict) and set(value) == set(registered_jobs()), "execution inventory did not cover every registered job")
+    for job, row in value.items():
+        require(isinstance(row, dict) and set(row) == {"parent", "retained_count", "active_count", "sha256"}
+                and row["parent"] == job_parent(job), "invalid execution inventory identity")
+        require(type(row["retained_count"]) is int and 0 <= row["retained_count"] <= MAX_EVENTS
+                and type(row["active_count"]) is int and 0 <= row["active_count"] <= row["retained_count"]
+                and isinstance(row["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", row["sha256"]), "invalid execution inventory proof")
+    return value
 
 
 def observation_filter():
@@ -111,14 +138,33 @@ def validate_checkpoint(value):
     instant(value["covered_through"])
     require(isinstance(value["seen"], dict) and len(value["seen"]) <= MAX_EVENTS, "invalid deduplication state")
     for source, row in value["seen"].items():
-        require(isinstance(source, str) and re.fullmatch(r"cloud(?:log|exec):[0-9a-f]{64}", source) and isinstance(row, dict) and set(row) == {"timestamp", "sha256"}, "invalid source checkpoint")
+        require(isinstance(source, str) and re.fullmatch(r"cloud(?:log|exec|api):[0-9a-f]{64}", source) and isinstance(row, dict) and set(row) == {"timestamp", "sha256"}, "invalid source checkpoint")
         instant(row["timestamp"])
         require(isinstance(row["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", row["sha256"]), "invalid source digest")
     require(isinstance(value["pending"], list) and len(value["pending"]) <= MAX_EVENTS, "invalid pending observations")
     require(isinstance(value["watching"], dict) and len(value["watching"]) <= MAX_EVENTS, "invalid execution watch state")
-    for source, fact in value["watching"].items():
-        require(source in value["seen"] and isinstance(fact, dict) and fact.get("source_id") == source and isinstance(fact.get("execution"), dict) and fact["execution"].get("terminal") is False, "invalid pending execution proof")
     require(isinstance(value["last_cycle"], dict), "invalid coverage evidence")
+    completed = instant(value["last_cycle"].get("completed_at"))
+    from scripts.cloud_incident_adapter import validate_fact
+    for fact in [*value["pending"], *value["watching"].values()]:
+        validate_fact(fact)
+        # Canonical translation polls happen later, during policy evaluation,
+        # and have their own precise observed_by(evaluation clock) boundary.
+        if fact["kind"] != "translation_manifest":
+            require(instant(fact["observed_at"]) <= completed, "source observation is beyond the completed coverage clock")
+        execution = fact.get("execution", {})
+        require(all(instant(execution[key]) <= completed for key in ("create_time", "start_time", "completion_time")
+                    if execution.get(key) is not None), "execution metadata is beyond the completed coverage clock")
+    for source, fact in value["watching"].items():
+        require(isinstance(fact, dict) and fact.get("source_id") == source and isinstance(fact.get("execution"), dict), "invalid pending execution proof")
+        execution = fact["execution"]
+        if execution.get("terminal") is False:
+            require(source in value["seen"], "active execution lacks a source checkpoint")
+        else:
+            require(source.startswith("cloudapi:") and source not in value["seen"]
+                    and execution.get("terminal") is True and execution.get("completion_time") is not None
+                    and instant(execution["completion_time"]) > instant(value["covered_through"]), "invalid future execution buffer")
+    validate_inventory(value["last_cycle"].get("execution_inventory"))
     return value
 
 
@@ -139,24 +185,26 @@ def validate_entry(entry, start, end):
     return source, observed, kind, name
 
 
-def execution_name(entry, *, required=True):
+def execution_name(entry):
     value = entry.get("labels", {}).get("run.googleapis.com/execution_name")
-    if value is None:
-        response = entry.get("protoPayload", {}).get("response", {})
-        value = response.get("metadata", {}).get("name") or response.get("name")
-        if isinstance(value, str):
-            value = value.rsplit("/", 1)[-1]
-    if value is None and not required:
-        return None
     require(isinstance(value, str) and NAME.fullmatch(value), "Cloud Run event has no exact execution identity")
     return value
 
 
 def authoritative_execution(api, job, execution):
-    name = f"projects/{PROJECT}/locations/{REGION}/jobs/{job}/executions/{execution}"
-    result = api.execution(name)
+    name = job_parent(job) + "/executions/" + execution
+    return execution_proof(api.execution(name), job, name=name)
+
+
+def execution_proof(result, job, *, name=None):
+    """Construct one exact v2 execution proof, independently of audit requests."""
+    prefix = job_parent(job) + "/executions/"
+    require(isinstance(result, dict) and isinstance(result.get("name"), str)
+            and re.fullmatch(re.escape(prefix) + r"[a-z][a-z0-9-]{0,62}", result["name"]), "execution metadata belongs to another operation")
+    name = name or result["name"]
     require(isinstance(result, dict) and result.get("name") == name, "execution metadata belongs to another operation")
     containers = result.get("template", {}).get("containers", [])
+    require(isinstance(containers, list) and all(isinstance(row, dict) for row in containers), "execution container metadata is incomplete")
     images = [row.get("image") for row in containers]
     require(images and all(isinstance(value, str) and value for value in images), "execution container metadata is incomplete")
     uid = result.get("uid")
@@ -170,13 +218,56 @@ def authoritative_execution(api, job, execution):
         # uncertain mutation, no retry and no supervision suppression.
         revision = "cloudrun-execution:" + uid
     terminal = result.get("completionTime") is not None
-    completed = [row for row in result.get("conditions", []) if row.get("type") == "Completed"]
+    conditions = result.get("conditions", [])
+    require(isinstance(conditions, list) and all(isinstance(row, dict) for row in conditions), "execution conditions are incomplete")
+    completed = [row for row in conditions if row.get("type") == "Completed"]
     success = terminal and len(completed) == 1 and completed[0].get("state") == "CONDITION_SUCCEEDED"
+    created = instant(result.get("createTime"))
+    started = instant(result["startTime"]) if result.get("startTime") is not None else created
+    require(created <= started and (not terminal or started <= instant(result["completionTime"])), "execution timestamps are inconsistent")
     return {"name": name, "uid": uid, "revision": revision, "coverage_gaps": gaps, "terminal": terminal, "success": success,
             "completion_time": result.get("completionTime"), "create_time": result.get("createTime"), "start_time": result.get("startTime"), "images": images}
 
 
-def normalize(entry, source, api):
+def api_execution_fact(proof, job):
+    return {"source_id": "cloudapi:" + digest(proof), "observed_at": proof["completion_time"] or proof["start_time"] or proof["create_time"],
+            "resource_type": "cloud_run_job", "job": job, "kind": "execution", "execution": proof,
+            "evidence": {"api": "run.googleapis.com/v2", "resource": proof["name"]}}
+
+
+def request_evidence(audit, job):
+    """An API result has no execution identity, even when its response has a name."""
+    require(isinstance(audit, dict) and audit.get("serviceName") == "run.googleapis.com"
+            and audit.get("methodName") in RUN_METHODS, "unsupported execution observation")
+    request = audit.get("request", {})
+    require(isinstance(request, dict), "execution request body is malformed")
+    proof = {"method": audit["methodName"], "resource_name": audit.get("resourceName"),
+             "request_name": request.get("name"), "status": deepcopy(audit.get("status"))}
+    reason, _ = request_outcome(proof, job)
+    return {"request": proof, "mutation_status": "uncertain",
+            "coverage_gaps": [] if reason == "accepted" else ["execution_request_outcome_unverified"]}
+
+
+def request_outcome(proof, job):
+    require(isinstance(proof, dict) and set(proof) == {"method", "resource_name", "request_name", "status"}
+            and proof["method"] in RUN_METHODS, "invalid API request proof")
+    names = {job_parent(job), f"namespaces/{PROJECT}/jobs/{job}"}
+    require(proof["resource_name"] is None or proof["resource_name"] in names, "audit resource differs from authenticated job")
+    require(proof["request_name"] is None or proof["request_name"] in names, "audit request differs from authenticated job")
+    status = proof["status"]
+    require(status is None or isinstance(status, dict), "execution request status is malformed")
+    require(status is None or set(status) <= {"code", "message", "details"}, "execution request status has unsupported fields")
+    code = status.get("code", 0) if status is not None else None
+    require(code is None and status is None or type(code) is int and code >= 0, "execution request status code is malformed")
+    require(status is None or isinstance(status.get("message", ""), str)
+            and isinstance(status.get("details", []), list), "execution request status details are malformed")
+    # Message/detail-bearing non-errors are contradictory rather than success.
+    accepted = code == 0 and not status.get("message") and not status.get("details")
+    reason = "accepted" if accepted else "permission_denied" if code in {7, 16} else "unknown"
+    return reason, code
+
+
+def normalize(entry, source, api, execution_index):
     resource = entry["resource"]
     labels = resource["labels"]
     kind = resource["type"]
@@ -190,26 +281,64 @@ def normalize(entry, source, api):
         require(kind == "cloud_run_job", "runtime fact has a non-runtime resource")
         execution = execution_name(entry)
         require(payload["context"]["job"] == job and payload["context"]["execution"] == execution, "runtime payload disagrees with authenticated log context")
-        result.update(kind="runtime", fact=payload, execution=authoritative_execution(api, job, execution))
+        name = job_parent(job) + "/executions/" + execution
+        if job in registered_jobs():
+            require(name in execution_index, "runtime execution is absent from complete job inventory")
+            proof = execution_index[name]
+        else:
+            proof = authoritative_execution(api, job, execution)
+        result.update(kind="runtime", fact=payload, execution=proof)
         receipt = payload["details"].get("receipt_uri")
         if receipt and payload["details"].get("receipt_generation") is not None:
             result["receipt_metadata"] = api.receipt_metadata(receipt, generation=payload["details"].get("receipt_generation"))
         if payload["details"].get("run_record_uri"):
             result["run_receipt"] = api.run_receipt(payload["details"]["run_record_uri"], generation=payload["details"]["run_record_generation"])
     elif kind == "cloud_run_job":
-        audit = entry.get("protoPayload", {})
-        require(audit.get("serviceName") == "run.googleapis.com" and audit.get("methodName") in RUN_METHODS, "unsupported execution observation")
-        execution = execution_name(entry, required=False)
-        if execution is None:
-            code = audit.get("status", {}).get("code")
-            require(type(code) is int and code > 0, "execution request has neither execution identity nor a failed status")
-            result.update(kind="execution_request", reason="permission_denied" if code in {7, 16} else "unknown", mutation_status="uncertain", status_code=code, coverage_gaps=["execution_request_outcome_unverified"])
-        else:
-            result.update(kind="execution", execution=authoritative_execution(api, job, execution))
+        result.update(kind="execution_request", **request_evidence(entry.get("protoPayload", {}), job))
     else:
         require(entry.get("severity") in {"ERROR", "CRITICAL", "ALERT", "EMERGENCY"}, "unrelated healthy Scheduler event")
         result.update(kind="scheduler_dispatch", mutation_status="uncertain", coverage_gaps=["scheduler_dispatch_outcome_unverified"])
     return result
+
+
+def execution_snapshot(api):
+    """Validate every retained execution before selecting bounded observations."""
+    index, inventory = {}, {}
+    for job in sorted(registered_jobs()):
+        rows = []
+        active = 0
+        for raw in api.executions(job):
+            proof = execution_proof(raw, job)
+            require(proof["name"] not in index, "execution pagination duplicated an identity")
+            index[proof["name"]] = proof
+            rows.append(raw)
+            active += int(not proof["terminal"])
+            require(len(index) <= MAX_EVENTS, "execution inventory exceeds bounded snapshot size")
+        inventory[job] = {"parent": job_parent(job), "retained_count": len(rows), "active_count": active,
+                          "sha256": digest(sorted(rows, key=lambda row: row["name"]))}
+    return index, validate_inventory(inventory)
+
+
+def selected_executions(index, watching, *, start, end):
+    tracked = {fact["execution"]["name"] for fact in watching.values()}
+    selected, latest = {}, {}
+    for name, proof in index.items():
+        job = name.split("/jobs/", 1)[1].split("/", 1)[0]
+        if not proof["terminal"]:
+            selected[name] = proof
+            continue
+        completed = instant(proof["completion_time"])
+        if completed > end:
+            selected[name] = proof  # Buffer it without a failure/recovery until its cutoff.
+            continue
+        if name in tracked or not proof["success"] and start <= completed:
+            selected[name] = proof
+        if proof["success"] and (job not in latest or (completed, name) >
+                                 (instant(latest[job]["completion_time"]), latest[job]["name"])):
+            latest[job] = proof
+    selected.update((proof["name"], proof) for proof in latest.values())
+    return [api_execution_fact(proof, name.split("/jobs/", 1)[1].split("/", 1)[0])
+            for name, proof in sorted(selected.items())]
 
 
 def collect(previous, api, *, now, clock=None):
@@ -229,18 +358,44 @@ def collect(previous, api, *, now, clock=None):
     start = max(covered - OVERLAP, end - HISTORY)
 
     def snapshot():
+        execution_index, inventory = execution_snapshot(api)
         found, new, next_watching = {}, [], {}
+
+        def add_api_fact(fact):
+            source = fact["source_id"]
+            if fact["execution"]["terminal"] and instant(fact["execution"]["completion_time"]) > end:
+                next_watching[source] = fact
+                return
+            fingerprint = digest(fact)
+            old = found.get(source) or seen.get(source)
+            require(old is None or old["sha256"] == fingerprint, "API execution identity changed immutable proof")
+            if old is None:
+                new.append(fact)
+                found[source] = {"timestamp": timestamp(instant(fact["observed_at"])), "sha256": fingerprint}
+            if not fact["execution"]["terminal"]:
+                next_watching[source] = fact
+
         for source, fact in watching.items():
-            updated = authoritative_execution(api, fact["job"], fact["execution"]["name"].rsplit("/", 1)[1])
+            if fact["job"] in registered_jobs():
+                require(fact["execution"]["name"] in execution_index, "watched execution is absent from complete inventory")
+                updated = execution_index[fact["execution"]["name"]]
+            else:
+                updated = authoritative_execution(api, fact["job"], fact["execution"]["name"].rsplit("/", 1)[1])
             old = fact["execution"]
             require(not old.get("uid") or updated.get("uid") == old["uid"], "immutable execution UID changed")
             require(not old["revision"] or not old["revision"].startswith("sha256:") or updated["revision"] == old["revision"], "immutable execution image changed")
+            require(not old["terminal"] or updated == old, "terminal execution metadata changed")
+            if source.startswith("cloudapi:"):
+                continue  # The same complete inventory constructs its next proof below.
             if updated != fact["execution"]:
                 transition = {**deepcopy(fact), "source_id": "cloudexec:" + digest({"source": source, "proof": updated}), "execution": updated, "observed_at": timestamp(now)}
                 new.append(transition)
                 found[transition["source_id"]] = {"timestamp": timestamp(now), "sha256": digest(transition)}
             if not updated["terminal"]:
                 next_watching[source] = {**deepcopy(fact), "execution": updated}
+        selected = selected_executions(execution_index, watching, start=start, end=end)
+        for fact in selected:
+            add_api_fact(fact)
         for view in VIEWS:
             for entry in api.entries(view, start=start, end=end):
                 source, observed, _, _ = validate_entry(entry, start, end)
@@ -250,19 +405,24 @@ def collect(previous, api, *, now, clock=None):
                     require(old["sha256"] == fingerprint, "source identity was reused with different log bytes")
                     continue
                 found[source] = {"timestamp": timestamp(observed), "sha256": fingerprint}
-                fact = normalize(entry, source, api)
+                fact = normalize(entry, source, api, execution_index)
                 new.append(fact)
                 if fact.get("execution", {}).get("terminal") is False:
                     next_watching[source] = fact
                 require(len(found) <= MAX_EVENTS, "enumeration exceeds bounded snapshot size")
-        retained = {source: row for source, row in seen.items() if instant(row["timestamp"]) >= end - HISTORY or source in next_watching}
+        selected_sources = {fact["source_id"] for fact in selected}
+        retained = {source: row for source, row in seen.items() if instant(row["timestamp"]) >= end - HISTORY
+                    or source in next_watching or source in selected_sources}
         retained.update(found)
         require(len(retained) <= MAX_EVENTS and len(pending) + len(new) <= MAX_EVENTS, "operational backlog exceeds bounded state")
         gaps = sorted({gap for fact in [*pending, *new, *next_watching.values()] for gap in [*fact.get("coverage_gaps", []), *fact.get("execution", {}).get("coverage_gaps", [])]})
         completed = clock() if clock is not None else now
         require(completed >= now, "completion clock moved backwards")
+        require(all(instant(proof["completion_time"] or proof["start_time"] or proof["create_time"]) <= completed
+                    for proof in execution_index.values()), "execution metadata is from the future")
+        request_timeout(30)  # A slow final page cannot return an expired writable snapshot.
         return validate_checkpoint({"schema": SCHEMA, "covered_through": timestamp(end), "seen": retained,
-                                   "pending": [*deepcopy(pending), *new], "watching": next_watching, "last_cycle": {"start": timestamp(start), "end": timestamp(end), "completed_at": timestamp(completed), "new_events": len(new), "views": list(VIEWS), "coverage_gaps": gaps, "overlap_seconds": int(OVERLAP.total_seconds()), "ingestion_lag_seconds": int(INGESTION_LAG.total_seconds())}})
+                                   "pending": [*deepcopy(pending), *new], "watching": next_watching, "last_cycle": {"start": timestamp(start), "end": timestamp(end), "completed_at": timestamp(completed), "new_events": len(new), "views": list(VIEWS), "execution_inventory": inventory, "coverage_gaps": gaps, "overlap_seconds": int(OVERLAP.total_seconds()), "ingestion_lag_seconds": int(INGESTION_LAG.total_seconds())}})
 
     with operation(profile=UNATTENDED):
         return run_read(snapshot, classify=gcp_read_retry.classify, label="cloud operational observation snapshot")
@@ -365,6 +525,7 @@ class CloudReader:
             if page:
                 payload["pageToken"] = page
             value = self.request("POST", "https://logging.googleapis.com/v2/entries:list", payload=payload)
+            require(set(value) <= {"entries", "nextPageToken"}, "unexpected log enumeration response")
             require(isinstance(value.get("entries", []), list), "incomplete log enumeration")
             yield from value.get("entries", [])
             page = value.get("nextPageToken", "")
@@ -376,6 +537,23 @@ class CloudReader:
     def execution(self, name):
         require(re.fullmatch(f"projects/{PROJECT}/locations/{REGION}/jobs/[a-z][a-z0-9-]{{0,62}}/executions/[a-z][a-z0-9-]{{0,62}}", name), "invalid execution resource")
         return self.request("GET", "https://run.googleapis.com/v2/" + name)
+
+    def executions(self, job):
+        require(job in registered_jobs(), "unregistered execution inventory refused")
+        token, seen = "", set()
+        while True:
+            params = {"pageSize": 1000, "showDeleted": "true"}
+            if token:
+                params["pageToken"] = token
+            value = self.request("GET", "https://run.googleapis.com/v2/" + job_parent(job) + "/executions", params=params)
+            require(set(value) <= {"executions", "nextPageToken"}, "unexpected execution enumeration response")
+            require(isinstance(value.get("executions", []), list), "incomplete execution enumeration")
+            yield from value.get("executions", [])
+            token = value.get("nextPageToken", "")
+            require(isinstance(token, str) and token not in seen, "invalid execution pagination token")
+            if not token:
+                return
+            seen.add(token)
 
     def translation_manifest(self, uri):
         """Read only an already named, current canonical translation manifest."""

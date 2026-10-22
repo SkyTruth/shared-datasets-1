@@ -6,31 +6,20 @@ printed in a log. These observations confer no execution or replay authority.
 from __future__ import annotations
 
 from copy import deepcopy
-from functools import lru_cache
 import re
-from pathlib import Path
 from urllib.parse import urlencode
-
-import yaml
 
 from ingestion.common.operational_events import validate as validate_event
 from scripts import cloud_operational_observations as cloud, deployment_revision as deployments, operational_policy as policy
 from scripts import translation_recovery as translations
 
 SCHEMA = "shared-datasets-cloud-incident-proof-v1"
-SOURCE = re.compile(r"(?:cloud(?:log|exec)|gcsmanifest):[0-9a-f]{64}")
+SOURCE = re.compile(r"(?:cloud(?:log|exec|api)|gcsmanifest):[0-9a-f]{64}")
 SCOPE = re.compile(r"[a-z][a-z0-9:._-]{0,150}")
 EXECUTION_FIELDS = {"name", "uid", "revision", "coverage_gaps", "terminal", "success", "completion_time", "create_time", "start_time", "images"}
 
 
-@lru_cache(maxsize=1)
-def registered_jobs():
-    # Reuse the deployment target graph and its explicit job resource binding.
-    # A new runtime job cannot gain suppression from looking like an old name.
-    root = Path(__file__).resolve().parents[1] / ".github/workflows"
-    return frozenset({name for name, workflow in deployments.TARGET_WORKFLOWS.items()
-                      if yaml.safe_load((root / workflow).read_text()).get("env", {}).get("JOB_NAME") == name}
-                     | set(deployments.AUXILIARY_CLOUD_JOBS))
+registered_jobs = cloud.registered_jobs
 
 
 def require(condition, message):
@@ -66,7 +55,7 @@ def validate_fact(value):
     require(isinstance(value, dict) and value.get("kind") in {"runtime", "execution", "execution_request", "scheduler_dispatch"}, "invalid source variant")
     kind = value["kind"]
     fields = base | ({"fact", "execution"} if kind == "runtime" else {"execution"} if kind == "execution"
-                     else {"reason", "mutation_status", "status_code", "coverage_gaps"} if kind == "execution_request"
+                     else {"request", "mutation_status", "coverage_gaps"} if kind == "execution_request"
                      else {"mutation_status", "coverage_gaps"})
     optional = {"receipt_metadata", "run_receipt"} if kind == "runtime" else set()
     require(fields <= set(value) <= fields | optional, "unexpected source proof fields")
@@ -75,10 +64,16 @@ def validate_fact(value):
     require(value["resource_type"] in {"cloud_run_job", "cloud_scheduler_job"}
             and isinstance(value["job"], str) and cloud.NAME.fullmatch(value["job"]), "invalid authenticated resource")
     evidence = value["evidence"]
-    require(isinstance(evidence, dict) and set(evidence) == {"log_name", "insert_id"}
-            and isinstance(evidence["log_name"], str) and evidence["log_name"].startswith(f"projects/{cloud.PROJECT}/logs/")
-            and isinstance(evidence["insert_id"], str) and 0 < len(evidence["insert_id"]) <= 1024, "invalid authenticated log identity")
-    source = "cloudlog:" + cloud.digest({"logName": evidence["log_name"], "insertId": evidence["insert_id"]})
+    api_source = value["source_id"].startswith("cloudapi:")
+    if api_source:
+        require(kind == "execution" and isinstance(evidence, dict) and set(evidence) == {"api", "resource"}
+                and evidence["api"] == "run.googleapis.com/v2", "invalid authoritative API evidence")
+        source = None
+    else:
+        require(isinstance(evidence, dict) and set(evidence) == {"log_name", "insert_id"}
+                and isinstance(evidence["log_name"], str) and evidence["log_name"].startswith(f"projects/{cloud.PROJECT}/logs/")
+                and isinstance(evidence["insert_id"], str) and 0 < len(evidence["insert_id"]) <= 1024, "invalid authenticated log identity")
+        source = "cloudlog:" + cloud.digest({"logName": evidence["log_name"], "insertId": evidence["insert_id"]})
     execution = value.get("execution")
     if execution:
         require(value["resource_type"] == "cloud_run_job" and isinstance(execution, dict) and set(execution) == EXECUTION_FIELDS,
@@ -97,6 +92,8 @@ def validate_fact(value):
             require(cloud.instant(execution["create_time"]) <= cloud.instant(execution["start_time"]), "execution started before creation")
         if execution["start_time"] is not None and execution["completion_time"] is not None:
             require(cloud.instant(execution["start_time"]) <= cloud.instant(execution["completion_time"]), "execution completed before start")
+        if execution["create_time"] is not None and execution["completion_time"] is not None:
+            require(cloud.instant(execution["create_time"]) <= cloud.instant(execution["completion_time"]), "execution completed before creation")
         images = execution["images"]
         require(isinstance(images, list) and images and all(isinstance(image, str) and image for image in images), "execution images are incomplete")
         immutable = len(images) == 1 and "@" in images[0] and cloud.DIGEST.fullmatch(images[0].rsplit("@", 1)[1])
@@ -104,7 +101,11 @@ def validate_fact(value):
         if expected_revision is None and isinstance(execution["uid"], str) and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", execution["uid"]) and execution["uid"].replace("-", "") != "0" * 32:
             expected_revision = "cloudrun-execution:" + execution["uid"]
         require(execution["revision"] == expected_revision and execution["coverage_gaps"] == ([] if immutable else ["execution_image_digest_unresolved"]), "execution artifact proof differs from source")
-    if value["source_id"].startswith("cloudexec:"):
+    if api_source:
+        require(execution is not None and evidence["resource"] == execution["name"]
+                and execution["create_time"] is not None
+                and value == cloud.api_execution_fact(execution, value["job"]), "API source differs from exact execution metadata")
+    elif value["source_id"].startswith("cloudexec:"):
         require(execution is not None and value["source_id"] == "cloudexec:" + cloud.digest({"source": source, "proof": execution}), "invalid execution transition identity")
     else:
         require(value["source_id"] == source, "log source identity differs from evidence")
@@ -123,10 +124,9 @@ def validate_fact(value):
                     and receipt["asset_slug"] == event["subject"].get("asset_slug") and receipt["release_date"] == event["subject"].get("release"), "run receipt differs from runtime outcome")
             require(event["status"] == receipt["status"], "runtime status differs from canonical run record")
     elif kind == "execution_request":
-        require(value["resource_type"] == "cloud_run_job" and value["reason"] in {"permission_denied", "unknown"}
-                and type(value["status_code"]) is int and value["status_code"] > 0
-                and value["reason"] == ("permission_denied" if value["status_code"] in {7, 16} else "unknown")
-                and value["mutation_status"] == "uncertain" and value["coverage_gaps"] == ["execution_request_outcome_unverified"], "invalid failed execution request")
+        reason, _ = cloud.request_outcome(value["request"], value["job"])
+        require(value["resource_type"] == "cloud_run_job" and value["mutation_status"] == "uncertain"
+                and value["coverage_gaps"] == ([] if reason == "accepted" else ["execution_request_outcome_unverified"]), "invalid execution request outcome")
     elif kind == "scheduler_dispatch":
         require(value["resource_type"] == "cloud_scheduler_job" and value["mutation_status"] == "uncertain"
                 and value["coverage_gaps"] == ["scheduler_dispatch_outcome_unverified"], "invalid scheduler proof")
@@ -185,6 +185,8 @@ def provenance_gap(fact, correlation=None):
     if fact["kind"] == "translation_manifest":
         validate_fact(fact)
         return False
+    if accepted_request(fact):
+        return fact["job"] not in registered_jobs()
     return (fact["job"] not in registered_jobs() or not cloud.DIGEST.fullmatch(revision(fact))
             or bool(fact.get("execution", {}).get("coverage_gaps")) or domain(fact) is not None and domain_subject(fact) is None
             or fact["job"] in deployments.AUXILIARY_CLOUD_JOBS and fact.get("execution", {}).get("terminal") is not False
@@ -197,6 +199,10 @@ def observational_success(fact, correlation):
                 and not provenance_gap(fact, correlation) and execution.get("terminal") and execution.get("success")
                 and (fact["kind"] == "execution" or fact["kind"] == "runtime" and fact["fact"]["kind"] == "job_outcome"
                      and fact["fact"]["status"] in {"success", "skipped"}))
+
+
+def accepted_request(fact):
+    return fact["kind"] == "execution_request" and cloud.request_outcome(fact["request"], fact["job"])[0] == "accepted"
 
 
 def recoverable(fact):
@@ -217,6 +223,8 @@ def normalize(fact, *, correlation=None, promote=False):
     validate_fact(fact)
     event = fact.get("fact", {})
     gap = provenance_gap(fact, correlation)
+    if not gap and accepted_request(fact):
+        return None  # API acceptance establishes no execution or recovery outcome.
     # These are audit facts. They must not produce a red parent merely because
     # a healthy worker has no publication receipt, or falsely close a failure.
     if not gap and fact["kind"] == "execution" and not fact["execution"]["terminal"]:
@@ -341,7 +349,7 @@ def operational(value):
         data = "Translation publication/delivery is separate from canonical dataset publication; inspect the referenced manifest."
         action = ("Inspect the existing translation delivery claim; establish delivery status without resending the notice."
                   if event["status"] in {"already_claimed", "delivery_unknown"} else "Review translation maintenance for the named asset/release using its existing receipt; do not replay publication.")
-    elif fact["kind"] == "execution_request" and fact["reason"] == "permission_denied":
+    elif fact["kind"] == "execution_request" and cloud.request_outcome(fact["request"], fact["job"])[0] == "permission_denied":
         reason = "artifact_provenance_unverified"  # No execution/artifact can be established.
     return policy.OperationalObservation.from_dict({**binding(value).to_dict(), "source_id": fact["source_id"], "observed_at": value["time"],
         "phase": phase, "reason": reason, "mutation_status": mutation,

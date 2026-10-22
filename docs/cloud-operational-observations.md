@@ -82,6 +82,35 @@ enable Run DATA_READ. Keep the native route until real shadow evidence includes
 these cold-start audit observations. The legacy Admin Activity family remains
 in the bounded view for historical/internal `/Jobs.RunJob` entries.
 
+RunJob audit records prove the API request outcome, separately from an execution
+outcome. A present empty protobuf `status: {}` or explicit code `0`, without
+contradictory error details, is an accepted request fact. It creates no incident
+or recovery and grants no retry, supervision or publication authority. Missing,
+malformed or contradictory status is not acceptance. Response names, request
+counts and nearby timestamps cannot establish which execution was created.
+
+Each snapshot independently lists every page of executions for all six currently
+registered jobs, with `showDeleted=true`, using the existing read-only metadata
+role. The registered workflow-to-target graph owns this set. All returned rows
+are validated and counted before an inventory digest is saved; any incomplete or
+conflicting inventory aborts the snapshot. An empty complete inventory proves
+only the API visibility observed at that time, never request completion or
+nonexecution. Unknown jobs seen in logs remain coverage gaps.
+
+Execution facts have exact API resource and UID evidence rather than invented log
+identities. To bound routine healthy evidence, the snapshot materializes every
+active execution regardless of creation date, failures completed within the
+covered window, and each job's latest successful terminal execution at or before
+the cutoff. An older-created execution that failed inside the window is included.
+Execution-failure facts observed through logs and the API retain one attempt
+identity in the job episode. A domain decision does not explain an independently
+failed execution's unknown mutation outcome; both action requirements remain
+visible. A blocked identity decision normally returns a successful execution and
+therefore creates no additional execution-failure action.
+Successful observer executions prove only observer health. Other healthy job
+executions still require the existing generation-pinned publication or domain
+proof before resolving a publication, identity or translation episode.
+
 Every page and its authoritative execution/receipt metadata must be read before
 the candidate checkpoint is complete. Safe read retries share the operation's
 single budget and discard a partial snapshot before restarting enumeration.
@@ -89,7 +118,8 @@ The deduplication key binds the authenticated log name and insert ID. Reusing
 that identity with different log bytes is an error. A replay gap beyond the
 bounded horizon is an explicit failure, never permission to skip history.
 
-The checkpoint contains `covered_through`, bounded `seen` source identities,
+The v2 checkpoint contains complete per-job execution inventory counts and digests,
+`covered_through`, bounded `seen` source identities,
 pending facts, pending execution watches, and coverage evidence. Pending
 executions are checked again even when no new log event arrives. A terminal
 transition adds a distinct evidence identity; a running observation does not
@@ -167,6 +197,15 @@ protocol and reviewed immutable evidence. Failed, unsigned or incompatible newer
 attempts cannot be replaced with an older successful receipt. The worker checks
 the same activation before delivery, final persistence and heartbeat.
 
+The installed protocol file set is defined once in
+`scripts/operational_protocol.py`. Activation and CI deployment selection share
+that set, including the collector, adapter, routing verifier and registry itself.
+Changing any member requires a fresh protected policy receipt. The broader cycle
+contract also hashes every installed-protocol member, so an older shadow window
+cannot qualify a changed request or execution interpretation. Collector-only
+repairs select policy sync without launching dataset jobs; cutover configuration
+and runtime changes retain their broader deployment dependencies.
+
 Native mode also requires a supported signed installed policy receipt. An older
 native worker cannot bypass that check after a newer unified policy is installed.
 The writer repeats the check after predecessor verification and after part
@@ -181,6 +220,15 @@ same authoritative execution, immutable image and signed deployment proof.
 Payload owner names and similar job names confer no ownership. The inherited
 record retains the original activity and fixed deadline; it cannot create a
 fresh two-hour window. Recovery remains specific to the affected target.
+
+Within one CLI phase, repeated observer records may reuse an already verified
+image-only auxiliary receipt. The phase owns this in-memory proof context; a
+later phase starts fresh. Every recovery still fetches and compares the exact
+execution, and publication/translation receipt reads remain current. Saved
+record, status, revision or artifact differences require their own exact proof;
+missing provenance and failed verification are never memoized. This prevents
+routine healthy records from repeatedly verifying the same immutable image
+without granting execution or dataset recovery authority.
 
 Runtime context is checked against the log resource and exact authoritative
 execution. Repository revision or owner claims in a payload are not trusted.

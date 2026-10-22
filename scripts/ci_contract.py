@@ -16,6 +16,7 @@ from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.catalog_csv import read_catalog_rows_text
+from scripts.operational_protocol import PROTOCOL_FILES
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
@@ -39,7 +40,7 @@ NATIVE_TESTS = (
     "tests/test_mpatlas_monthly.py",
 )
 CONTRACT_FILES = (
-    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
+    "scripts/ci_contract.py", "scripts/operational_protocol.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
     "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
@@ -235,8 +236,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("ingestion_iam")
         if path in {"catalog/operational-slack-rollout.json", "scripts/operational_cutover.py"} or path.startswith(".github/operational-cutovers/"):
             selected.update(ingestion | {"ingestion_iam", "cron_alert_policy"})
-        if path in {"scripts/operational_reconcile.py", "scripts/operational_delivery_activation.py",
-                    ".github/workflows/unattended-workflow-alert.yml"}:
+        if path in PROTOCOL_FILES:
             selected.add("cron_alert_policy")
         if path == "terraform/envs/prod/translation_notices.tf":
             selected.update({"ingestion_iam", "eamlis", "wdpa"})
@@ -253,8 +253,6 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
             "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
-            "terraform/envs/prod/operational_observer.tf",
-            "catalog/operational-log-views.json", "scripts/operational_log_views.py",
             "scripts/wif_setup_permissions.py", "scripts/setup_grant_proof.py", "scripts/logging_setup_permissions.py",
             "terraform/envs/prod/github_readonly_iam.tf", "scripts/readonly_wif_trust.py",
         }:
