@@ -94,72 +94,6 @@ export function checkRegistry(candidate, run = commandText) {
   return publicationDecision(candidate.version, versions, candidate.integrity, publishedIntegrity);
 }
 
-const visibilitySchema = 'shared-datasets-npm-visibility-v1';
-const transientStatuses = new Set([500, 502, 503, 504]);
-const transportFailures = new Map([
-  ['ECONNRESET', 'connection_reset'], ['ECONNREFUSED', 'connection_refused'], ['EAI_AGAIN', 'dns_temporary'],
-  ['ETIMEDOUT', 'request_timeout'], ['UND_ERR_CONNECT_TIMEOUT', 'request_timeout'],
-  ['UND_ERR_HEADERS_TIMEOUT', 'request_timeout'], ['UND_ERR_BODY_TIMEOUT', 'request_timeout'],
-  ['UND_ERR_SOCKET', 'connection_reset']
-]);
-
-export async function checkVisibility(candidate, fetcher = fetch, timeoutMs = 30000) {
-  parseVersion(candidate.version);
-  if (candidate.name !== PACKAGE_NAME || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(candidate.integrity)) {
-    throw new Error('Visibility check requires the exact tested package identity and integrity');
-  }
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) {
-    throw new Error('Visibility request timeout must be between 1 and 60000 milliseconds');
-  }
-  const result = (status, reason) => ({ schema: visibilitySchema, name: candidate.name,
-    version: candidate.version, integrity: candidate.integrity, status, reason });
-  const url = `https://registry.npmjs.org/${PACKAGE_NAME.replace('/', '%2F')}/${candidate.version}`;
-  try {
-    // Exact version metadata cannot authorize another publish. Bypass stale
-    // caches, reject redirects, and never attach publishing credentials.
-    const response = await fetcher(url, { method: 'GET', redirect: 'error',
-      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 404 || transientStatuses.has(response.status)) {
-      if (response.body) await response.body.cancel();
-      return result(response.status === 404 ? 'absent' : 'transient', `HTTP ${response.status}`);
-    }
-    if (response.status !== 200) throw new Error(`npm visibility request rejected: HTTP ${response.status}`);
-    if (!response.body) throw new Error('npm visibility response has no metadata');
-    const chunks = [];
-    let size = 0;
-    for await (const chunk of response.body) {
-      size += chunk.length;
-      if (size > 1024 * 1024) throw new Error('npm visibility metadata exceeds the read limit');
-      chunks.push(chunk);
-    }
-    const metadata = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-    if (metadata?.name !== candidate.name || metadata?.version !== candidate.version) {
-      throw new Error('npm visibility metadata differs from the exact tested package');
-    }
-    if (metadata?.dist?.integrity !== candidate.integrity) {
-      throw new Error('Published version has different or missing integrity; inspect the existing publication');
-    }
-    return result('visible', 'verified_integrity');
-  } catch (error) {
-    const reason = transportFailures.get(error?.cause?.code ?? error?.code) ??
-      (error?.name === 'TimeoutError' ? 'request_timeout' : undefined);
-    if (reason) return result('transient', reason);
-    throw error;
-  }
-}
-
-function localCandidate(path) {
-  const pkg = readJson('package.json');
-  validatePackage(pkg, readJson('package-lock.json'));
-  const candidate = readJson(path);
-  if (candidate.name !== pkg.name || candidate.version !== pkg.version) {
-    throw new Error('Packed candidate must match checked-out SDK name and version');
-  }
-  const integrity = `sha512-${createHash('sha512').update(readFileSync(candidate.tarball)).digest('base64')}`;
-  if (integrity !== candidate.integrity) throw new Error('Packed candidate bytes changed after validation');
-  return candidate;
-}
-
 function writeOutput(name, value) {
   console.log(`${name}=${value}`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
@@ -170,10 +104,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (mode === 'changes' && args.length === 2) {
     writeOutput('release_needed', checkChanges(...args));
   } else if (mode === 'registry' && args.length === 1) {
-    writeOutput('should_publish', checkRegistry(localCandidate(args[0])));
-  } else if (mode === 'visibility' && args.length === 2) {
-    console.log(JSON.stringify(await checkVisibility(localCandidate(args[0]), fetch, Number(args[1]))));
+    const pkg = readJson('package.json');
+    validatePackage(pkg, readJson('package-lock.json'));
+    const candidate = readJson(args[0]);
+    if (candidate.name !== pkg.name || candidate.version !== pkg.version) {
+      throw new Error('Packed candidate must match checked-out SDK name and version');
+    }
+    const integrity = `sha512-${createHash('sha512').update(readFileSync(candidate.tarball)).digest('base64')}`;
+    if (integrity !== candidate.integrity) throw new Error('Packed candidate bytes changed after validation');
+    writeOutput('should_publish', checkRegistry(candidate));
   } else {
-    throw new Error('Usage: release-policy.mjs changes BASE HEAD | registry CANDIDATE_JSON | visibility CANDIDATE_JSON TIMEOUT_MS');
+    throw new Error('Usage: release-policy.mjs changes BASE HEAD | registry CANDIDATE_JSON');
   }
 }

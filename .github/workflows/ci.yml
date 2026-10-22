@@ -431,7 +431,7 @@ jobs:
 
   mpatlas:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
+    if: ${{ always() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -447,7 +447,7 @@ jobs:
 
   eamlis:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -463,7 +463,7 @@ jobs:
 
   wdpa:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -480,7 +480,7 @@ jobs:
 
   sea-ice:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' }}
     permissions:
       contents: read
       actions: read

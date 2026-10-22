@@ -20,7 +20,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.slack_notify import notify
-from scripts.slack_breakglass import emergency_capability
 
 
 PROD_DIR = REPO_ROOT / "terraform" / "envs" / "prod"
@@ -221,7 +220,6 @@ def send_summary(
 ) -> None:
     notify(
         title=title,
-        capability=emergency_capability(approved_emergency=True, project_id="shared-datasets-1", secret_id="shared-datasets-slack-webhook-url"),
         body=(
             f"*Operator:* `{operator}`\n"
             f"*Reason:* {reason}\n"
@@ -236,7 +234,6 @@ def send_summary(
 def send_failure_summary(exc: StageFailure, *, dry_run: bool) -> None:
     notify(
         title="Terraform prod break-glass apply failed",
-        capability=emergency_capability(approved_emergency=True, project_id="shared-datasets-1", secret_id="shared-datasets-slack-webhook-url"),
         body=(
             f"*Stage:* `{exc.stage}`\n"
             f"*Exit code:* `{exc.returncode}`\n"

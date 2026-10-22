@@ -55,165 +55,9 @@ jobs:
       targets: |
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
-        google_project_iam_custom_role.operational_log_view_manager
-        google_project_iam_member.github_actions_operational_log_view_manager
-        google_project_iam_custom_role.operational_metric_descriptor_manager
-        google_project_iam_member.github_actions_operational_metric_descriptor_manager
-        google_project_iam_custom_role.operational_provider_creator
-        google_project_iam_member.github_actions_operational_provider_creator
-        google_project_iam_custom_role.operational_provider_reader
-        google_project_iam_member.github_actions_operational_provider_reader
       allowed_exact: |
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
-        google_project_iam_custom_role.operational_log_view_manager
-        google_project_iam_member.github_actions_operational_log_view_manager
-        google_project_iam_custom_role.operational_metric_descriptor_manager
-        google_project_iam_member.github_actions_operational_metric_descriptor_manager
-        google_project_iam_custom_role.operational_provider_creator
-        google_project_iam_member.github_actions_operational_provider_creator
-        google_project_iam_custom_role.operational_provider_reader
-        google_project_iam_member.github_actions_operational_provider_reader
-      tf_vars: |
-        wdpa_monthly_image=unused-by-cron-alert-policy-sync
-        sea_ice_daily_image=unused-by-cron-alert-policy-sync
-        eamlis_monthly_image=unused-by-cron-alert-policy-sync
-
-  readonly-bootstrap:
-    name: Bootstrap temporary read-only workflow trust authority
-    needs: bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    uses: ./.github/workflows/prod-terraform-target-apply.yml
-    with:
-      caller_workflow: cron-alert-policy-sync.yml
-      executor_sha: ${{ inputs.executor_sha }}
-      source_run_id: ${{ inputs.source_run_id }}
-      source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
-      sync_name: Read-only workflow trust IAM bootstrap
-      refusal_prefix: Refusing changes outside temporary read-only workflow trust authority
-      block_deletes: true
-      post_apply_wait_seconds: 30
-      targets: |
-        google_project_iam_custom_role.readonly_provider_updater
-        google_project_iam_member.github_actions_readonly_provider_updater
-      allowed_exact: |
-        google_project_iam_custom_role.readonly_provider_updater
-        google_project_iam_member.github_actions_readonly_provider_updater
-      tf_vars: |
-        wdpa_monthly_image=unused-by-readonly-trust-bootstrap
-        sea_ice_daily_image=unused-by-readonly-trust-bootstrap
-        eamlis_monthly_image=unused-by-readonly-trust-bootstrap
-
-  readonly-trust:
-    name: Repair exact read-only workflow trust condition
-    needs: readonly-bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    uses: ./.github/workflows/prod-terraform-target-apply.yml
-    with:
-      caller_workflow: cron-alert-policy-sync.yml
-      executor_sha: ${{ inputs.executor_sha }}
-      source_run_id: ${{ inputs.source_run_id }}
-      source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: readonly-wif-trust
-      sync_name: Read-only workflow trust sync
-      refusal_prefix: Refusing changes beyond the exact read-only workflow trust addition
-      block_deletes: true
-      targets: |
-        google_iam_workload_identity_pool_provider.github_readonly
-      allowed_exact: |
-        google_iam_workload_identity_pool_provider.github_readonly
-      tf_vars: |
-        wdpa_monthly_image=unused-by-readonly-trust-sync
-        sea_ice_daily_image=unused-by-readonly-trust-sync
-        eamlis_monthly_image=unused-by-readonly-trust-sync
-
-  observations:
-    name: Apply operational observation setup
-    needs: [bootstrap, readonly-trust]
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    uses: ./.github/workflows/prod-terraform-target-apply.yml
-    with:
-      caller_workflow: cron-alert-policy-sync.yml
-      executor_sha: ${{ inputs.executor_sha }}
-      source_run_id: ${{ inputs.source_run_id }}
-      source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: operational-observer-setup
-      sync_name: Operational observation setup
-      refusal_prefix: Refusing automatic operational observation setup
-      block_deletes: true
-      targets: |
-        google_iam_workload_identity_pool_provider.operational_observer
-        google_project_iam_audit_config.operational_run_data_write
-        module.operational_observer_service_account.google_service_account.this
-        google_service_account_iam_member.operational_observer_wif
-        google_logging_log_view.operational_observations["_Default-run-stderr"]
-        google_logging_log_view.operational_observations["_Default-run-activity"]
-        google_logging_log_view.operational_observations["_Default-run-data-access"]
-        google_logging_log_view.operational_observations["_Default-scheduler-executions"]
-        google_logging_log_view.operational_observations["_Required-run-stderr"]
-        google_logging_log_view.operational_observations["_Required-run-activity"]
-        google_logging_log_view.operational_observations["_Required-run-data-access"]
-        google_logging_log_view.operational_observations["_Required-scheduler-executions"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-stderr"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-activity"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-data-access"]
-        google_logging_log_view_iam_member.operational_observer["_Default-scheduler-executions"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-stderr"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-activity"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-data-access"]
-        google_logging_log_view_iam_member.operational_observer["_Required-scheduler-executions"]
-        google_project_iam_custom_role.operational_observer_reader
-        google_project_iam_member.operational_observer_reader
-        google_project_iam_custom_role.operational_observer_receipts
-        google_storage_bucket_iam_member.operational_observer_receipts["0"]
-        google_storage_bucket_iam_member.operational_observer_receipts["1"]
-        google_storage_bucket_iam_member.operational_observer_receipts["2"]
-        google_storage_bucket_iam_member.operational_observer_receipts["3"]
-        google_storage_bucket_iam_member.operational_observer_receipts["4"]
-        google_storage_bucket_iam_member.operational_observer_manifests["0"]
-        google_storage_bucket_iam_member.operational_observer_manifests["1"]
-        google_storage_bucket_iam_member.operational_observer_manifests["2"]
-        google_storage_bucket_iam_member.operational_observer_manifests["3"]
-        google_storage_bucket_iam_member.operational_observer_manifests["4"]
-        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
-        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2
-      allowed_exact: |
-        google_iam_workload_identity_pool_provider.operational_observer
-        google_project_iam_audit_config.operational_run_data_write
-        module.operational_observer_service_account.google_service_account.this
-        google_service_account_iam_member.operational_observer_wif
-        google_logging_log_view.operational_observations["_Default-run-stderr"]
-        google_logging_log_view.operational_observations["_Default-run-activity"]
-        google_logging_log_view.operational_observations["_Default-run-data-access"]
-        google_logging_log_view.operational_observations["_Default-scheduler-executions"]
-        google_logging_log_view.operational_observations["_Required-run-stderr"]
-        google_logging_log_view.operational_observations["_Required-run-activity"]
-        google_logging_log_view.operational_observations["_Required-run-data-access"]
-        google_logging_log_view.operational_observations["_Required-scheduler-executions"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-stderr"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-activity"]
-        google_logging_log_view_iam_member.operational_observer["_Default-run-data-access"]
-        google_logging_log_view_iam_member.operational_observer["_Default-scheduler-executions"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-stderr"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-activity"]
-        google_logging_log_view_iam_member.operational_observer["_Required-run-data-access"]
-        google_logging_log_view_iam_member.operational_observer["_Required-scheduler-executions"]
-        google_project_iam_custom_role.operational_observer_reader
-        google_project_iam_member.operational_observer_reader
-        google_project_iam_custom_role.operational_observer_receipts
-        google_storage_bucket_iam_member.operational_observer_receipts["0"]
-        google_storage_bucket_iam_member.operational_observer_receipts["1"]
-        google_storage_bucket_iam_member.operational_observer_receipts["2"]
-        google_storage_bucket_iam_member.operational_observer_receipts["3"]
-        google_storage_bucket_iam_member.operational_observer_receipts["4"]
-        google_storage_bucket_iam_member.operational_observer_manifests["0"]
-        google_storage_bucket_iam_member.operational_observer_manifests["1"]
-        google_storage_bucket_iam_member.operational_observer_manifests["2"]
-        google_storage_bucket_iam_member.operational_observer_manifests["3"]
-        google_storage_bucket_iam_member.operational_observer_manifests["4"]
-        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
-        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync
@@ -221,7 +65,7 @@ jobs:
 
   sync:
     name: Apply cron alert policy sync
-    needs: [bootstrap, observations]
+    needs: bootstrap
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
@@ -238,18 +82,12 @@ jobs:
         google_monitoring_alert_policy.release_awaiting_identity_decision
         google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
-        google_monitoring_alert_policy.dataset_object_deleted
-        google_monitoring_alert_policy.dataset_schema_changed
-        google_monitoring_alert_policy.operational_reconciliation_unhealthy
       allowed_exact: |
         google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
         google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
         google_monitoring_alert_policy.release_awaiting_identity_decision
         google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
-        google_monitoring_alert_policy.dataset_object_deleted
-        google_monitoring_alert_policy.dataset_schema_changed
-        google_monitoring_alert_policy.operational_reconciliation_unhealthy
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync

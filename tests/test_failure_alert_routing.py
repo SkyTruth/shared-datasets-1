@@ -59,20 +59,23 @@ def test_event_data_cannot_override_destination_or_inject_slack_mentions():
             alerts.alert_for_run(event(id=run_id))
 
 
-def test_cli_is_always_preview_and_has_no_webhook_bypass(tmp_path, monkeypatch, capsys):
+def test_cli_dry_run_and_delivery_failure(tmp_path, monkeypatch, capsys):
     path = tmp_path / "event.json"
     path.write_text(json.dumps(event()))
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path), "--dry-run"])
-    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")), mock.patch.object(alerts, "verify_source_event", return_value=True):
+    with mock.patch.object(alerts, "notify") as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
         alerts.main()
+        notify.assert_not_called()
     assert "actions/runs/123" in capsys.readouterr().out
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")), mock.patch.object(alerts, "verify_source_event", return_value=True):
-        alerts.main()
-    assert "actions/runs/123" in capsys.readouterr().out
+    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
+        with pytest.raises(RuntimeError, match="delivery failed"):
+            alerts.main()
+        assert notify.call_args.kwargs["strict"] is True
     path.write_text(json.dumps(event(event="pull_request")))
-    with mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
+    with mock.patch.object(alerts, "notify") as notify:
         alerts.main()
+        notify.assert_not_called()
 
 
 def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
@@ -80,23 +83,21 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     subscriptions = workflow_triggers(workflow)["workflow_run"]["workflows"]
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
-        if "schedule" in workflow_triggers(candidate) and path.name != "unattended-workflow-alert.yml":
+        if "schedule" in workflow_triggers(candidate):
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
     assert "CI" in subscriptions
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
-    assert set(workflow["jobs"]) == {"incidents"}
-    worker_filter = workflow["jobs"]["incidents"]["if"]
+    worker_filter = workflow["jobs"]["notify"]["if"]
     assert "github.event.workflow_run.status == 'completed'" in worker_filter
     assert "contains(fromJSON(" in worker_filter
     conclusions = json.loads(worker_filter.split("fromJSON('", 1)[1].split("')", 1)[0])
-    assert set(conclusions) == alerts.FAILED_CONCLUSIONS | {"success"}
+    assert set(conclusions) == alerts.FAILED_CONCLUSIONS
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in worker_filter
-    assert "github.event_name == 'schedule'" in worker_filter
-    steps = workflow["jobs"]["incidents"]["steps"]
+    steps = workflow["jobs"]["notify"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
+    assert checkout["with"] == {"ref": "main", "persist-credentials": False}
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
 
 
@@ -121,13 +122,13 @@ def source_api(run, **updates):
 
 
 @pytest.mark.parametrize("conclusion", ["success", "failure", "timed_out", "cancelled"])
-def test_only_successful_idle_catalog_probes_are_quiet(conclusion):
+def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusion):
     payload = event(name="Catalog web deploy")
     jobs = [
         {"name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
-    assert (alerts.alert_for_run(payload, jobs=jobs) is None) == (conclusion == "success")
+    assert alerts.alert_for_run(payload, jobs=jobs) is None
     # Actual publisher failures and historical jobs without the activity gate
     # still alert. The exception never applies to an explicit action's failure.
     jobs[1]["conclusion"] = "failure"
@@ -141,19 +142,21 @@ def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_pat
     payload = event(name="Catalog web deploy", head_sha="a" * 40, run_attempt=1)
     api = source_api(payload["workflow_run"])
     api.pages.return_value = [
-        {"name": "Check for catalog input changes", "status": "completed", "conclusion": "success"},
+        {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
     path = tmp_path / "event.json"
     path.write_text(json.dumps(payload))
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
         alerts.main()
+    notify.assert_not_called()
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
     api = source_api(payload["workflow_run"], run_attempt=2)
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch("scripts.slack_notify.notify", side_effect=AssertionError("legacy delivery")):
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
         alerts.main()
+    notify.assert_not_called()
     api.pages.assert_not_called()
 
 
@@ -261,20 +264,12 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
             for step in job.get("steps", []):
                 run = step.get("run", "")
                 if MARKER in run:
-                    if (path.name, step["name"]) == (
-                        "monitoring-slack-relay-deploy.yml", "Verify live shadow configuration and no active execution"
-                    ):
-                        # Read the execution's marker as evidence; this step
-                        # neither assigns it nor starts/updates a workload.
-                        assert "--update-env-vars" not in run and "gcloud " not in run
-                        assert "session.post(" not in run and "session.patch(" not in run
-                        continue
                     marked_steps.append(step["name"])
                     assert "--wait" in run and "--async" not in run
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Execute read-only capability canary", "Execute only the exact receipt request"}
+    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -289,19 +284,17 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
   protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
-    # The observer has persistent-health coverage; the transport's own failure
-    # uses GHA/GCP logs. Other jobs, including future jobs, remain observable.
-    assert filter_text.count("resource.labels.job_name") == 2
+    # The frequent observer has persistent-health coverage. Every other job,
+    # including future jobs, retains the immediate failure policy.
+    assert filter_text.count("resource.labels.job_name") == 1
     assert 'NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in filter_text
-    assert 'NOT resource.labels.job_name="${local.monitoring_slack_job_name}"' in filter_text
     scheduler = text.split('"scheduled_ingestion_scheduler_failure"', 1)[1].split("\nresource ", 1)[0]
     scheduler_filter = scheduler.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
-    assert scheduler_filter.count("resource.labels.job_id") == 2
+    assert scheduler_filter.count("resource.labels.job_id") == 1
     assert 'NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"' in scheduler_filter
-    assert 'NOT resource.labels.job_id="${local.monitoring_slack_job_name}"' in scheduler_filter
     health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
     assert 'enabled      = var.cron_alerts_enabled' in health
-    assert 'notification_channels = local.operational_alert_notification_channels' in health
+    assert 'notification_channels = local.cron_alert_notification_channels' in health
     assert 'resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in health
     # An alert-only target plan must not pull in the Cloud Run job and its
     # placeholder image. The same constant names both the job and its policies.
@@ -339,7 +332,7 @@ def test_observer_health_counts_successes_and_keeps_missing_data_unhealthy():
     assert 'notification_rate_limit' not in health
 
 
-def test_live_alert_probe_is_removed_and_wdpa_runs_keep_async_coverage():
+def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     for filename,step_name in [
         ("wdpa-monthly-deploy.yml", "Execute wdpa-monthly canary"),
     ]:
@@ -349,15 +342,10 @@ def test_live_alert_probe_is_removed_and_wdpa_runs_keep_async_coverage():
         assert "WDPA_FAIL_BEFORE" not in str(steps)
         assert "--async" in steps[step_name]["run"]
         assert MARKER not in steps[step_name]["run"]
-    assert not (WORKFLOWS / "cron-alert-delivery-test.yml").exists()
-    probe = load_workflow(WORKFLOWS / "notification-rehearsal.yml")
+    probe = load_workflow(WORKFLOWS / "cron-alert-delivery-test.yml")
     assert set(workflow_triggers(probe)) == {"workflow_dispatch"}
-    assert probe["permissions"] == {"contents": "read"}
-    assert "environment" not in probe["jobs"]["probe"]
-    steps = workflow_steps_by_name(probe, "probe")
-    guard = steps["Require trusted main workflow and isolated destination"]["run"]
-    assert "SHARED_DATASETS_SLACK_TEST_CHANNEL_ID" in guard
-    assert "C0B12LDMB1A" in guard
-    assert "Rehearse isolated notification delivery" in steps
-    assert "gcloud" not in str(probe)
-    assert "WDPA_FAIL_BEFORE_WRITES" not in str(probe)
+    assert probe["jobs"]["probe"]["environment"] == "shared-datasets-production"
+    run = workflow_steps_by_name(probe, "probe")["Run a controlled failure without dataset writes"]["run"]
+    assert MARKER not in run
+    assert "WDPA_FAIL_BEFORE_WRITES=true" in run
+    assert run.index("completionTime") < run.index("gcloud run jobs execute")

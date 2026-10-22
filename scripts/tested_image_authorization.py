@@ -13,9 +13,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import sdk_release_authorization as proof
-from scripts.github_api_read import READ_TIMEOUT_SECONDS, download as download_artifact
 from scripts.deployment_revision import DeploymentError, GitHub as DeploymentGitHub, TARGET_WORKFLOWS, require, verify_context
-from scripts.operational_retry import UNATTENDED, operation
 from scripts.tested_image_bundle import ImageError, MAX_IMAGE, MAX_JSON, TARGETS, hash_file, load_image, read_json, validate_manifest
 
 MAX_ARTIFACT = len(TARGETS) * MAX_IMAGE + 100 * 1024 ** 2
@@ -24,9 +22,21 @@ MAX_ARTIFACT = len(TARGETS) * MAX_IMAGE + 100 * 1024 ** 2
 class GitHub(proof.GitHub):
     def archive_to(self, repository, artifact_id, path):
         # Avoid retaining the multi-image ZIP or its expanded members in memory.
-        with operation(profile=UNATTENDED) as budget:
-            download_artifact(f"repos/{repository}/actions/artifacts/{artifact_id}/zip", Path(path),
-                              max_bytes=MAX_ARTIFACT, timeout_seconds=budget.profile.deadline_seconds or READ_TIMEOUT_SECONDS)
+        with Path(path).open("xb") as stream:
+            command = ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"]
+            with subprocess.Popen(command, stdout=subprocess.PIPE) as process:
+                try:
+                    size = 0
+                    for chunk in iter(lambda: process.stdout.read(1024 ** 2), b""):
+                        size += len(chunk)
+                        require(size <= MAX_ARTIFACT, "retained-image download exceeds limit")
+                        stream.write(chunk)
+                    if process.wait() != 0:
+                        raise subprocess.CalledProcessError(process.returncode, command)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait()
 
 
 def selected_image(api, repository, run_id, artifacts, reference, path, target, sha, plan, suite_attempt):
@@ -79,15 +89,14 @@ def selected_image(api, repository, run_id, artifacts, reference, path, target, 
 
 def download(api, repository, run_id, attempt, sha, target, directory, root):
     require(target in TARGETS, "target has no retained-image contract")
-    with operation(profile=UNATTENDED):
-        run, artifacts, evidence, plan = proof.verified_plan(api, repository, run_id, attempt, sha, root)
-        require("production-images" in plan["suites"], "production images were not selected for validation")
-        reference = evidence.get("suite_artifacts", {}).get("production-images")
-        suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
-        proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
-        directory.mkdir(parents=True, exist_ok=True)
-        archive = directory / f"{target}.docker.tar"
-        image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
+    run, artifacts, evidence, plan = proof.verified_plan(api, repository, run_id, attempt, sha, root)
+    require("production-images" in plan["suites"], "production images were not selected for validation")
+    reference = evidence.get("suite_artifacts", {}).get("production-images")
+    suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
+    proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
+    directory.mkdir(parents=True, exist_ok=True)
+    archive = directory / f"{target}.docker.tar"
+    image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
     image_id = load_image(archive, image)
     return {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
             "artifact": target + "@" + image["config_digest"], "tested_sha": sha}

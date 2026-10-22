@@ -25,8 +25,6 @@ DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/wdpa-monthly-deploy.yml"
 DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 REQUIRED_SCRIPT_COPIES = (
-    "scripts/operational_retry.py",
-    "scripts/gcp_read_retry.py",
     "scripts/feature_metadata_localization.py",
     "scripts/feature_metadata_translation_reuse.py",
     "scripts/translation_local_io.py",
@@ -51,11 +49,8 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                 ("ingestion/wdpa_monthly/publication_only.py", "/app/ingestion/wdpa_monthly/publication_only.py"),
                 ("ingestion/common", "/app/ingestion/common"),
                 ("ingestion/wdpa_monthly/run.py", "/app/ingestion/wdpa_monthly/run.py"),
-                ("ingestion/wdpa_monthly/execution_observer.py", "/app/ingestion/wdpa_monthly/execution_observer.py"),
                 ("ingestion/wdpa_monthly/translations.py", "/app/ingestion/wdpa_monthly/translations.py"),
                 ("scripts/catalog_csv.py", "/app/scripts/catalog_csv.py"),
-                ("scripts/operational_retry.py", "/app/scripts/operational_retry.py"),
-                ("scripts/gcp_read_retry.py", "/app/scripts/gcp_read_retry.py"),
                 ("scripts/release_feature_model.py", "/app/scripts/release_feature_model.py"),
                 ("scripts/feature_metadata_localization.py", "/app/scripts/feature_metadata_localization.py"),
                 ("scripts/feature_metadata_translation_reuse.py", "/app/scripts/feature_metadata_translation_reuse.py"),
@@ -359,8 +354,6 @@ elif args[0] != "build":
                 [sys.executable, "-I", "-c",
                  f"import sys; sys.path.insert(0, {str(root)!r}); "
                  "import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.feature_metadata_translation_reuse; "
-                 "from scripts.operational_retry import OBSERVER_READ; import scripts.gcp_read_retry; "
-                 "assert OBSERVER_READ.deadline_seconds == 60; "
                  f"assert scripts.feature_metadata_localization.__file__.startswith({str(root)!r}); "
                  "print('declared copies import successfully')"],
                 cwd=root, capture_output=True, text=True, check=False,

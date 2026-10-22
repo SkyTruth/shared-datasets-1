@@ -50,24 +50,23 @@ module "eamlis_monthly_job" {
   timeout               = "14400s"
   max_retries           = 0
 
-  secret_env = local.operational_slack_rollout.retire_runtime_webhook_access ? {} : {
+  secret_env = {
     SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id
   }
 
   env = {
-    SHARED_DATASETS_OPERATIONAL_DELIVERY_MODE = local.operational_slack_rollout.mode
-    GOOGLE_CLOUD_PROJECT                      = var.project_id
-    SHARED_DATASETS_BUCKET                    = var.bucket_name
-    EAMLIS_LAYER_URL                          = var.eamlis_layer_url
-    EAMLIS_WHERE                              = var.eamlis_where
-    EAMLIS_PAGE_SIZE                          = tostring(var.eamlis_page_size)
+    GOOGLE_CLOUD_PROJECT   = var.project_id
+    SHARED_DATASETS_BUCKET = var.bucket_name
+    EAMLIS_LAYER_URL       = var.eamlis_layer_url
+    EAMLIS_WHERE           = var.eamlis_where
+    EAMLIS_PAGE_SIZE       = tostring(var.eamlis_page_size)
   }
 
   depends_on = [
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_storage_bucket_iam_member.eamlis_job_object_user,
-    google_secret_manager_secret_iam_member.translation_notice,
+    google_secret_manager_secret_iam_member.translation_notice["eamlis"],
     google_storage_bucket_iam_member.translation_debt_writer["eamlis"],
   ]
 }

@@ -24,7 +24,6 @@ SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
-    "monitoring-slack-relay": "monitoring-slack-relay-deploy.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
@@ -35,26 +34,7 @@ TARGET_WORKFLOWS = {
     "catalog-web": "catalog-web-deploy.yml",
     "catalog-viewer": "catalog-viewer-deploy.yml",
 }
-# Auxiliary resources belong to their existing protected deployment target.
-# They are observation workers, never aliases for that target's data recovery.
-AUXILIARY_CLOUD_JOBS = {
-    "wdpa-execution-observer": {
-        "deployment_target": "wdpa-monthly",
-        "resource": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-        "completion_evidence": "execution",
-        "delivery_route": "incident",
-    },
-    "monitoring-slack-relay": {
-        "deployment_target": "monitoring-slack-relay",
-        "resource": "module.monitoring_slack_job[0].google_cloud_run_v2_job.this",
-        "completion_evidence": "normal_live_cycle",
-        "delivery_route": "logs",
-        "control_workflows": ("monitoring-slack-relay-receipt.yml",),
-    },
-}
 TERRAFORM_SYNCS = {
-    "Monitoring Slack relay secret authority bootstrap": "monitoring-slack-relay-deploy.yml",
-    "Monitoring Slack relay secret setup": "monitoring-slack-relay-deploy.yml",
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
@@ -68,50 +48,15 @@ TERRAFORM_SYNCS = {
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
-    "Operational observation setup": "cron-alert-policy-sync.yml",
-    "Read-only workflow trust IAM bootstrap": "cron-alert-policy-sync.yml",
-    "Read-only workflow trust sync": "cron-alert-policy-sync.yml",
 }
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
     for name, workflow in TERRAFORM_SYNCS.items()
 }
 
-# A transport's own failures must not recursively use that same public route.
-# Scope comes from exact resource/workflow identities, never display text.
-LOGS_ONLY_WORKFLOWS = frozenset(
-    workflow
-    for contract in AUXILIARY_CLOUD_JOBS.values()
-    if contract["delivery_route"] == "logs"
-    for workflow in (
-        TARGET_WORKFLOWS[contract["deployment_target"]],
-        *contract.get("control_workflows", ()),
-    )
-)
-LOGS_ONLY_TARGETS = frozenset(
-    target for target, workflow in {**TARGET_WORKFLOWS, **TERRAFORM_WORKFLOWS}.items()
-    if workflow in LOGS_ONLY_WORKFLOWS
-)
-LOGS_ONLY_WORKFLOW_SCOPES = frozenset("workflow:" + path for path in LOGS_ONLY_WORKFLOWS)
-LOGS_ONLY_CLOUD_SCOPES = frozenset(
-    f"cloud:{resource}:{job}"
-    for job, contract in AUXILIARY_CLOUD_JOBS.items()
-    if contract["delivery_route"] == "logs"
-    for resource in ("cloud_run_job", "cloud_scheduler_job")
-)
-
 
 class DeploymentError(RuntimeError):
     pass
-
-
-class DeploymentPrerequisitePending(DeploymentError):
-    """An exact, trusted CI attempt has not produced its gate result yet."""
-
-    def __init__(self, run_id, attempt):
-        super().__init__("exact main CI attempt is still awaiting ci-ready")
-        self.run_id = run_id
-        self.attempt = attempt
 
 
 def require(condition, message):
@@ -124,7 +69,7 @@ class GitHub:
         return json.loads(read(path))
 
     def pages(self, path, field=None):
-        pages = json.loads(read(path, paginate=True, no_cache=True))
+        pages = json.loads(read(path, paginate=True))
         require(isinstance(pages, list) and pages, "missing API pages")
         if field:
             count = pages[0].get("total_count")
@@ -154,11 +99,6 @@ def verify_ci(api, repository, executor, run_id, attempt):
     require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "source CI repository mismatch")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "jobs")
     ready = [job for job in jobs if job.get("name") == "ci-ready"]
-    pending_states = {"queued", "in_progress", "waiting", "pending", "requested"}
-    if run.get("status") in pending_states and (not ready or (
-            len(ready) == 1 and ready[0].get("status") in pending_states
-            and ready[0].get("conclusion") is None)):
-        raise DeploymentPrerequisitePending(run_id, attempt)
     require(len(ready) == 1 and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success", "ci-ready is missing, ambiguous, cancelled or unsuccessful")
     return run
 
@@ -259,7 +199,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "monitoring-slack-relay"}
+        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             prior_artifact = record_payload(latest)["artifact"]

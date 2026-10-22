@@ -8,20 +8,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
-from scripts import logging_setup_permissions as logging_setup
-from scripts import operational_log_views as log_views
-from scripts import readonly_wif_trust, setup_grant_proof, wif_setup_permissions as wif_setup
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -50,57 +46,30 @@ MONITORING_PERMISSIONS = (
     "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete",
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
-    "monitoring.timeSeries.list",
-)
-OPERATIONAL_LOG_SETUP_PERMISSIONS = logging_setup.SETUP_PERMISSIONS
-OPERATIONAL_METRIC_SETUP_PERMISSIONS = (
-    "monitoring.metricDescriptors.create", "monitoring.metricDescriptors.get", "monitoring.metricDescriptors.list",
 )
 
 
-def read_json(url, token, *, data=None, method="GET", content_type="application/json", bearer=True):
-    headers = {"Content-Type": content_type}
-    if bearer:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+def request(url, permissions, token):
+    raw = json.dumps({"permissions": list(permissions)}).encode()
+    req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
-            body = response.read(1024 * 1024 + 1)
-            if len(body) > 1024 * 1024:
-                raise RuntimeError("permission probe JSON exceeds 1 MiB")
-            payload = json.loads(body)
+            payload = json.load(response)
     except urllib.error.HTTPError as error:
         # Capture structured Google error diagnostics, never request headers or
         # an incomplete body that might contain a truncated credential value.
         body = error.read(16 * 1024 + 1)
         diagnostic = 'response body unavailable, unstructured or over 16 KiB'
-        status = None
         if len(body) <= 16 * 1024:
             try:
                 vendor = json.loads(body)
             except (ValueError, UnicodeDecodeError):
                 vendor = None
             if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
-                status = vendor['error'].get('status')
                 safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
                 encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
-                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]').replace(quote_plus(token), '[REDACTED]')[:4096]
-        raise setup_grant_proof.ProbeHTTPError(f'permission probe HTTP {error.code}: {url}; {diagnostic}', code=error.code, status=status) from error
-    if not isinstance(payload, dict):
-        raise RuntimeError("invalid permission probe JSON response")
-    return payload
-
-
-def request(url, permissions, token):
-    if url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS}:
-        return logging_setup.verify_parent(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
-    if url == wif_setup.PROVIDER_URL:
-        return wif_setup.verify_provider(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
-    if url == readonly_wif_trust.PROVIDER_URL:
-        return readonly_wif_trust.verify_provider(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
-    storage = "storage.googleapis.com" in url
-    raw = None if storage else json.dumps({"permissions": list(permissions)}).encode()
-    payload = read_json(url, token, data=raw, method="GET" if storage else "POST")
+                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]')[:4096]
+        raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
     actual = payload.get("permissions", [])
     if not isinstance(actual, list) or not all(isinstance(value, str) for value in actual):
         raise RuntimeError("invalid testIamPermissions response")
@@ -110,13 +79,6 @@ def request(url, permissions, token):
 def checks(target):
     secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}:testIamPermissions", SECRET_PERMISSIONS)
     project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
-    if target == "monitoring-slack-secret-setup":
-        # The exact saved-plan probe below requires secrets.create only when
-        # creation is actually planned. Existing metadata must remain usable
-        # after the fixed bootstrap write grant expires.
-        return [(project_url, ("resourcemanager.projects.get", "serviceusage.services.list"))]
-    if target == "readonly-wif-trust":
-        return [(readonly_wif_trust.PROVIDER_URL, (wif_setup.GET,))]
     if target == "iam-bootstrap":
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
     if target == "artifact-registry":
@@ -124,17 +86,7 @@ def checks(target):
     if target == "artifact-registry-images":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
     if target == "monitoring-alerts":
-        return [(project_url, MONITORING_PERMISSIONS),
-                *[(f"https://logging.googleapis.com/v2/{name}:testIamPermissions", ("logging.views.get",)) for name in log_views.VIEWS]]
-    if target == "operational-observer-setup":
-        pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
-        return checks("iam-bootstrap") + checks("bucket-iam") + [
-            (project_url, OPERATIONAL_METRIC_SETUP_PERMISSIONS + ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "serviceusage.services.list")),
-            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules")),
-            (wif_setup.PROVIDER_URL, (wif_setup.GET,)),
-            *[(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS) for bucket in logging_setup.BUCKETS],
-            *[(logging_setup.bucket_url(bucket) + "/views/_AllLogs:testIamPermissions", logging_setup.VIEW_PERMISSIONS) for bucket in logging_setup.BUCKETS],
-        ]
+        return [(project_url, MONITORING_PERMISSIONS)]
     if target == "preview-service-account-iam":
         # The preview WIF binding references the managed GitHub pool, while
         # its signing binding references a managed custom role. Terraform
@@ -191,7 +143,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "readonly-wif-trust", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage", "monitoring-slack-relay", "monitoring-slack-secret-setup"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):
@@ -204,16 +156,7 @@ def main():
         required = plan_checks(plan, project_number=project_number, target=args.target)
     else:
         required = checks(args.target)
-    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS}
-                         | {wif_setup.PROVIDER_URL, readonly_wif_trust.PROVIDER_URL} for url, _ in required)
-    if logging_parent:
-        # Minted by the same protected WIF auth step with identity metadata
-        # scope; an email-less gcloud token cannot prove the actual principal.
-        token = os.environ.get(logging_setup.TOKEN_ENV, "").strip()
-        if not token:
-            parser.error("Logging parent permission checks require the protected identity-scoped access token")
-    else:
-        token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
+    token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
     if not token:
         parser.error("authenticated deployment identity has no access token")
     verify_checks(required, lambda url, permissions: request(url, permissions, token))

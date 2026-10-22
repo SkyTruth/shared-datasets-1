@@ -29,10 +29,10 @@ class Slack:
         self.clock, self.sleep, self.last_post = clock, sleep, None
 
     def call(self, method, payload):
-        require(method in {"auth.test", "chat.postMessage", "chat.update", "chat.getPermalink", "conversations.history"}, "unsupported Slack method")
+        require(method in {"auth.test", "chat.postMessage", "chat.update", "chat.getPermalink"}, "unsupported Slack method")
         url = "https://slack.com/api/" + method
         headers = {"Authorization": "Bearer " + self.token}
-        if method in {"chat.getPermalink", "conversations.history"}:
+        if method == "chat.getPermalink":
             # This read method uses GET parameters in Slack's documented
             # contract and official SDK; message timestamps stay strings.
             url += "?" + urlencode(payload)
@@ -90,37 +90,3 @@ class Slack:
         link = result.get("permalink", "")
         require(isinstance(link, str) and re.fullmatch(r"https://[a-z0-9-]+\.slack\.com/archives/" + self.channel + r"/p" + ts.replace(".", ""), link), "invalid Slack message permalink")
         return link
-
-    def message(self, ts):
-        """Read one exact parent; absence is never evidence of non-delivery."""
-        require(isinstance(ts, str) and TIMESTAMP.fullmatch(ts), "invalid receipt message timestamp")
-        result = self.call("conversations.history", {"channel": self.channel, "oldest": ts, "latest": ts,
-                                                      "inclusive": "true", "limit": 1})
-        require("error" not in result, "contradictory exact Slack message response")
-        metadata = result.get("response_metadata", {})
-        require(result.get("has_more", False) is False and isinstance(metadata, dict)
-                and metadata.get("next_cursor", "") == "", "incomplete exact Slack message response")
-        messages = result.get("messages")
-        require(isinstance(messages, list) and len(messages) == 1 and isinstance(messages[0], dict)
-                and messages[0].get("ts") == ts and messages[0].get("type") == "message", "exact Slack message unavailable")
-        require(messages[0].get("thread_ts") in {None, ts}, "receipt cannot adopt a reply")
-        return messages[0]
-
-
-class ReadOnlySlack(Slack):
-    """Same explicit credentials/transport, without a messaging-write capability."""
-
-    def call(self, method, payload):
-        require(method in {"auth.test", "conversations.history"}, "receipt transport forbids Slack writes")
-        return super().call(method, payload)
-
-    def history_capability(self):
-        """Exercise channel-history permission without requesting any messages."""
-        # Equal exclusive timestamp bounds describe an empty range. Do not
-        # widen it or retry another query if Slack rejects this capability test.
-        result = self.call("conversations.history", {"channel": self.channel,
-            "oldest": "946684800.000000", "latest": "946684800.000000", "inclusive": "false", "limit": 1})
-        metadata = result.get("response_metadata", {})
-        require("error" not in result and result.get("messages") == [] and result.get("has_more", False) is False
-                and isinstance(metadata, dict) and metadata.get("next_cursor", "") == "", "history capability response is not complete and empty")
-        return True

@@ -169,7 +169,6 @@ class AlertPolicyTests(unittest.TestCase):
                 "monitoring.alertPolicies.update",
                 "monitoring.notificationChannels.get",
                 "monitoring.notificationChannels.list",
-                "monitoring.timeSeries.list",
             },
         )
 
@@ -201,9 +200,6 @@ class AlertPolicyTests(unittest.TestCase):
             "google_monitoring_alert_policy.release_awaiting_identity_decision",
             "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",
             "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",
-            "google_monitoring_alert_policy.dataset_object_deleted",
-            "google_monitoring_alert_policy.dataset_schema_changed",
-            "google_monitoring_alert_policy.operational_reconciliation_unhealthy",
         }
         assert_target_apply_caller(
             self,
@@ -211,7 +207,7 @@ class AlertPolicyTests(unittest.TestCase):
             expected_name="Cron alert policy sync",
             push_paths=None,
             expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
-            expected_needs=["bootstrap", "observations"],
+            expected_needs="bootstrap",
             sync_name="Cron alert policy sync",
             refusal_prefix="Refusing automatic cron alert policy sync",
             expected_targets=policies,

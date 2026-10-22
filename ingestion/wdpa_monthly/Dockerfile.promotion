@@ -15,11 +15,8 @@ COPY scripts/wdpa_processing_gate.py /app/scripts/wdpa_processing_gate.py
 COPY ingestion/wdpa_monthly/publication_only.py /app/ingestion/wdpa_monthly/publication_only.py
 COPY ingestion/common /app/ingestion/common
 COPY ingestion/wdpa_monthly/run.py /app/ingestion/wdpa_monthly/run.py
-COPY ingestion/wdpa_monthly/execution_observer.py /app/ingestion/wdpa_monthly/execution_observer.py
 COPY ingestion/wdpa_monthly/translations.py /app/ingestion/wdpa_monthly/translations.py
 COPY scripts/catalog_csv.py /app/scripts/catalog_csv.py
-COPY scripts/operational_retry.py /app/scripts/operational_retry.py
-COPY scripts/gcp_read_retry.py /app/scripts/gcp_read_retry.py
 COPY scripts/release_feature_model.py /app/scripts/release_feature_model.py
 COPY scripts/feature_metadata_localization.py /app/scripts/feature_metadata_localization.py
 COPY scripts/feature_metadata_translation_reuse.py /app/scripts/feature_metadata_translation_reuse.py

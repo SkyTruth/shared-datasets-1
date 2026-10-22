@@ -49,10 +49,7 @@ def assert_source_contract(documents, caller_name, caller, job_name, job):
             expected = "${{ format('{0}', github." + context + ") }}"
             assert job["with"][field] == expected, f"{job_name}.{field} must produce a string"
     else:
-        triggers = workflow_triggers(caller)
-        trigger = "workflow_call" if "workflow_call" in triggers else "workflow_dispatch"
-        assert trigger in triggers, "source identity needs an explicit callable or dispatched input contract"
-        incoming = triggers[trigger]["inputs"]
+        incoming = workflow_triggers(caller)["workflow_call"]["inputs"]
         for field in ("executor_sha", *SOURCE_FIELDS):
             assert incoming[field]["required"] is True, f"{caller_name} must require {field}"
             assert incoming[field]["type"] == "string", f"{caller_name}.{field} must be string"
@@ -109,14 +106,5 @@ def test_nested_source_identity_cannot_be_optional(field):
     documents = copy.deepcopy(workflows())
     call = next(call for call in source_calls(documents) if call[0] != "ci.yml")
     workflow_triggers(call[1])["workflow_call"]["inputs"][field]["required"] = False
-    with pytest.raises(AssertionError, match=rf"{call[0]} must require {field}"):
-        assert_source_contract(documents, *call)
-
-
-@pytest.mark.parametrize("field", ("executor_sha", *SOURCE_FIELDS))
-def test_manual_nested_source_identity_cannot_be_optional(field):
-    documents = copy.deepcopy(workflows())
-    call = next(call for call in source_calls(documents) if call[0] == "monitoring-slack-relay-deploy.yml")
-    workflow_triggers(call[1])["workflow_dispatch"]["inputs"][field]["required"] = False
     with pytest.raises(AssertionError, match=rf"{call[0]} must require {field}"):
         assert_source_contract(documents, *call)

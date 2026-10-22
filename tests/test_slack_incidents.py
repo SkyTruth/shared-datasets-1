@@ -95,14 +95,11 @@ class FakeSlack:
 def delivered_parent_with_uncertain_retry(first=None):
     first = first or observation()
     retry = {**first, "run_id": 102, "time": "2026-10-06T09:00:00Z"}
-    ledger, slack = MemoryLedger(), FakeSlack()
+    ledger, slack = MemoryLedger(), FakeSlack(crash=2)
     incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [first], success=lambda *_: None), slack)
-    value = incidents.fold(ledger.states[first["scope"]], retry, IDENTITY)
-    # v1/v2 workers could leave this exact uncertain reply claim. v3 preserves
-    # its signed historical shape without ever producing another such send.
-    value["incident"]["posts"]["attempt:" + incidents.observation_key(retry)] = {"state": "claimed", "ts": None}
-    value["incident"]["parent_view_sha256"] = incidents.parent_view_sha256(value)
-    ledger.save(value, "outcomes")
+    records = incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: None)
+    with pytest.raises(SlackError, match="unconfirmed"):
+        incidents.deliver(ledger, records, slack)
     slack.calls.clear()
     return ledger, slack, retry
 
@@ -218,7 +215,7 @@ def test_unrelated_healthy_runs_do_not_create_messages_or_close_open_target():
     assert incidents.prepare(MemoryLedger(), IDENTITY, observations, success=lambda *_: None) == []
 
 
-def test_one_parent_failed_attempts_update_it_and_recovery_updates_original(tmp_path, monkeypatch):
+def test_one_parent_failed_attempts_thread_and_recovery_only_updates_original(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
     ledger, slack = MemoryLedger(), FakeSlack()
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
@@ -230,9 +227,9 @@ def test_one_parent_failed_attempts_update_it_and_recovery_updates_original(tmp_
     records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
     incidents.deliver(ledger, records, slack)
     posts = [item for item in slack.calls if item[0] == "post"]
-    assert len(posts) == 1
+    assert len(posts) == 2
     assert not posts[0][2]
-    assert len([item for item in slack.calls if item[0] == "update"]) == 2
+    assert posts[1][2] == {"thread_ts": ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]}
     assert not any(key.startswith("resolved:") for key in ledger.states[SCOPE]["incident"]["posts"])
     assert "Original failure" in slack.calls[-1][1]["text"]
     assert "Resolved" in slack.calls[-1][1]["text"]
@@ -262,23 +259,18 @@ def test_permalink_failure_retains_acknowledgement_and_resumes_without_another_p
     assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
 
 
-def test_unconfirmed_parent_is_never_automatically_repeated():
-    ledger, slack = MemoryLedger(), FakeSlack(crash=1)
+@pytest.mark.parametrize("crash", [1, 2])
+def test_unconfirmed_parent_or_failed_attempt_is_never_automatically_repeated(crash):
+    ledger, slack = MemoryLedger(), FakeSlack(crash=crash)
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
+    if crash == 2:
+        incidents.deliver(ledger, records, slack)
+        records = incidents.prepare(ledger, IDENTITY, [observation(run_id=102, time="2026-10-06T09:00:00Z")], success=lambda *_: None)
     with pytest.raises(SlackError, match="unconfirmed"):
         incidents.deliver(ledger, records, slack)
     call_count = len(slack.calls)
     assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
     assert len(slack.calls) == call_count
-
-
-def historical_state(value, schema):
-    value = copy.deepcopy(value)
-    for key in ("operation_id", "first_failure_at", "stable_since", "escalation_at", "escalation_reason", "aliases", "source_aliases", "operational", "recoveries", "watermarks", "supervision"):
-        value.pop(key)
-    if schema == incidents.LEGACY_SCHEMA:
-        del value["incident"]["parent_view_sha256"]
-    return value
 
 
 @pytest.mark.parametrize("kind,scope", [
@@ -447,7 +439,7 @@ def test_verified_legacy_recovery_operations_remain_audit_only(delivery, tmp_pat
     record = signed_record()
     record["payload"]["schema"] = incidents.LEGACY_SCHEMA
     legacy = incidents.fold(record["payload"]["state"], success(), IDENTITY, ancestor=lambda *_: True)
-    legacy = historical_state(legacy, incidents.LEGACY_SCHEMA)
+    del legacy["incident"]["parent_view_sha256"]
     parent = "1791270000.000001"
     legacy["incident"]["posts"]["parent"] = {"state": "delivered", "ts": parent}
     legacy["incident"]["permalink"] = "https://example.slack.com/archives/" + IDENTITY["channel"] + "/p" + parent.replace(".", "")
@@ -480,7 +472,7 @@ def test_verified_legacy_recovery_operations_remain_audit_only(delivery, tmp_pat
 def test_legacy_migration_never_precedes_signature_verification(tmp_path):
     record = signed_record()
     record["payload"]["schema"] = incidents.LEGACY_SCHEMA
-    record["payload"]["state"] = historical_state(record["payload"]["state"], incidents.LEGACY_SCHEMA)
+    del record["payload"]["state"]["incident"]["parent_view_sha256"]
     original = copy.deepcopy(record)
     api = mock.Mock()
     api.pages.return_value = [{"id": 12, "state": "success", "description": "applied"}]
@@ -516,9 +508,6 @@ def test_owner_reconciliation_uses_lifecycle_order_after_sorted_json_persistence
     ledger.states = json.loads(json.dumps(ledger.states, sort_keys=True))
     value = ledger.states[SCOPE]
     operation = "attempt:" + incidents.observation_key(retry)
-    value["incident"]["posts"][operation] = {"state": "claimed", "ts": None}
-    ledger.states = json.loads(json.dumps(ledger.states, sort_keys=True))
-    value = ledger.states[SCOPE]
     assert next(iter(value["incident"]["posts"])) == operation  # JSON lexical order differs from delivery order.
     with pytest.raises(incidents.IncidentError, match="first uncertain operation"):
         incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], operation, "not-delivered", "")
@@ -555,7 +544,6 @@ def test_owner_confirmed_absent_old_retry_after_recovery_updates_parent_only():
     value = incidents.fold(ledger.states[SCOPE], success(), IDENTITY, ancestor=lambda *_: True)
     ledger.states[SCOPE] = value  # A verified old receipt can retain the uncertain retry.
     operation = "attempt:" + incidents.observation_key(retry)
-    value["incident"]["posts"][operation] = {"state": "claimed", "ts": None}
     slack.calls.clear()
     records = incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None)
     assert len(records) == 1
@@ -578,8 +566,6 @@ def test_confirming_one_old_retry_never_authorizes_other_uncertain_retries_after
     value = incidents.fold(ledger.states[SCOPE], success(), IDENTITY, ancestor=lambda *_: True)
     ledger.states[SCOPE] = json.loads(json.dumps(value, sort_keys=True))
     first, second = ["attempt:" + incidents.observation_key(item) for item in retries]
-    for operation in (first, second):
-        ledger.states[SCOPE]["incident"]["posts"][operation] = {"state": "claimed", "ts": None}
     slack.calls.clear()
     records = incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], first, "delivered", "1791270000.000099")
     incidents.deliver(ledger, records, slack)
@@ -633,6 +619,12 @@ def test_malformed_parent_acknowledgement_and_retired_operation_identity_fail(ch
         incidents.validate_state(value)
 
 
+def test_recovery_payload_cannot_be_rendered_as_a_thread_reply():
+    value = incidents.fold(state(), success(), IDENTITY, ancestor=lambda *_: True)
+    with pytest.raises(incidents.IncidentError, match="only failures"):
+        incidents.render(value, reply=success())
+
+
 def test_signed_healthy_watermark_advances_without_another_recovery_post():
     ledger, slack = MemoryLedger(), FakeSlack()
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
@@ -641,7 +633,7 @@ def test_signed_healthy_watermark_advances_without_another_recovery_post():
     incidents.deliver(ledger, records, slack)
     count = len(slack.calls)
     newer = success(sha="c" * 40, run_id=104, time="2026-10-06T11:00:00Z")
-    assert incidents.prepare(ledger, IDENTITY, [newer], ancestor=lambda *_: True, success=lambda *_: None) == []
+    assert incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: newer) == []
     assert ledger.states[SCOPE]["healthy"] == newer
     assert ledger.states[SCOPE]["incident"]["resolution"] == success()
     late = observation(sha="b" * 40, run_id=105, time="2026-10-06T11:30:00Z")
@@ -726,8 +718,8 @@ def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity(name,
         assert incidents.source_observations(api, event, {}) == []
 
 
-def test_successful_idle_catalog_probe_resolves_only_an_existing_probe_incident():
-    conclusion = "success"
+@pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled", "timed_out"])
+def test_idle_catalog_probe_neither_opens_nor_resolves_an_incident(conclusion):
     api = mock.Mock()
     run = {"id": 100, "run_attempt": 1, "name": "Catalog web deploy", "event": "schedule", "head_sha": SHA,
            "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
@@ -738,37 +730,8 @@ def test_successful_idle_catalog_probe_resolves_only_an_existing_probe_incident(
         {"id": 2, "name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped", "completed_at": run["updated_at"]},
     ]
     with mock.patch.object(incidents.alerts, "verify_source_event", return_value=True) as verify:
-        observations = incidents.source_observations(api, event, incidents.job_targets())
-    assert len(observations) == 1
-    healthy = observations[0]
-    assert healthy["kind"] == "job" and healthy["job_name"] == "Check for catalog input changes"
-    assert incidents.fold(None, healthy, IDENTITY)["incident"] is None
-    failure = {**healthy, "conclusion": "failure", "time": "2026-10-06T09:18:44Z", "run_id": 99}
-    opened = incidents.fold(None, failure, IDENTITY)
-    resolved = incidents.fold(opened, healthy, IDENTITY, ancestor=lambda *_: True)
-    assert resolved["incident"]["resolution"] == healthy
-    assert all(item["kind"] != "deployment" for item in observations)
+        assert incidents.source_observations(api, event, {}) == []
     verify.assert_called_once_with(api, run)
-
-
-@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out"])
-def test_unsuccessful_catalog_probe_reaches_signed_incident_engine(conclusion):
-    api = mock.Mock()
-    run = {"id": 100, "run_attempt": 1, "name": "Catalog web deploy", "event": "schedule", "head_sha": SHA,
-           "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
-           "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}
-    event = {"workflow_run": run, "repository": {"full_name": incidents.REPOSITORY}}
-    api.pages.return_value = [
-        {"id": 1, "name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion,
-         "completed_at": run["updated_at"]},
-        {"id": 2, "name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped",
-         "completed_at": run["updated_at"]},
-    ]
-    with mock.patch.object(incidents.alerts, "verify_source_event", return_value=True):
-        observed = incidents.source_observations(api, event, incidents.job_targets())
-    assert len(observed) == 1
-    assert observed[0]["kind"] == "job"
-    assert observed[0]["job_id"] == 1 and observed[0]["conclusion"] == conclusion
 
 
 def test_batch_signatures_bind_exact_checkpoint_and_keep_production_single_subject_default():
@@ -894,11 +857,11 @@ def test_exact_completed_ci_jobs_and_publication_negative_controls():
 @pytest.mark.parametrize("name", ["CI", "Deployment terminal verification", "Deployment completion check"])
 def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name):
     api = mock.Mock()
-    api.pages.return_value = [{"id": 100, "status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
+    api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
     with mock.patch.object(incidents, "source_observations", return_value=[observation()]):
         assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [observation()]
     path = api.pages.call_args.args[0]
-    assert "2026-10-06T11%3A59%3A59Z..2026-10-07T11%3A59%3A59Z" in path and "branch=main" in path
+    assert "2026-10-06T12%3A00%3A00Z" in path and "branch=main" in path
     assert api.pages.call_args.kwargs == {"field": "workflow_runs"}
     api.pages.side_effect = deployments.DeploymentError("incomplete API enumeration")
     with pytest.raises(deployments.DeploymentError, match="incomplete"):
@@ -1022,27 +985,18 @@ def test_malicious_labels_cannot_insert_mentions_and_id_is_searchable():
 def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_preserved_failure_filter():
     root = Path(__file__).resolve().parents[1]
     workflow = load_workflow(root / incidents.WORKFLOW)
-    assert set(workflow["jobs"]) == {"incidents"}
+    legacy = workflow["jobs"]["notify"]
     worker = workflow["jobs"]["incidents"]
+    assert "INCIDENTS_ENABLED != 'true'" in legacy["if"]
     assert "INCIDENTS_ENABLED == 'true'" in worker["if"]
     assert worker["concurrency"]["queue"] == "max" and worker["concurrency"]["cancel-in-progress"] is False
     checkout = next(step for step in worker["steps"] if step.get("uses") == "actions/checkout@v4")
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert "download-artifact" not in str(worker)
     assert "id-token" in worker["permissions"] and "deployments" in worker["permissions"]
-    observer = next(step for step in worker["steps"] if step.get("uses") == "google-github-actions/auth@v2")
-    assert observer["if"] == "${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}"
-    assert observer["with"] == {
-        "workload_identity_provider": "${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}",
-        "service_account": "${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}",
-        "create_credentials_file": True,
-    }
-    from scripts.deployment_receipt_contracts import notification_boundary
-    assert notification_boundary("unattended-workflow-alert.yml", "incidents", workflow, worker)
+    assert "gcp" not in str(worker).lower()
     steps = {step.get("id"): step for step in worker["steps"] if step.get("id")}
     assert "steps.attest-claims.outcome == 'success'" in steps["deliver"]["if"]
     assert "always()" in steps["attest-outcomes"]["if"]
     assert "workflow_dispatch" in workflow_triggers(workflow)
-    assert workflow_triggers(workflow)["schedule"] == [{"cron": "3-59/5 * * * *"}]
-    assert "SHARED_DATASETS_SLACK_WEBHOOK_URL" not in str(workflow)
     assert "Approved dataset mutation" in workflow_triggers(workflow)["workflow_run"]["workflows"]

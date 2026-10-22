@@ -1102,6 +1102,10 @@ def metadata_for_asset(
 def run() -> list[dict[str, Any]]:
     configure_logging()
     prepare_scratch()
+    if os.environ.get("WDPA_FAIL_BEFORE_WRITES") == "true":
+        raise RuntimeError(
+            "Controlled WDPA execution failure before any dataset writes"
+        )
     for binary in ("ogrinfo", "ogr2ogr", "tippecanoe", "pmtiles"):
         require_binary(binary)
 

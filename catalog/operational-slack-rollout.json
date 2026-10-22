@@ -1,7 +1,0 @@
-{
-  "schema": "shared-datasets-operational-slack-rollout-v1",
-  "mode": "native",
-  "cutover_evidence": null,
-  "retire_runtime_webhook_access": false,
-  "retirement_evidence": null
-}

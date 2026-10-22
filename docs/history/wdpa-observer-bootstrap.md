@@ -96,10 +96,11 @@ image through `catalog-viewer-deploy.yml` before the web bundle through
 `catalog-web-deploy.yml`, both protected workflows. Verify status on the static
 and protected catalog pages after deployment.
 
-The historical `cron-alert-delivery-test.yml` failure probe and its runtime
-override have been retired. Current verification follows
-[alert routing](../alert-routing.md#execution-and-delivery-verification);
-production jobs are not deliberately failed to test notifications.
+Routine rollout does not inject a deliberate failure or require a previous
+Slack notification as an input. Monitoring delivery is tested separately with
+`cron-alert-delivery-test.yml` from reviewed `main`, using the pre-write failure
+overrides. Verify the terminal failed execution, observer JSON (for the worker),
+and actual Slack delivery before declaring an alert-policy change verified.
 
 The multi-hour validation run and the worker canary remain unmarked and alertable:
 they run asynchronously, and the worker workflow watches only the first ten

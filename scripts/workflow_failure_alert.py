@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Classify verified unattended GitHub failures for the signed incident engine."""
+"""Notify only for failed unattended GitHub runs; never execute their artifacts."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.slack_notify import notify
 from scripts.dataset_mutation_authorization import GitHub
-from scripts import deployment_revision as deployments
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
@@ -25,8 +25,6 @@ VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integratio
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
 OBSERVER_WORKFLOWS = {"Deployment completion check", "Deployment terminal verification", "Deployment read-only reconciliation"}
 WORKFLOW_PATHS = {
-    "Monitoring Slack relay deploy": "monitoring-slack-relay-deploy.yml",
-    "Monitoring Slack relay receipt control": "monitoring-slack-relay-receipt.yml",
     "CI": "ci.yml", "Bucket hygiene audit": "bucket-hygiene-audit.yml",
     "Scratch cleanup audit": "scratch-cleanup-audit.yml", "Catalog web deploy": "catalog-web-deploy.yml",
     "Catalog viewer deploy": "catalog-viewer-deploy.yml", "PMTiles CDN sync": "pmtiles-cdn-sync.yml",
@@ -58,26 +56,19 @@ def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
 
 
 def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
-    """Recognize a successful idle probe, never an unobserved catalog outage.
-
-    The source worker owns bounded transport recovery. An unsuccessful probe
-    means that recovery was exhausted or the failure was not safe to retry;
-    neither case can be treated as evidence of unchanged catalog inputs.
-    """
+    """Recognize an idle scheduled probe from authoritative same-attempt jobs."""
     if run["name"] != "Catalog web deploy" or run["event"] != "schedule":
         return False
     probes = [job for job in jobs if job["name"] == "Check for catalog input changes"]
     publishers = [job for job in jobs if job["name"] == "Build and publish catalog web"]
     return (len(probes) == len(publishers) == 1
-            and probes[0]["status"] == "completed" and probes[0]["conclusion"] == "success"
+            and probes[0]["status"] == "completed"
             and publishers[0]["status"] == "completed" and publishers[0]["conclusion"] == "skipped"
             and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
 
 
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
     run = event["workflow_run"]
-    if WORKFLOW_PATHS.get(run["name"]) in deployments.LOGS_ONLY_WORKFLOWS:
-        return None
     # Maintenance and automatic follow-ups are unattended. CI's main-push
     # publication jobs share that coverage; other supervised checks stay in GitHub.
     if (
@@ -158,7 +149,7 @@ def jobs_for_event(api: GitHub, run: dict) -> list[dict] | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--event-path", type=Path, required=True)
-    parser.add_argument("--dry-run", action="store_true", help="Compatibility flag; this CLI always previews classification")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     event = json.loads(args.event_path.read_text())
     run = event["workflow_run"]
@@ -177,10 +168,10 @@ def main() -> None:
         alert = None
     if alert is None:
         print("No unattended workflow failure to announce.")
-    else:
-        # Delivery belongs exclusively to the signed incident engine. Preserve
-        # this historical classifier for replay without a webhook bypass.
+    elif args.dry_run:
         print(json.dumps(alert, indent=2))
+    else:
+        notify(**alert, strict=True)
 
 
 if __name__ == "__main__":

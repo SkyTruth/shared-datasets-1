@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 import urllib.error
 from pathlib import Path
-from unittest import mock
 
 from scripts import slack_notify
 
@@ -53,24 +53,37 @@ class SlackNotifyTests(unittest.TestCase):
             raise urllib.error.URLError("network down")
 
         with self.assertRaisesRegex(slack_notify.SlackNotificationError, "network down"):
-            slack_notify.post_webhook(slack_notify.webhook_capability("new_dataset", webhook_url="https://hooks.slack.test/example"), {"text": "hello"}, opener=failing_open)
+            slack_notify.post_webhook("https://hooks.slack.test/example", {"text": "hello"}, opener=failing_open)
 
     def test_load_webhook_prefers_env(self):
+        def runner(_command, **_kwargs):
+            raise AssertionError("runner should not be called")
+
         self.assertEqual(
-            slack_notify.load_webhook_url(env={slack_notify.WEBHOOK_ENV: "https://example"}),
+            slack_notify.load_webhook_url(env={slack_notify.WEBHOOK_ENV: "https://example"}, runner=runner),
             "https://example",
         )
 
-    def test_missing_explicit_configuration_never_discovers_secret(self):
-        with mock.patch("subprocess.run", side_effect=AssertionError("ambient secret discovery")):
-            with self.assertRaisesRegex(slack_notify.SlackNotificationError, "Explicit webhook environment"):
-                slack_notify.load_webhook_url(env={})
+    def test_load_webhook_reports_missing_github_actions_secret(self):
+        def runner(_command, **_kwargs):
+            raise AssertionError("runner should not be called")
 
-    def test_live_delivery_requires_explicit_capability(self):
-        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "explicit webhook capability"):
-            slack_notify.notify(title="test", body="body", strict=True)
-        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "explicit webhook capability"):
-            slack_notify.post_webhook("https://example.invalid", {})
+        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "GitHub Actions secret"):
+            slack_notify.load_webhook_url(env={"GITHUB_ACTIONS": "true", slack_notify.WEBHOOK_ENV: ""}, runner=runner)
+
+    def test_load_webhook_uses_gcloud_secret(self):
+        def runner(command, **kwargs):
+            self.assertIn("shared-datasets-slack-webhook-url", command)
+            return subprocess.CompletedProcess(command, 0, stdout="https://secret\n", stderr="")
+
+        self.assertEqual(slack_notify.load_webhook_url(env={}, runner=runner), "https://secret")
+
+    def test_load_webhook_reports_gcloud_stderr(self):
+        def runner(command, **kwargs):
+            raise subprocess.CalledProcessError(1, command, stderr="PERMISSION_DENIED")
+
+        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "PERMISSION_DENIED"):
+            slack_notify.load_webhook_url(env={}, runner=runner)
 
 
 class SlackWebhookTerraformTests(unittest.TestCase):

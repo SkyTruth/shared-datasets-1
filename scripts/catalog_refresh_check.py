@@ -10,36 +10,25 @@ import argparse
 import os
 from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import catalog_drift_guard as guard
 from scripts.collect_release_indexes import collect
-from scripts import gcp_read_retry
-from scripts.operational_retry import UNATTENDED, operation, run_read
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, required=True)
     args = parser.parse_args(argv)
-    args.work_dir.mkdir(parents=True, exist_ok=True)
-
-    def compare():
-        with TemporaryDirectory(prefix="release-indexes-", dir=args.work_dir) as directory:
-            indexes = Path(directory) / "snapshot"
-            collect(guard.get_client(), guard.DEFAULT_BUCKET, indexes, retry=None)
-            # Reuse actual publication acceptance. Each retry reads a complete
-            # new snapshot and discards all prior partial bytes. SDK retries
-            # are disabled so nested readers share this operation's budget.
-            return guard.run_checks(guard.parse_args([
-                "--bucket", guard.DEFAULT_BUCKET,
-                "--release-index-dir", str(indexes.resolve()), "--latest-from-release-index",
-            ]), retry=None)
-
-    with operation(profile=UNATTENDED):
-        checks = run_read(compare, classify=gcp_read_retry.classify, label="catalog input probe")
+    indexes = args.work_dir / "release-indexes"
+    collect(guard.get_client(), guard.DEFAULT_BUCKET, indexes)
+    # Reuse the actual publication acceptance contract. generated_at alone is
+    # not an input change; release history, latest runs and metadata all are.
+    checks = guard.run_checks(guard.parse_args([
+        "--bucket", guard.DEFAULT_BUCKET,
+        "--release-index-dir", str(indexes.resolve()), "--latest-from-release-index",
+    ]))
     changed = any(not check.ok for check in checks)
     message = ("Catalog inputs changed; selecting the protected deployment."
                if changed else "Catalog inputs unchanged; deployment skipped.")

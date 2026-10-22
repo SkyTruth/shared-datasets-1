@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  PACKAGE_NAME, checkChanges, checkRegistry, checkVisibility, compareVersions, needsRelease,
+  PACKAGE_NAME, checkChanges, checkRegistry, compareVersions, needsRelease,
   parseVersion, publicationDecision, validatePackage
 } from '../scripts/release-policy.mjs';
 
@@ -100,66 +100,6 @@ test('registry boundary only reads metadata; outages are never missing releases'
   }
   assert.throws(() => checkRegistry(candidate, () => 'not JSON'));
   assert.throws(() => checkRegistry(candidate, () => JSON.stringify({ error: 'denied' })));
-});
-
-test('accepted publication visibility binds exact HTTP metadata without publishing or credentials', async () => {
-  const candidate = { name: PACKAGE_NAME, version: '0.9.0', integrity };
-  const calls = [];
-  const result = await checkVisibility(candidate, async (url, options) => {
-    calls.push([url, options]);
-    return new Response(JSON.stringify({ ...candidate, dist: { integrity } }), { status: 200 });
-  });
-  assert.deepEqual(result, { schema: 'shared-datasets-npm-visibility-v1', ...candidate,
-    status: 'visible', reason: 'verified_integrity' });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], 'https://registry.npmjs.org/@skytruth%2Fshared-datasets/0.9.0');
-  assert.equal(calls[0][1].method, 'GET');
-  assert.equal(calls[0][1].redirect, 'error');
-  assert.deepEqual(calls[0][1].headers, { Accept: 'application/json', 'Cache-Control': 'no-cache' });
-  assert(calls[0][1].signal instanceof AbortSignal);
-});
-
-test('only explicit absence and recognized transport failures are propagation outcomes', async () => {
-  const candidate = { name: PACKAGE_NAME, version: '0.9.0', integrity };
-  for (const code of [404, 500, 502, 503, 504]) {
-    const result = await checkVisibility(candidate, async () => new Response('unavailable', { status: code }));
-    assert.equal(result.status, code === 404 ? 'absent' : 'transient');
-    assert.equal(result.reason, `HTTP ${code}`);
-  }
-  for (const code of [400, 401, 403, 409, 429, 501]) {
-    await assert.rejects(checkVisibility(candidate, async () => new Response('rejected', { status: code })), /request rejected/);
-  }
-  for (const code of ['ECONNRESET', 'EAI_AGAIN', 'ETIMEDOUT']) {
-    const result = await checkVisibility(candidate, async () => { throw new TypeError('fetch failed', { cause: { code } }); });
-    assert.equal(result.status, 'transient');
-  }
-  await assert.rejects(checkVisibility(candidate, async () => { throw new Error('verifier failure'); }), /verifier failure/);
-  await assert.rejects(checkVisibility(candidate, async () => { throw new TypeError('fetch failed', { cause: { code: 'UNKNOWN' } }); }), /fetch failed/);
-});
-
-test('published integrity, exact identity, and metadata validation failures are never propagation', async () => {
-  const candidate = { name: PACKAGE_NAME, version: '0.9.0', integrity };
-  for (const metadata of [{ ...candidate, name: 'other', dist: { integrity } },
-    { ...candidate, version: '0.8.0', dist: { integrity } }, { ...candidate, dist: { integrity: otherIntegrity } },
-    { ...candidate, dist: {} }]) {
-    await assert.rejects(checkVisibility(candidate, async () => new Response(JSON.stringify(metadata), { status: 200 })));
-  }
-  await assert.rejects(checkVisibility(candidate, async () => new Response('not JSON', { status: 200 })));
-  await assert.rejects(checkVisibility(candidate, async () => new Response('x'.repeat(1024 * 1024 + 1), { status: 200 })), /read limit/);
-});
-
-test('an interrupted metadata stream supplies no partial integrity evidence', async () => {
-  const candidate = { name: PACKAGE_NAME, version: '0.9.0', integrity };
-  const interrupted = new ReadableStream({ start(controller) {
-    controller.enqueue(new TextEncoder().encode('{"dist":{"integrity":"partial'));
-    controller.error(new TypeError('stream reset', { cause: { code: 'ECONNRESET' } }));
-  } });
-  const failed = await checkVisibility(candidate, async () => new Response(interrupted, { status: 200 }));
-  assert.equal(failed.status, 'transient');
-  assert.equal(failed.reason, 'connection_reset');
-  const recovered = await checkVisibility(candidate,
-    async () => new Response(JSON.stringify({ ...candidate, dist: { integrity } }), { status: 200 }));
-  assert.equal(recovered.status, 'visible');
 });
 
 test('registry CLI refreshes cached metadata after publication and preserves integrity rejection', async () => {

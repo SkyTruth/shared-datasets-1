@@ -22,11 +22,6 @@
     "cron-alert-policy-sync.yml/bootstrap": [
       "google_project_service.required"
     ],
-    "cron-alert-policy-sync.yml/readonly-bootstrap": [],
-    "cron-alert-policy-sync.yml/readonly-trust": [
-      "google_iam_workload_identity_pool.github",
-      "google_project_service.required"
-    ],
     "cron-alert-policy-sync.yml/sync": [
       "google_monitoring_notification_channel.cron_alert_slack",
       "google_project_iam_audit_config.storage_data_write",
@@ -40,10 +35,6 @@
       "module.mpatlas_job_service_account.google_service_account.this",
       "google_project_iam_custom_role.dataset_usage_deployer",
       "google_project_iam_member.github_actions_dataset_usage_deployer"
-    ],
-    "cron-alert-policy-sync.yml/observations": [
-      "google_project_service.required",
-      "google_iam_workload_identity_pool.github"
     ],
     "dataset-usage-deploy.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/bootstrap": [],
@@ -72,10 +63,6 @@
     "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [],
     "preview-terraform-iam-sync.yml/published-reader": [
       "module.feature_preview_service_account.google_service_account.this"
-    ],
-    "monitoring-slack-relay-deploy.yml/bootstrap": [],
-    "monitoring-slack-relay-deploy.yml/secret-setup": [
-      "google_project_service.required"
     ]
   }
 }

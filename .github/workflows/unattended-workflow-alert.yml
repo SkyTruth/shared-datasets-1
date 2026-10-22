@@ -1,9 +1,6 @@
 name: Workflow health and Slack reconciliation
-run-name: ${{ inputs.action == 'supervision' && format('Supervision {0}', inputs.supervision_request_id) || 'Workflow health and Slack reconciliation' }}
 
 on:
-  schedule:
-    - cron: '3-59/5 * * * *'
   workflow_run:
     workflows:
       - Bucket hygiene audit
@@ -26,54 +23,64 @@ on:
       - Preview Terraform IAM sync
       - Scratch cleanup IAM sync
       - Cron alert policy sync
-      - Monitoring Slack relay deploy
       - Approved dataset mutation
     branches: [main]
     types: [completed]
   workflow_dispatch:
     inputs:
-      action:
-        description: Reconcile uncertain delivery, or register/check in accountable supervision
-        type: choice
-        options: [reconcile-delivery, supervision]
-        default: reconcile-delivery
-      supervision_request:
-        description: Exact JSON request from scripts/slack_supervision.py; no authority or clocks accepted
-        type: string
-      supervision_request_id:
-        description: Unique CLI request ID used to verify this exact signed workflow run
-        type: string
       incident_id:
         description: Exact incident ID with unconfirmed Slack delivery
-        required: false
+        required: true
         type: string
       operation:
         description: Exact first claimed operation, or checkpoint:ID:SHA256 for reviewed checkpoint sealing
-        required: false
+        required: true
         type: string
       delivery_result:
         description: Owner confirmation after inspecting the incident in Slack
-        required: false
+        required: true
         type: choice
-        options: [none, delivered, not-delivered, seal-checkpoint]
-        default: none
+        options: [delivered, not-delivered, seal-checkpoint]
       message_ts:
         description: Exact message timestamp when confirming delivered; empty otherwise
         required: false
         type: string
-
-# Only redundant scheduled ticks may replace a pending workflow. Every source
-# event and supervision request keeps its own workflow group; the job below
-# still serializes all signed writes and Slack sends without cancellation.
-concurrency:
-  group: slack-notification-${{ github.repository }}-${{ github.event_name == 'schedule' && 'scheduled-reconciliation' || github.run_id }}
-  cancel-in-progress: false
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  notify:
+    if: >-
+      vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
+      github.event.workflow_run.status == 'completed' &&
+      contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (
+        github.event.workflow_run.event == 'schedule' ||
+        github.event.workflow_run.event == 'workflow_run' ||
+        (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI') ||
+        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
+      )
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run is privileged: use trusted main code, never the source
+      # run's checkout, caches, or artifacts. Event text is parsed as data.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Notify unattended failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: python scripts/workflow_failure_alert.py --event-path "$GITHUB_EVENT_PATH"
+
   incidents:
     name: Reconcile Slack incident status
     if: >-
@@ -81,14 +88,9 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (
         github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'schedule' ||
         (
           github.event.workflow_run.status == 'completed' &&
           contains(fromJSON('["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
-          (
-            github.event.workflow_run.conclusion != 'success' ||
-            contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name)
-          ) &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           (
@@ -100,7 +102,7 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -117,7 +119,7 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/unattended-workflow-alert.yml@refs/heads/main" ]]; then
-            echo "Execution must use this workflow from main." >&2
+            echo "Incident notifications require this workflow from main." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
@@ -136,60 +138,14 @@ jobs:
         run: uv sync --locked --no-dev
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
-      - name: Prepare scheduled GitHub reconciliation
-        id: github-prepare
-        if: ${{ github.event_name == 'schedule' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
-          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
-          SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
-        run: uv run --no-sync python scripts/operational_reconcile.py prepare-github --work-dir "$RUNNER_TEMP/github-incidents"
-      - name: Attest scheduled GitHub claims
-        id: github-attest-claims
-        if: ${{ always() && steps.github-prepare.outputs.claims == 'true' }}
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: ${{ runner.temp }}/github-incidents/claims/*.json
-          create-storage-record: false
-      - name: Deliver scheduled GitHub incident changes
-        id: github-deliver
-        if: ${{ always() && steps.github-prepare.outputs.claims == 'true' && steps.github-attest-claims.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
-          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
-        run: uv run --no-sync python scripts/operational_reconcile.py deliver-github --work-dir "$RUNNER_TEMP/github-incidents"
-      - name: Attest scheduled GitHub delivery outcomes
-        id: github-attest-outcomes
-        if: ${{ always() && steps.github-deliver.outputs.outcomes == 'true' }}
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: ${{ runner.temp }}/github-incidents/outcomes/*.json
-          create-storage-record: false
-      - name: Verify scheduled GitHub checkpoints before cloud authentication
-        id: github-verify
-        if: ${{ always() && github.event_name == 'schedule' && (steps.github-prepare.outcome == 'success' || steps.github-attest-claims.outcome == 'success' || steps.github-attest-outcomes.outcome == 'success') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/github-incidents"
-      - name: Authenticate read-only cloud observer
-        if: ${{ success() && github.event_name == 'schedule' && vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success' }}
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_OPERATIONAL_OBSERVER_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_OPERATIONAL_OBSERVER_SERVICE_ACCOUNT }}
-          create_credentials_file: true
       - name: Prepare incident changes and claim posts
         id: prepare
-        if: ${{ success() && (github.event_name != 'schedule' || (vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED == 'true' && steps.github-verify.outcome == 'success')) }}
         env:
           GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
           SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
-          SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED: ${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}
-        run: uv run --no-sync python scripts/operational_reconcile.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"
+        run: uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"
       - name: Attest incident claims before Slack delivery
         id: attest-claims
         if: ${{ always() && steps.prepare.outputs.claims == 'true' }}
@@ -204,8 +160,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
-          SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED: ${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}
-        run: uv run --no-sync python scripts/operational_reconcile.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"
+        run: uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"
       - name: Attest confirmed deliveries even after a later send fails
         id: attest-outcomes
         if: ${{ always() && steps.deliver.outputs.outcomes == 'true' }}
@@ -214,28 +169,7 @@ jobs:
           subject-path: ${{ runner.temp }}/slack-incidents/outcomes/*.json
           create-storage-record: false
       - name: Verify durable incident checkpoints
-        id: verify
-        if: ${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success' || steps.prepare.outputs.cycle_proposed == 'true') }}
+        if: ${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: uv run --no-sync python scripts/operational_reconcile.py verify --work-dir "$RUNNER_TEMP/slack-incidents"
-      - name: Persist complete cloud cycle after verified incident delivery
-        id: finalize-cycle
-        if: ${{ success() && steps.prepare.outputs.cycle_proposed == 'true' && steps.verify.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED: ${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}
-        run: uv run --no-sync python scripts/operational_reconcile.py finalize-cycle --work-dir "$RUNNER_TEMP/slack-incidents"
-      - name: Attest complete cloud cycle
-        id: attest-cycle
-        if: ${{ success() && steps.finalize-cycle.outputs.cycle_saved == 'true' }}
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: ${{ runner.temp }}/slack-incidents/claims/*.json
-          create-storage-record: false
-      - name: Verify durable cloud cycle and emit pipeline heartbeat
-        if: ${{ success() && steps.attest-cycle.outcome == 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED: ${{ vars.SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED }}
-        run: uv run --no-sync python scripts/operational_reconcile.py verify-heartbeat --work-dir "$RUNNER_TEMP/slack-incidents"
+        run: uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"

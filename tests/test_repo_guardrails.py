@@ -130,7 +130,6 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('mpatlas-monthly-deploy.yml', 'deploy'),
             ('catalog-viewer-deploy.yml', 'deploy'),
             ('dataset-usage-deploy.yml', 'deploy'),
-            ('monitoring-slack-relay-deploy.yml', 'deploy'),
             ('pmtiles-cdn-sync.yml', 'sync'),
         })
 
@@ -502,7 +501,6 @@ class RepoGuardrailsTests(unittest.TestCase):
     def test_real_immutable_bootstrap_guards_execute_before_checkout(self):
         for filename, job_name in (
             ("publish-dataset.yml", "reviewed_pr_plans"),
-            ("monitoring-slack-relay-deploy.yml", "deploy"),
         ):
             path = repo_guardrails.REPO_ROOT / ".github/workflows" / filename
             workflow = yaml.safe_load(path.read_text())

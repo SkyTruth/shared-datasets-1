@@ -76,19 +76,6 @@ same owner, not a second independent retry or integration task.
 
 Follow the applicable authorization rules before messaging another task.
 
-Before overseeing deployment, register exact PR/revision/target supervision with
-the responsible human and originating conversation through the main-only
-notification workflow. Registration alone is inactive. Check in with the current
-action at least every ten minutes while handling a safe issue, and continue
-through terminal verification and reconciliation. A fixed two-hour deadline
-starts at the first verified failure and cannot restart on a new commit or retry.
-
-If clarification is needed, ask in the originating conversation and record its
-question reference and responsible human. Check-ins pause during the recorded
-wait; the original deadline and all recovery-proof requirements remain. Before
-stopping, record that wait, an explicit release or an accepted handoff. This
-process grants no cross-chat messaging or deployment authority.
-
 ## Classify The Failure
 
 Distinguish:
@@ -134,11 +121,7 @@ A newer tested revision is eligible only when the existing verifier and deployme
 
 Do not blanket-retry production mutations. Do not replay a stale deployment over a newer attempted revision.
 
-Retry only recognized read-only transport failures within one shared thirty-minute
-operation budget. Authentication, malformed bytes, provenance failures and unknown
-errors require repair or inspection. Nested helpers cannot multiply retry budgets.
-For a mutation, establish its outcome and replay contract first. Security and
-demonstrated data-integrity risks bypass private waiting periods.
+Retry a read-only transient operation only when its behavior is understood. For a mutation, establish its outcome and replay contract first.
 
 For hosted validation, refresh the live PR head and exact run/attempt before a
 selective retry. Use one recovery owner and at most two additional attempts with
@@ -194,9 +177,7 @@ Use a stable incident identity and retain the original message identity.
 
 After verified recovery, update the original message to its resolved green state. Do not create a new recovery parent or an automatic recovery reply.
 
-Keep failed attempts in GitHub evidence and update the original parent's count
-and latest evidence. Do not create automatic failed-attempt replies. Preserved
-historical uncertain reply claims still require explicit delivery reconciliation.
+Any warranted thread reply must explicitly disable channel broadcast.
 
 Keep synthetic rehearsal notifications out of the production alert channel. Use isolated tests or private evidence for rehearsal and negative controls.
 
