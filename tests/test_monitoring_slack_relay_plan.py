@@ -459,4 +459,3 @@ def test_scheduler_never_adds_overrides_or_dispatch_retry(prepared, which):
         value["retry_config"][0]["retry_count"] = 3
     with pytest.raises(ValueError):
         deploy.validate_plan(plan, IMAGE, root=root)
-
