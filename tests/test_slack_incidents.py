@@ -894,11 +894,11 @@ def test_exact_completed_ci_jobs_and_publication_negative_controls():
 @pytest.mark.parametrize("name", ["CI", "Deployment terminal verification", "Deployment completion check"])
 def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name):
     api = mock.Mock()
-    api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
+    api.pages.return_value = [{"id": 100, "status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
     with mock.patch.object(incidents, "source_observations", return_value=[observation()]):
         assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [observation()]
     path = api.pages.call_args.args[0]
-    assert "2026-10-06T12%3A00%3A00Z" in path and "branch=main" in path
+    assert "2026-10-06T11%3A59%3A59Z..2026-10-07T11%3A59%3A59Z" in path and "branch=main" in path
     assert api.pages.call_args.kwargs == {"field": "workflow_runs"}
     api.pages.side_effect = deployments.DeploymentError("incomplete API enumeration")
     with pytest.raises(deployments.DeploymentError, match="incomplete"):

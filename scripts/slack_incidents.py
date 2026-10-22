@@ -369,13 +369,21 @@ def same_migrated_episode(original, current):
 def replay_observations(api, targets, since, *, now=None):
     """Bounded replay catches queue loss on scheduled and observer completions.
 
-    Reconcile the last 24 hours, starting no earlier than explicit activation.
+    Reconcile 24 hours through the preceding complete UTC second, starting no
+    earlier than activation. New runs cannot move the query's upper boundary
+    while pages are fetched; the next overlapping pass includes them.
     Longer GitHub outages need an explicit replay, documented beside rollout.
     """
     now = now or datetime.now(timezone.utc)
-    start = max(instant(since), now - timedelta(hours=24))
-    query = urlencode({"branch": "main", "created": ">=" + start.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    require(isinstance(now, datetime) and now.utcoffset() is not None, "replay requires an aware pass clock")
+    end = now.astimezone(timezone.utc).replace(microsecond=0) - timedelta(seconds=1)
+    start = max(instant(since), end - timedelta(hours=24))
+    require(start <= end, "replay activation exceeds the completed observation window")
+    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ") + ".." + end.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     runs = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
+    require(isinstance(runs, list) and all(isinstance(run, dict) and positive(run.get("id")) for run in runs),
+            "replay enumeration lacks positive workflow run identities")
+    require(len({run["id"] for run in runs}) == len(runs), "duplicate workflow run identity in replay")
     observations = []
     for run in runs:
         if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
