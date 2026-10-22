@@ -248,7 +248,15 @@ def test_real_collection_cli_serialization_reloads_checkpoint_without_mutation_o
             return cls.current
 
     session = Mock()
-    session.request.side_effect = [Response({"entries": [event_entry()]}), Response(execution()), Response({}), Response({"entries": [event_entry()]}), Response({})]
+    def respond(method, url, **kwargs):
+        if url == "https://logging.googleapis.com/v2/entries:list":
+            assert method == "POST"
+            view = kwargs["json"]["resourceNames"]
+            assert len(view) == 1 and view[0] in cloud.VIEWS
+            return Response({"entries": [event_entry()]} if view == [cloud.VIEWS[0]] else {})
+        assert method == "GET" and url.endswith(f"/jobs/{JOB}/executions/{EXECUTION}")
+        return Response(execution())
+    session.request.side_effect = respond
     monkeypatch.setattr(google.auth, "default", lambda **kwargs: (object(), cloud.PROJECT))
     monkeypatch.setattr(requests, "AuthorizedSession", lambda *args, **kwargs: session)
     monkeypatch.setattr(cloud, "datetime", Clock)
@@ -263,3 +271,53 @@ def test_real_collection_cli_serialization_reloads_checkpoint_without_mutation_o
     assert len(second["pending"]) == 1 and len(second["seen"]) == 1
     assert second["covered_through"] != first["covered_through"]
     assert all(call.args[0] == "GET" or call.args[1] == "https://logging.googleapis.com/v2/entries:list" for call in session.request.call_args_list)
+
+
+@pytest.mark.parametrize("failed_view", range(8))
+def test_any_atomic_view_failure_discards_whole_candidate_and_never_advances_checkpoint(failed_view):
+    previous = cloud.collect(None, reader(), now=NOW)
+    original = json.loads(json.dumps(previous))
+    api = reader()
+    def entries(view, **kwargs):
+        if view == cloud.VIEWS[failed_view]:
+            raise PermissionDenied("one required view is inaccessible")
+        yield event_entry(view.rsplit("/", 1)[-1])
+    api.entries.side_effect = entries
+    persist, heartbeat = Mock(), Mock()
+    with pytest.raises(PermissionDenied):
+        cycle(previous, api, now=NOW + timedelta(minutes=5), persist=persist, heartbeat=heartbeat)
+    assert previous == original
+    persist.assert_not_called()
+    heartbeat.assert_not_called()
+    assert [call.args[0] for call in api.entries.call_args_list] == list(cloud.VIEWS[:failed_view + 1])
+
+
+def test_last_atomic_view_partial_http_page_restarts_entire_snapshot_without_partial_facts(monkeypatch):
+    monkeypatch.setattr("scripts.operational_retry.sleep", lambda _: None)
+    scans, last_pages = [], 0
+    class Session:
+        def request(self, method, url, **kwargs):
+            nonlocal last_pages
+            if method == "GET":
+                return Response(execution())
+            assert url == "https://logging.googleapis.com/v2/entries:list"
+            body = kwargs["json"]
+            view = body["resourceNames"][0]
+            if "pageToken" not in body:
+                scans.append(view)
+            if view != cloud.VIEWS[-1]:
+                return Response({})
+            if "pageToken" in body:
+                assert body["pageToken"] == "last-partial"
+                last_pages += 1
+                result = Response({})
+                result.status_code = 503
+                return result
+            if last_pages == 0:
+                return Response({"entries": [event_entry("discarded")], "nextPageToken": "last-partial"})
+            return Response({"entries": [event_entry("complete")]})
+    result = cloud.collect(None, cloud.CloudReader(Session()), now=NOW)
+    assert scans == [*cloud.VIEWS, *cloud.VIEWS]
+    assert last_pages == 1
+    assert [fact["evidence"]["insert_id"] for fact in result["pending"]] == ["complete"]
+    assert result["last_cycle"]["views"] == list(cloud.VIEWS)

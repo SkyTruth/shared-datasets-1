@@ -38,14 +38,14 @@ visible provenance gaps.
 
 ## Collection and persistence contract
 
-`scripts/cloud_operational_observations.py` scans the two filtered views on the
+`scripts/cloud_operational_observations.py` scans eight family views across the
 global `_Default` and `_Required` Logging buckets. It covers all regional Cloud
 Run jobs and Scheduler failures, including newly added jobs. Each pass scans up
 to 24 hours, overlaps the previous checkpoint by ten minutes, and leaves a
 two-minute ingestion lag. Delayed ingestion beyond that overlap is a remaining
 coverage limitation; shadow evidence must assess it before cutover.
 
-The view uses only [supported flexible-view
+Each view uses only [supported flexible-view
 fields](https://docs.cloud.google.com/logging/docs/logs-views#filters_for_log_views):
 project/region resource labels, resource type and `log_id`. Its access boundary
 contains regional job `run.googleapis.com/stderr`, Cloud Run Admin Activity and
@@ -57,13 +57,21 @@ The collector's `entries:list` query additionally requires the runtime schema,
 exact legacy/v1/v2 RunJob methods or Scheduler errors before retrieving entries.
 Those query checks select observations; they are not an IAM boundary.
 
-The view filter has four flat disjunctive branches, each repeating the project,
-region, resource type and log family. Cloud Logging rejects Boolean grouping
-deeper than one level for these views, as the protected setup on revision
-`18b2884c` demonstrated. Do not factor the shared labels outside another grouped
-expression: that would reintroduce nested groups or change the access boundary.
-The offline filter regression evaluates every supported family and rejects
-cross-project, cross-region, cross-resource and unrelated-family combinations.
+The four family selectors live in `catalog/operational-log-views.json`. Terraform
+creates a separate view for each family in each bucket: eight views and eight
+scoped accessors. IDs are `shared-datasets-operations-` followed by `run-stderr`,
+`run-activity`, `run-data-access` or `scheduler-executions`. Each filter is one
+flat conjunction of project, region, resource type and one log ID. The collector
+reads their exact union; cross-family resource/log combinations remain excluded.
+
+Protected setup rejected the previous OR-of-AND filter with HTTP 400 even though
+its parenthesis depth was one. Parenthesis counting does not establish service
+acceptance. The lint gate now evaluates the actual Terraform constructor using
+the pinned offline console and validates its serialized eight-view payload.
+Offline scope tests reject missing views, Boolean branches, cross-project,
+cross-region, cross-resource and unrelated-family combinations. Protected
+creation and exact live filter/IAM readback are still required before collection;
+offline checks do not claim that the service has accepted a filter.
 
 RunJob uses `DATA_WRITE` in the [current Run audit
 contract](https://docs.cloud.google.com/run/docs/audit-logging#googlecloudrunv2Jobs).

@@ -46,7 +46,7 @@ POLICY_FILE = "catalog/alert-routing.json"
 # Each path participates in the actual protocol. Unrelated main commits do
 # not reset shadow evidence; a missing protocol file is a configuration error.
 CONTRACT_FILES = tuple(sorted({
-    POLICY_FILE, "catalog/shared-datasets-catalog.csv", "scripts/operational_policy.py", "scripts/cloud_operational_observations.py",
+    POLICY_FILE, "catalog/operational-log-views.json", "scripts/operational_log_views.py", "catalog/shared-datasets-catalog.csv", "scripts/operational_policy.py", "scripts/cloud_operational_observations.py",
     "ingestion/common/operational_events.py", "scripts/slack_incidents.py",
     "scripts/cloud_incident_adapter.py", "scripts/operational_reconcile.py",
     "scripts/translation_recovery.py", "scripts/release_feature_model.py", "scripts/catalog_csv.py",

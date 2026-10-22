@@ -204,3 +204,9 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     }).static_order())
     assert order.index('pmtiles-cdn') < order.index('dataset-usage')
     assert 'needs.dataset-usage' not in jobs['pmtiles-cdn']['if']
+
+
+def test_atomic_view_contract_changes_keep_protected_policy_deployment_selected():
+    from scripts import ci_contract
+    for path in ("catalog/operational-log-views.json", "scripts/operational_log_views.py"):
+        assert ci_contract.select_deployments([path]) == ["cron_alert_policy"]

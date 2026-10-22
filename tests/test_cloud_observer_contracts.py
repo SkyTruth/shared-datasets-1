@@ -4,7 +4,7 @@ import unittest
 
 import yaml
 
-from scripts import ci_contract, cloud_operational_observations, deployment_permissions, release_contracts, wif_setup_permissions
+from scripts import ci_contract, cloud_operational_observations, deployment_permissions, operational_log_views, release_contracts, wif_setup_permissions
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks
 from test_terraform_plan_permissions import plan, row
 from workflow_helpers import assert_target_apply_caller
@@ -37,17 +37,21 @@ class ObserverBoundaryTests(unittest.TestCase):
     def test_views_cover_new_regional_jobs_without_a_job_name_allowlist(self):
         text = TERRAFORM.read_text().split('# No project-wide', 1)[0]
         self.assertIn('toset(["_Default", "_Required"])', text)
-        self.assertIn('resource.type="cloud_run_job"', text)
-        self.assertIn('resource.type="cloud_scheduler_job"', text)
-        self.assertIn('resource.labels.project_id="${var.project_id}"', text)
-        self.assertIn('resource.labels.location="${var.region}"', text)
+        self.assertIn('jsondecode(file("${path.module}/../../../catalog/operational-log-views.json"))', text)
+        self.assertIn('"resource.labels.project_id=\\"${var.project_id}\\""', text)
+        self.assertIn('"resource.labels.location=\\"${var.region}\\""', text)
+        self.assertIn('"resource.type=\\"${selector.resource_type}\\""', text)
         self.assertNotIn("job_name", text)
         self.assertNotIn("jsonPayload", text)
         self.assertNotIn("protoPayload", text)
         self.assertNotIn("severity", text)
-        for log_id in ("run.googleapis.com/stderr", "cloudaudit.googleapis.com/activity", "cloudaudit.googleapis.com/data_access", "cloudscheduler.googleapis.com/executions"):
-            self.assertIn(f'log_id("{log_id}")', text)
-        self.assertNotIn('log_id("run.googleapis.com/stdout")', text)
+        self.assertEqual({row['log_id'] for row in operational_log_views.FAMILIES.values()},
+                         {"run.googleapis.com/stderr", "cloudaudit.googleapis.com/activity", "cloudaudit.googleapis.com/data_access", "cloudscheduler.googleapis.com/executions"})
+        for resource, fields in (("google_logging_log_view", ("for_each    = local.operational_observer_log_views", "bucket      = each.value.bucket", "name        = each.value.name", "filter      = each.value.filter")),
+                                 ("google_logging_log_view_iam_member", ("for_each = local.operational_observer_log_views", "bucket   = each.value.bucket", "name     = google_logging_log_view.operational_observations[each.key].name"))):
+            body = TERRAFORM.read_text().split(f'resource "{resource}"', 1)[1].split('\nresource ', 1)[0]
+            for field in fields:
+                self.assertIn(field, body)
 
     def test_health_is_independent_30_minute_absence_and_preserves_native_routes(self):
         text = TERRAFORM.read_text()
@@ -83,10 +87,8 @@ class ObserverBoundaryTests(unittest.TestCase):
             "google_project_iam_audit_config.operational_run_data_write",
             "module.operational_observer_service_account.google_service_account.this",
             "google_service_account_iam_member.operational_observer_wif",
-            'google_logging_log_view.operational_observations["_Default"]',
-            'google_logging_log_view.operational_observations["_Required"]',
-            'google_logging_log_view_iam_member.operational_observer["_Default"]',
-            'google_logging_log_view_iam_member.operational_observer["_Required"]',
+            *(f'{resource}["{bucket}-{family}"]' for resource in ("google_logging_log_view.operational_observations", "google_logging_log_view_iam_member.operational_observer")
+              for bucket in operational_log_views.BUCKETS for family in operational_log_views.FAMILY_KEYS),
             "google_project_iam_custom_role.operational_observer_reader",
             "google_project_iam_member.operational_observer_reader",
             "google_project_iam_custom_role.operational_observer_receipts",
@@ -94,6 +96,7 @@ class ObserverBoundaryTests(unittest.TestCase):
             "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
             "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
         }
+        self.assertEqual(len(targets), 35)
         assert_target_apply_caller(self, ROOT / ".github/workflows/cron-alert-policy-sync.yml", expected_name="Cron alert policy sync", job_name="observations", push_paths=None,
             expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}", expected_needs=["bootstrap", "readonly-trust"],
             sync_name="Operational observation setup", refusal_prefix="Refusing automatic operational observation setup", expected_targets=targets, expected_block_deletes=True,
@@ -146,7 +149,7 @@ class ObserverBoundaryTests(unittest.TestCase):
         self.assertEqual(set(required), {"storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy"})
 
     def test_exact_new_resource_permission_probes_reject_foreign_boundaries(self):
-        view = {"parent": f"projects/{PROJECT}", "location": "global", "bucket": "_Default", "name": "shared-datasets-operations"}
+        view = {"parent": f"projects/{PROJECT}", "location": "global", "bucket": "_Default", "name": "shared-datasets-operations-run-stderr"}
         metric = {"project": PROJECT, "type": cloud_operational_observations.METRIC}
         provider = {"project": PROJECT, "workload_identity_pool_id": "github", "workload_identity_pool_provider_id": "github-operational-observer"}
         actual = dict(plan_checks(plan(row("google_logging_log_view", ["create"], view), row("google_monitoring_metric_descriptor", ["create"], metric), row("google_iam_workload_identity_pool_provider", ["create"], provider)), project_number="123456789"))
@@ -160,8 +163,8 @@ class ObserverBoundaryTests(unittest.TestCase):
         iam = dict(plan_checks(plan(row("google_logging_log_view_iam_member", ["update"], view)), project_number="123456789"))
         self.assertEqual(set(next(iter(iam.values()))), {"logging.views.getIamPolicy", "logging.views.setIamPolicy"})
         existing = dict(plan_checks(plan(row("google_logging_log_view_iam_member", ["create"], view)), project_number="123456789"))
-        self.assertTrue(next(iter(existing)).endswith("/views/shared-datasets-operations:testIamPermissions"))
-        for kind, value in (("google_logging_log_view", {**view, "bucket": "unrelated"}), ("google_logging_log_view_iam_member", {**view, "parent": "projects/foreign"}), ("google_monitoring_metric_descriptor", {**metric, "type": "unrelated"}), ("google_iam_workload_identity_pool_provider", {**provider, "workload_identity_pool_provider_id": "publisher"})):
+        self.assertTrue(next(iter(existing)).endswith("/views/shared-datasets-operations-run-stderr:testIamPermissions"))
+        for kind, value in (("google_logging_log_view", {**view, "bucket": "unrelated"}), ("google_logging_log_view", {**view, "name": "shared-datasets-operations"}), ("google_logging_log_view", {**view, "name": "shared-datasets-operations-stdout"}), ("google_logging_log_view_iam_member", {**view, "parent": "projects/foreign"}), ("google_monitoring_metric_descriptor", {**metric, "type": "unrelated"}), ("google_iam_workload_identity_pool_provider", {**provider, "workload_identity_pool_provider_id": "publisher"})):
             with self.subTest(kind=kind), self.assertRaises(ValueError):
                 plan_checks(plan(row(kind, ["create"], value)), project_number="123456789")
 

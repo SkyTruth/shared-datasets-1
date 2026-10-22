@@ -486,31 +486,45 @@ def test_live_evidence_enumerates_every_page_using_read_only_http():
     assert calls[3][2]["params"]["pageToken"] == "more"
 
 
-@pytest.mark.parametrize("defect", [None, "filter", "identity", "missing_filter", "unresolved_source"])
-def test_live_filtered_views_must_match_the_reviewed_access_boundary(tmp_path, defect):
-    path = tmp_path / "terraform/envs/prod/operational_observer.tf"
+@pytest.mark.parametrize("defect", [None, "filter", "identity", "missing_filter", "unresolved_source", "swapped_family", "wrong_project", "wrong_region"])
+@pytest.mark.parametrize("view_index", range(8))
+def test_live_filtered_views_must_match_each_reviewed_access_boundary(tmp_path, defect, view_index):
+    from scripts import operational_log_views as views
+    path = tmp_path / views.CONTRACT
     path.parent.mkdir(parents=True)
-    path.write_text('operational_observer_log_filter = <<-EOT\nresource.labels.project_id="${var.project_id}"\nresource.labels.location="${var.region}"\nEOT\n')
+    path.write_bytes((gate.ROOT / views.CONTRACT).read_bytes())
+    expected = views.expected_filters(tmp_path)
     if defect == "unresolved_source":
-        path.write_text(path.read_text().replace("${var.region}", "${var.other}"))
-    expected = 'resource.labels.project_id="shared-datasets-1" resource.labels.location="us-central1"'
+        path.write_text(path.read_text().replace("run.googleapis.com/stderr", "${var.other}"))
+    selected = views.VIEWS[view_index]
     calls = []
     class Response:
         status_code = 200
         def json(self):
-            return {"name": "foreign" if defect == "identity" else calls[-1], "filter": "severity>=ERROR" if defect == "filter" else None if defect == "missing_filter" else expected}
+            name = calls[-1]
+            altered = name == selected
+            boundary = expected[name]
+            if altered and defect == "swapped_family":
+                boundary = expected[views.VIEWS[(view_index + 1) % len(views.VIEWS)]]
+            elif altered and defect == "wrong_project":
+                boundary = boundary.replace(views.PROJECT, "other-project")
+            elif altered and defect == "wrong_region":
+                boundary = boundary.replace(views.REGION, "europe-west1")
+            return {"name": "foreign" if altered and defect == "identity" else name,
+                    "filter": "severity>=ERROR" if altered and defect == "filter" else None if altered and defect == "missing_filter" else boundary}
     class Session:
         def request(self, method, url, **kwargs):
             assert method == "GET"
             calls.append(url.removeprefix("https://logging.googleapis.com/v2/"))
             return Response()
     if defect:
-        with pytest.raises(ValueError, match="filter|boundary"):
+        with pytest.raises(ValueError, match="filter|boundary|log-view"):
             gate.LiveEvidence(Session()).verify_views(tmp_path)
     else:
         proof = gate.LiveEvidence(Session()).verify_views(tmp_path)
-        assert calls == list(gate.collector.VIEWS)
-        assert proof["filter_sha256"] == gate.sha256(gate.routing.filter_text(expected).encode())
+        assert calls == list(views.VIEWS)
+        normalized = {name: gate.routing.filter_text(value) for name, value in expected.items()}
+        assert proof["filter_sha256"] == gate.sha256(gate.canonical(normalized))
 
 
 @pytest.mark.parametrize("defect", [None, "missing", "exempted", "all_services_exempted", "wrong_type"])
@@ -538,12 +552,15 @@ def test_live_run_write_audit_capture_has_no_exemptions_and_uses_read_only_iam_m
     assert call.kwargs["json"] == {"options": {"requestedPolicyVersion": 3}}
 
 
-@pytest.mark.parametrize("defect", [None, "unsigned", "wrong_scope", "wrong_target", "failed", "source_drift", "not_ancestor"])
+@pytest.mark.parametrize("defect", [None, "unsigned", "wrong_scope", "wrong_target", "failed", "source_drift", "registry_drift", "not_ancestor"])
 def test_audit_enablement_time_comes_from_exact_signed_setup_receipt(tmp_path, defect):
     from scripts import deployment_revision as deployments
     path = tmp_path / gate.OBSERVER_TF
     path.parent.mkdir(parents=True)
     path.write_bytes(b"reviewed audit+view boundary\n")
+    registry = tmp_path / gate.collector.operational_log_views.CONTRACT
+    registry.parent.mkdir(parents=True)
+    registry.write_bytes((gate.ROOT / gate.collector.operational_log_views.CONTRACT).read_bytes())
     api = mock.Mock()
     api.get.return_value = {"id": 500, "sha": "b" * 40}
     payload = {"target": gate.AUDIT_SETUP_TARGET, "targets": [gate.AUDIT_ADDRESS]}
@@ -554,11 +571,14 @@ def test_audit_enablement_time_comes_from_exact_signed_setup_receipt(tmp_path, d
         payload["target"] = "terraform-other"
     elif defect == "failed":
         status["state"] = "failure"
-    raw = b"other audit source" if defect == "source_drift" else path.read_bytes()
+    def source(args, **kwargs):
+        name = args[-1].split(":", 1)[1]
+        changed = name == gate.OBSERVER_TF and defect == "source_drift" or name == gate.collector.operational_log_views.CONTRACT and defect == "registry_drift"
+        return b"other reviewed source" if changed else (tmp_path / name).read_bytes()
     with mock.patch.object(deployments, "verify_record", return_value=payload, side_effect=ValueError("invalid signature") if defect == "unsigned" else None), \
          mock.patch.object(deployments, "verified_statuses", return_value=[status]), \
          mock.patch.object(deployments, "git_ancestor", return_value=defect != "not_ancestor"), \
-         mock.patch.object(gate.subprocess, "check_output", return_value=raw):
+         mock.patch.object(gate.subprocess, "check_output", side_effect=source):
         if defect:
             with pytest.raises(ValueError):
                 gate.audit_setup_receipt(api, "SkyTruth/shared-datasets-1", 500, tmp_path, "a" * 40)
@@ -656,3 +676,11 @@ def test_full_plan_gate_audits_current_filters_channels_and_preserves_independen
         policies.append({**deepcopy(policies[0]), "name": "projects/shared-datasets-1/alertPolicies/unknown"})
         with pytest.raises(ValueError, match="live routing audit"):
             gate.verify_plan(plan, rollout("unified", retire=True), **kwargs)
+
+
+def test_historical_two_view_cycles_cannot_qualify_twenty_four_hour_shadow():
+    evidence, cycles, points = shadow()
+    cycles[145]["checkpoint"]["last_cycle"]["views"] = [f"projects/{gate.collector.PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations"
+                                                       for bucket in ("_Default", "_Required")]
+    with pytest.raises(ValueError, match="coverage"):
+        verify(evidence, cycles, points)

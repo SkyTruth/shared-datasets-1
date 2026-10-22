@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from scripts import deployment_permissions as live
+from scripts import operational_log_views
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks
 
 NUMBER = "123456789"
@@ -36,6 +37,28 @@ def permissions(value, target=None):
 
 
 class SavedPlanPermissionTests(unittest.TestCase):
+    def test_each_atomic_view_uses_exact_child_after_creation_and_only_its_parent_before(self):
+        for bucket in operational_log_views.BUCKETS:
+            for name in operational_log_views.VIEW_NAMES:
+                value = {'parent': 'projects/' + PROJECT, 'location': 'global', 'bucket': bucket, 'name': name}
+                child = f'https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/{bucket}/views/{name}:testIamPermissions'
+                existing = checks(plan(row('google_logging_log_view', ['update'], value)))
+                self.assertEqual(existing[child], ('logging.views.get', 'logging.views.update'))
+                policy = checks(plan(row('google_logging_log_view_iam_member', ['create'], value)))
+                self.assertEqual(policy[child], ('logging.views.getIamPolicy', 'logging.views.setIamPolicy'))
+                creating = checks(plan(row('google_logging_log_view', ['create'], value), row('google_logging_log_view_iam_member', ['create'], value)))
+                self.assertNotIn(child, creating)
+                parent = child.split('/views/', 1)[0]
+                self.assertEqual(set(creating[parent]), {'logging.buckets.get', 'logging.views.create', 'logging.views.list'})
+                self.assertEqual(set(creating[parent + '/views/_AllLogs:testIamPermissions']), {'logging.views.get', 'logging.views.getIamPolicy', 'logging.views.setIamPolicy'})
+
+    def test_atomic_view_saved_plan_rejects_legacy_unknown_and_foreign_identities(self):
+        value = {'parent': 'projects/' + PROJECT, 'location': 'global', 'bucket': '_Default', 'name': 'shared-datasets-operations-run-stderr'}
+        for changed in ({'bucket': '_Other'}, {'parent': 'projects/foreign'}, {'location': 'us-central1'},
+                        {'name': 'shared-datasets-operations'}, {'name': 'shared-datasets-operations-stdout'}, {'name': '_AllLogs'}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                checks(plan(row('google_logging_log_view', ['create'], {**value, **changed})))
+
     def test_existing_url_map_update_requires_actual_map_and_backend_authority(self):
         value = {"project": PROJECT, "name": "shared-datasets-pmtiles-cdn", "default_service":
                  f"https://www.googleapis.com/compute/v1/projects/{PROJECT}/global/backendBuckets/shared-datasets"}

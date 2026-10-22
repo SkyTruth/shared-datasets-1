@@ -46,6 +46,7 @@ PROOF_SCHEMA = "shared-datasets-operational-cutover-verification-v1"
 AUDIT_ADDRESS = "google_project_iam_audit_config.operational_run_data_write"
 AUDIT_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
 OBSERVER_TF = "terraform/envs/prod/operational_observer.tf"
+OBSERVER_SOURCE_FILES = (OBSERVER_TF, collector.operational_log_views.CONTRACT)
 
 
 def require(condition, message):
@@ -241,17 +242,13 @@ class LiveEvidence:
         return {collector.instant(point["interval"]["endTime"]) for series in values for point in series.get("points", []) if point.get("value", {}).get("int64Value") == "1"}
 
     def verify_views(self, root):
-        text = (root / OBSERVER_TF).read_text()
-        matches = re.findall(r'operational_observer_log_filter\s*=\s*<<-EOT\n(.*?)\nEOT', text, re.S)
-        require(len(matches) == 1, "reviewed filtered-view boundary is missing or ambiguous")
-        expected = matches[0].replace("${var.project_id}", collector.PROJECT).replace("${var.region}", collector.REGION)
-        require("${" not in expected, "unresolved reviewed filtered-view boundary")
-        normalized = routing.filter_text(expected)
-        for name in collector.VIEWS:
+        expected = collector.operational_log_views.expected_filters(root)
+        normalized = {name: routing.filter_text(value) for name, value in expected.items()}
+        for name, boundary in normalized.items():
             value = self.reader.request("GET", "https://logging.googleapis.com/v2/" + name)
-            require(value.get("name") == name and routing.filter_text(value.get("filter")) == normalized,
-                    "live filtered-view identity or coverage boundary differs from reviewed Terraform")
-        return {"views": list(collector.VIEWS), "filter_sha256": sha256(normalized.encode())}
+            require(value.get("name") == name and routing.filter_text(value.get("filter")) == boundary,
+                    "live filtered-view identity or coverage boundary differs from reviewed Terraform contract")
+        return {"views": list(normalized), "filter_sha256": sha256(canonical(normalized))}
 
     def verify_run_audit(self):
         # Read-only IAM method. Request no bindings, member identities or etag.
@@ -367,7 +364,8 @@ def audit_setup_receipt(api, repository, identifier, root, executor_sha):
             and statuses and statuses[0].get("state") == "success" and statuses[0].get("description") == "applied",
             "protected setup did not verify complete Run audit capture")
     require(deployments.git_ancestor(record["sha"], executor_sha)
-            and subprocess.check_output(["git", "show", f"{record['sha']}:{OBSERVER_TF}"], cwd=root) == (root / OBSERVER_TF).read_bytes(),
+            and all(subprocess.check_output(["git", "show", f"{record['sha']}:{path}"], cwd=root) == (root / path).read_bytes()
+                    for path in OBSERVER_SOURCE_FILES),
             "audit setup used another reviewed observation boundary")
     collector.instant(statuses[0]["created_at"])
     return {"deployment_id": record["id"], "status_id": statuses[0]["id"], "completed_at": statuses[0]["created_at"]}

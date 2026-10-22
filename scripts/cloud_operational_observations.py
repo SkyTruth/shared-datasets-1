@@ -23,7 +23,7 @@ from types import MappingProxyType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common.operational_events import SCHEMA as EVENT_SCHEMA, validate as validate_event
-from scripts import gcp_read_retry
+from scripts import gcp_read_retry, operational_log_views
 from scripts.operational_retry import UNATTENDED, operation, request_timeout, run_read
 
 PROJECT = "shared-datasets-1"
@@ -31,7 +31,7 @@ REGION = "us-central1"
 BUCKET = "skytruth-shared-datasets-1"
 SCHEMA = "shared-datasets-cloud-observation-checkpoint-v1"
 METRIC = "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
-VIEWS = tuple(f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations" for bucket in ("_Default", "_Required"))
+VIEWS = operational_log_views.VIEWS
 OVERLAP = timedelta(minutes=10)
 INGESTION_LAG = timedelta(minutes=2)
 HISTORY = timedelta(hours=24)

@@ -11,9 +11,9 @@ import re
 from urllib.parse import urlencode
 
 from scripts import setup_grant_proof as proof
+from scripts.operational_log_views import BUCKETS
 
 PROJECT = "shared-datasets-1"
-BUCKETS = ("_Default", "_Required")
 PARENT_PERMISSIONS = ("logging.buckets.get", "logging.views.create", "logging.views.list")
 VIEW_PERMISSIONS = ("logging.views.get", "logging.views.update", "logging.views.getIamPolicy", "logging.views.setIamPolicy")
 SETUP_PERMISSIONS = PARENT_PERMISSIONS + VIEW_PERMISSIONS

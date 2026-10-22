@@ -65,6 +65,14 @@ The proposed broader create scope requires human approval before merge/apply;
 see the [scope and expiry contract](cloud-operational-observations.md).
 An existing provider does not require creation permission after expiry.
 
+Operational observation setup owns 35 exact targets, including eight atomic log
+views and eight matching accessors across the same two Logging buckets. Each view
+admits one reviewed project/region/resource/log-family conjunction. The shared
+registry defines their exact union; neither project-wide log access nor new
+setup permissions are added. The pinned offline Terraform gate serializes and
+checks the actual filters. Protected setup blocks deletes and must verify every
+created view and accessor before policy installation or collection proceeds.
+
 The separate read-only provider trust repair owns only
 `google_iam_workload_identity_pool_provider.github_readonly`. Its two-resource
 IAM bootstrap proposes a project-wide **update-only** grant to the same protected

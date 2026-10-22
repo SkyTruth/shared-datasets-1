@@ -100,7 +100,11 @@ valid prerequisites; that policy does not add any resource to an apply allowlist
 New managed ancestors fail before pushing, including references inside disabled
 dynamic blocks. Retained evidence includes the graph, each target closure and
 negative controls from failed main revision `ffe2dd53`: the telemetry bucket
-dependency must be rejected with collection both disabled and enabled. The usage
+dependency must be rejected with collection both disabled and enabled. The same
+isolated module evaluates the operational log views with Terraform console and
+retains their serialized filters. All eight identities and flat conjunctions must
+match the shared reviewed contract; this checks the Terraform producer, while
+protected creation and live readback remain the service acceptance checks. The usage
 owner provisions its private raw bucket with collection disabled before a later
 reviewed activation may enable shared-bucket logging.
 Browser validation removes its process-owned uv download cache after installing
