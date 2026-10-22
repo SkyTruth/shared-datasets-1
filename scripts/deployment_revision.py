@@ -24,6 +24,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
+    "monitoring-slack-relay": "monitoring-slack-relay-deploy.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
@@ -43,6 +44,8 @@ AUXILIARY_CLOUD_JOBS = {
     },
 }
 TERRAFORM_SYNCS = {
+    "Monitoring Slack relay secret authority bootstrap": "monitoring-slack-relay-deploy.yml",
+    "Monitoring Slack relay secret setup": "monitoring-slack-relay-deploy.yml",
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
@@ -224,7 +227,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
+        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "monitoring-slack-relay"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             prior_artifact = record_payload(latest)["artifact"]

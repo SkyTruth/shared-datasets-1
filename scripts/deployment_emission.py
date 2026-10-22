@@ -32,6 +32,7 @@ PHASES = {
 OBSERVER = ".github/workflows/deployment-verification.yml"
 RECOVERY = ".github/workflows/deployment-recovery.yml"
 REHEARSAL_SIGNERS = {
+    "monitoring-slack-relay-deploy.yml",
     "dataset-usage-deploy.yml",
     "deployment-receipt-rehearsal.yml", "prod-terraform-target-apply.yml",
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",

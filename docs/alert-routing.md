@@ -18,7 +18,7 @@ Cloud operational delivery is staged separately. The checked-in rollout remains
 The [reviewed cutover contract](../.github/operational-cutovers/README.md) requires
 24 hours of verified shadow cycles, observed post-policy heartbeat samples,
 current routing audit and old-image drain before protected channel removal.
-Security and pipeline-health policies retain direct native delivery throughout.
+Security and pipeline-health detectors remain independent. Their direct native Slack route stays installed until the [independent Monitoring relay](monitoring-slack-relay.md) has verified read, private persistence and bot capability evidence; a separate reviewed protected change then replaces those opening-only messages with editable bot-owned parents. The current relay preparation is shadow-only with its schedule paused.
 No real cutover, heartbeat seed or runtime secret retirement is established by
 offline tests. A config merge alone does not activate cloud delivery.
 

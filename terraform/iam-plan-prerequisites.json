@@ -72,6 +72,10 @@
     "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [],
     "preview-terraform-iam-sync.yml/published-reader": [
       "module.feature_preview_service_account.google_service_account.this"
+    ],
+    "monitoring-slack-relay-deploy.yml/bootstrap": [],
+    "monitoring-slack-relay-deploy.yml/secret-setup": [
+      "google_project_service.required"
     ]
   }
 }

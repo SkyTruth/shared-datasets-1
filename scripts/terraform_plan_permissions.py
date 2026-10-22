@@ -325,6 +325,14 @@ def plan_checks(plan, *, project_number, target=None):
                     require(future_unknown(row, "google_storage_managed_folder"), "unknown managed folder lacks creation dependency")
                 future = folder is None or (bucket, folder) in created["google_storage_managed_folder"]
                 add(storage_url(bucket, needed, None if future else folder), needed)
+            elif kind == "google_secret_manager_secret":
+                project(current)
+                secret = text(current.get("secret_id"), "secret_id")
+                if action == "create":
+                    add(PROJECT_URL, ("secretmanager.secrets.create",))
+                else:
+                    needed = ("secretmanager.secrets.get", "secretmanager.secrets." + action)
+                    add(f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{secret}:testIamPermissions", needed)
             elif kind == "google_secret_manager_secret_iam_member":
                 project(current)
                 secret = current.get("secret_id")

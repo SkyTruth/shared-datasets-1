@@ -26,6 +26,7 @@ on:
       - Preview Terraform IAM sync
       - Scratch cleanup IAM sync
       - Cron alert policy sync
+      - Monitoring Slack relay deploy
       - Approved dataset mutation
     branches: [main]
     types: [completed]

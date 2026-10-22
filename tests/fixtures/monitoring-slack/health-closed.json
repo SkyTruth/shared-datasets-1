@@ -1,0 +1,20 @@
+{
+  "name": "projects/shared-datasets-1/alerts/fixture-health-incident",
+  "state": "CLOSED",
+  "openTime": "2026-10-22T12:44:25Z",
+  "closeTime": "2026-10-22T13:00:00Z",
+  "resource": {
+    "type": "global",
+    "labels": {"project_id": "shared-datasets-1"}
+  },
+  "metric": {
+    "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2",
+    "labels": {}
+  },
+  "policy": {
+    "name": "projects/shared-datasets-1/alertPolicies/1980534029880229379",
+    "displayName": "Shared datasets operational reconciliation stopped",
+    "severity": "ERROR",
+    "userLabels": {"component": "operational-reconciliation", "kind": "pipeline-health", "service": "shared-datasets"}
+  }
+}

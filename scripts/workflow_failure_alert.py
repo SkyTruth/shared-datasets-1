@@ -24,6 +24,7 @@ VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integratio
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
 OBSERVER_WORKFLOWS = {"Deployment completion check", "Deployment terminal verification", "Deployment read-only reconciliation"}
 WORKFLOW_PATHS = {
+    "Monitoring Slack relay deploy": "monitoring-slack-relay-deploy.yml",
     "CI": "ci.yml", "Bucket hygiene audit": "bucket-hygiene-audit.yml",
     "Scratch cleanup audit": "scratch-cleanup-audit.yml", "Catalog web deploy": "catalog-web-deploy.yml",
     "Catalog viewer deploy": "catalog-viewer-deploy.yml", "PMTiles CDN sync": "pmtiles-cdn-sync.yml",

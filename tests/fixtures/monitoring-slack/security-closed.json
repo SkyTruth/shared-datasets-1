@@ -1,0 +1,17 @@
+{
+  "name": "projects/shared-datasets-1/alerts/fixture-security-incident",
+  "state": "CLOSED",
+  "openTime": "2026-10-22T12:00:00Z",
+  "closeTime": "2026-10-22T13:00:00Z",
+  "resource": {
+    "type": "gcs_bucket",
+    "labels": {"project_id": "shared-datasets-1", "bucket_name": "skytruth-shared-datasets-1"}
+  },
+  "log": {"extractedLabels": {}},
+  "policy": {
+    "name": "projects/shared-datasets-1/alertPolicies/9000000000000000001",
+    "displayName": "Shared dataset object deleted",
+    "severity": "ERROR",
+    "userLabels": {"component": "shared-datasets", "kind": "security"}
+  }
+}
