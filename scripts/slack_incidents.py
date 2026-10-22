@@ -367,7 +367,7 @@ def same_migrated_episode(original, current):
 
 
 def replay_observations(api, targets, since, *, now=None):
-    """Hourly observation catches bounded queue loss without another scheduler.
+    """Bounded replay catches queue loss on scheduled and observer completions.
 
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
@@ -1160,9 +1160,35 @@ def bind_episode_owners(state, now):
             owner, binding, first_failure_at=state["first_failure_at"], now=now)
 
 
+def canonical_translation_recovery(state):
+    return (state["incident"] is not None and state["incident"]["resolution"] is not None
+            and any(item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "translation_manifest"
+                    for item in state["recoveries"].values()))
+
+
+def github_public_action(state, previous, *, now=None):
+    """Independent GitHub escalation or a quiet edit of a known bot parent.
+
+    A stored cloud success cannot replace the current canonical read required
+    immediately before a translation green. Other mixed-history parents retain
+    their GitHub recovery path without granting cloud delivery capability.
+    """
+    if state["incident"] is None or canonical_translation_recovery(state):
+        return False
+    if any(fact.source_id.startswith("github:") and decision.disposition == policy.Disposition.ESCALATE
+           for fact, decision in episode_decisions(state, now=now)):
+        return True
+    parent = state["incident"]["posts"].get("parent")
+    if not parent or parent["state"] != "delivered" or previous is None or previous["incident"] is None:
+        return False
+    old_parent = previous["incident"]["posts"].get("parent")
+    return previous["incident"]["id"] == state["incident"]["id"] and old_parent == parent
+
+
 def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success,
             on_saved=lambda _: None, now=None, operational=None, initial_states=None, original_states=None,
-            cloud_delivery_enabled=False, before_decisions=lambda _states, _now: None, decision_clock=None):
+            cloud_delivery_enabled=False, before_decisions=lambda _states, _now: None, decision_clock=None,
+            github_only=False):
     now = now or policy.timestamp(datetime.now(timezone.utc))
     policy.instant(now)
     states = ledger.load() if initial_states is None else initial_states
@@ -1220,6 +1246,10 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
         existing = original.get(scope)
         incident = state["incident"]
         cloud_history = incident is not None and any(item.get("source") == "cloud" for item in incident["failures"])
+        if github_only and cloud_history and not github_public_action(state, existing, now=now):
+            if state != existing:
+                ledger.save(state, "claims")
+            continue
         if not cloud_delivery_enabled and cloud_history:
             parent = incident["posts"].get("parent")
             if parent and parent["state"] == "delivered":

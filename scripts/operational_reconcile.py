@@ -153,10 +153,10 @@ def public_delivery_counts(ledger, states, *, shadow=False):
         if incident is None or not any(item.get("source") == "cloud" for item in incident["failures"]):
             continue
         key = state["scope"], incident["id"]
-        changed.add(key)
         old = previous.get(key)
         parent = incident["posts"].get("parent")
         if parent and parent["state"] == "delivered":
+            changed.add(key)
             incidents.require(old is not None, "confirmed public delivery has no signed predecessor or claim")
             old_parent = old["incident"]["posts"].get("parent")
             incidents.require(old_parent is not None, "confirmed public delivery has no signed claim")
@@ -174,7 +174,7 @@ def public_delivery_counts(ledger, states, *, shadow=False):
     return counts
 
 
-def deliver_messages(ledger, cycles, slack, *, cloud_reader=None):
+def deliver_messages(ledger, cycles, slack, *, cloud_reader=None, github_only=False):
     """A partial prepare may deliver only its signed, currently authorized claims."""
     from scripts.cloud_observation_ledger import positive, strict_json
     records = strict_json((ledger.directory / "prepared.json").read_bytes())
@@ -182,6 +182,7 @@ def deliver_messages(ledger, cycles, slack, *, cloud_reader=None):
                       and len({record["id"] for record in records}) == len(records), "invalid prepared incident plan")
     current_records = []
     cloud_context = None
+    github_baselines = None
     for record in records:
         payload = strict_json(record["payload"]) if isinstance(record.get("payload"), str) else record.get("payload")
         incidents.require(isinstance(payload, dict) and payload.get("execution_run_id") == ledger.run["id"]
@@ -192,12 +193,17 @@ def deliver_messages(ledger, cycles, slack, *, cloud_reader=None):
         incidents.require({key: item for key, item in current.items() if key != "updated_at"}
                           == {key: item for key, item in record.items() if key != "updated_at"}, "prepared claim changed")
         state = ledger.verify(current)
+        cloud_history = state["incident"] and any(item.get("source") == "cloud" for item in state["incident"]["failures"])
+        if github_only and cloud_history:
+            if github_baselines is None:
+                _, github_baselines = current_worker_records(ledger)
+            incidents.require(incidents.github_public_action(state, github_baselines.get(state["scope"])),
+                              "GitHub phase cannot deliver a cloud-only action or canonical translation green")
+            current_records.append(current)
+            continue
         observer_authenticated = (ledger.run.get("event") == "schedule"
                                   and os.environ.get("SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED") == "true")
-        if (not observer_authenticated and cloud_reader is None and state["incident"]
-                and state["incident"]["resolution"] is not None and any(
-                    item.get("source") == "cloud" and item["proof"]["fact"]["kind"] == "translation_manifest"
-                    for item in state["recoveries"].values())):
+        if not observer_authenticated and cloud_reader is None and incidents.canonical_translation_recovery(state):
             # Only scheduled workers receive the observation identity. Keep the
             # signed green pending for that worker, without failing unrelated CI.
             continue
@@ -212,7 +218,25 @@ def deliver_messages(ledger, cycles, slack, *, cloud_reader=None):
         nonlocal cloud_reader
         cloud_reader = cloud_reader or reader()
         return incidents.reverify_saved_cloud_success(cloud_reader, observation, github_api=ledger.api, clock=utc_now)
-    incidents.deliver(ledger, current_records, slack, recovery_verifier=reverify)
+    incidents.deliver(ledger, current_records, slack, recovery_verifier=None if github_only else reverify)
+
+
+def prepare_github(ledger, identity, *, now):
+    """Every scheduled tick covers GitHub before requesting cloud credentials."""
+    plan = ledger.directory / "prepared.json"
+    plan.write_text("[]\n")
+    observations = incidents.replay_observations(
+        ledger.api, incidents.job_targets(), os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", ""), now=now)
+    records = []
+
+    def retain(record):
+        records.append(record)
+        plan.write_text(json.dumps(records, sort_keys=True) + "\n")
+
+    prepared = incidents.prepare(ledger, identity, observations, on_saved=retain, github_only=True,
+                                 now=incidents.policy.timestamp(now), decision_clock=utc_now)
+    plan.write_text(json.dumps(prepared, sort_keys=True) + "\n")
+    return prepared
 
 
 def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
@@ -226,8 +250,6 @@ def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
     context, selected = delivery["context"], delivery["activation"]
     previous = cycles.load()
     proposal = cloud.collect(previous["checkpoint"] if previous else None, cloud_reader, now=now, clock=clock)
-    github_observations = incidents.replay_observations(
-        ledger.api, incidents.job_targets(), os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", ""), now=now)
     records = []
 
     def retain(record):
@@ -236,7 +258,7 @@ def prepare_cycle(ledger, cycles, identity, cloud_reader, *, now, clock=None):
 
     prepared, evaluation = incidents.prepare_cloud(
         ledger, identity, proposal, shadow=selected["mode"] == "shadow", now=proposal["last_cycle"]["completed_at"], on_saved=retain,
-        github_api=ledger.api, github_observations=github_observations, clock=clock,
+        github_api=ledger.api, github_observations=(), clock=clock,
         translation_reader=lambda uri: cloud_reader.translation_manifest(uri),
         recovery_verifier=lambda observation: incidents.reverify_saved_cloud_success(
             cloud_reader, observation, github_api=ledger.api, clock=clock or utc_now))
@@ -321,10 +343,23 @@ def verify_heartbeat(ledger, cycles, cloud_reader, *, clock=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "deliver", "verify", "finalize-cycle", "verify-heartbeat"])
+    parser.add_argument("command", choices=["prepare-github", "deliver-github", "prepare", "deliver", "verify", "finalize-cycle", "verify-heartbeat"])
     parser.add_argument("--work-dir", required=True, type=Path)
     args = parser.parse_args()
     enabled = os.environ.get("SHARED_DATASETS_CLOUD_OBSERVATIONS_ENABLED") == "true"
+    if args.command in {"prepare-github", "deliver-github"}:
+        incidents.require(os.environ.get("GITHUB_EVENT_NAME") == "schedule", "GitHub phase requires a trusted scheduled tick")
+        api = deployments.GitHub()
+        run = incidents.worker_context(api)
+        incidents.require(run["event"] == "schedule", "GitHub phase requires a trusted scheduled tick")
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        ledger = incidents.Ledger(api, run, args.work_dir)
+        slack = Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""), os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", ""))
+        if args.command == "prepare-github":
+            prepare_github(ledger, slack.identity(), now=utc_now())
+        else:
+            deliver_messages(ledger, None, slack, github_only=True)
+        return
     if args.command == "verify" or args.command == "prepare" and (
             os.environ.get("GITHUB_EVENT_NAME") != "schedule" or not enabled):
         if args.command == "prepare":

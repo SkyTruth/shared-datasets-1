@@ -37,6 +37,14 @@ the retained legacy metric cannot satisfy the new gate. On native rollback, clou
 coverage and health pause until the supported signed native restoration is
 verified; a config change alone does not declare the pipeline healthy.
 
+The scheduled worker first completes independent GitHub replay, signed delivery
+and durable verification before observer authentication or collection. Ordinary
+healthy workflow completions allocate no full worker; successful observer
+completions retain their replay route. Cloud authentication or scan failure
+leaves completed GitHub recovery intact and produces no cloud checkpoint or
+heartbeat. A worker-protocol change requires a matching protected policy receipt
+before starting the compatible shadow window.
+
 The overlapping contracts are `deployment_revision.py`, `slack_incidents.py`, the
 notification workflow and its provenance verifier, protected Terraform policy/IAM
 allowlists, and alerting documentation. Finish prerequisites before final integration;

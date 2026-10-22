@@ -141,10 +141,11 @@ Before declaring live routing verified:
    through `unattended-workflow-alert.yml`. That privileged workflow checks out
    only `main`, reads event JSON as data, and never downloads source-run artifacts.
 
-Successful/skipped upstream outcomes are filtered before allocating the legacy
-failure worker. When incident tracking is enabled, its separate reconciliation
-worker also inspects successful completions for matching recovery evidence;
-routine healthy completions produce no Slack messages. CI now includes reusable dataset publication, catalog refresh and
+Ordinary healthy upstream completions allocate no full reconciliation worker.
+When incident tracking is enabled, every five-minute scheduled tick replays
+verified main observations for matching recovery evidence before optional cloud
+authentication. Successful observer completions retain their independent replay
+route; routine healthy outcomes produce no Slack messages. CI now includes reusable dataset publication, catalog refresh and
 deployment jobs. For a failed main-push CI run, the alert worker verifies the
 workflow identity and exact current run attempt, then checks its actual jobs.
 Publication failures and failed deployment jobs after passing `ci-ready` are
