@@ -47,8 +47,9 @@ def test_read_only_gate_permission_is_probed_without_adding_metric_write_authori
     probes = set(next(iter(deployment_permissions.checks("monitoring-alerts")))[1])
     assert "monitoring.timeSeries.list" in probes
     views = deployment_permissions.checks("monitoring-alerts")[1:]
-    assert len(views) == 2 and all(permissions == ("logging.views.get",) for _, permissions in views)
-    assert all("/views/shared-datasets-operations:testIamPermissions" in url for url, _ in views)
+    assert len(views) == 8 and all(permissions == ("logging.views.get",) for _, permissions in views)
+    from scripts.operational_log_views import VIEWS
+    assert {url for url, _ in views} == {f"https://logging.googleapis.com/v2/{name}:testIamPermissions" for name in VIEWS}
 
 
 def test_rollout_and_evidence_changes_select_both_policy_and_runtime_protected_paths():

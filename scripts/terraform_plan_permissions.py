@@ -12,6 +12,7 @@ import re
 from urllib.parse import quote, urlencode
 
 from scripts import logging_setup_permissions as logging_setup
+from scripts import operational_log_views as log_views
 from scripts import wif_setup_permissions as wif_setup
 from scripts import readonly_wif_trust
 
@@ -261,13 +262,13 @@ def plan_checks(plan, *, project_number, target=None):
             elif kind in {"google_logging_log_view", "google_logging_log_view_iam_member"}:
                 require(current.get("parent") in {f"projects/{PROJECT}", f"projects/{project_number}"} and current.get("location") == "global", "foreign operational log-view parent")
                 bucket = current.get("bucket")
-                require(bucket in {"_Default", "_Required"} and current.get("name") == "shared-datasets-operations", "unexpected operational log-view identity")
+                require(bucket in log_views.BUCKETS and current.get("name") in log_views.VIEW_NAMES, "unexpected operational log-view identity")
                 resource = f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/"
                 # Bucket creation authority cannot be tested on a view or a
                 # project: the installed grant is conditioned on bucket names.
                 # Use the same exact parent metadata/grant proof as readiness.
                 future = (kind == "google_logging_log_view" and action == "create") or (current.get("parent"), current.get("location"), bucket, current.get("name")) in created["google_logging_log_view"] or future_unknown(row, "google_logging_log_view")
-                resource += "_AllLogs" if future else "shared-datasets-operations"
+                resource += "_AllLogs" if future else current["name"]
                 if kind == "google_logging_log_view" and action == "create":
                     add(logging_setup.bucket_url(bucket), logging_setup.PARENT_PERMISSIONS)
                     needed = ("logging.views.get",)

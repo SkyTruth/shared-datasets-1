@@ -20,6 +20,7 @@ from urllib.parse import quote_plus, urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
 from scripts import logging_setup_permissions as logging_setup
+from scripts import operational_log_views as log_views
 from scripts import readonly_wif_trust, setup_grant_proof, wif_setup_permissions as wif_setup
 
 PROJECT = "shared-datasets-1"
@@ -119,7 +120,7 @@ def checks(target):
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
     if target == "monitoring-alerts":
         return [(project_url, MONITORING_PERMISSIONS),
-                *[(f"https://logging.googleapis.com/v2/projects/{PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations:testIamPermissions", ("logging.views.get",)) for bucket in ("_Default", "_Required")]]
+                *[(f"https://logging.googleapis.com/v2/{name}:testIamPermissions", ("logging.views.get",)) for name in log_views.VIEWS]]
     if target == "operational-observer-setup":
         pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
         return checks("iam-bootstrap") + checks("bucket-iam") + [

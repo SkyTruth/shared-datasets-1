@@ -365,6 +365,8 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
     "scripts/readonly_wif_trust.py",
     "scripts/wif_setup_permissions.py",
     "scripts/setup_grant_proof.py",
+    "catalog/operational-log-views.json",
+    "scripts/operational_log_views.py",
 ])
 def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
     assert relative in cycles.CONTRACT_FILES
@@ -451,3 +453,12 @@ def test_predecessor_is_verified_and_monotonic_before_persistence(ledger, change
     with pytest.raises((cycles.CycleLedgerError, emissions.EmissionError)):
         ledger.save(checkpoint, evaluation, "shadow", previous_cycle_id=predecessor, before_commit=lambda: None)
     assert len(ledger.api.writes) == written
+
+
+def test_historical_two_view_coverage_cannot_be_written_or_qualify_current_shadow(ledger):
+    checkpoint, evaluation = bundle()
+    checkpoint["last_cycle"]["views"] = [f"projects/{cloud.PROJECT}/locations/global/buckets/{bucket}/views/shared-datasets-operations"
+                                           for bucket in ("_Default", "_Required")]
+    with pytest.raises(cycles.CycleLedgerError, match="every registered log view"):
+        ledger.save(checkpoint, evaluation, "shadow", before_commit=lambda: None)
+    assert ledger.api.writes == []

@@ -19,32 +19,26 @@ locals {
     "resource.type == 'storage.googleapis.com/Object'",
     "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json'))"])})",
   ]) }
-  operational_observer_log_filter = <<-EOT
-(
-  resource.labels.project_id="${var.project_id}" AND
-  resource.labels.location="${var.region}" AND
-  resource.type="cloud_run_job" AND
-  log_id("run.googleapis.com/stderr")
-)
-OR (
-  resource.labels.project_id="${var.project_id}" AND
-  resource.labels.location="${var.region}" AND
-  resource.type="cloud_run_job" AND
-  log_id("cloudaudit.googleapis.com/activity")
-)
-OR (
-  resource.labels.project_id="${var.project_id}" AND
-  resource.labels.location="${var.region}" AND
-  resource.type="cloud_run_job" AND
-  log_id("cloudaudit.googleapis.com/data_access")
-)
-OR (
-  resource.labels.project_id="${var.project_id}" AND
-  resource.labels.location="${var.region}" AND
-  resource.type="cloud_scheduler_job" AND
-  log_id("cloudscheduler.googleapis.com/executions")
-)
-EOT
+}
+
+locals {
+  # A view has one flat conjunction. The exact union of these independent
+  # family views preserves the access boundary without nested Boolean filters.
+  operational_observer_log_families = jsondecode(file("${path.module}/../../../catalog/operational-log-views.json"))
+  operational_observer_log_views = merge([
+    for bucket in local.operational_observer_log_buckets : {
+      for family, selector in local.operational_observer_log_families : "${bucket}-${family}" => {
+        bucket = bucket
+        name   = "shared-datasets-operations-${family}"
+        filter = join(" AND\n", [
+          "resource.labels.project_id=\"${var.project_id}\"",
+          "resource.labels.location=\"${var.region}\"",
+          "resource.type=\"${selector.resource_type}\"",
+          "log_id(\"${selector.log_id}\")",
+        ])
+      }
+    }
+  ]...)
 }
 
 # RunJob is DATA_WRITE in the current Run API. Without this capture setting a
@@ -94,21 +88,21 @@ resource "google_service_account_iam_member" "operational_observer_wif" {
 }
 
 resource "google_logging_log_view" "operational_observations" {
-  for_each    = local.operational_observer_log_buckets
+  for_each    = local.operational_observer_log_views
   parent      = "projects/${var.project_id}"
   location    = "global"
-  bucket      = each.value
-  name        = "shared-datasets-operations"
-  description = "Regional job stderr, Run audit and Scheduler execution families; collector queries select operational facts."
-  filter      = local.operational_observer_log_filter
+  bucket      = each.value.bucket
+  name        = each.value.name
+  description = "One regional operational log family; collector queries select operational facts."
+  filter      = each.value.filter
   depends_on  = [google_project_service.required, google_project_iam_audit_config.operational_run_data_write]
 }
 
 resource "google_logging_log_view_iam_member" "operational_observer" {
-  for_each = local.operational_observer_log_buckets
+  for_each = local.operational_observer_log_views
   parent   = "projects/${var.project_id}"
   location = "global"
-  bucket   = each.value
+  bucket   = each.value.bucket
   name     = google_logging_log_view.operational_observations[each.key].name
   role     = "roles/logging.viewAccessor"
   member   = module.operational_observer_service_account.member
@@ -269,7 +263,7 @@ resource "google_project_iam_custom_role" "operational_log_view_manager" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalLogViewManager"
   title       = "Shared Datasets Operational Log View Manager"
-  description = "Protected setup of two filtered operational log views; no deletion or project IAM authority."
+  description = "Protected setup of eight family views across two Logging buckets; no deletion or project IAM authority."
   permissions = [
     "logging.buckets.get",
     "logging.views.create", "logging.views.get", "logging.views.list", "logging.views.update",

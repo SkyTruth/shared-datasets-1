@@ -1,0 +1,18 @@
+{
+  "run-stderr": {
+    "resource_type": "cloud_run_job",
+    "log_id": "run.googleapis.com/stderr"
+  },
+  "run-activity": {
+    "resource_type": "cloud_run_job",
+    "log_id": "cloudaudit.googleapis.com/activity"
+  },
+  "run-data-access": {
+    "resource_type": "cloud_run_job",
+    "log_id": "cloudaudit.googleapis.com/data_access"
+  },
+  "scheduler-executions": {
+    "resource_type": "cloud_scheduler_job",
+    "log_id": "cloudscheduler.googleapis.com/executions"
+  }
+}

@@ -178,7 +178,7 @@ class LoggingPermissionTests(unittest.TestCase):
                 self.verify(transport)
 
     def test_saved_plan_cli_uses_same_parent_proof_and_explicit_scoped_token(self):
-        value = {"format_version": "1.2", "resource_changes": [{"address": 'google_logging_log_view.operational_observations["_Default"]', "type": "google_logging_log_view", "change": {"actions": ["create"], "after": {"parent": "projects/" + PROJECT, "location": "global", "bucket": "_Default", "name": "shared-datasets-operations"}}}]}
+        value = {"format_version": "1.2", "resource_changes": [{"address": 'google_logging_log_view.operational_observations["_Default-run-stderr"]', "type": "google_logging_log_view", "change": {"actions": ["create"], "after": {"parent": "projects/" + PROJECT, "location": "global", "bucket": "_Default", "name": "shared-datasets-operations-run-stderr"}}}]}
         transport = LoggingHttp()
         with tempfile.TemporaryDirectory() as directory:
             saved = Path(directory) / "saved.tfplan.json"
