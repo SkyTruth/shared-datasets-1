@@ -66,6 +66,11 @@ CONTRACT_FILES = tuple(sorted({
     "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/Dockerfile.promotion",
     "ingestion/common/runtime.py", "ingestion/common/feature_metadata.py", "ingestion/common/translation_notices.py",
     "ingestion/common/legacy_runtime_notifications.py", "scripts/slack_notify.py", WORKFLOW,
+    "catalog/monitoring-slack-relay.json", "scripts/monitoring_slack_deploy.py",
+    "scripts/monitoring_slack_receipt_control.py", "services/monitoring_slack/__init__.py",
+    "services/monitoring_slack/run.py", "services/monitoring_slack/model.py",
+    "services/monitoring_slack/receipts.py", "services/monitoring_slack/store.py",
+    "services/monitoring_slack/Dockerfile",
     *('.github/workflows/' + path for path in set(deployments.TARGET_WORKFLOWS.values())
       | set(deployments.TERRAFORM_WORKFLOWS.values()) | set(alerts.WORKFLOW_PATHS.values()) | {"ci.yml"}),
 }))
