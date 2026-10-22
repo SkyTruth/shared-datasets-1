@@ -361,6 +361,10 @@ def test_contract_hash_changes_only_when_an_explicit_protocol_file_changes(ledge
     "scripts/catalog_csv.py",
     "scripts/feature_metadata_localization.py",
     "scripts/translation_local_io.py",
+    "terraform/envs/prod/github_readonly_iam.tf",
+    "scripts/readonly_wif_trust.py",
+    "scripts/wif_setup_permissions.py",
+    "scripts/setup_grant_proof.py",
 ])
 def test_shadow_contract_binds_legacy_bridge_and_transport_source(ledger, relative):
     assert relative in cycles.CONTRACT_FILES

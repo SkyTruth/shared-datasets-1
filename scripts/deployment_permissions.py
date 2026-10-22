@@ -20,7 +20,7 @@ from urllib.parse import quote_plus, urlencode
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
 from scripts import logging_setup_permissions as logging_setup
-from scripts import setup_grant_proof, wif_setup_permissions as wif_setup
+from scripts import readonly_wif_trust, setup_grant_proof, wif_setup_permissions as wif_setup
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -95,6 +95,8 @@ def request(url, permissions, token):
         return logging_setup.verify_parent(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
     if url == wif_setup.PROVIDER_URL:
         return wif_setup.verify_provider(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
+    if url == readonly_wif_trust.PROVIDER_URL:
+        return readonly_wif_trust.verify_provider(url, permissions, token, lambda url, **kwargs: read_json(url, token, **kwargs))
     storage = "storage.googleapis.com" in url
     raw = None if storage else json.dumps({"permissions": list(permissions)}).encode()
     payload = read_json(url, token, data=raw, method="GET" if storage else "POST")
@@ -107,6 +109,8 @@ def request(url, permissions, token):
 def checks(target):
     secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}:testIamPermissions", SECRET_PERMISSIONS)
     project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
+    if target == "readonly-wif-trust":
+        return [(readonly_wif_trust.PROVIDER_URL, (wif_setup.GET,))]
     if target == "iam-bootstrap":
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
     if target == "artifact-registry":
@@ -181,7 +185,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "operational-observer-setup", "readonly-wif-trust", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):
@@ -194,7 +198,8 @@ def main():
         required = plan_checks(plan, project_number=project_number, target=args.target)
     else:
         required = checks(args.target)
-    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS} | {wif_setup.PROVIDER_URL} for url, _ in required)
+    logging_parent = any(url in {logging_setup.bucket_url(bucket) for bucket in logging_setup.BUCKETS}
+                         | {wif_setup.PROVIDER_URL, readonly_wif_trust.PROVIDER_URL} for url, _ in required)
     if logging_parent:
         # Minted by the same protected WIF auth step with identity metadata
         # scope; an email-less gcloud token cannot prove the actual principal.

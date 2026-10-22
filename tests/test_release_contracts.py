@@ -116,6 +116,46 @@ class ReleaseContractTests(unittest.TestCase):
         workflow_path.write_text(yaml.safe_dump(workflow))
         self.assertTrue(any("exact protected bootstrap allowed_exact" in item for item in contracts.iam_contract(self.root)))
 
+    def test_readonly_trust_repair_preserves_exact_provider_and_separate_update_scope(self):
+        path = self.root / "terraform/envs/prod/github_readonly_iam.tf"
+        original = path.read_text()
+        for before, after in (
+            ('permissions = ["iam.workloadIdentityPoolProviders.update"]',
+             'permissions = ["iam.workloadIdentityPoolProviders.update", "iam.workloadIdentityPoolProviders.delete"]'),
+            ("2026-10-22T02:00:00Z", "2099-01-01T00:00:00Z"),
+            ('"sharedDatasetsReadonlyTrustUpdater"', '"otherRole"'),
+            ("assertion.workflow == 'Dataset breaking change alert'", "assertion.workflow == 'Other workflow'"),
+            ('issuer_uri = "https://token.actions.githubusercontent.com"', 'issuer_uri = "https://other.invalid"'),
+            ('"google.subject"             = "assertion.sub"', '"google.subject"             = "assertion.actor"'),
+        ):
+            with self.subTest(before=before):
+                self.assertIn(before, original)
+                path.write_text(original.replace(before, after, 1))
+                self.assertTrue(contracts.readonly_trust_contract(self.root))
+        path.write_text(original)
+        workflow_path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        original_workflow = yaml.safe_load(workflow_path.read_text())
+        for job, field, value in (
+            ("readonly-bootstrap", "needs", "readonly-trust"),
+            ("readonly-trust", "needs", "bootstrap"),
+            ("readonly-trust", "readiness_target", "operational-observer-setup"),
+            ("readonly-trust", "allowed_exact", "google_iam_workload_identity_pool.github"),
+            ("readonly-bootstrap", "targets", "google_iam_workload_identity_pool_provider.github_readonly"),
+        ):
+            with self.subTest(job=job, field=field):
+                value_workflow = deepcopy(original_workflow)
+                current = value_workflow["jobs"][job]
+                (current if field == "needs" else current["with"])[field] = value
+                workflow_path.write_text(yaml.safe_dump(value_workflow))
+                self.assertTrue(contracts.readonly_trust_contract(self.root))
+        workflow_path.write_text(yaml.safe_dump(original_workflow))
+        changed = deepcopy(original_workflow)
+        changed["jobs"]["observations"]["needs"] = "bootstrap"
+        workflow_path.write_text(yaml.safe_dump(changed))
+        self.assertTrue(any("operational setup requires ordered bootstrap" in item
+                            for item in contracts.iam_contract(self.root)))
+        workflow_path.write_text(yaml.safe_dump(original_workflow))
+
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
         evidence = json.loads(path.read_text())

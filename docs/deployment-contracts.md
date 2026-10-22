@@ -65,6 +65,26 @@ The proposed broader create scope requires human approval before merge/apply;
 see the [scope and expiry contract](cloud-operational-observations.md).
 An existing provider does not require creation permission after expiry.
 
+The separate read-only provider trust repair owns only
+`google_iam_workload_identity_pool_provider.github_readonly`. Its two-resource
+IAM bootstrap proposes a project-wide **update-only** grant to the same protected
+Terraform identity, expiring at `2026-10-22T02:00:00Z`; the approved observer
+create grant does not authorize this proposal. Separate explicit human approval
+is required before merge/apply. The next protected stage permits only an in-place
+`attribute_condition` change from the exact existing two-workflow condition to
+the existing declared condition adding `Dataset breaking change alert`.
+Issuer, audience, mappings, identity, enabled state and every other field must
+remain unchanged. Creation, replacement, deletion and additional mutations fail
+before apply. Actual child metadata, scoped-token principal and the exact
+installed update-only allow grant establish readiness without an unsupported
+provider permission-test endpoint. Google's [provider patch contract](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers/patch)
+requires this exact child-update permission. Its read-only permission metadata
+identifies the legacy spelling as an alias of
+`iam.googleapis.com/workloadIdentityPoolProviders.update`, supported in custom
+roles. An already-correct no-op uses only metadata
+reads and does not require the expired update grant. This proof does not bypass
+independent deny policies.
+
 Immediately before each saved-plan apply, trusted code runs
 `python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`
 after the resource allowlist. It derives permission probes from every changed

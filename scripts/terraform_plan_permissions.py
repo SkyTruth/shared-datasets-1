@@ -13,6 +13,7 @@ from urllib.parse import quote, urlencode
 
 from scripts import logging_setup_permissions as logging_setup
 from scripts import wif_setup_permissions as wif_setup
+from scripts import readonly_wif_trust
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -114,6 +115,8 @@ def plan_checks(plan, *, project_number, target=None):
     require(re.fullmatch(r"[1-9][0-9]*", str(project_number)), "project number unavailable")
     rows = plan.get("resource_changes", [])
     require(isinstance(rows, list), "resource change enumeration unavailable")
+    if target == "readonly-wif-trust":
+        readonly_wif_trust.validate_plan_rows(rows)
     probes = defaultdict(set)
     created = defaultdict(set)
     created_addresses = defaultdict(set)
@@ -278,6 +281,9 @@ def plan_checks(plan, *, project_number, target=None):
                 add(PROJECT_URL, ("monitoring.metricDescriptors.get", "monitoring.metricDescriptors." + ("create" if action == "update" else action)))
             elif kind == "google_iam_workload_identity_pool_provider":
                 project(current)
+                if target == "readonly-wif-trust":
+                    add(readonly_wif_trust.PROVIDER_URL, (wif_setup.GET, readonly_wif_trust.UPDATE))
+                    continue
                 require(current.get("workload_identity_pool_id") == "github" and current.get("workload_identity_pool_provider_id") == "github-operational-observer", "unexpected operational WIF provider")
                 require(action == "create", "operational WIF provider updates and deletes require separately reviewed authority")
                 add(f"https://iam.googleapis.com/v1/{wif_setup.POOL}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules"))

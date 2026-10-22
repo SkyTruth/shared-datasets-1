@@ -20,18 +20,29 @@ locals {
     "(${join(" || ", [for scope in group : "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${scope.root}/releases/') && resource.name.endsWith('/${scope.slug}.manifest.json'))"])})",
   ]) }
   operational_observer_log_filter = <<-EOT
-resource.labels.project_id="${var.project_id}"
-resource.labels.location="${var.region}"
 (
-  (
-    resource.type="cloud_run_job"
-    (
-      log_id("run.googleapis.com/stderr")
-      OR log_id("cloudaudit.googleapis.com/activity")
-      OR log_id("cloudaudit.googleapis.com/data_access")
-    )
-  )
-  OR (resource.type="cloud_scheduler_job" log_id("cloudscheduler.googleapis.com/executions"))
+  resource.labels.project_id="${var.project_id}" AND
+  resource.labels.location="${var.region}" AND
+  resource.type="cloud_run_job" AND
+  log_id("run.googleapis.com/stderr")
+)
+OR (
+  resource.labels.project_id="${var.project_id}" AND
+  resource.labels.location="${var.region}" AND
+  resource.type="cloud_run_job" AND
+  log_id("cloudaudit.googleapis.com/activity")
+)
+OR (
+  resource.labels.project_id="${var.project_id}" AND
+  resource.labels.location="${var.region}" AND
+  resource.type="cloud_run_job" AND
+  log_id("cloudaudit.googleapis.com/data_access")
+)
+OR (
+  resource.labels.project_id="${var.project_id}" AND
+  resource.labels.location="${var.region}" AND
+  resource.type="cloud_scheduler_job" AND
+  log_id("cloudscheduler.googleapis.com/executions")
 )
 EOT
 }

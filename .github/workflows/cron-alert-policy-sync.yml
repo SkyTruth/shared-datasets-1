@@ -79,9 +79,58 @@ jobs:
         sea_ice_daily_image=unused-by-cron-alert-policy-sync
         eamlis_monthly_image=unused-by-cron-alert-policy-sync
 
+  readonly-bootstrap:
+    name: Bootstrap temporary read-only workflow trust authority
+    needs: bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: cron-alert-policy-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Read-only workflow trust IAM bootstrap
+      refusal_prefix: Refusing changes outside temporary read-only workflow trust authority
+      block_deletes: true
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_custom_role.readonly_provider_updater
+        google_project_iam_member.github_actions_readonly_provider_updater
+      allowed_exact: |
+        google_project_iam_custom_role.readonly_provider_updater
+        google_project_iam_member.github_actions_readonly_provider_updater
+      tf_vars: |
+        wdpa_monthly_image=unused-by-readonly-trust-bootstrap
+        sea_ice_daily_image=unused-by-readonly-trust-bootstrap
+        eamlis_monthly_image=unused-by-readonly-trust-bootstrap
+
+  readonly-trust:
+    name: Repair exact read-only workflow trust condition
+    needs: readonly-bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: cron-alert-policy-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: readonly-wif-trust
+      sync_name: Read-only workflow trust sync
+      refusal_prefix: Refusing changes beyond the exact read-only workflow trust addition
+      block_deletes: true
+      targets: |
+        google_iam_workload_identity_pool_provider.github_readonly
+      allowed_exact: |
+        google_iam_workload_identity_pool_provider.github_readonly
+      tf_vars: |
+        wdpa_monthly_image=unused-by-readonly-trust-sync
+        sea_ice_daily_image=unused-by-readonly-trust-sync
+        eamlis_monthly_image=unused-by-readonly-trust-sync
+
   observations:
     name: Apply operational observation setup
-    needs: bootstrap
+    needs: [bootstrap, readonly-trust]
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
