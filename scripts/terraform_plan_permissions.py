@@ -243,6 +243,21 @@ def plan_checks(plan, *, project_number, target=None):
             elif kind == "google_project_iam_audit_config":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
+            elif kind == "google_logging_log_view_iam_member":
+                require(action == "delete", "rollback only revokes observer log-view access")
+                require(current.get("parent") in {f"projects/{PROJECT}", f"projects/{project_number}"}
+                        and current.get("location") == "global", "foreign observer log-view parent")
+                bucket, name = current.get("bucket"), current.get("name")
+                prefix = f"projects/{PROJECT}/locations/global/buckets/{bucket}/views/"
+                require(bucket in {"_Default", "_Required"} and name in {prefix + suffix for suffix in {
+                    "shared-datasets-operations-run-activity", "shared-datasets-operations-run-data-access",
+                    "shared-datasets-operations-run-stderr", "shared-datasets-operations-scheduler-executions",
+                }}, "unexpected observer log-view identity")
+                require(current.get("role") == "roles/logging.viewAccessor"
+                        and current.get("member") == f"serviceAccount:shared-datasets-alert-observer@{PROJECT}.iam.gserviceaccount.com",
+                        "unexpected observer log-view grant")
+                add(f"https://logging.googleapis.com/v2/{name}:testIamPermissions",
+                    ("logging.views.getIamPolicy", "logging.views.setIamPolicy"))
             elif kind == "google_logging_project_sink":
                 project(current)
                 add(PROJECT_URL, ("logging.sinks.get", "logging.sinks." + action))
