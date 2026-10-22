@@ -68,7 +68,7 @@ An existing provider does not require creation permission after expiry.
 The separate read-only provider trust repair owns only
 `google_iam_workload_identity_pool_provider.github_readonly`. Its two-resource
 IAM bootstrap proposes a project-wide **update-only** grant to the same protected
-Terraform identity, expiring at `2026-10-22T02:00:00Z`; the approved observer
+Terraform identity, expiring at `2026-10-22T06:00:00Z` (02:00 EDT); the approved observer
 create grant does not authorize this proposal. Separate explicit human approval
 is required before merge/apply. The next protected stage permits only an in-place
 `attribute_condition` change from the exact existing two-workflow condition to
@@ -84,6 +84,15 @@ identifies the legacy spelling as an alias of
 roles. An already-correct no-op uses only metadata
 reads and does not require the expired update grant. This proof does not bypass
 independent deny policies.
+
+This new fixed UPDATE window is a separate review proposal. Main CI
+`39706344866/1` failed validation before any of its five protected IAM callers
+ran, so the updater role and binding were never created. The existing
+two-resource bootstrap still creates them; this proposal requires no replacement
+of an installed conditional binding. Approval of the earlier UPDATE window
+ending at 02:00 UTC does not authorize the new 06:00 UTC window. The original
+observer CREATE deadline remains 02:00 UTC and its permanent GET-only reader is
+unchanged. No deadline renews automatically.
 
 Immediately before each saved-plan apply, trusted code runs
 `python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`

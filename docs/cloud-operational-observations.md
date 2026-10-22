@@ -320,8 +320,8 @@ while Terraform also declares `Dataset breaking change alert`. A generation-pinn
 backend read confirmed this exact provider is already managed (state serial 759,
 generation 1792616426547848). No failed consumer run or earlier drift date is
 inferred from that snapshot. A separate proposed protected repair adds a
-project-wide update-only role for the Terraform identity with the same fixed
-`2026-10-22T02:00:00Z` expiry. **It requires separate explicit human approval
+project-wide update-only role for the Terraform identity with a new fixed
+`2026-10-22T06:00:00Z` expiry (02:00 EDT). **It requires separate explicit human approval
 before merge/apply; approval of the observer create grant does not cover it.**
 The exact two-resource bootstrap precedes a one-resource trust sync. A strict
 saved-plan guard accepts only the old two-workflow condition becoming the
@@ -330,6 +330,16 @@ creation or deletion. Readiness GETs the real child, verifies its unchanged
 issuer/mapping/configuration and exact installed update-only allow grant; it
 does not call a nonexistent provider permission-test method. A later verified
 no-op does not require update permission after expiry.
+
+The new UPDATE window is a concrete proposal, not an extension authorized by the
+earlier approval ending at 02:00 UTC. Main CI `39706344866/1` failed its validation
+gate before any protected IAM caller ran; neither updater resource was created.
+The unchanged two-resource bootstrap therefore still creates the role and
+binding, with no installed conditional binding to replace. The observer CREATE
+grant remains capped at `2026-10-22T02:00:00Z`, and the permanent metadata reader
+is unchanged. Old 02:00 UTC UPDATE-grant evidence cannot satisfy the new proposal's
+exact installed-grant proof. The source guards, target allowlists and sole
+permitted trust-condition change are unchanged.
 
 Successful main5 shadow cycles may seed the independent heartbeat after its
 protected setup and absence policy are ready. They remain audit evidence for

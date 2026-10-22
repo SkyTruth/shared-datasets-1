@@ -42,8 +42,8 @@ resource "google_project_iam_member" "github_actions_readonly_provider_updater" 
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
   condition {
     title       = "readonly-trust-update-expires"
-    description = "Expire temporary read-only provider update authority at 2026-10-22 02:00 UTC."
-    expression  = "request.time < timestamp('2026-10-22T02:00:00Z')"
+    description = "Expire temporary read-only provider update authority at 2026-10-22 06:00 UTC."
+    expression  = "request.time < timestamp('2026-10-22T06:00:00Z')"
   }
 }
 

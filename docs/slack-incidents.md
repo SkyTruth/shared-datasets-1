@@ -72,6 +72,12 @@ stopping unresolved work, record clarification, `release`, or `supersede` with
 an explicit handoff reference. There is no automatic cross-chat message, agent
 creation or transfer of deployment authority.
 
+For supervision commands, only an explicit `claim` submitted after 30 minutes of
+verified stable recovery retires ownership bound to the old failure. A fresh
+prospective owner survives later commands with its original registration, human
+and chat constraints; queue delay cannot move an earlier claim into a new
+ownership episode.
+
 Security and demonstrated integrity risks bypass holds through independent
 Monitoring. Uncertain mutation outcomes freeze replay and require authoritative
 inspection. The notification engine starts no production recovery. Source

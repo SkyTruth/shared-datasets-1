@@ -1856,8 +1856,9 @@ def supervise(ledger, identity, request, *, now=None):
         states[scope] = state
     previous = state["supervision"].get(scope)
     latch_escalation(state, now)
-    if state["incident"] is not None and state["incident"]["resolution"] is not None and (
-            instant(now) >= instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds)):
+    if (request["command"] == "claim" and previous is not None and previous["first_failure_at"] is not None
+            and state["incident"] is not None and state["incident"]["resolution"] is not None
+            and instant(activity_at) >= instant(state["stable_since"]) + timedelta(seconds=policy.DEFAULT_POLICY.stable_recovery_seconds)):
         previous = None  # Its signed historical checkpoint remains audit evidence.
     owner = policy.transition_supervision(previous, request["command"], binding, now=activity_at, authority=authority,
         responsible_human=request["responsible_human"], conversation_ref=request["conversation_ref"],
