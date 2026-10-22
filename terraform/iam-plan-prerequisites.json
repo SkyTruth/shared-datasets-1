@@ -11,22 +11,6 @@
       "google_service_account_iam_member.wdpa_validation_deployer",
       "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
       "module.wdpa_validation_service_account.google_service_account.this"
-    ],
-    "cron-alert-policy-sync.yml/retire-observer-access": [
-      "google_logging_log_view_iam_member.operational_observer",
-      "google_monitoring_alert_policy.operational_reconciliation_unhealthy",
-      "google_project_iam_audit_config.operational_run_data_write",
-      "google_project_iam_member.operational_observer_reader",
-      "google_service_account_iam_member.operational_observer_wif",
-      "google_storage_bucket_iam_member.operational_observer_manifests",
-      "google_storage_bucket_iam_member.operational_observer_receipts"
-    ],
-    "cron-alert-policy-sync.yml/retire-observer-authority": [
-      "google_project_iam_member.github_actions_operational_log_view_manager",
-      "google_project_iam_member.github_actions_operational_metric_descriptor_manager",
-      "google_project_iam_member.github_actions_operational_provider_creator",
-      "google_project_iam_member.github_actions_operational_provider_reader",
-      "google_project_iam_member.github_actions_readonly_provider_updater"
     ]
   },
   "jobs": {
@@ -79,8 +63,6 @@
     "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [],
     "preview-terraform-iam-sync.yml/published-reader": [
       "module.feature_preview_service_account.google_service_account.this"
-    ],
-    "cron-alert-policy-sync.yml/retire-observer-access": [],
-    "cron-alert-policy-sync.yml/retire-observer-authority": []
+    ]
   }
 }
