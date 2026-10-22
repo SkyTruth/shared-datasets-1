@@ -216,6 +216,7 @@ def test_atomic_view_contract_changes_keep_protected_policy_deployment_selected(
     "scripts/cloud_operational_observations.py", "scripts/cloud_observation_ledger.py",
     "scripts/cloud_incident_adapter.py", "scripts/operational_protocol.py",
     "scripts/monitoring_routing_audit.py", "scripts/operational_cutover.py",
+    "scripts/deployment_emission.py",
 ])
 def test_cloud_protocol_repairs_install_the_fresh_policy_without_redeploying_data_workers(path):
     assert select_deployments([path]) == ["cron_alert_policy"]

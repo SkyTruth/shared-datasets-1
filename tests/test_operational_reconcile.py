@@ -535,6 +535,8 @@ def test_serialized_full_cycle_verifies_real_policy_receipts_outcomes_and_heartb
         path.write_text("jobs: {}\n" if relative.endswith((".yml", ".yaml")) else "actual protocol fixture: " + relative)
     api, run = CompleteAPI(), deepcopy(RUN)
     monkeypatch.setattr(emissions, "verify", api.verify_signature)
+    monkeypatch.setattr(emissions.subprocess, "check_output", api.signature_output)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "2026-10-01T00:00:00Z")
     initial_mode = "unified" if mode == "rollback" else mode

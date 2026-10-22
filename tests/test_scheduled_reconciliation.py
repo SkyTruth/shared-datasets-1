@@ -72,6 +72,8 @@ class PhaseAPI(API):
 def phase(tmp_path, monkeypatch):
     api, slack = PhaseAPI(), FakeSlack()
     monkeypatch.setattr(emissions, "verify", api.verify_signature)
+    monkeypatch.setattr(emissions.subprocess, "check_output", api.signature_output)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(worker.deployments, "GitHub", lambda: api)
     monkeypatch.setattr(worker, "Slack", lambda *_: slack)
     monkeypatch.setattr(worker, "utc_now", lambda: NOW)

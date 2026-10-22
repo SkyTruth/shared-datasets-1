@@ -226,7 +226,7 @@ class CycleLedger:
         return {"source_sha": run["head_sha"], "execution_run_id": run["id"], "execution_run_attempt": run["run_attempt"],
                 "policy_sha256": policy_hash(self.root), "collector_contract_sha256": contract_hash(self.root)}
 
-    def _verified_payload(self, record, *, task, schema):
+    def _candidate(self, record, *, task, schema):
         value = strict_json(record["payload"]) if isinstance(record.get("payload"), str) else record.get("payload")
         require(positive(record.get("id")) and isinstance(value, dict) and value.get("schema") == schema
                 and record.get("task") == task and record.get("environment") == ENVIRONMENT
@@ -239,26 +239,31 @@ class CycleLedger:
                 and statuses[0].get("state") == "success" and statuses[0].get("environment_url") == ""
                 and statuses[0].get("log_url") == emissions.invocation(REPOSITORY, value["execution_run_id"], value["execution_run_attempt"]),
                 "cycle checkpoint is incomplete or has another worker status")
-        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
         worker = validate_worker(self.api.get(
             f"repos/{REPOSITORY}/actions/runs/{value['execution_run_id']}/attempts/{value['execution_run_attempt']}"))
         require(worker["id"] == value["execution_run_id"] and worker["run_attempt"] == value["execution_run_attempt"]
                 and worker["head_sha"] == value["source_sha"], "cycle source differs from authoritative worker revision")
-        return value
+        return value, statuses[0]
 
     def verify(self, record):
-        manifest = self._verified_payload(record, task=TASK, schema=SCHEMA)
+        manifest, status = self._candidate(record, task=TASK, schema=SCHEMA)
+        receipts = [(record, status)]
         require(manifest["previous_cycle_id"] is None or manifest["previous_cycle_id"] < record["id"], "invalid cycle predecessor order")
         chunks = []
         for index, ref in enumerate(manifest["parts"]):
             require(ref["id"] < record["id"], "manifest precedes one of its parts")
             part_record = self.api.get(f"repos/{REPOSITORY}/deployments/{ref['id']}")
             require(part_record.get("id") == ref["id"], "cycle part identity changed")
-            part = self._verified_payload(part_record, task=PART_TASK, schema=PART_SCHEMA)
+            part, status = self._candidate(part_record, task=PART_TASK, schema=PART_SCHEMA)
+            receipts.append((part_record, status))
             require(all(part[key] == manifest[key] for key in {"cycle_nonce", *WORKER_FIELDS})
                     and part["index"] == index and part["total"] == len(manifest["parts"])
                     and part["sha256"] == ref["sha256"], "cycle part belongs to another collection")
             chunks.append(part["data"])
+        # The worker signs this exact manifest and all its parts together.
+        # Fresh mutable records/statuses and worker identities above still gate
+        # every subject; only their shared cryptographic statement is reused.
+        emissions.verify_batch(self.api, REPOSITORY, receipts, original_signer=WORKFLOW)
         encoded = "".join(chunks)
         require(len(encoded) <= 4 * ((MAX_COMPRESSED_BYTES + 2) // 3), "encoded cycle exceeds limit")
         try:

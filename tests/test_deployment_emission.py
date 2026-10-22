@@ -53,6 +53,25 @@ def verified(value, emitter=None, signer=SIGNER):
     }}]
 
 
+def batch_pairs(count=3):
+    pairs = []
+    for index in range(count):
+        claim = record()
+        claim["id"] += index
+        pairs.append((claim, status(identifier=81 + index)))
+    return pairs
+
+
+def batch_verified(pairs, emitter=None, signer=SIGNER):
+    values = [e.receipt(REPO, *pair) for pair in pairs]
+    results = verified(values[0], emitter, signer)
+    results[0]["verificationResult"]["statement"]["subject"] = [
+        {"name": e.name(value), "digest": {"sha256": hashlib.sha256(e.canonical(value)).hexdigest()}}
+        for value in values
+    ]
+    return results
+
+
 class EmissionTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -259,6 +278,145 @@ class EmissionTests(unittest.TestCase):
         sleep.assert_called_once_with(5)
         self.assertEqual(len(log.read_text().splitlines()), 2)
         self.api.post.assert_not_called()
+
+    def test_batch_uses_one_real_cli_anchor_for_every_exact_canonical_receipt(self):
+        pairs = batch_pairs()
+        anchor = e.receipt(REPO, *pairs[0])
+        environment, log = self.fake_verifier([{"stdout": json.dumps(batch_verified(pairs))}])
+        with environment:
+            self.assertIsNone(e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER))
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["digest"], hashlib.sha256(e.canonical(anchor)).hexdigest())
+        self.assertEqual(Path(calls[0]["args"][2]).name, e.name(anchor))
+        command = calls[0]["args"]
+        for flag, expected in (("--repo", REPO), ("--signer-workflow", REPO + "/" + SIGNER), ("--signer-digest", SHA), ("--source-digest", SHA), ("--source-ref", "refs/heads/main")):
+            self.assertEqual(command[command.index(flag) + 1], expected)
+        self.assertIn("--deny-self-hosted-runners", command)
+        # Each pair derives its own authoritative context; only crypto is shared.
+        self.assertEqual(self.api.get.call_count, 3 * len(pairs))
+        self.api.post.assert_not_called()
+
+    def test_batch_bounds_and_duplicate_receipt_names_fail_before_crypto(self):
+        for pairs in ([], batch_pairs(514), batch_pairs(1) * 2):
+            with self.subTest(count=len(pairs)), patch.object(e.subprocess, "check_output") as verifier, self.assertRaises(e.EmissionError):
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_not_called()
+        for count in (1, 513):
+            pairs = batch_pairs(count)
+            with self.subTest(count=count), patch.object(e.subprocess, "check_output", return_value=json.dumps(batch_verified(pairs))) as verifier:
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_called_once()
+
+    def test_batch_members_must_be_unique_and_complete_in_one_authenticated_statement(self):
+        pairs = batch_pairs()
+        valid = batch_verified(pairs)
+        cases = []
+        missing = copy.deepcopy(valid)
+        missing[0]["verificationResult"]["statement"]["subject"].pop()
+        cases.append(missing)
+        wrong = copy.deepcopy(valid)
+        wrong[0]["verificationResult"]["statement"]["subject"][-1]["digest"]["sha256"] = "0" * 64
+        cases.append(wrong)
+        for alternate_digest in (False, True):
+            duplicate = copy.deepcopy(valid)
+            subject = copy.deepcopy(duplicate[0]["verificationResult"]["statement"]["subject"][-1])
+            if alternate_digest:
+                subject["digest"]["sha256"] = "0" * 64
+            duplicate[0]["verificationResult"]["statement"]["subject"].append(subject)
+            cases.append(duplicate)
+        # Other verified statements cannot supply a missing member or be unioned.
+        cases.append(missing + verified(e.receipt(REPO, *pairs[-1])))
+        cases.append(missing + [{"rawBundle": valid}])
+        oversized = copy.deepcopy(valid)
+        oversized[0]["verificationResult"]["statement"]["subject"].extend(
+            {"name": f"extra-{index}", "digest": {"sha256": "0" * 64}} for index in range(1022)
+        )
+        cases.append(oversized)
+        for results in cases:
+            with self.subTest(results=results), patch.object(e.subprocess, "check_output", return_value=json.dumps(results)) as verifier, self.assertRaises(e.EmissionError):
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_called_once()  # No per-member fallback verification.
+
+        # Multiple attestations are legitimate, but only a complete matching
+        # statement can establish the group; neighboring subjects never help.
+        for results in (valid * 2, missing + valid, [{"rawBundle": valid}] + valid):
+            with self.subTest(results=results), patch.object(e.subprocess, "check_output", return_value=json.dumps(results)) as verifier:
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_called_once()
+
+    def test_batch_enforces_every_member_context_before_the_cli_boundary(self):
+        for field, value in (("id", 99), ("run_attempt", 3), ("head_sha", "b" * 40),
+                             ("head_branch", "feature"), ("event", "pull_request"),
+                             ("repository", {"id": 18, "full_name": REPO}),
+                             ("head_repository", {"id": 17, "full_name": "other/repo"})):
+            pairs = batch_pairs(2)
+            emitters = [run(), {**run(), field: value}]
+            self.api.get.side_effect = lambda path: emitters.pop(0) if "/actions/runs/" in path else self.route(path)
+            with self.subTest(field=field), patch.object(e.subprocess, "check_output") as verifier, self.assertRaises(e.EmissionError):
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_not_called()
+
+        pairs = batch_pairs(2)
+        def wrong_workflow(path):
+            if "/actions/workflows/" in path:
+                return {"id": 99, "path": run()["path"]}
+            return self.route(path)
+        self.api.get.side_effect = wrong_workflow
+        with patch.object(e.subprocess, "check_output") as verifier, self.assertRaisesRegex(e.EmissionError, "workflow identity"):
+            e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+        verifier.assert_not_called()
+        self.api.get.side_effect = self.route
+        for replacement in (run(19, 1, e.OBSERVER, "schedule"), run(13, 3)):
+            pairs = batch_pairs(2)
+            pairs[1] = (pairs[1][0], status("verified", identifier=82, run_id=replacement["id"], attempt=replacement["run_attempt"]))
+            def route(path):
+                if "/actions/runs/" in path:
+                    return run() if path.endswith("/13/attempts/2") else replacement
+                if "/actions/workflows/" in path:
+                    return {"id": 12, "path": e.OBSERVER if path.endswith("deployment-verification.yml") else run()["path"]}
+                return self.route(path)
+            self.api.get.side_effect = route
+            with self.subTest(replacement=replacement), patch.object(e.subprocess, "check_output") as verifier, self.assertRaises(e.EmissionError):
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_not_called()
+
+    def test_batch_wrong_bytes_certificate_or_unverified_output_never_authorize_members(self):
+        pairs = batch_pairs()
+        valid = batch_verified(pairs)
+        cases = [[], [{"rawBundle": valid}]]
+        for section, field, value in (("statement", "_type", "wrong"), ("statement", "predicateType", "wrong"),
+                                       (None, "verifiedTimestamps", [])):
+            changed = copy.deepcopy(valid)
+            target = changed[0]["verificationResult"]
+            if section:
+                target = target[section]
+            target[field] = value
+            cases.append(changed)
+        for field in e.policy(REPO, 17, e.receipt(REPO, *pairs[0]), run(), SIGNER):
+            changed = copy.deepcopy(valid)
+            changed[0]["verificationResult"]["signature"]["certificate"][field] = "wrong"
+            cases.append(changed)
+        for results in cases:
+            with self.subTest(results=results), patch.object(e.subprocess, "check_output", return_value=json.dumps(results)) as verifier, self.assertRaises(e.EmissionError):
+                e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+            verifier.assert_called_once()
+        changed_pairs = copy.deepcopy(pairs)
+        changed_pairs[-1][0]["payload"]["target"] = "forged"
+        with patch.object(e.subprocess, "check_output", return_value=json.dumps(valid)), self.assertRaises(e.EmissionError):
+            e.verify_batch(self.api, REPO, changed_pairs, original_signer=SIGNER)
+        environment, log = self.fake_verifier([{"code": 7, "stdout": json.dumps(valid), "stderr": "invalid signature"}])
+        with environment, patch("time.sleep") as sleep, self.assertRaises(subprocess.CalledProcessError):
+            e.verify_batch(self.api, REPO, pairs, original_signer=SIGNER)
+        sleep.assert_not_called()
+        self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_single_verifier_default_stays_strict_for_a_multi_subject_statement(self):
+        pairs = batch_pairs()
+        with patch.object(e.subprocess, "check_output", return_value=json.dumps(batch_verified(pairs))), self.assertRaises(e.EmissionError):
+            e.verify(self.api, REPO, *pairs[0], original_signer=SIGNER)
+        with patch.object(e.subprocess, "check_output", return_value=json.dumps(batch_verified(pairs))):
+            e.verify(self.api, REPO, *pairs[0], original_signer=SIGNER, batch=True)
 
     def test_observer_and_recovery_updates_require_their_own_exact_signed_runs(self):
         claim = record()

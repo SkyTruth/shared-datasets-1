@@ -24,7 +24,7 @@ The cutover document has schema
 | `policy_sha256` | Exact current classification registry hash. |
 | `audit_setup_deployment_id` | Exact signed successful protected Operational observation setup receipt proving the current observer Terraform and unexempted Run DATA_WRITE audit configuration. Shadow history starts after its applied timestamp. |
 | `policy_ids` | Every Terraform policy address and its exact installed `projects/shared-datasets-1/alertPolicies/…` identity. |
-| `cycles` | Ordered `{deployment_id, manifest_sha256}` references to at least 24 elapsed hours of signed, complete, provenance-complete shadow cycles; no public cloud delivery, missing predecessor, coverage gap or interval over ten minutes. |
+| `cycles` | Ordered `{deployment_id, manifest_sha256}` references to at least 24 elapsed hours of signed, complete, provenance-complete shadow cycles; no public cloud delivery, missing predecessor, coverage gap or completion interval over 25 minutes. This leaves five minutes before the independent 30-minute heartbeat absence alarm; final evidence freshness remains ten minutes. |
 | `runtime_deployments` | Exactly `wdpa-monthly`, `eamlis-monthly`, `sea-ice-daily`, `mpatlas-monthly`, each with `{deployment_id, runtime_sha256}` binding a signed applied/verified source anchor to the reviewed runtime bridge contract. The gate independently resolves the latest signed deployment and exact current unified image under that same contract. |
 
 The gate reads every referenced signed manifest and part, verifies main ancestry,
@@ -46,7 +46,7 @@ silently extend the ten-minute freshness limit.
 Immediately before the saved-plan apply, a complete live read-only routing audit
 must match installed before-values. Independent canonical-write/delete security
 and 30-minute pipeline-health policies must remain enabled with native channels.
-Both exact filtered Logging views must also match the reviewed Terraform filter;
+All eight exact filtered Logging views must also match the reviewed Terraform filter;
 a known view identity alone cannot prove the intended access or coverage boundary.
 This check uses existing protected setup metadata-read authority and grants no
 additional observer access. The Terraform view boundary participates in the
