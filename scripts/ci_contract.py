@@ -234,7 +234,9 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("pmtiles_cdn")
         if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
             selected.add("ingestion_iam")
-        if path == "catalog/operational-slack-rollout.json" or path.startswith(".github/operational-cutovers/"):
+        if path == "catalog/operational-slack-rollout.json" or (
+            path.startswith(".github/operational-cutovers/") and path != ".github/operational-cutovers/README.md"
+        ):
             selected.update(ingestion | {"ingestion_iam", "cron_alert_policy"})
         if path in PROTOCOL_FILES:
             selected.add("cron_alert_policy")

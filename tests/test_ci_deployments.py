@@ -223,8 +223,22 @@ def test_cloud_protocol_repairs_install_the_fresh_policy_without_redeploying_dat
     assert select_suites([path])[0] == list(SUITES)
 
 
+def test_cutover_guide_cannot_request_production_runtime_deployments():
+    guide = ".github/operational-cutovers/README.md"
+    assert select_deployments([guide]) == []
+    assert select_suites([guide])[0] == list(SUITES)
+    # The actual gate repair also changes this guide. Its documentation must
+    # not expand the verifier's protected deployment into four canary jobs.
+    assert select_deployments([guide, "scripts/operational_cutover.py", "scripts/cloud_observation_ledger.py",
+                               "scripts/deployment_emission.py", "scripts/operational_protocol.py"]) == ["cron_alert_policy"]
+    assert set(select_deployments([guide, "ingestion/eamlis_monthly/run.py"])) == {
+        "eamlis", "ingestion_iam", "artifact_registry_iam",
+    }
+
+
 @pytest.mark.parametrize("path", [
     "catalog/operational-slack-rollout.json", ".github/operational-cutovers/reviewed-evidence.json",
+    ".github/operational-cutovers/README.md.json",
 ])
 def test_actual_rollout_changes_keep_every_runtime_and_its_iam_dependencies(path):
     assert set(select_deployments([path])) == {
