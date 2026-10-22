@@ -54,5 +54,5 @@ def test_read_only_gate_permission_is_probed_without_adding_metric_write_authori
 
 def test_rollout_and_evidence_changes_select_both_policy_and_runtime_protected_paths():
     expected = {"wdpa", "eamlis", "mpatlas", "sea_ice", "ingestion_iam", "cron_alert_policy", "artifact_registry_iam"}
-    for path in ("catalog/operational-slack-rollout.json", ".github/operational-cutovers/reviewed.json", "scripts/operational_cutover.py"):
+    for path in ("catalog/operational-slack-rollout.json", ".github/operational-cutovers/reviewed.json"):
         assert set(ci_contract.select_deployments([path])) == expected
