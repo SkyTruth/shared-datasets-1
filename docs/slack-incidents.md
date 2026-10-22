@@ -73,10 +73,17 @@ an explicit handoff reference. There is no automatic cross-chat message, agent
 creation or transfer of deployment authority.
 
 For supervision commands, only an explicit `claim` submitted after 30 minutes of
-verified stable recovery retires ownership bound to the old failure. A fresh
-prospective owner survives later commands with its original registration, human
-and chat constraints; queue delay cannot move an earlier claim into a new
-ownership episode.
+verified stable recovery retires ownership bound to the old failure. Repeated
+commands for a prospective binding preserve its registration, human and chat
+constraints; queue delay cannot move an earlier claim into a new ownership episode.
+
+After explicitly releasing an operation that never owned a failure, the same
+authenticated human may register a new deployment PR and revision from a new
+originating chat. The worker verifies the exact merged PR and requires no open
+incident; a retained resolved incident must have 30 minutes of stable recovery
+at dispatch creation time. This creates inactive registration with empty source
+coverage and no check-in or failure clock. Previous signed checkpoints and all
+incident, delivery and recovery evidence remain intact.
 
 Security and demonstrated integrity risks bypass holds through independent
 Monitoring. Uncertain mutation outcomes freeze replay and require authoritative
