@@ -373,16 +373,39 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     assert admission[admission.index("--base") + 1] == "f" * 40
 
 
-def test_real_diff_docs_only_does_not_select_suites_for_trailing_nul(tmp_path):
+@pytest.mark.parametrize("paths,suites,deployments", [
+    (["docs/guide.md"], ALWAYS, []),
+    (["ingestion/dataset_usage/README.md"], ALWAYS, []),
+    (["services/catalog_viewer/README.md"], ALWAYS, []),
+    (["ingestion/common/nested/operations.md"], ALWAYS, []),
+    (["ingestion/dataset_usage/README.md", "ingestion/dataset_usage/run.py"],
+     ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage", "artifact_registry_iam"]),
+    (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
+     ALWAYS | {"production-images", "browser"}, ["catalog_viewer", "dataset_usage", "artifact_registry_iam"]),
+    (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice", "ingestion_iam", "artifact_registry_iam"]),
+    (["docs/guide.md", "scripts/unproved.py"], set(SUITES), []),
+    (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
+    (["docs/new-tool.py"], set(SUITES), []),
+    ([".claude/skills/new-tool.py"], set(SUITES), []),
+    (["terraform/iam-plan-prerequisites.json"], set(SUITES), []),
+    ([".github/workflows/ci.yml"], set(SUITES), []),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
+    ([], ALWAYS, []),
+])
+def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path, paths, suites, deployments):
     source, run = fixture_repo(tmp_path)
     base = run("rev-parse", "HEAD")
-    (source / "docs").mkdir()
-    (source / "docs/guide.md").write_text("documentation\n")
-    run("add", ".")
-    run("commit", "-m", "docs")
-    validation = preflight.make_plan(source, base, "HEAD")
-    assert validation["changed_paths"] == ["docs/guide.md"]
-    assert set(validation["suites"]) == ALWAYS
+    for path in paths:
+        target = source / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed fixture\n")
+    if paths:
+        run("add", ".")
+        run("commit", "-m", "change")
+    validation = json.loads(json.dumps(preflight.make_plan(source, base, "HEAD")))
+    assert validation["changed_paths"] == sorted(paths)
+    assert set(validation["suites"]) == suites
+    assert validation["deployments"] == deployments
 
 
 def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():

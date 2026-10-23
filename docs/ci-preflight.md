@@ -120,11 +120,23 @@ offline feature-identity decision checks, and Python tests. The two local hygien
 checks run in the shared `tests` suite before pytest, replacing the separate
 bucket-hygiene PR workflow. A finding or invalid decision fails that suite.
 It adds native, SDK, image and browser suites according to component dependencies.
-Documentation-only component paths and proven script exceptions use the single
-selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry records
-its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
-`uv.lock`, unknown paths and unavailable comparisons select all suites. Test
-selection does not change deployment selection.
+Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier
+and additional suites, with no separate policy file or persisted tier state.
+
+| Tier | Additional validation | Deployment selection |
+| --- | --- | --- |
+| Documentation | None beyond the mandatory suites above | None |
+| Metadata | Existing consumer suites | Explicit release dependencies |
+| Component | Existing component/consumer suites | Explicit release dependencies |
+| Infrastructure | Terraform checks in mandatory lint; shared contracts remain broad | Explicit protected infrastructure dependencies |
+| Shared or unknown | All suites | Explicit release dependencies only |
+
+Informational Markdown paths use the documentation tier; `docs/assets/` remains
+runtime metadata. Non-Markdown tools under guidance directories remain unknown.
+Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union their
+requirements. Workflow/shared-contract changes and unavailable comparisons select
+all suites. Tiers never grant mutation authority; tested-artifact, approval,
+permission and terminal-verification gates remain unchanged.
 The standard Python run permits only the six named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.
