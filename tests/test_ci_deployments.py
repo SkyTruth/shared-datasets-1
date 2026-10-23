@@ -17,7 +17,7 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
     assert ALWAYS <= set(select_suites(paths)[0])
 
 
-@pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly"])
+@pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly", "dataset_usage"])
 def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
     path = f"ingestion/{job}/README.md"
     assert select_deployments([path]) == []
