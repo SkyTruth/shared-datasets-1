@@ -52,9 +52,9 @@ def outage(status=502, *, stdout=""):
 @pytest.mark.parametrize("client", CLIENTS)
 def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
     log = gh([outage(), outage(), {"stdout": '{"id": 38508512742, "run_attempt": 1}'}])
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         assert client().get(PATH) == {"id": 38508512742, "run_attempt": 1}
-    assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
+    assert [call.args for call in clock.sleep.call_args_list] == [(5,), (15,)]
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [calls[0]] * 3
     assert calls[0] == ["api", "--method", "GET", PATH]
@@ -64,10 +64,10 @@ def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
 def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys):
     log = gh([outage(status, stdout='{"id": 38508512742}')])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     assert len(log.read_text().splitlines()) == 3
-    assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
+    assert [call.args for call in clock.sleep.call_args_list] == [(5,), (15,)]
     assert "attempt 3/3 failed" in capsys.readouterr().err
 
 
@@ -79,18 +79,18 @@ def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys)
 ])
 def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
     log = gh([{"code": 1, "stderr": stderr}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
-    sleep.assert_not_called()
+    clock.sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
 
 
 @pytest.mark.parametrize("client", CLIENTS)
 def test_connection_failure_recovers(client, gh):
     log = gh([{"code": 1, "stderr": transport.CONNECTION_ERROR.decode()}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         assert client().get(PATH) == {}
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
 
 
@@ -102,9 +102,9 @@ def test_connection_failure_recovers(client, gh):
 ])
 def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, gh):
     log = gh([outage(stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         assert client().pages(PATH, field="jobs") == [row for page in pages for row in page["jobs"]]
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [calls[0]] * 2
     assert calls[0] == ["api", "--method", "GET", "--paginate", "--slurp", PATH]
@@ -118,9 +118,9 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
 ])
 def test_response_validation_after_recovery_is_not_retried(client, response, gh):
     log = gh([outage(), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
-    with patch("time.sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
+    with patch.object(transport, "time") as clock, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
         client().pages(PATH, field="jobs")
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
 
 
@@ -128,7 +128,7 @@ def test_response_validation_after_recovery_is_not_retried(client, response, gh)
 def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
     timeout = subprocess.TimeoutExpired(["gh", "api"], 60, output=b'{"partial": true}')
     responses = [timeout, b"{}"] if recover else [timeout] * 3
-    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch("time.sleep") as sleep:
+    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch.object(transport, "time") as clock:
         if recover:
             assert deployments.GitHub().get(PATH) == {}
         else:
@@ -136,14 +136,14 @@ def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
                 deployments.GitHub().get(PATH)
     assert command.call_count == (2 if recover else 3)
     assert all(call.kwargs["timeout"] == 60 for call in command.call_args_list)
-    assert len(sleep.call_args_list) == (1 if recover else 2)
+    assert len(clock.sleep.call_args_list) == (1 if recover else 2)
 
 
 def test_deployment_write_is_never_replayed(gh):
     log = gh([outage(), {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         deployments.GitHub().post("repos/SkyTruth/shared-datasets-1/deployments", {"ref": "a" * 40})
-    sleep.assert_not_called()
+    clock.sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
 
 
@@ -165,13 +165,13 @@ def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wron
         {"stdout": '[{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}]'},
     ]
     log = gh(evidence)
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         if wrong_revision:
             with pytest.raises(deployments.DeploymentError, match="executor differs"):
                 deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1)
         else:
             assert deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1) == run
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls[2] == calls[3] == ["api", "--method", "GET", PATH]
     assert len(calls) == (4 if wrong_revision else 5)

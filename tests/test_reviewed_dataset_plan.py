@@ -448,7 +448,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                 self.assertRaises(reviewed_dataset_plan.PlanValidationError),
             ):
                 reviewed_dataset_plan.read_document(bad_raw, path=bad_path)
-        for mutate in (
+        for case, mutate in enumerate((
             lambda d: d["publish"]["promotions"].append(
                 deepcopy(d["publish"]["promotions"][0])
             ),
@@ -458,11 +458,11 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             lambda d: d.update(plan_version=True),
             lambda d: d.update(finalization_version="arbitrary-command"),
             lambda d: d["publish"].update(unknown=True),
-        ):
+        )):
             bad = deepcopy(doc)
             mutate(bad)
             with (
-                self.subTest(mutate=mutate),
+                self.subTest(mutate=case),
                 self.assertRaises(reviewed_dataset_plan.PlanValidationError),
             ):
                 reviewed_dataset_plan.normalize_document(bad)

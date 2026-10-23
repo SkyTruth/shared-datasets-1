@@ -282,6 +282,34 @@ def test_missing_tools_and_wrong_versions_fail_before_commands(tmp_path):
             preflight.probe_tools("tests", dict(os.environ))
 
 
+@pytest.mark.parametrize("outcome", ["pass", "fail", "crash"])
+def test_parallel_python_command_preserves_failures_and_worker_crashes(tmp_path, outcome):
+    fixture = tmp_path / "test_workers.py"
+    fixture.write_text(
+        "import os\nfrom pathlib import Path\nimport pytest\n"
+        "@pytest.mark.parametrize('case', range(4))\n"
+        "def test_case(case):\n"
+        f"    if case == 0 and {outcome!r} == 'crash': os._exit(7)\n"
+        f"    Path({str(tmp_path)!r}, f'case-{{case}}.txt').write_text(os.environ['PYTEST_XDIST_WORKER'])\n"
+        f"    assert case != 0 or {outcome!r} != 'fail'\n"
+    )
+    command = next(command for command, _ in preflight.suite_commands("tests", ROOT, plan(), tmp_path) if "pytest" in command)
+    completed = subprocess.run(
+        [*command, str(fixture)], cwd=ROOT, capture_output=True, text=True, timeout=60,
+        env={key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_WORKER")},
+    )
+    if outcome == "pass":
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        check_junit(tmp_path / "pytest.xml", native=False)
+        assert {path.name for path in tmp_path.glob("case-*.txt")} == {f"case-{case}.txt" for case in range(4)}
+        assert {path.read_text() for path in tmp_path.glob("case-*.txt")} == {"gw0", "gw1"}
+    else:
+        assert completed.returncode != 0
+        with pytest.raises(ValueError, match="failed test"):
+            check_junit(tmp_path / "pytest.xml", native=False)
+        assert "replacing crashed worker" not in completed.stdout.lower()
+
+
 @pytest.mark.parametrize("failed_check", ["audit_shared_datasets.py", "check_identity_resolutions.py"])
 def test_local_hygiene_failure_stops_python_validation(tmp_path, failed_check):
     validation = plan(["tests"])

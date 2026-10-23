@@ -307,7 +307,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
         if selected_targets:
             add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
-        add("uv", "run", "--no-sync", "pytest", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
+        add("uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
         add("node", "scripts/release-policy.mjs", "changes", base, head, cwd=package)

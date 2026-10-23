@@ -137,8 +137,11 @@ Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union thei
 requirements. Workflow/shared-contract changes and unavailable comparisons select
 all suites. Tiers never grant mutation authority; tested-artifact, approval,
 permission and terminal-verification gates remain unchanged.
-The standard Python run permits only the six named native fixtures to skip;
-native validation requires every selected test and every required fixture to pass.
+The standard Python run permits only the six named native fixtures to skip
+and runs the complete collection in two worker processes. Worker crashes fail
+validation without replacement or retry. Subtest labels must be serializable,
+and clock mocks must stay local to the tested module. Native tests remain serial.
+Native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.
 
 Each run prints its retained evidence directory. `plan.json` identifies base,

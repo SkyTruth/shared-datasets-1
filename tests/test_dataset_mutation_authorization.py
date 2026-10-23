@@ -269,7 +269,7 @@ class AuthorizationTests(unittest.TestCase):
             self.capture()
 
     def test_wrong_pr_context_and_lineage_fail(self):
-        for mutate in (
+        for case, mutate in enumerate((
             lambda api: api.pr.update(number=8),
             lambda api: api.pr.update(draft=True),
             lambda api: api.pr["head"].update(repo={**REPO, "id": 200}),
@@ -277,8 +277,8 @@ class AuthorizationTests(unittest.TestCase):
             lambda api: api.pr.update(merge_commit_sha="d" * 40),
             lambda api: api.compare.update(status="diverged"),
             lambda api: api.pr.update(state="closed", merged=False),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 self.api = FakeGitHub()
                 mutate(self.api)
                 with self.assertRaises(auth.Error):
@@ -287,15 +287,15 @@ class AuthorizationTests(unittest.TestCase):
     def test_document_discovery_refuses_missing_duplicate_modified_truncated_and_symlink(
         self,
     ):
-        for mutate in (
+        for case, mutate in enumerate((
             lambda api: api.files.clear(),
             lambda api: api.files.append(deepcopy(api.files[0])),
             lambda api: api.files[0].update(status="modified"),
             lambda api: api.tree.update(truncated=True),
             lambda api: api.tree["tree"][0].update(mode="120000"),
             lambda api: api.files[0].update(sha="d" * 40),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 self.api = FakeGitHub()
                 mutate(self.api)
                 with self.assertRaises(auth.Error):
@@ -343,7 +343,7 @@ class AuthorizationTests(unittest.TestCase):
         self.api.set_artifact(envelope)
         event = {"repository": REPO, "workflow_run": deepcopy(self.api.run)}
         self.assertEqual(auth.from_run(self.api, event, pr_number=7), envelope)
-        for mutate in (
+        for case, mutate in enumerate((
             lambda api: api.artifact.update(expired=True),
             lambda api: api.artifact.update(name="wrong"),
             lambda api: api.artifact.update(digest="sha256:" + "0" * 64),
@@ -354,8 +354,8 @@ class AuthorizationTests(unittest.TestCase):
             lambda api: api.run.update(head_repository={**REPO, "id": 101}),
             lambda api: api.run.update(run_attempt=2),
             lambda api: api.run.update(head_sha="e" * 40),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 api = FakeGitHub()
                 api.set_artifact(envelope)
                 mutate(api)
@@ -513,29 +513,29 @@ class AdvisoryPreviewTests(unittest.TestCase):
         self.assertEqual(sum(path.endswith("/pulls/7") for path in self.api.calls), 3)
 
     def test_stale_route_to_preview_event_skips_before_document_discovery(self):
-        for mutate in (
+        for case, mutate in enumerate((
             lambda pr: pr["head"].update(sha="d" * 40),
             lambda pr: pr["base"].update(sha="d" * 40),
             lambda pr: pr.update(body="edited", changed_files=2),
             lambda pr: pr.update(draft=True),
             lambda pr: pr.update(state="closed", merged=True),
             lambda pr: pr.update(state="closed", merged=False),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 self.setUp()
                 mutate(self.api.pr)
                 self.assert_noop()
                 self.assertEqual(self.api.calls, [f"repos/{REPO['full_name']}/pulls/7"])
 
     def test_supersession_during_enumeration_skips_before_immutable_plan_validation(self):
-        for mutate in (
+        for case, mutate in enumerate((
             lambda pr: pr["head"].update(sha="d" * 40),
             lambda pr: pr["base"].update(sha="d" * 40),
             lambda pr: pr.update(body="edited", changed_files=2),
             lambda pr: pr.update(draft=True),
             lambda pr: pr.update(state="closed"),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 self.setUp()
                 original = self.api.pages
 
@@ -572,12 +572,12 @@ class AdvisoryPreviewTests(unittest.TestCase):
         self.assertTrue(any("/git/blobs/" in path for path in self.api.calls))
 
     def test_unchanged_current_invalid_plan_still_fails(self):
-        for mutate in (
+        for case, mutate in enumerate((
             lambda api: api.files[0].update(status="modified"),
             lambda api: api.files[0].update(sha="d" * 40),
             lambda api: api.pr.update(body="missing required readable plan fence"),
-        ):
-            with self.subTest(mutate=mutate):
+        )):
+            with self.subTest(mutate=case):
                 self.setUp()
                 mutate(self.api)
                 self.event["pull_request"] = deepcopy(self.api.pr)
@@ -602,7 +602,7 @@ class AdvisoryPreviewTests(unittest.TestCase):
 
     def test_wrong_identity_or_malformed_snapshot_cannot_be_a_noop(self):
         for target in ("event", "first", "second", "third"):
-            for mutate in (
+            for case, mutate in enumerate((
                 lambda pr: pr.update(number=8),
                 lambda pr: pr["head"].update(repo={**REPO, "id": 101}),
                 lambda pr: pr["base"].update(repo={**REPO, "full_name": "other/repository"}),
@@ -613,8 +613,8 @@ class AdvisoryPreviewTests(unittest.TestCase):
                 lambda pr: pr.update(draft="false"),
                 lambda pr: pr.update(body={}),
                 lambda pr: pr.update(changed_files=True),
-            ):
-                with self.subTest(target=target, mutate=mutate):
+            )):
+                with self.subTest(target=target, mutate=case):
                     self.setUp()
                     if target == "event":
                         mutate(self.event["pull_request"])

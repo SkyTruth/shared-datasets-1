@@ -42,7 +42,7 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         ]
 
         for path in bad_paths:
-            with self.subTest(path=path):
+            with self.subTest(path=str(path)):
                 with self.assertRaisesRegex(Exception, "unexpanded shell-variable syntax"):
                     gcs_asset.ensure_expanded_local_path(path, label="test path")
 
