@@ -15,10 +15,18 @@ COPY scripts/ci_install_tools.py scripts/ci_toolchain.py /opt/ci-source/scripts/
 RUN cd /opt/ci-source && python scripts/ci_install_tools.py --destination /opt/ci \
     node22 node24 terraform gitleaks actionlint
 
+# Lockfile-dependent wheels, including native builds, survive across fresh suite
+# containers. Each suite still installs its own environment with locked sync.
+COPY pyproject.toml uv.lock /opt/ci-dependencies/
+RUN cd /opt/ci-dependencies \
+    && UV_CACHE_DIR=/opt/uv-cache UV_PROJECT_ENVIRONMENT=/opt/ci-dependencies/venv \
+       UV_LINK_MODE=copy uv sync --locked --all-groups \
+    && rm -rf /opt/ci-dependencies
+
 ENV PATH="/opt/ci/node22/bin:/opt/ci/bin:${PATH}" \
     CI_NODE22_BIN="/opt/ci/node22/bin" \
     CI_NODE24_BIN="/opt/ci/node24/bin" \
-    UV_CACHE_DIR="/work/uv-cache" \
+    UV_CACHE_DIR="/opt/uv-cache" \
     UV_PROJECT_ENVIRONMENT="/work/venv" \
     UV_LINK_MODE="copy" \
     GODEBUG="asyncpreemptoff=1" \

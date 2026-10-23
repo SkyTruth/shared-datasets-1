@@ -499,6 +499,8 @@ def test_every_local_suite_runs_in_ci_mode_without_forwarded_credentials(tmp_pat
         record = preflight.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64')
     create = execute.call_args_list[1].args[0]
     assert 'CI=true' in create
+    assert 'UV_CACHE_DIR=/opt/uv-cache' in create
+    assert 'UV_PROJECT_ENVIRONMENT=/evidence/venv' in create
     assert create[create.index('--platform') + 1] == 'linux/arm64'
     assert '--entrypoint' not in create
     assert record['environment']['CI'] == 'true'
