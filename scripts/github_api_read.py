@@ -12,7 +12,7 @@ import sys
 import time
 
 
-HTTP_ERROR = re.compile(rb"gh: [^\r\n]+ \(HTTP ([0-9]{3})\)")
+HTTP_ERROR = re.compile(rb"gh: (?:[^\r\n]+ \(HTTP ([0-9]{3})\)|HTTP ([0-9]{3}))")
 TRANSIENT_STATUSES = {500, 502, 503, 504}
 CONNECTION_ERROR = (
     b"error connecting to api.github.com\n"
@@ -34,9 +34,10 @@ def read(path: str, *, paginate: bool = False) -> bytes:
                 reason, transient = "read timeout", True
             else:
                 stderr = (error.stderr or b"").strip()
-                status = HTTP_ERROR.fullmatch(stderr)
-                reason = f"HTTP {int(status[1])}" if status else "GitHub CLI error"
-                transient = bool(status and int(status[1]) in TRANSIENT_STATUSES) or stderr == CONNECTION_ERROR
+                match = HTTP_ERROR.fullmatch(stderr)
+                status = int(match[1] or match[2]) if match else None
+                reason = f"HTTP {status}" if status else "GitHub CLI error"
+                transient = status in TRANSIENT_STATUSES or stderr == CONNECTION_ERROR
                 if stderr == CONNECTION_ERROR:
                     reason = "connection failure"
             diagnostic = f"GitHub GET {path}: attempt {attempt}/3 failed ({reason})"

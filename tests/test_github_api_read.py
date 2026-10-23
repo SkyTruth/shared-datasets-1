@@ -45,8 +45,9 @@ def gh(tmp_path, monkeypatch):
     return configure
 
 
-def outage(status=502, *, stdout=""):
-    return {"code": 1, "stderr": f"gh: Server Error (HTTP {status})\n", "stdout": stdout}
+def outage(status=502, *, stdout="", plain=False):
+    stderr = f"gh: HTTP {status}\n" if plain else f"gh: Server Error (HTTP {status})\n"
+    return {"code": 1, "stderr": stderr, "stdout": stdout}
 
 
 @pytest.mark.parametrize("client", CLIENTS)
@@ -61,9 +62,30 @@ def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
 
 
 @pytest.mark.parametrize("client", CLIENTS)
+@pytest.mark.parametrize("path,paginate,response", [
+    # Repository read observed in 38495751381/2.
+    ("repos/SkyTruth/shared-datasets-1", False, {"id": 1213606315}),
+    # Deployment-history read observed in 38496427534/1.
+    ("repos/SkyTruth/shared-datasets-1/deployments?environment=production-typescript-sdk&per_page=100",
+     True, [[{"id": 7}]]),
+])
+def test_observed_plain_500_recovers_same_read(client, path, paginate, response, gh, capsys):
+    log = gh([outage(500, plain=True, stdout='{"untrusted": true}'), {"stdout": json.dumps(response)}])
+    with patch.object(transport, "time") as clock:
+        result = client().pages(path) if paginate else client().get(path)
+    assert result == ([{"id": 7}] if paginate else response)
+    clock.sleep.assert_called_once_with(5)
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    command = ["api", "--method", "GET"] + (["--paginate", "--slurp"] if paginate else []) + [path]
+    assert calls == [command, command]
+    assert "attempt 1/3 failed (HTTP 500); retrying in 5s" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("client", CLIENTS)
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
-def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys):
-    log = gh([outage(status, stdout='{"id": 38508512742}')])
+@pytest.mark.parametrize("plain", [False, True])
+def test_exhausted_server_errors_never_accept_stdout(client, status, plain, gh, capsys):
+    log = gh([outage(status, plain=plain, stdout='{"id": 38508512742}')])
     with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     assert len(log.read_text().splitlines()) == 3
@@ -74,6 +96,10 @@ def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys)
 @pytest.mark.parametrize("client", CLIENTS)
 @pytest.mark.parametrize("stderr", [
     *[f"gh: Rejected (HTTP {code})\n" for code in (400, 401, 403, 404, 422, 429, 501)],
+    *[f"gh: HTTP {code}\n" for code in (400, 401, 403, 404, 422, 429, 501)],
+    "gh: HTTP 500)\n",
+    "gh: Server Error (HTTP 500\n",
+    "gh: HTTP 500\nadditional unknown error\n",
     "not logged into GitHub\n",
     "gh: Server Error (HTTP 502)\nadditional unknown error\n",
 ])
@@ -100,8 +126,9 @@ def test_connection_failure_recovers(client, gh):
     [{"total_count": 1, "jobs": [{"id": 1}]}],
     [{"total_count": 2, "jobs": [{"id": 1}]}, {"total_count": 2, "jobs": [{"id": 2}]}],
 ])
-def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, gh):
-    log = gh([outage(stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
+@pytest.mark.parametrize("plain", [False, True])
+def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, plain, gh):
+    log = gh([outage(500, plain=plain, stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
     with patch.object(transport, "time") as clock:
         assert client().pages(PATH, field="jobs") == [row for page in pages for row in page["jobs"]]
     clock.sleep.assert_called_once_with(5)
@@ -116,8 +143,9 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
     '[{"total_count": 2, "jobs": [{"id": 1}]}]',
     '[{"total_count": 2, "jobs": []}, {"total_count": 3, "jobs": []}]',
 ])
-def test_response_validation_after_recovery_is_not_retried(client, response, gh):
-    log = gh([outage(), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
+@pytest.mark.parametrize("plain", [False, True])
+def test_response_validation_after_recovery_is_not_retried(client, response, plain, gh):
+    log = gh([outage(500, plain=plain), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
     with patch.object(transport, "time") as clock, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
         client().pages(PATH, field="jobs")
     clock.sleep.assert_called_once_with(5)
@@ -139,8 +167,9 @@ def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
     assert len(clock.sleep.call_args_list) == (1 if recover else 2)
 
 
-def test_deployment_write_is_never_replayed(gh):
-    log = gh([outage(), {"stdout": "{}"}])
+@pytest.mark.parametrize("plain", [False, True])
+def test_deployment_write_is_never_replayed(plain, gh):
+    log = gh([outage(500, plain=plain), {"stdout": "{}"}])
     with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         deployments.GitHub().post("repos/SkyTruth/shared-datasets-1/deployments", {"ref": "a" * 40})
     clock.sleep.assert_not_called()
@@ -148,7 +177,8 @@ def test_deployment_write_is_never_replayed(gh):
 
 
 @pytest.mark.parametrize("wrong_revision", [False, True])
-def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wrong_revision, gh):
+@pytest.mark.parametrize("plain", [False, True])
+def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wrong_revision, plain, gh):
     repository = {"id": 17, "full_name": "SkyTruth/shared-datasets-1"}
     revision = "a" * 40
     run = {
@@ -160,7 +190,7 @@ def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wron
     evidence = [
         {"stdout": json.dumps(repository)},
         {"stdout": '{"id": 12, "path": ".github/workflows/ci.yml"}'},
-        outage(),
+        outage(500, plain=plain),
         {"stdout": json.dumps(run)},
         {"stdout": '[{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}]'},
     ]
