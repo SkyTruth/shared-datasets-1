@@ -340,7 +340,7 @@ class EamlisMonthlyTests(unittest.TestCase):
 
     def test_translation_input_race_or_corruption_prevents_all_canonical_writes(self):
         for problem in (PreconditionFailed("changed"), None):
-            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as tmpdir:
+            with self.subTest(problem=str(problem)), tempfile.TemporaryDirectory() as tmpdir:
                 bucket = FakeBucket()
                 blob = bucket.blob(eamlis.ASSET.latest_object(".metadata-translations.csv"))
                 blob.exists, blob.data = True, b"corrupted CSV"
@@ -368,7 +368,7 @@ class EamlisMonthlyTests(unittest.TestCase):
 
         with (
             mock.patch.object(eamlis.urllib.request, "urlopen", flaky),
-            mock.patch("ingestion.common.http.time.sleep"),
+            mock.patch("ingestion.common.http.time"),
         ):
             payload = eamlis.request_json("https://example.test/layer", {"f": "json"})
 

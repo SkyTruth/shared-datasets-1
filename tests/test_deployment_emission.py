@@ -177,9 +177,9 @@ class EmissionTests(unittest.TestCase):
         outage = self.unavailable()
         outage["stderr"] = "Loaded digest for receipt\n" + outage["stderr"]
         environment, log = self.fake_verifier([outage, self.unavailable(), success])
-        with environment, patch("time.sleep") as sleep:
+        with environment, patch.object(e, "time") as clock:
             e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
-        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
+        self.assertEqual(clock.sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
         calls = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls, [calls[0]] * 3)
@@ -194,9 +194,9 @@ class EmissionTests(unittest.TestCase):
         response = self.unavailable()
         response["stdout"] = json.dumps(verified(e.receipt(REPO, record(), status())))
         environment, log = self.fake_verifier([response])
-        with environment, patch("time.sleep") as sleep, self.assertRaises(subprocess.CalledProcessError) as failed:
+        with environment, patch.object(e, "time") as clock, self.assertRaises(subprocess.CalledProcessError) as failed:
             e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
-        self.assertEqual(sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
+        self.assertEqual(clock.sleep.call_args_list, [unittest.mock.call(5), unittest.mock.call(15)])
         self.assertEqual(len(log.read_text().splitlines()), 3)
         self.assertIn("HTTP 503: trust-metadata-api service unavailable", failed.exception.stderr)
         self.api.post.assert_not_called()
@@ -221,9 +221,9 @@ class EmissionTests(unittest.TestCase):
                 environment, log = self.fake_verifier([response, {"stdout": json.dumps(verified(value))}])
                 if log.exists():
                     log.unlink()
-                with environment, patch("time.sleep") as sleep, self.assertRaises(expected):
+                with environment, patch.object(e, "time") as clock, self.assertRaises(expected):
                     e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
-                sleep.assert_not_called()
+                clock.sleep.assert_not_called()
                 self.assertEqual(len(log.read_text().splitlines()), 1)
                 self.api.post.assert_not_called()
 
@@ -232,9 +232,9 @@ class EmissionTests(unittest.TestCase):
         invalid = verified(value)
         invalid[0]["verificationResult"]["statement"]["subject"][0]["digest"]["sha256"] = "0" * 64
         environment, log = self.fake_verifier([self.unavailable(), {"stdout": json.dumps(invalid)}, {"stdout": json.dumps(verified(value))}])
-        with environment, patch("time.sleep") as sleep, self.assertRaises(e.EmissionError):
+        with environment, patch.object(e, "time") as clock, self.assertRaises(e.EmissionError):
             e.verify(self.api, REPO, record(), status(), original_signer=SIGNER)
-        sleep.assert_called_once_with(5)
+        clock.sleep.assert_called_once_with(5)
         self.assertEqual(len(log.read_text().splitlines()), 2)
         self.api.post.assert_not_called()
 

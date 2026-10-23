@@ -865,7 +865,7 @@ class ExactArtifactFetchTests(unittest.TestCase):
         self.publish()
         self.fetch()
         for failure in (StorageError(403), StorageError(401), TimeoutError("offline"), OSError("network")):
-            with self.subTest(failure=failure):
+            with self.subTest(failure=str(failure)):
                 self.client.requests.clear()
                 self.client.blobs[self.index_key].error = failure
                 with self.assertRaises(CatalogLoadError):

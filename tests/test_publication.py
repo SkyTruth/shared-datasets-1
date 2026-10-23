@@ -275,8 +275,8 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual(store.events, before)
 
     def test_stale_generated_range_and_backfill_are_refused(self):
-        for mutate in (lambda value: value["reservation"].update(start=41), lambda value: value.update(release="2026-08-01")):
-            with self.subTest(mutate=mutate):
+        for case, mutate in enumerate((lambda value: value["reservation"].update(start=41), lambda value: value.update(release="2026-08-01"))):
+            with self.subTest(mutate=case):
                 store = MemoryStore()
                 seed(store)
                 original = make_intent(store)
@@ -308,8 +308,8 @@ class PublicationTests(unittest.TestCase):
             lambda r: r["intent"]["operations"][0].update(destination=f"gs://bucket/{ROOT}/../foreign.fgb"),
             lambda r: r["intent"]["reservation"].update(next=True),
         ]
-        for mutate in mutations:
-            with self.subTest(mutate=mutate):
+        for case, mutate in enumerate(mutations):
+            with self.subTest(mutate=case):
                 store = MemoryStore()
                 seed(store)
                 intent = make_intent(store)
