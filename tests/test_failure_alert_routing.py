@@ -410,7 +410,7 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
 def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
     workflow = load_workflow(WORKFLOWS / "resolve-workflow-alert.yml")
     assert set(workflow_triggers(workflow)) == {"workflow_dispatch"}
-    assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read"}
+    assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "attestations": "read"}
     job = workflow["jobs"]["resolve"]
     assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main'"
     checkout = job["steps"][0]
