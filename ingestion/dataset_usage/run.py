@@ -222,10 +222,18 @@ def activation_valid(activation, classifier, source=None):
             all(entry.get("checks", {}).get(check) is True for check in TRAFFIC_CHECKS[source]))
 
 
+def usage_log_before(name, day):
+    # Native hourly logs may contain earlier requests, never later ones.
+    # An unknown name cannot prove that a missing generation is outside replay.
+    match = re.fullmatch(r"storage-usage_usage_(\d{4}(?:_\d{2}){5})_[a-zA-Z0-9]+_v0", name)
+    return bool(match and dt.datetime.strptime(match[1], "%Y_%m_%d_%H_%M_%S").date().isoformat() < day)
+
+
 def collect(store, classifier, activation, now, directory, *, probe=None, configuration_healthy=False):
     ledger = directory / "ledger.sqlite"
     previous_manifest, generation = store.load(ledger)
     db = sqlite3.connect(ledger)
+    db.create_function("usage_log_before", 2, usage_log_before)
     try:
         replay = initialize(db, classifier, now, activation)
         errors = []
@@ -245,7 +253,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
         rebuilding = False
         if replay:
             assert previous_manifest is not None, "Reconciliation requires a committed ledger reference"
-            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE source='gcs_usage' AND seen_at>=? AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest,)).fetchall()
+            missing = db.execute("SELECT DISTINCT source FROM inputs WHERE source='gcs_usage' AND seen_at>=? AND NOT usage_log_before(name, ?) AND NOT EXISTS(SELECT 1 FROM inventory WHERE inventory.name=inputs.name AND inventory.generation=inputs.generation)", (oldest, oldest)).fetchall()
             if missing:
                 # Never erase old totals when their original generations cannot
                 # be replayed. Keep original evidence versions and mark unknown.
@@ -260,7 +268,7 @@ def collect(store, classifier, activation, now, directory, *, probe=None, config
                 rebuilding = True
                 db.execute("DELETE FROM daily WHERE source='gcs_usage' AND day>=?", (oldest,))
                 db.execute("DELETE FROM events WHERE source='gcs_usage' AND day>=?", (oldest,))
-                db.execute("DELETE FROM inputs WHERE source='gcs_usage' AND seen_at>=?", (oldest,))
+                db.execute("DELETE FROM inputs WHERE source='gcs_usage' AND seen_at>=? AND NOT usage_log_before(name, ?)", (oldest, oldest))
         probes = {token: {"day": day, "source": source, "slug": slug} for token, day, source, slug in db.execute("SELECT token,day,source,slug FROM probes WHERE day>=?", (oldest,))}
         for name, item_generation, size, source in db.execute("SELECT name,generation,size,source FROM inventory ORDER BY name,generation"):
             item = {"name": name, "generation": item_generation, "size": size, "source": source}

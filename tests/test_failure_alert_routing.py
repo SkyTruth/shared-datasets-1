@@ -1,5 +1,6 @@
 """Keep supervised failures in GitHub without losing unattended coverage."""
 
+import io
 import json
 import os
 from pathlib import Path
@@ -349,3 +350,71 @@ def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     assert MARKER not in run
     assert "WDPA_FAIL_BEFORE_WRITES=true" in run
     assert run.index("completionTime") < run.index("gcloud run jobs execute")
+
+
+@pytest.mark.parametrize("failure", [None, "missing", "applied", "older", "divergent", "unsigned", "unregistered"])
+def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure):
+    from scripts import slack_incidents as incidents
+    from scripts import deployment_revision as deployments
+    from scripts.slack_incident_api import Slack
+
+    run = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    repository = {"id": 9, "full_name": alerts.REPOSITORY}
+    run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
+    job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
+           "status": "completed", "conclusion": "failure", "completed_at": "2026-10-23T22:05:00Z"}
+    jobs = [{**job, "id": 11, "name": "ci-ready", "conclusion": "success"}, job]
+    if failure == "unregistered":
+        jobs.append({**job, "id": 12, "name": "Unknown failed job"})
+    record = {"id": 20, "sha": "b" * 40}
+    status = {"id": 21, "state": "success", "description": "applied" if failure == "applied" else "verified",
+              "created_at": "2026-10-22T22:05:00Z" if failure == "older" else "2026-10-25T12:00:00Z",
+              "log_url": incidents.emissions.invocation(alerts.REPOSITORY, 456, 1)}
+    api = mock.Mock()
+    api.get.side_effect = lambda path: ({"id": 7, "path": run["path"]} if path.endswith("/workflows/7")
+                                      else repository if path == "repos/" + alerts.REPOSITORY else run)
+    api.pages.side_effect = lambda path, **kwargs: jobs if "/jobs?" in path else ([] if failure == "missing" else [record])
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    opener = mock.Mock(return_value=Response(b'{"ok":true,"channel":"C0123456789","ts":"1792793158.506179"}'))
+    slack = Slack("test-token", "C0123456789", opener=opener)
+    monkeypatch.setattr("sys.argv", ["alert", "--resolve-run-id", "123", "--message-ts", "1792793158.506179"])
+    with mock.patch.object(alerts, "GitHub", return_value=api), \
+            mock.patch("scripts.slack_incident_api.Slack", return_value=slack), \
+            mock.patch.object(deployments, "verify_record", return_value={"target": "dataset-usage", "artifact": "image@sha256:" + "f" * 64},
+                              side_effect=deployments.DeploymentError("unsigned") if failure == "unsigned" else None), \
+            mock.patch.object(deployments, "verified_statuses", return_value=[status]), \
+            mock.patch.object(deployments, "git_ancestor", return_value=failure != "divergent"):
+        if failure:
+            with pytest.raises((incidents.IncidentError, deployments.DeploymentError)):
+                alerts.main()
+            opener.assert_not_called()
+        else:
+            alerts.main()
+            request = opener.call_args.args[0]
+            assert request.full_url == "https://slack.com/api/chat.update"
+            payload = json.loads(request.data)
+            assert payload["channel"] == "C0123456789" and payload["ts"] == "1792793158.506179"
+            assert payload["text"].startswith("✅ Unattended GitHub workflow resolved")
+            assert "actions/runs/123" in payload["text"] and "actions/runs/456/attempts/1" in payload["text"]
+            assert "thread_ts" not in payload and "reply_broadcast" not in payload
+            assert opener.call_count == 1
+
+
+def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
+    workflow = load_workflow(WORKFLOWS / "resolve-workflow-alert.yml")
+    assert set(workflow_triggers(workflow)) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "attestations": "read"}
+    job = workflow["jobs"]["resolve"]
+    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main'"
+    checkout = job["steps"][0]
+    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
+    step = job["steps"][-1]
+    assert '${{ inputs.' not in step["run"]
+    assert step["env"]["ORIGINAL_MESSAGE_TS"] == "${{ inputs.message_ts }}"

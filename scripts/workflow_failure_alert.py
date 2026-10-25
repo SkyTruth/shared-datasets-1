@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.slack_notify import notify
+from scripts.slack_notify import build_slack_payload, notify
 from scripts.dataset_mutation_authorization import GitHub
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
@@ -146,11 +147,52 @@ def jobs_for_event(api: GitHub, run: dict) -> list[dict] | None:
     )
 
 
+def resolve_legacy(api, slack, run_id, message_ts):
+    """Update an owner-identified webhook parent after all failed targets recover."""
+    from scripts import slack_incidents as incidents
+
+    incidents.require(type(run_id) is int and run_id > 0, "invalid original run ID")
+    run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
+    incidents.require(run["id"] == run_id, "original run identity changed")
+    jobs = jobs_for_event(api, run)
+    event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
+    incidents.require(jobs is not None and alert_for_run(event, jobs=jobs) is not None,
+                      "source is not a current unattended failure")
+    targets = incidents.job_targets()
+    failures = [incidents.from_job(run, job, targets) for job in jobs
+                if job["conclusion"] in FAILED_CONCLUSIONS]
+    incidents.require(failures and all(item["kind"] == "deployment" for item in failures),
+                      "every failed job must have a registered deployment recovery")
+    links = []
+    for failure in failures:
+        recovery = incidents.terminal_success(api, failure["scope"])
+        incidents.require(recovery is not None
+                          and incidents.deployments.git_ancestor(failure["sha"], recovery["sha"])
+                          and incidents.instant(recovery["time"]) > incidents.instant(failure["time"]),
+                          "failed target has no newer verified recovery")
+        links.append(f"<{incidents.emissions.invocation(REPOSITORY, recovery['run_id'], recovery['attempt'])}|Verified {failure['label']} recovery>")
+    payload = build_slack_payload(title="Unattended GitHub workflow resolved", status="success",
+                                 body=f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Original failed run>\n" + "\n".join(dict.fromkeys(links)))
+    slack.update(message_ts, payload)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--event-path", type=Path, required=True)
+    parser.add_argument("--event-path", type=Path)
+    parser.add_argument("--resolve-run-id", type=int)
+    parser.add_argument("--message-ts")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.resolve_run_id is not None:
+        if args.event_path or args.dry_run or not args.message_ts:
+            parser.error("resolution requires only --resolve-run-id and --message-ts")
+        from scripts.slack_incident_api import Slack
+        resolve_legacy(GitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
+                                      os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
+                       args.resolve_run_id, args.message_ts)
+        return
+    if not args.event_path or args.message_ts:
+        parser.error("notification requires --event-path")
     event = json.loads(args.event_path.read_text())
     run = event["workflow_run"]
     jobs = None

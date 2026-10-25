@@ -821,15 +821,16 @@ def test_checkpoint_writes_disable_merges_production_and_auto_inactivation(tmp_p
     assert list((tmp_path / "claims").glob("record-*-status-*.json"))
 
 
-def test_runtime_started_applied_or_missing_receipt_cannot_establish_terminal_success():
+@pytest.mark.parametrize("target", ["wdpa-monthly", "dataset-usage"])
+def test_runtime_started_applied_or_missing_receipt_cannot_establish_terminal_success(target):
     api = mock.Mock()
     record = {"id": 10, "sha": SHA}
     api.pages.return_value = [record]
-    payload = {"target": "wdpa-monthly", "artifact": "image@sha256:" + "f" * 64}
+    payload = {"target": target, "artifact": "image@sha256:" + "f" * 64}
     status = {"id": 12, "state": "success", "description": "applied", "created_at": "2026-10-06T10:18:44Z",
               "log_url": emissions.invocation(incidents.REPOSITORY, 11, 1)}
     with mock.patch.object(deployments, "verify_record", return_value=payload), mock.patch.object(deployments, "verified_statuses", return_value=[status]):
-        assert incidents.terminal_success(api, "deployment:wdpa-monthly") is None
+        assert incidents.terminal_success(api, "deployment:" + target) is None
         payload["target"] = "pmtiles-cdn"
         assert incidents.terminal_success(api, SCOPE)["proof"]["status_id"] == 12
     with mock.patch.object(deployments, "verify_record", side_effect=deployments.DeploymentError("unsigned")):
