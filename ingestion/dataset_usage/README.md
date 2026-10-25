@@ -23,6 +23,14 @@ report. Known nonce probes are excluded as maintenance. Raw retention remains
 seven days and aggregate/snapshot retention remains 460 days. Last-observed
 bucket timestamps survive aggregate expiry.
 
+Reconciliation uses the reporting hour in native usage-log names to exclude
+expired logs that cannot contain events in the replay window, even when they
+were first processed later. Older aggregates and their receipts stay intact.
+Missing generations inside the replay window, and unrecognized names that
+cannot prove an earlier reporting hour, still stop reconciliation with an
+explicit gap. [Google's hourly log contract](https://cloud.google.com/storage/docs/access-logs#download_logs)
+allows earlier events in a file, never events from a later hour.
+
 Configuration, report and ledger schema version 3 retire `app_usage`. The worker
 accepts existing version-2 ledgers and the older unversioned ledger, preserves
 historical tables, totals, timestamps and original source labels, and records a

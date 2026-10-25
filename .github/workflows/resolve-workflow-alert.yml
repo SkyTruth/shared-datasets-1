@@ -1,0 +1,48 @@
+name: Resolve legacy workflow alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Original failed unattended run ID
+        required: true
+        type: string
+      message_ts:
+        description: Owner-confirmed timestamp of that run's original Slack parent
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+
+jobs:
+  resolve:
+    if: github.actor == 'jonaraphael' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+          enable-cache: false
+      - run: uv sync --locked --no-dev
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Verify every failed target and update the original parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+          ORIGINAL_RUN_ID: ${{ inputs.run_id }}
+          ORIGINAL_MESSAGE_TS: ${{ inputs.message_ts }}
+        run: uv run --no-sync python scripts/workflow_failure_alert.py --resolve-run-id "$ORIGINAL_RUN_ID" --message-ts "$ORIGINAL_MESSAGE_TS"

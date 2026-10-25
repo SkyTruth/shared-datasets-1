@@ -282,3 +282,17 @@ historical v1 snapshots and recovery posts retain persisted audit evidence; the
 existing webhook supports disabled mode and established ingestion notifications.
 Remaining uncertainty: actual delivery depends on Slack availability and bot
 configuration; ambiguous non-idempotent sends still require owner inspection.
+
+
+### Closing a legacy webhook parent
+
+Webhook alerts sent while incident management is disabled have no managed message
+record. After recovery, the owner may dispatch `Resolve legacy workflow alert`
+from `main` with the original failed run ID and its inspected Slack parent
+`message_ts`. The action uses read-only GitHub permissions to verify every failed job maps to a
+registered deployment and that each latest signed terminal success is newer and
+covers the failed revision. Runtime targets, including dataset usage, require
+`verified`, not merely `applied`. It updates only the supplied original parent;
+it never posts a replacement or reply. Unsupported failures remain unresolved.
+This action does not enable incident management or reinterpret retained incident
+records from other protocol versions.

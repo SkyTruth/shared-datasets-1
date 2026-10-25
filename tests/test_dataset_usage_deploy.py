@@ -178,6 +178,9 @@ def test_retirement_requires_native_health_without_any_application_receipts(tmp_
         (directory / name).write_bytes((ROOT / 'catalog' / name).read_bytes())
     now = dt.datetime.now(dt.UTC)
     activation = json.loads((directory / 'dataset-usage-activation.json').read_text())
+    activation['configuration_sha256'] = dataset_usage_deploy.Classifier(
+        dataset_usage_deploy.read_catalog_rows_text((directory / 'shared-datasets-catalog.csv').read_text()),
+        json.loads((directory / 'dataset-usage.json').read_text()), 'skytruth-shared-datasets-1').version
     for source, entry in activation['sources'].items():
         entry.update(verified_at=(now - dt.timedelta(days=4)).isoformat(), checks=dict.fromkeys(TRAFFIC_CHECKS[source], True))
     (directory / 'dataset-usage-activation.json').write_text(json.dumps(activation))
