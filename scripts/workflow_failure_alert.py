@@ -187,7 +187,8 @@ def main() -> None:
         if args.event_path or args.dry_run or not args.message_ts:
             parser.error("resolution requires only --resolve-run-id and --message-ts")
         from scripts.slack_incident_api import Slack
-        resolve_legacy(GitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
+        from scripts.deployment_revision import GitHub as DeploymentGitHub
+        resolve_legacy(DeploymentGitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
                                       os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
                        args.resolve_run_id, args.message_ts)
         return
