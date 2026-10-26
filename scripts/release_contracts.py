@@ -190,8 +190,13 @@ def iam_contract(root):
             for key in ("executor_sha", "source_run_id", "source_run_attempt"):
                 if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
                     errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
-    for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
-        if workflow(root, filename)["jobs"][child].get("needs") != "bootstrap":
+    for filename, child, parents in (
+        ("artifact-registry-iam-sync.yml", "writer", "bootstrap"),
+        ("cron-alert-policy-sync.yml", "resources", "bootstrap"),
+        ("cron-alert-policy-sync.yml", "sync", ["bootstrap", "resources"]),
+        ("preview-terraform-iam-sync.yml", "sync", "bootstrap"),
+    ):
+        if workflow(root, filename)["jobs"][child].get("needs") != parents:
             errors.append(f"{filename}: bootstrap authority must precede dependent mutation")
     return errors
 
