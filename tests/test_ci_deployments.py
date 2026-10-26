@@ -210,24 +210,25 @@ def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path
     assert "production-images" in select_suites([path])[0]
 
 
+@pytest.mark.parametrize("cancelled", [True, False])
 @pytest.mark.parametrize("gate", ["success", "failure", "cancelled", "skipped"])
 @pytest.mark.parametrize("selected", [True, False])
 @pytest.mark.parametrize("event,ref", [
     ("push", "refs/heads/main"), ("push", "refs/heads/topic"),
     ("pull_request", "refs/heads/main"), ("workflow_dispatch", "refs/heads/main"),
 ])
-def test_registry_bootstrap_survives_unselected_suites_without_bypassing_gate(gate, selected, event, ref):
+def test_registry_bootstrap_survives_unselected_suites_without_bypassing_gate(cancelled, gate, selected, event, ref):
     job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["artifact-registry-iam"]
     expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
     # GitHub otherwise adds success() over skipped transitive ancestors.
-    assert "always()" in expression
+    assert "!cancelled()" in expression
     values = {
-        "always()": "True", "github.event_name": repr(event), "github.ref": repr(ref),
+        "!cancelled()": repr(not cancelled), "github.event_name": repr(event), "github.ref": repr(ref),
         "needs.ci-ready.result": repr(gate),
         "needs.geospatial-changes.outputs.artifact_registry_iam": repr("true" if selected else "false"),
     }
     for name, value in values.items():
         expression = expression.replace(name, value)
     assert eval(expression.replace("&&", " and "), {"__builtins__": {}}) is (
-        gate == "success" and selected and event == "push" and ref == "refs/heads/main"
+        not cancelled and gate == "success" and selected and event == "push" and ref == "refs/heads/main"
     )
