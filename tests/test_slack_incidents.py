@@ -790,6 +790,113 @@ def signed_record():
             "payload": {"schema": incidents.SCHEMA, "state": value, "execution_run_id": 11, "execution_run_attempt": 1}}
 
 
+def retired_record(*, empty=False):
+    record = signed_record()
+    record["payload"]["schema"] = "shared-datasets-slack-incident-v3"
+    value = record["payload"]["state"]
+    value.update(operation_id=SCOPE, first_failure_at=observation()["time"], stable_since=None,
+                 aliases=[SCOPE], source_aliases=["github:100:1"], operational={}, recoveries={},
+                 watermarks={}, supervision={}, escalation_at=None, escalation_reason=None)
+    if empty:
+        value.update(incident=None, first_failure_at=None, source_aliases=[],
+                     supervision={SCOPE: {"status": "released"}})
+    return record
+
+
+def load_retired(record, tmp_path):
+    api = mock.Mock()
+    api.pages.side_effect = lambda path, **_: ([record] if "/deployments?" in path else
+                                              [{"id": 12, "state": "success", "description": "applied"}])
+    return incidents.Ledger(api, {}, tmp_path).load()
+
+
+def test_retired_checkpoint_recovery_edits_its_original_parent(tmp_path):
+    record = retired_record()
+    parent = "1791270000.000001"
+    record["payload"]["state"]["incident"]["posts"]["parent"] = {"state": "delivered", "ts": parent}
+    with mock.patch.object(emissions, "verify") as verify:
+        states = load_retired(json.loads(json.dumps(record)), tmp_path)
+    verify.assert_called_once()
+    ledger, slack = MemoryLedger(states), FakeSlack()
+    records = incidents.prepare(ledger, IDENTITY, [success()], ancestor=lambda *_: True, success=lambda *_: None)
+    incidents.deliver(ledger, records, slack)
+    assert not any(call[0] == "post" for call in slack.calls)
+    assert [(call[0], call[2]) for call in slack.calls] == [("update", {"ts": parent})]
+    assert ledger.states[SCOPE]["incident"]["id"] == record["payload"]["state"]["incident"]["id"]
+    assert ledger.states[SCOPE]["incident"]["failures"] == record["payload"]["state"]["incident"]["failures"]
+
+
+def test_retired_checkpoint_does_not_resend_an_uncertain_parent(tmp_path):
+    record = retired_record()
+    with mock.patch.object(emissions, "verify"):
+        states = load_retired(record, tmp_path)
+    ledger, slack = MemoryLedger(states), FakeSlack()
+    records = incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None)
+    incidents.deliver(ledger, records, slack)
+    assert not slack.calls and incidents.pending_posts(ledger.states[SCOPE]) == {"parent": {"state": "claimed", "ts": None}}
+
+
+def test_retired_registration_is_ignored_only_after_signature_verification(tmp_path):
+    record = retired_record(empty=True)
+    with mock.patch.object(emissions, "verify", side_effect=emissions.EmissionError("forged")):
+        with pytest.raises(emissions.EmissionError, match="forged"):
+            load_retired(record, tmp_path)
+    with mock.patch.object(emissions, "verify") as verify:
+        assert load_retired(record, tmp_path) == {}
+    verify.assert_called_once()
+
+
+def test_later_retired_writer_cannot_replace_current_notification_state(tmp_path):
+    record = retired_record()
+    record["id"] = incidents.RETIRED_CHECKPOINT_MAX_ID + 1
+    with mock.patch.object(emissions, "verify") as verify, pytest.raises(incidents.IncidentError, match="state downgrade"):
+        load_retired(record, tmp_path)
+    verify.assert_not_called()
+
+
+@pytest.mark.parametrize("change", [
+    {"aliases": [SCOPE, "deployment:dataset-usage"]},
+    {"watermarks": {SCOPE: success()}},
+    {"unexpected": True},
+])
+def test_retired_checkpoint_cannot_drop_unrepresented_state(change, tmp_path):
+    record = retired_record()
+    record["payload"]["state"].update(change)
+    with mock.patch.object(emissions, "verify"), pytest.raises(incidents.IncidentError):
+        load_retired(record, tmp_path)
+
+
+def test_retired_setup_requires_a_resolved_checkpoint_and_never_reactivates_deployment():
+    record = retired_record()
+    value = record["payload"]["state"]
+    scope = "deployment:" + incidents.RETIRED_SETUP_TARGET
+    value.update(scope=scope, operation_id=scope, aliases=[scope])
+    for failure in value["incident"]["failures"]:
+        failure["scope"] = scope
+    with pytest.raises(incidents.IncidentError, match="unresolved"):
+        incidents.migrate_verified_state(value, incidents.RETIRED_SCHEMA)
+    value["healthy"] = value["incident"]["resolution"] = success(scope=scope)
+    value["watermarks"] = value["recoveries"] = {scope: value["healthy"]}
+    assert incidents.migrate_verified_state(value, incidents.RETIRED_SCHEMA)["incident"]["resolution"] == value["healthy"]
+    api = mock.Mock()
+    assert incidents.terminal_success(api, scope) is None
+    api.pages.assert_not_called()
+    with pytest.raises(incidents.IncidentError, match="unregistered"):
+        incidents.terminal_success(api, "deployment:unknown")
+
+
+@pytest.mark.parametrize("change", [
+    {"supervision": {SCOPE: {"status": "active"}}},
+    {"deferred": [observation()]},
+    {"operational": {"source": {}}},
+])
+def test_retired_empty_registration_cannot_hide_work(change, tmp_path):
+    record = retired_record(empty=True)
+    record["payload"]["state"].update(change)
+    with mock.patch.object(emissions, "verify"), pytest.raises(incidents.IncidentError):
+        load_retired(record, tmp_path)
+
+
 def test_forged_actions_bot_ledger_claim_cannot_choose_parent_or_suppress_real_alert(tmp_path):
     api = mock.Mock()
     api.pages.return_value = [{"id": 12, "state": "success", "description": "applied"}]
@@ -859,14 +966,68 @@ def test_exact_completed_ci_jobs_and_publication_negative_controls():
 def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name):
     api = mock.Mock()
     api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
-    with mock.patch.object(incidents, "source_observations", return_value=[observation()]):
-        assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [observation()]
+    inside = observation(time="2026-10-06T13:00:00Z")
+    with mock.patch.object(incidents, "source_observations", return_value=[observation(), inside, observation(time="2026-10-07T13:00:00Z")]):
+        assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [inside]
     path = api.pages.call_args.args[0]
-    assert "2026-10-06T12%3A00%3A00Z" in path and "branch=main" in path
+    assert "2026-10-06T12%3A00%3A00Z..2026-10-07T12%3A00%3A00Z" in path and "branch=main" in path
     assert api.pages.call_args.kwargs == {"field": "workflow_runs"}
     api.pages.side_effect = deployments.DeploymentError("incomplete API enumeration")
     with pytest.raises(deployments.DeploymentError, match="incomplete"):
         incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z")
+
+
+def test_owner_cutover_replay_uses_existing_recovery_and_closed_daily_windows(tmp_path, monkeypatch):
+    ledger = MemoryLedger()
+    operation = "replay:2026-10-06T00:00:00Z..2026-10-08T12:00:00Z"
+    with mock.patch.object(incidents, "replay_observations", return_value=[observation()]) as replay, \
+            mock.patch.object(incidents, "prepare", return_value=[]) as prepare:
+        assert incidents.replay_window(ledger, IDENTITY, operation, now=datetime(2026, 10, 9, tzinfo=timezone.utc)) == []
+    assert [(call.args[2], call.kwargs["now"].isoformat()) for call in replay.call_args_list] == [
+        ("2026-10-06T00:00:00Z", "2026-10-07T00:00:00+00:00"),
+        ("2026-10-07T00:00:00Z", "2026-10-08T00:00:00+00:00"),
+        ("2026-10-08T00:00:00Z", "2026-10-08T12:00:00+00:00"),
+    ]
+    assert prepare.call_args.args == (ledger, IDENTITY, [observation()] * 3)
+    assert all(call.kwargs["completed_until"] == datetime(2026, 10, 8, 12, tzinfo=timezone.utc) for call in replay.call_args_list)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"inputs": {"delivery_result": "replay-window", "incident_id": "workflow-bot-cutover",
+                                               "operation": operation, "message_ts": ""}}))
+    monkeypatch.setattr("sys.argv", ["slack_incidents.py", "prepare", "--event-path", str(event_path), "--work-dir", str(tmp_path)])
+    with mock.patch.object(incidents, "worker_context", return_value=ledger.run), \
+            mock.patch.object(incidents, "Ledger", return_value=ledger), \
+            mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
+            mock.patch.object(incidents, "replay_observations", return_value=[]):
+        incidents.main()
+    assert json.loads((tmp_path / "prepared.json").read_text()) == []
+    ledger.api.post.assert_not_called()
+
+
+def test_cutover_replay_keeps_a_run_that_finishes_in_the_following_daily_window():
+    ledger = MemoryLedger()
+    source = {"status": "completed", "name": "CI", "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}
+    ledger.api.pages.side_effect = [[source], []]
+    late = observation(time="2026-10-07T00:10:00Z")
+    with mock.patch.object(incidents, "source_observations", return_value=[late]), \
+            mock.patch.object(incidents, "prepare", return_value=[]) as prepare:
+        incidents.replay_window(ledger, IDENTITY, "replay:2026-10-06T00:00:00Z..2026-10-08T00:00:00Z",
+                                now=datetime(2026, 10, 9, tzinfo=timezone.utc))
+    assert prepare.call_args.args[2] == [late]
+
+
+@pytest.mark.parametrize("actor,operation", [
+    ("other", "replay:2026-10-06T00:00:00Z..2026-10-08T12:00:00Z"),
+    ("jonaraphael", "replay:2026-10-06T00:00:00Z..2026-10-06T00:00:00Z"),
+    ("jonaraphael", "replay:2026-10-06T00:00:00Z..2026-10-15T00:00:00Z"),
+    ("jonaraphael", "replay:2026-10-10T00:00:00Z..2026-10-11T00:00:00Z"),
+    ("jonaraphael", "arbitrary"),
+])
+def test_cutover_replay_rejects_nonowner_unbounded_and_future_windows(actor, operation):
+    ledger = MemoryLedger()
+    ledger.run["actor"]["login"] = actor
+    with mock.patch.object(incidents, "replay_observations") as replay, pytest.raises(incidents.IncidentError):
+        incidents.replay_window(ledger, IDENTITY, operation, now=datetime(2026, 10, 9, tzinfo=timezone.utc))
+    replay.assert_not_called()
 
 
 class Response(io.BytesIO):
