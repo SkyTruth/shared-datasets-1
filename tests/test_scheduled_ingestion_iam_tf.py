@@ -79,12 +79,15 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
 
     def test_monitoring_secret_writer_covers_authorized_version_without_other_secrets(self):
         text = (PROD_TF_DIR / "monitoring_slack.tf").read_text()
-        block = terraform_resource_block(text, "google_project_iam_member", "monitoring_slack_token_writer")
-        self.assertIn('"roles/secretmanager.secretVersionAdder"', block)
-        self.assertIn('"serviceAccount:${var.github_actions_terraform_service_account_email}"', block)
-        expression = re.search(r'expression\s*=\s*"([^"]+)"', block).group(1)
-        expression = expression.replace("${data.google_project.current.number}", "123456789")
-        expression = expression.replace("resource.name", "name").replace(".startsWith(", ".startswith(").replace("||", " or ")
+        blocks = [block for block in terraform_resource_blocks(text, "google_project_iam_member")
+                  if '"roles/secretmanager.secretVersionAdder"' in block]
+        self.assertTrue(blocks)
+        expressions = []
+        for block in blocks:
+            self.assertIn('"serviceAccount:${var.github_actions_terraform_service_account_email}"', block)
+            expression = re.search(r'expression\s*=\s*"([^"]+)"', block).group(1)
+            expression = expression.replace("${data.google_project.current.number}", "123456789")
+            expressions.append(expression.replace("resource.name", "name").replace(".startsWith(", ".startswith("))
         secret = "projects/123456789/secrets/shared-datasets-slack-bot-token"
         for name, allowed in [
             (secret, True),  # Secret-level testIamPermissions precheck.
@@ -96,7 +99,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             ("", False),
         ]:
             with self.subTest(resource=name):
-                self.assertIs(eval(expression, {"__builtins__": {}}, {"name": name}), allowed)
+                self.assertIs(any(eval(expression, {"__builtins__": {}}, {"name": name}) for expression in expressions), allowed)
 
     def test_shared_bucket_conditions_cover_hns_folder_resources(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
