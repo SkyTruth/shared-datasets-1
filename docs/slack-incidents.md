@@ -125,7 +125,9 @@ acknowledges its update; an interrupted update safely retries the same parent.
 Version 1 snapshots are signature-verified before migration. Existing timestamps
 and historical recovery replies remain audit evidence and are never sent again.
 Retired version 3 snapshots are also signature-verified before reading their
-incident core. Only a single scope with all failure and recovery evidence
+incident core. Only historical IDs through the reviewed retirement boundary are
+accepted; a newly emitted retired-format checkpoint fails as a state downgrade.
+Only a single scope with all failure and recovery evidence
 represented in that core is accepted. Original parents and delivery claims stay
 intact; their old view acknowledgements are cleared so the current bot updates
 the same messages. Proven-empty registrations with released supervision have no

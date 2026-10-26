@@ -846,6 +846,14 @@ def test_retired_registration_is_ignored_only_after_signature_verification(tmp_p
     verify.assert_called_once()
 
 
+def test_later_retired_writer_cannot_replace_current_notification_state(tmp_path):
+    record = retired_record()
+    record["id"] = incidents.RETIRED_CHECKPOINT_MAX_ID + 1
+    with mock.patch.object(emissions, "verify") as verify, pytest.raises(incidents.IncidentError, match="state downgrade"):
+        load_retired(record, tmp_path)
+    verify.assert_not_called()
+
+
 @pytest.mark.parametrize("change", [
     {"aliases": [SCOPE, "deployment:dataset-usage"]},
     {"watermarks": {SCOPE: success()}},

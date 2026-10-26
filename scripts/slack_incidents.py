@@ -31,6 +31,8 @@ from scripts.slack_notify import build_slack_payload
 SCHEMA = "shared-datasets-slack-incident-v2"
 LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
 RETIRED_SCHEMA = "shared-datasets-slack-incident-v3"
+# Last retained checkpoint before the retired writer was disabled.
+RETIRED_CHECKPOINT_MAX_ID = 7260103711
 READ_SCHEMAS = {SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
 RETIRED_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
 ENVIRONMENT = "slack-incidents"
@@ -605,6 +607,8 @@ class Ledger:
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
                 and record.get("ref") == record.get("sha") and deployments.SHA.fullmatch(str(record.get("sha", "")))
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
+        require(payload["schema"] != RETIRED_SCHEMA or positive(record.get("id")) and record["id"] <= RETIRED_CHECKPOINT_MAX_ID,
+                "a retired writer emitted a new checkpoint; refusing state downgrade")
         if payload["schema"] != RETIRED_SCHEMA:
             validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
