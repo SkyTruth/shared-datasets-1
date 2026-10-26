@@ -1,16 +1,7 @@
 locals {
   slack_webhook_secret_id = "shared-datasets-slack-webhook-url"
 
-  cron_alert_created_slack_channel = (
-    var.cron_alert_slack_channel_name == null
-    ? []
-    : [google_monitoring_notification_channel.cron_alert_slack[0].name]
-  )
-
-  cron_alert_notification_channels = concat(
-    var.cron_alert_notification_channels,
-    local.cron_alert_created_slack_channel,
-  )
+  cron_alert_notification_channels = [google_monitoring_notification_channel.monitoring_slack.name]
 
   dataset_delete_excluded_prefix_filter = join(" AND ", [
     for prefix in var.dataset_delete_alert_excluded_prefixes :
@@ -59,7 +50,7 @@ resource "terraform_data" "cron_alert_channel_configured" {
   lifecycle {
     precondition {
       condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
-      error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
+      error_message = "Monitoring alerts are enabled, but no notification channel is configured. Provision the authenticated Monitoring Slack Pub/Sub transport before routing policies."
     }
   }
 }
@@ -163,6 +154,7 @@ EOT
   depends_on = [
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
 
@@ -228,7 +220,7 @@ EOT
 
   alert_strategy {
     auto_close           = "604800s"
-    notification_prompts = ["OPENED"]
+    notification_prompts = ["OPENED", "CLOSED"]
   }
 
   user_labels = {
@@ -240,6 +232,7 @@ EOT
   depends_on = [
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
 
@@ -299,6 +292,7 @@ EOT
   depends_on = [
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
 
@@ -359,6 +353,7 @@ EOT
   depends_on = [
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
 
@@ -425,6 +420,7 @@ EOT
     google_project_iam_audit_config.storage_data_write,
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
 
@@ -498,5 +494,6 @@ EOT
     google_project_iam_audit_config.storage_data_write,
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
+    google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }

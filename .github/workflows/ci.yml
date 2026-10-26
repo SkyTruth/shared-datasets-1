@@ -592,8 +592,8 @@ jobs:
     secrets: inherit
 
   cron-alert-policy:
-    needs: [ci-ready, geospatial-changes, ingestion-iam]
-    if: ${{ always() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
+    if: ${{ always() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
     permissions:
       contents: read
       actions: read

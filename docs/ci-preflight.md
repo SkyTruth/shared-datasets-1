@@ -66,8 +66,8 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests all six actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. Its evidence retains the five deployable
+tests all seven actual Linux AMD64 deployment recipes on every host without mounting the Docker
+socket into a validation container. Its evidence retains the six deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these

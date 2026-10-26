@@ -198,3 +198,13 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     }).static_order())
     assert order.index('pmtiles-cdn') < order.index('dataset-usage')
     assert 'needs.dataset-usage' not in jobs['pmtiles-cdn']['if']
+
+
+@pytest.mark.parametrize("path", [
+    "services/monitoring_slack/run.py", "terraform/envs/prod/monitoring_slack.tf",
+    "terraform/envs/prod/monitoring.tf", "scripts/slack_incident_api.py",
+    "scripts/monitoring_slack_prepare.py",
+])
+def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path):
+    assert select_deployments([path]) == ["artifact_registry_iam", "cron_alert_policy"]
+    assert "production-images" in select_suites([path])[0]
