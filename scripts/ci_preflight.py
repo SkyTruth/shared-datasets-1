@@ -334,8 +334,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "sync", "--locked", "--all-groups", "--extra", "wdpa-native")
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
-        add("uv", "sync", "--locked", "--all-groups")
-        add("uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(output))
+        # Host checks use only the standard library; image dependencies stay in Docker.
+        add(sys.executable, "-I", "scripts/production_image_contracts.py", "--output", str(output))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -517,10 +517,10 @@ def preflight(args: argparse.Namespace) -> int:
             # The host owns Docker and source paths. A nested container would
             # need privileged Docker access and paths outside its namespace.
             with isolated_host_environment(work, dict(os.environ)) as environment:
-                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"], "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
+                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"],
                                     "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
-                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=image_root, env=environment, check=True)
-                command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
+                command = ["uv", "run", "--no-project", "--isolated", "--managed-python", "--python", TOOLCHAIN["python"],
+                           "python", "-I", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
                 completed = subprocess.run(command, cwd=image_root, env=environment, check=False)
             report = output / "result.json"
             if not report.exists():
@@ -544,12 +544,17 @@ def preflight(args: argparse.Namespace) -> int:
             results.append(result)
             runtime["suites"][result["suite"]] = suite_runtime
             write_json(work / "runtime.json", runtime)
-    verify_results(plan, results)
+    verified = verify_results(plan, results)
     # Recheck the source identities after potentially lengthy validation.
     if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
         raise ValueError("base or head changed during preflight; evidence is stale")
     if git(source, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("source changed during preflight; evidence is stale")
+    if "production-images" in verified:
+        for image in verified["production-images"]["production_images"]["images"].values():
+            (work / "production-images/images" / image["archive"]).unlink()
+        runtime["production_image_archives_retained"] = False
+        write_json(work / "runtime.json", runtime)
     write_json(work / "preflight.json", {**plan, "status": "success", "results": results, "runtime": runtime})
     print(f"All {len(results)} selected suites passed. Evidence: {work / 'preflight.json'}")
     return 0
