@@ -83,9 +83,10 @@ resource "google_project_iam_member" "monitoring_slack_token_writer" {
   project = var.project_id
   role    = "roles/secretmanager.secretVersionAdder"
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  # Prechecks use the secret; AddSecretVersion authorizes versions/NEW.
   condition {
     title      = "monitoring_slack_token_versions_only"
-    expression = "resource.name == 'projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token'"
+    expression = "resource.name == 'projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token' || resource.name.startsWith('projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token/versions/')"
   }
 }
 

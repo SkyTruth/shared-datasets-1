@@ -77,6 +77,27 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         # The bootstrap plan must not need permission to read the secret it unlocks.
         self.assertNotIn("google_secret_manager_secret.", binding)
 
+    def test_monitoring_secret_writer_covers_authorized_version_without_other_secrets(self):
+        text = (PROD_TF_DIR / "monitoring_slack.tf").read_text()
+        block = terraform_resource_block(text, "google_project_iam_member", "monitoring_slack_token_writer")
+        self.assertIn('"roles/secretmanager.secretVersionAdder"', block)
+        self.assertIn('"serviceAccount:${var.github_actions_terraform_service_account_email}"', block)
+        expression = re.search(r'expression\s*=\s*"([^"]+)"', block).group(1)
+        expression = expression.replace("${data.google_project.current.number}", "123456789")
+        expression = expression.replace("resource.name", "name").replace(".startsWith(", ".startswith(").replace("||", " or ")
+        secret = "projects/123456789/secrets/shared-datasets-slack-bot-token"
+        for name, allowed in [
+            (secret, True),  # Secret-level testIamPermissions precheck.
+            (secret + "/versions/NEW", True),  # Observed AddSecretVersion audit resource.
+            (secret + "/versions/1", True),
+            (secret + "-other/versions/NEW", False),
+            ("projects/123456789/secrets/other/versions/NEW", False),
+            (secret.replace("123456789", "987654321") + "/versions/NEW", False),
+            ("", False),
+        ]:
+            with self.subTest(resource=name):
+                self.assertIs(eval(expression, {"__builtins__": {}}, {"name": name}), allowed)
+
     def test_shared_bucket_conditions_cover_hns_folder_resources(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
 
