@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -126,6 +127,15 @@ def commands(target, executor, *, image_id=None):
     return [build, *checks]
 
 
+def cached_build(command, target):
+    """Reuse build layers in Actions; checks and retained images always run anew."""
+    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true":
+        return command
+    cache = f"type=gha,version=2,scope=production-{target}"
+    return ["docker", "buildx", "build", "--load", "--cache-from", cache,
+            "--cache-to", cache + ",mode=max,ignore-error=true", *command[2:]]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", action="append", choices=["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"])
@@ -141,7 +151,7 @@ def main():
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
     for target in args.target or ["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"]:
-        subprocess.run(commands(target, executor)[0], check=True)
+        subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)
         for command in commands(target, executor, image_id=image_id)[1:]:

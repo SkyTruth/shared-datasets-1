@@ -83,6 +83,15 @@ images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these
 tested bytes without rebuilding.
+
+Hosted production-image builds restore per-recipe GitHub Actions build caches.
+GitHub's branch restrictions isolate PR cache writes from main; PRs can restore
+main's cache. BuildKit invalidates layers when recipe inputs change. Every image
+is still built, checked by immutable identity, exported, hashed and loaded again.
+Caches never substitute for validation evidence or deployment artifacts. Cache
+export errors are optional acceleration failures; image or validation failures
+still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
+
 After all selected suites, final evidence verification and source checks pass,
 full local preflight removes only its own six verified image archives. Manifests,
 hashes, command logs and results remain; `runtime.json` records
