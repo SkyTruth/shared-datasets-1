@@ -30,6 +30,9 @@ from scripts.slack_notify import build_slack_payload
 
 SCHEMA = "shared-datasets-slack-incident-v2"
 LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
+RETIRED_SCHEMA = "shared-datasets-slack-incident-v3"
+READ_SCHEMAS = {SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
+RETIRED_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
 ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
@@ -269,7 +272,7 @@ def same_migrated_episode(original, current):
             and all(new["posts"].get(key) == post for key, post in old["posts"].items() if post["state"] == "delivered"))
 
 
-def replay_observations(api, targets, since, *, now=None):
+def replay_observations(api, targets, since, *, now=None, completed_until=None):
     """Hourly observation catches bounded queue loss without another scheduler.
 
     Reconcile the last 24 hours, starting no earlier than explicit activation.
@@ -277,18 +280,39 @@ def replay_observations(api, targets, since, *, now=None):
     """
     now = now or datetime.now(timezone.utc)
     start = max(instant(since), now - timedelta(hours=24))
-    query = urlencode({"branch": "main", "created": ">=" + start.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
+                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     runs = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
     observations = []
     for run in runs:
         if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
                 and run.get("head_branch") == "main" and run.get("head_repository", {}).get("full_name") == REPOSITORY):
             observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}, targets))
-    return observations
+    return [item for item in observations if start <= instant(item["time"]) <= (completed_until or now)]
+
+
+def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: None):
+    """Owner-reviewed catch-up in closed daily windows; never rerun a source."""
+    require(ledger.run["event"] == "workflow_dispatch" and ledger.run.get("actor", {}).get("login") == "jonaraphael",
+            "historical replay requires the repository owner on trusted main")
+    match = re.fullmatch(r"replay:(.+)\.\.(.+)", operation)
+    require(match is not None, "require replay:START..END with exact UTC timestamps")
+    start, end = map(instant, match.groups())
+    require(timedelta(0) < end - start <= timedelta(days=7) and end <= (now or datetime.now(timezone.utc)),
+            "replay requires a closed past window of at most seven days")
+    observations, targets = [], job_targets()
+    while start < end:
+        stop = min(start + timedelta(days=1), end)
+        observations.extend(replay_observations(ledger.api, targets, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
+        start = stop
+    return prepare(ledger, identity, observations, on_saved=on_saved)
 
 
 def terminal_success(api, scope):
     target = scope.removeprefix("deployment:")
+    if target == RETIRED_SETUP_TARGET:
+        # Its signed, already-resolved incident survives the retired deployment.
+        return None
     require(target in deployments.TARGET_WORKFLOWS | deployments.TERRAFORM_WORKFLOWS, "unregistered recovery target")
     records = api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100")
     if not records:
@@ -445,6 +469,32 @@ def validate_state(state, *, legacy=False):
 def migrate_verified_state(state, schema):
     """Upgrade only verified historical bytes; never assume an update succeeded."""
     state = copy.deepcopy(state)
+    if schema == RETIRED_SCHEMA:
+        fields = {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}
+        retired = {"operation_id", "first_failure_at", "stable_since", "aliases", "source_aliases",
+                   "operational", "recoveries", "watermarks", "supervision", "escalation_at", "escalation_reason"}
+        require(set(state) == fields | retired and state["operation_id"] == state["scope"]
+                and state["aliases"] == [state["scope"]], "retired checkpoint has incompatible scopes or fields")
+        incident, healthy = state["incident"], state["healthy"]
+        require(state["scope"] != "deployment:" + RETIRED_SETUP_TARGET or incident is not None and incident["resolution"] is not None,
+                "retired setup still has an unresolved incident")
+        require(state["watermarks"] == ({state["scope"]: healthy} if healthy else {})
+                and all(proof is not None and scope == state["scope"] and proof in (healthy, incident["resolution"] if incident else None)
+                        for scope, proof in state["recoveries"].items()), "retired checkpoint has unrepresented recovery evidence")
+        if incident is None:
+            require(healthy is None and not any(state[key] for key in
+                    ("deferred", "operational", "recoveries", "watermarks", "source_aliases"))
+                    and all(owner["status"] == "released" for owner in state["supervision"].values())
+                    and all(state[key] is None for key in
+                            ("first_failure_at", "stable_since", "escalation_at", "escalation_reason")),
+                    "retired registration still contains work")
+            return None
+        require(state["first_failure_at"] == min(item["time"] for item in incident["failures"])
+                and set(state["operational"]) <= {observation_key(item) for item in incident["failures"]},
+                "retired checkpoint has unrepresented failures")
+        state = {key: state[key] for key in fields}
+        # The retired renderer's acknowledgement cannot acknowledge this view.
+        state["incident"]["parent_view_sha256"] = None
     if schema == LEGACY_SCHEMA:
         state["incident"]["parent_view_sha256"] = None
     return validate_state(state)
@@ -551,17 +601,18 @@ class Ledger:
         if isinstance(payload, str):
             payload = json.loads(payload)
         require(isinstance(payload, dict) and set(payload) == {"schema", "state", "execution_run_id", "execution_run_attempt"}
-                and payload["schema"] in {SCHEMA, LEGACY_SCHEMA} and record.get("task") == "slack-incident"
+                and payload["schema"] in READ_SCHEMAS and record.get("task") == "slack-incident"
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
                 and record.get("ref") == record.get("sha") and deployments.SHA.fullmatch(str(record.get("sha", "")))
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
-        state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
+        if payload["schema"] != RETIRED_SCHEMA:
+            validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
         emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
-        return migrate_verified_state(state, payload["schema"])
+        return migrate_verified_state(payload["state"], payload["schema"])
 
     def load(self):
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
@@ -570,11 +621,15 @@ class Ledger:
             payload = record["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}, "unknown notification ledger schema")
+            require(isinstance(payload, dict) and payload.get("schema") in READ_SCHEMAS, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
-        states = {scope: self.verify(record) for scope, record in latest.items()}
+        states = {}
+        for scope, record in latest.items():
+            state = self.verify(record)
+            if state is not None:
+                states[scope] = state
         old_scope = "deployment:typescript-sdk"
         if old_scope not in states:
             return states
@@ -833,11 +888,19 @@ def main():
         identity = slack.identity()
         event = json.loads(args.event_path.read_text())
         plan_path.write_text("[]\n")
+        partial = []
+        def retain(record):
+            partial.append(record)
+            plan_path.write_text(json.dumps(partial, sort_keys=True) + "\n")
         if run["event"] == "workflow_dispatch":
             inputs = event["inputs"]
             if inputs["delivery_result"] == "seal-checkpoint":
                 require(not inputs.get("message_ts"), "checkpoint sealing does not acknowledge a Slack message")
                 records = seal_checkpoint(ledger, identity, inputs["incident_id"], inputs["operation"])
+            elif inputs["delivery_result"] == "replay-window":
+                require(inputs["incident_id"] == "workflow-bot-cutover" and not inputs.get("message_ts"),
+                        "historical replay cannot acknowledge a Slack message")
+                records = replay_window(ledger, identity, inputs["operation"], on_saved=retain)
             else:
                 records = reconcile(ledger, identity, inputs["incident_id"], inputs["operation"], inputs["delivery_result"], inputs.get("message_ts", ""))
         else:
@@ -848,10 +911,6 @@ def main():
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, targets, since))
-            partial = []
-            def retain(record):
-                partial.append(record)
-                plan_path.write_text(json.dumps(partial, sort_keys=True) + "\n")
             records = prepare(ledger, identity, observations, on_saved=retain)
         plan_path.write_text(json.dumps(records, sort_keys=True) + "\n")
         print(f"Prepared {len(records)} incident transition(s); routine healthy runs remain quiet.")

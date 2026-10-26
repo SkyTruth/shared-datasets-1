@@ -124,6 +124,14 @@ the last acknowledged parent view. A changed view remains pending until Slack
 acknowledges its update; an interrupted update safely retries the same parent.
 Version 1 snapshots are signature-verified before migration. Existing timestamps
 and historical recovery replies remain audit evidence and are never sent again.
+Retired version 3 snapshots are also signature-verified before reading their
+incident core. Only a single scope with all failure and recovery evidence
+represented in that core is accepted. Original parents and delivery claims stay
+intact; their old view acknowledgements are cleared so the current bot updates
+the same messages. Proven-empty registrations with released supervision have no
+incident to carry forward. Original signed snapshots remain audit history;
+unknown fields, merged scopes, active empty registrations and unrepresented
+evidence fail closed. New checkpoints retain the current version 2 format.
 Newer observations cannot replace a resolved incident until its original
 parent's green update is acknowledged. They remain in the signed deferred queue
 and replay on a later reconciliation, preserving both incident parents.
@@ -135,6 +143,12 @@ starting no earlier than the explicit activation timestamp. Complete API
 enumeration and authoritative source-attempt checks are required. Longer
 GitHub outages require reviewed replay of the missing interval; blanket
 production retries are never a notification recovery mechanism.
+For the owner-reviewed cutover, dispatch the same main workflow with
+`delivery_result=replay-window`, `incident_id=workflow-bot-cutover`,
+`operation=replay:START..END` (exact UTC timestamps), and no `message_ts`.
+The closed past interval is limited to seven days and enumerated in daily
+windows. This reads authoritative source attempts and uses the existing signed
+checkpoint, recovery and delivery gates. It does not rerun a source workflow.
 
 Before posting, the worker persists and signs the claim. After Slack returns a
 valid channel and message timestamp, it persists an acknowledgement; confirmed
