@@ -27,8 +27,8 @@ resource "google_service_account" "monitoring_slack_push" {
 }
 
 resource "google_service_account_iam_member" "monitoring_slack_deployer" {
-  for_each           = { runtime = google_service_account.monitoring_slack.name, push = google_service_account.monitoring_slack_push.name }
-  service_account_id = each.value
+  for_each           = { runtime = google_service_account.monitoring_slack.account_id, push = google_service_account.monitoring_slack_push.account_id }
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${each.value}@${var.project_id}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }

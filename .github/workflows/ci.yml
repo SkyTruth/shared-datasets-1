@@ -545,7 +545,7 @@ jobs:
 
   artifact-registry-iam:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
     permissions:
       contents: read
       actions: read
