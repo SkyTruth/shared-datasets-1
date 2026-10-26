@@ -89,6 +89,17 @@ resource "google_project_iam_member" "monitoring_slack_token_writer" {
   }
 }
 
+# AddSecretVersion authorizes versions/NEW; retain the parent precheck binding.
+resource "google_project_iam_member" "monitoring_slack_token_version_writer" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretVersionAdder"
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  condition {
+    title      = "monitoring_slack_token_version_creation_only"
+    expression = "resource.name.startsWith('projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token/versions/')"
+  }
+}
+
 # Adopt the already-enabled API without issuing an enable operation.
 import {
   to = google_project_service.monitoring_slack_pubsub

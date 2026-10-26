@@ -92,6 +92,7 @@ jobs:
         google_secret_manager_secret.monitoring_slack
         google_project_iam_member.monitoring_slack_token
         google_project_iam_member.monitoring_slack_token_writer
+        google_project_iam_member.monitoring_slack_token_version_writer
         google_pubsub_topic.monitoring_slack
       allowed_exact: |
         google_service_account.monitoring_slack
@@ -104,6 +105,7 @@ jobs:
         google_secret_manager_secret.monitoring_slack
         google_project_iam_member.monitoring_slack_token
         google_project_iam_member.monitoring_slack_token_writer
+        google_project_iam_member.monitoring_slack_token_version_writer
         google_pubsub_topic.monitoring_slack
       tf_vars: |
         wdpa_monthly_image=unused-by-monitoring-slack-resources
