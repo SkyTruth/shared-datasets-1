@@ -89,6 +89,12 @@ resource "google_project_iam_member" "monitoring_slack_token_writer" {
   }
 }
 
+# Adopt the already-enabled API without issuing an enable operation.
+import {
+  to = google_project_service.monitoring_slack_pubsub
+  id = "${var.project_id}/pubsub.googleapis.com"
+}
+
 resource "google_project_service" "monitoring_slack_pubsub" {
   project            = var.project_id
   service            = "pubsub.googleapis.com"
