@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ast
 import copy
+from contextlib import nullcontext
 import json
 import os
 import shlex
 import subprocess
 from pathlib import Path
+from threading import Barrier, Lock
 from unittest import mock
 
 import pytest
@@ -347,6 +349,85 @@ def fixture_repo(tmp_path):
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
+
+
+@pytest.mark.parametrize("suites", [SUITES, ("lint", "tests")])
+@pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale"])
+def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo" / "source.txt").write_text("tracked fixture")
+    (tmp_path / "repo" / "source-link").symlink_to("source.txt")
+    validation = plan(suites)
+    reports = {report["suite"]: report for report in results_for(validation)}
+    barrier, lock = Barrier(2), Lock()
+    calls, outputs = [], []
+    active = peak = 0
+
+    def execute(suite, work):
+        nonlocal active, peak
+        with lock:
+            calls.append(suite)
+            active += 1
+            peak = max(peak, active)
+            first_pair = len(calls) <= 2
+        try:
+            if first_pair:
+                barrier.wait(timeout=5)
+            if suite == "lint":
+                if outcome == "crash":
+                    raise subprocess.CalledProcessError(7, ["docker", "start"])
+                if outcome == "missing":
+                    return
+                if outcome == "failure":
+                    reports[suite]["status"] = "failure"
+                if outcome == "stale":
+                    reports[suite]["tested_sha"] = "f" * 40
+            output = work / suite / "result.json"
+            outputs.append(output)
+            output.write_text(json.dumps(reports[suite]))
+        finally:
+            with lock:
+                active -= 1
+
+    def container(root, work, suite, image, platform):
+        execute(suite, work)
+        return {"transport": "container", "exit_code": 0}
+
+    def command(argv, **kwargs):
+        if "run-suite" in argv:
+            output = Path(argv[argv.index("--output") + 1])
+            assert kwargs["cwd"] == output.parent / "production-image-repo"
+            assert (kwargs["cwd"] / "source-link").is_symlink()
+            (kwargs["cwd"] / "host-cache").write_text("host-only")
+            execute("production-images", output.parent)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(preflight, "LOCAL_COORDINATION_DIRECTORY", tmp_path / "coordination")
+    monkeypatch.setattr(preflight, "isolated_merge", lambda *args: (tmp_path / "repo", validation["base"], validation["head"]))
+    monkeypatch.setattr(preflight, "make_plan", lambda *args, **kwargs: validation)
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: "/tools/docker")
+    monkeypatch.setattr(preflight, "local_runtime", lambda: {"server_architecture": "amd64", "platform": "linux/amd64"})
+    monkeypatch.setattr(preflight, "isolated_host_environment", lambda *args: nullcontext({}))
+    monkeypatch.setattr(preflight, "run_container", container)
+    monkeypatch.setattr(preflight.subprocess, "run", command)
+    monkeypatch.setattr(preflight, "git", lambda root, *args: "" if args[0] == "status" else args[-1].split("^")[0])
+    monkeypatch.setattr(preflight.sys, "argv", ["ci_preflight.py", "--base", validation["base"], "--head", validation["head"]])
+    assert preflight.main() == (0 if outcome == "success" else 1)
+    assert len(calls) == len(set(calls)) and set(calls) <= set(suites)
+    if outcome in {"success", "stale"}:
+        assert set(calls) == set(suites)
+    assert active == 0 and peak == 2
+    assert not (tmp_path / "repo" / "host-cache").exists()
+    assert len(set(outputs)) == len(outputs)
+    if "production-images" in suites:
+        assert "production-images" in calls[:2]
+    evidence = list(tmp_path.rglob("preflight.json"))
+    assert len(evidence) == (1 if outcome == "success" else 0)
+    if evidence:
+        final = json.loads(evidence[0].read_text())
+        verify_results(validation, final["results"])
+        assert set(final["runtime"]["suites"]) == set(suites)
 
 
 def test_prospective_merge_preserves_source_index_and_contains_both_branches(tmp_path):
