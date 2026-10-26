@@ -31,6 +31,14 @@ The lock coordinates cooperating local entrypoints on Unix hosts; it does not
 control other users, remote hosts, direct Docker commands, or old checkouts that
 predate this change.
 
+Within that single owner, local preflight runs at most two selected suites at a
+time, starting production-image validation first when selected. Each suite keeps
+its existing isolated runtime and evidence directory. The host image checker
+uses a separate source copy that preserves tracked symlinks, keeping its generated
+caches out of the checkout copied into other suites. A failure waits for started
+work to finish before releasing the slot and cannot produce passing preflight
+evidence. Suite selection, commands and final evidence checks remain unchanged.
+
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
 the Docker socket are never mounted. All six container suites, including the full

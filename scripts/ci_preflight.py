@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import json
@@ -505,33 +506,44 @@ def preflight(args: argparse.Namespace) -> int:
         subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
     results = []
     runtime["suites"] = {}
-    for suite in plan["suites"]:
+
+    def execute(suite):
         output = work / suite
         output.mkdir()
         if suite == "production-images":
+            # Host imports must not write caches into other suites' source.
+            image_root = work / "production-image-repo"
+            shutil.copytree(root, image_root, symlinks=True)
             # The host owns Docker and source paths. A nested container would
             # need privileged Docker access and paths outside its namespace.
             with isolated_host_environment(work, dict(os.environ)) as environment:
                 environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"], "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
                                     "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
-                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=root, env=environment, check=True)
+                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=image_root, env=environment, check=True)
                 command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
-                completed = subprocess.run(command, cwd=root, env=environment, check=False)
+                completed = subprocess.run(command, cwd=image_root, env=environment, check=False)
             report = output / "result.json"
             if not report.exists():
                 raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
-            runtime["suites"][suite] = {"transport": "host-docker", "exit_code": completed.returncode}
+            suite_runtime = {"transport": "host-docker", "exit_code": completed.returncode}
         else:
             selected_image = native_image if suite == "geospatial-integration" else image
-            runtime["suites"][suite] = run_container(root, work, suite, selected_image, runtime["platform"])
-        write_json(work / "runtime.json", runtime)
+            suite_runtime = run_container(root, work, suite, selected_image, runtime["platform"])
         report = output / "result.json"
         if not report.exists():
             raise ValueError(f"{suite} did not produce evidence")
         result = json.loads(report.read_text())
-        results.append(result)
         if result.get("status") != "success":
             raise ValueError(f"{suite} failed; retained evidence: {report}")
+        return result, suite_runtime
+
+    # Start the longest suite first; keep at most two isolated suites active.
+    order = sorted(plan["suites"], key=lambda suite: suite != "production-images")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        for result, suite_runtime in executor.map(execute, order):
+            results.append(result)
+            runtime["suites"][result["suite"]] = suite_runtime
+            write_json(work / "runtime.json", runtime)
     verify_results(plan, results)
     # Recheck the source identities after potentially lengthy validation.
     if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
