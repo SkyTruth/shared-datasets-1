@@ -48,8 +48,7 @@ The health policy sums `run.googleapis.com/job/completed_execution_count` with
 `result="succeeded"` over a rolling 15-minute window. It notifies only when that
 sum stays below one for two minutes. Cloud Run metric ingestion and alert
 evaluation add latency. A later successful completion clears the condition;
-healthy runs and brief failures send no Slack messages. Notification prompts
-remain opening-only.
+healthy runs and brief failures send no Slack messages. Opening and closure notifications use the editable bot transport described below.
 
 Missing metric data counts as unhealthy. The completion metric also emits zero
 samples, so metric absence alone would not establish absence of successful runs.
@@ -68,6 +67,45 @@ window and missing-data behavior, replay historical metrics covering healthy
 operation and a brief failure, and verify the protected sync deployed the new
 policy together with both exact-job exclusions. Do not deliberately interrupt
 the production observer to test an outage notification.
+
+## Editable Monitoring messages
+
+Monitoring sends events through Pub/Sub to the authenticated `monitoring-slack`
+Cloud Run service. The existing Slack bot posts one parent per native incident;
+closure edits that exact parent to **Closed by Monitoring**, with no recovery
+reply or new parent. Duplicate events are quiet, closure is permanent for that
+incident ID, and an out-of-order open cannot turn the message red again.
+Google's original Slack app messages cannot be adopted by a different bot.
+
+The WDPA metric policy requests `OPENED` and `CLOSED`. Google supports only
+`OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
+Those alerts are bot-owned too. After investigating recovery, the owner can use
+**Resolve legacy workflow alert**, supplying only `monitoring_incident_id`.
+That protected, owner-only main workflow reads Monitoring once, requires its
+exact incident to be `CLOSED`, and edits the recorded parent. It does not poll,
+accept arbitrary Slack timestamps, create parents, or treat log expiry as proof
+of dataset/deployment recovery. Keep genuine identity decisions and consumer
+breaking-change notifications intact.
+
+Receipts live at
+`gs://skytruth-shared-datasets-1-monitoring-slack/incidents/<incident-id>.json`.
+Generation preconditions arbitrate delivery claims; receipts bind the bot user,
+workspace, channel and string message timestamp. A claimed post with no confirmed
+timestamp remains an error. Inspect the service's `Monitoring Slack receipt` log
+and the original Slack parent; an owner must repair that exact receipt with its
+current generation before retrying. Never delete a claim or repost to escape an
+uncertain delivery. Pub/Sub retains failed deliveries for seven days. Inspect
+subscription backlog and receiver errors during incident recovery.
+
+The existing protected cron policy sync provisions private resources, loads
+only exact CI-tested image bytes, and copies the existing GitHub bot secret to
+Secret Manager through stdin. The token never enters Terraform state. The bot
+must authenticate and verify its private receipt permissions before the service
+starts listening. Terraform waits for that service, authenticated subscription
+and Monitoring publisher grant before changing any of the six policy routes;
+startup failure leaves the existing native routes in place. Native channel
+configuration is retained for reviewed rollback. No alert conditions, grace
+windows, publication authority or dataset permissions are relaxed.
 
 ## Execution and delivery verification
 
@@ -97,8 +135,9 @@ not suppress other writes or delete alerts. Its protected sync watches
 ## Deployment verification
 
 Use a reviewed PR, merge to `main`, and the protected cron alert policy sync.
-Review its saved plan: only the allowlisted alert policies should change; job
-images, Scheduler configuration, bucket permissions and dataset objects must not.
+Review its saved plan: only the six alert policies and the explicitly allowlisted
+Monitoring transport resources may change. Ingestion jobs, Scheduler
+configuration, canonical bucket permissions and dataset objects must not.
 The workflow changes take effect on subsequent executions; existing executions
 do not gain the marker retroactively.
 

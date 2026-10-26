@@ -160,7 +160,7 @@ def test_gate_packages_only_results_and_verifier_retains_original_bundle_identit
     retained = transport["uploaded"]["ci-result-production-images-attempt1"]
     with zipfile.ZipFile(retained) as bundle:
         assert "images/manifest.json" in bundle.namelist()
-        assert len([name for name in bundle.namelist() if name.endswith(".docker.tar")]) == 5
+        assert len([name for name in bundle.namelist() if name.endswith(".docker.tar")]) == 6
         assert "runner.log" in bundle.namelist()
     for node in (22, 24):
         with zipfile.ZipFile(transport["uploaded"][f"ci-result-sdk-node{node}-attempt1"]) as bundle:

@@ -132,6 +132,13 @@ def classify_change(path: str) -> tuple[str, set[str]]:
             return "component", {"geospatial-integration", "production-images"}
         if any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
             return "component", {"sdk-node22", "sdk-node24", "browser"}
+    if path in {
+        "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_slack.tf",
+        "terraform/envs/prod/monitoring_alert_policy_iam.tf", "terraform/envs/prod/monitoring_variables.tf",
+        "terraform/envs/prod/wdpa_execution_observer.tf", "terraform/envs/prod/canonical_mutation_iam.tf",
+        "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
+    }:
+        return "infrastructure", {"production-images"}
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
         return "infrastructure", set()
     if (path.startswith(("docs/", ".claude/skills/", ".agents/")) and path.endswith(".md")) or path in {"README.md", "AGENTS.md", "CLAUDE.md", "LICENSE"}:
@@ -191,7 +198,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
+            selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
         if path.startswith("ingestion/common/") or path in {
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
             "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
@@ -257,6 +264,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
         }:
             selected.add("cron_alert_policy")
+        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/slack_incident_api.py", "scripts/monitoring_slack_prepare.py"}:
+            selected.add("cron_alert_policy")
         if path == "catalog/categories.yaml":
             selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
         if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
@@ -274,7 +283,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "dataset_usage"}):
+    if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

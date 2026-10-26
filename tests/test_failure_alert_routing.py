@@ -325,7 +325,7 @@ def test_observer_health_counts_successes_and_keeps_missing_data_unhealthy():
     assert 'threshold_value         = 1' in health
     assert 'duration                = "120s"' in health
     assert 'evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"' in health
-    assert 'notification_prompts = ["OPENED"]' in health
+    assert 'notification_prompts = ["OPENED", "CLOSED"]' in health
     # Zero-valued completion samples are not successful runs. Both repeated
     # failures and an absent metric must remain unhealthy.
     assert 'condition_absent' not in health
@@ -413,7 +413,7 @@ def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
     assert set(workflow_triggers(workflow)) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "attestations": "read"}
     job = workflow["jobs"]["resolve"]
-    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main'"
+    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id == ''"
     checkout = job["steps"][0]
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     step = job["steps"][-1]

@@ -85,6 +85,8 @@ def checks(target):
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
     if target == "artifact-registry-images":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
+    if target == "monitoring-slack-secret":
+        return [(f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/shared-datasets-slack-bot-token:testIamPermissions", ("secretmanager.versions.add",))]
     if target == "monitoring-alerts":
         return [(project_url, MONITORING_PERMISSIONS)]
     if target == "preview-service-account-iam":
@@ -143,7 +145,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):

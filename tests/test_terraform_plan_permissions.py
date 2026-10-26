@@ -285,3 +285,33 @@ class ImageOperationPermissionTests(unittest.TestCase):
             live.main()
         request.assert_called_once_with(*live.checks("artifact-registry-images")[0], "token")
         output.assert_called_once_with("artifact-registry-images: deployment permission prerequisites verified.")
+
+
+class MonitoringTransportPermissionsTests(unittest.TestCase):
+    def test_pubsub_and_monitoring_creation_preserve_project_and_runtime_authority(self):
+        topic = {"project": PROJECT, "name": "monitoring-slack"}
+        subscription = {**topic, "topic": f"projects/{PROJECT}/topics/monitoring-slack", "push_config": [{"oidc_token": [{"service_account_email": ACCOUNT}]}]}
+        actual = permissions(plan(
+            row("google_pubsub_topic", ["create"], topic),
+            row("google_pubsub_subscription", ["create"], subscription),
+            row("google_monitoring_notification_channel", ["create"], {"project": PROJECT}),
+            row("google_secret_manager_secret", ["create"], {"project": PROJECT, "secret_id": "shared-datasets-slack-bot-token"}),
+            row("google_project_service", ["create"], {"project": PROJECT, "service": "pubsub.googleapis.com"}),
+        ))
+        self.assertTrue({"pubsub.topics.create", "pubsub.subscriptions.create", "pubsub.topics.attachSubscription", "iam.serviceAccounts.actAs", "monitoring.notificationChannels.create", "secretmanager.secrets.create", "serviceusage.services.enable"} <= actual)
+        with self.assertRaisesRegex(ValueError, "production"):
+            checks(plan(row("google_pubsub_subscription", ["create"], {**subscription, "project": "foreign"})))
+        with self.assertRaisesRegex(ValueError, "foreign"):
+            checks(plan(row("google_pubsub_subscription", ["create"], {**subscription, "topic": "projects/foreign/topics/example"})))
+
+
+    def test_channel_guard_has_no_remote_permissions_and_other_local_state_is_rejected(self):
+        value = {"input": ["projects/shared-datasets-1/notificationChannels/123"]}
+        assert checks(plan(row("terraform_data", ["update"], value, address="terraform_data.cron_alert_channel_configured"))) == {}
+        with self.assertRaisesRegex(ValueError, "unsupported local Terraform guard"):
+            checks(plan(row("terraform_data", ["update"], value)))
+
+    def test_topic_publisher_authority_is_probed_on_the_exact_existing_topic(self):
+        for topic in ("monitoring-slack", f"projects/{PROJECT}/topics/monitoring-slack", f"projects/{NUMBER}/topics/monitoring-slack"):
+            actual = checks(plan(row("google_pubsub_topic_iam_member", ["create"], {"project": PROJECT, "topic": topic})))
+            self.assertEqual(actual, {f"https://pubsub.googleapis.com/v1/projects/{PROJECT}/topics/monitoring-slack:testIamPermissions": ("pubsub.topics.getIamPolicy", "pubsub.topics.setIamPolicy")})

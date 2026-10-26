@@ -23,18 +23,29 @@
       "google_project_service.required"
     ],
     "cron-alert-policy-sync.yml/sync": [
+      "data.google_project.current",
       "google_monitoring_notification_channel.cron_alert_slack",
       "google_project_iam_audit_config.storage_data_write",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_project_iam_member.github_actions_dataset_usage_deployer",
       "google_project_service.required",
+      "google_pubsub_topic.monitoring_slack",
+      "google_secret_manager_secret.monitoring_slack",
+      "google_project_iam_member.monitoring_slack_token",
+      "google_project_iam_member.monitoring_slack_token_writer",
+      "google_service_account.monitoring_slack",
+      "google_service_account.monitoring_slack_push",
+      "google_service_account_iam_member.monitoring_slack_deployer",
+      "google_storage_bucket.monitoring_slack",
+      "google_storage_bucket_iam_member.monitoring_slack_state",
       "module.eamlis_job_service_account.google_service_account.this",
+      "module.mpatlas_job_service_account.google_service_account.this",
       "module.sea_ice_job_service_account.google_service_account.this",
       "module.shared_datasets_publisher_service_account.google_service_account.this",
       "module.wdpa_job_service_account.google_service_account.this",
       "module.wdpa_observer_service_account.google_service_account.this",
       "terraform_data.cron_alert_channel_configured",
-      "module.mpatlas_job_service_account.google_service_account.this",
-      "google_project_iam_custom_role.dataset_usage_deployer",
-      "google_project_iam_member.github_actions_dataset_usage_deployer"
+      "google_storage_bucket_iam_member.monitoring_slack_recovery"
     ],
     "dataset-usage-deploy.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/bootstrap": [],
@@ -63,6 +74,9 @@
     "scratch-cleanup-iam-sync.yml/retire-wdpa-validation": [],
     "preview-terraform-iam-sync.yml/published-reader": [
       "module.feature_preview_service_account.google_service_account.this"
+    ],
+    "cron-alert-policy-sync.yml/resources": [
+      "google_project_service.required"
     ]
   }
 }
