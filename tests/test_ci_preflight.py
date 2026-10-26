@@ -332,6 +332,24 @@ def test_local_hygiene_failure_stops_python_validation(tmp_path, failed_check):
     assert "pytest" not in {argument for call in run.call_args_list for argument in call.args[0]}
 
 
+@pytest.mark.parametrize("script", ["scripts/ci_preflight.py", "scripts/production_image_contracts.py"])
+def test_image_host_entrypoints_require_only_standard_library(script):
+    completed = subprocess.run([preflight.sys.executable, "-I", "-S", script, "--help"],
+                               cwd=ROOT, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_image_suite_uses_verified_interpreter_without_installing_host_dependencies(tmp_path):
+    commands = preflight.suite_commands("production-images", ROOT, plan(), tmp_path)
+    assert len(commands) == 1
+    command, cwd = commands[0]
+    assert command[:2] == [preflight.sys.executable, "-I"]
+    # Exercise the actual command entrypoint with site packages disabled.
+    completed = subprocess.run([command[0], "-S", *command[1:command.index("--output")], "--help"],
+                               cwd=cwd, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
 def fixture_repo(tmp_path):
     root = tmp_path / "source"
     root.mkdir()
@@ -352,11 +370,13 @@ def fixture_repo(tmp_path):
 
 
 @pytest.mark.parametrize("suites", [SUITES, ("lint", "tests")])
-@pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale"])
+@pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale", "source-change"])
 def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome):
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / "source.txt").write_text("tracked fixture")
     (tmp_path / "repo" / "source-link").symlink_to("source.txt")
+    unrelated = tmp_path / "catalog-viewer.docker.tar"
+    unrelated.write_bytes(b"prior run")
     validation = plan(suites)
     reports = {report["suite"]: report for report in results_for(validation)}
     barrier, lock = Barrier(2), Lock()
@@ -399,6 +419,11 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
             assert kwargs["cwd"] == output.parent / "production-image-repo"
             assert (kwargs["cwd"] / "source-link").is_symlink()
             (kwargs["cwd"] / "host-cache").write_text("host-only")
+            images = output / "images"
+            images.mkdir()
+            for image in reports["production-images"]["production_images"]["images"].values():
+                (images / image["archive"]).write_bytes(b"verified fixture")
+            (images / "manifest.json").write_text(json.dumps(reports["production-images"]["production_images"]))
             execute("production-images", output.parent)
         return subprocess.CompletedProcess(argv, 0)
 
@@ -411,23 +436,31 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
     monkeypatch.setattr(preflight, "isolated_host_environment", lambda *args: nullcontext({}))
     monkeypatch.setattr(preflight, "run_container", container)
     monkeypatch.setattr(preflight.subprocess, "run", command)
-    monkeypatch.setattr(preflight, "git", lambda root, *args: "" if args[0] == "status" else args[-1].split("^")[0])
+    monkeypatch.setattr(preflight, "git", lambda root, *args: ("changed" if outcome == "source-change" else "") if args[0] == "status" else args[-1].split("^")[0])
     monkeypatch.setattr(preflight.sys, "argv", ["ci_preflight.py", "--base", validation["base"], "--head", validation["head"]])
     assert preflight.main() == (0 if outcome == "success" else 1)
     assert len(calls) == len(set(calls)) and set(calls) <= set(suites)
-    if outcome in {"success", "stale"}:
+    if outcome in {"success", "stale", "source-change"}:
         assert set(calls) == set(suites)
     assert active == 0 and peak == 2
     assert not (tmp_path / "repo" / "host-cache").exists()
+    assert unrelated.read_bytes() == b"prior run"
     assert len(set(outputs)) == len(outputs)
     if "production-images" in suites:
         assert "production-images" in calls[:2]
+        image_dirs = list((tmp_path / "_scratch").glob("ci-preflight-*/production-images/images"))
+        assert len(image_dirs) == 1
+        archives = list(image_dirs[0].glob("*.docker.tar"))
+        assert len(archives) == (0 if outcome == "success" else 6)
+        assert json.loads((image_dirs[0] / "manifest.json").read_text()) == reports["production-images"]["production_images"]
     evidence = list(tmp_path.rglob("preflight.json"))
     assert len(evidence) == (1 if outcome == "success" else 0)
     if evidence:
         final = json.loads(evidence[0].read_text())
         verify_results(validation, final["results"])
         assert set(final["runtime"]["suites"]) == set(suites)
+        if "production-images" in suites:
+            assert final["runtime"]["production_image_archives_retained"] is False
 
 
 def test_prospective_merge_preserves_source_index_and_contains_both_branches(tmp_path):

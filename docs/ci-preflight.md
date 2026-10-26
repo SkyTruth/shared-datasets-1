@@ -37,7 +37,7 @@ its existing isolated runtime and evidence directory. The host image checker
 uses a separate source copy that preserves tracked symlinks, keeping its generated
 caches out of the checkout copied into other suites. A failure waits for started
 work to finish before releasing the slot and cannot produce passing preflight
-evidence. Suite selection, commands and final evidence checks remain unchanged.
+evidence. Suite selection and final evidence checks remain unchanged.
 
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
@@ -65,7 +65,10 @@ Tool versions are owned by the dependency-free
 `scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
 CI setup and image pins are checked against that contract.
 The production-image suite uses the host Docker client and an isolated host
-environment with the same pinned Python and locked dependencies. Its process-owned
+environment with the same pinned Python. Host checks need only the standard
+library; application dependencies are installed inside the tested images. Local
+preflight uses an isolated uv environment without installing project dependencies.
+Its process-owned
 HOME, Docker, XDG and gcloud configuration directories contain no caller ADC or
 registry authentication. Only explicit tool paths, locale/temp settings, proxy/CA
 settings and the resolved Docker connection are retained; GitHub/cloud credentials,
@@ -75,11 +78,17 @@ Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
 tests all seven actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. Its evidence retains the six deployable
+socket into a validation container. GitHub CI evidence retains the six deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these
 tested bytes without rebuilding.
+After all selected suites, final evidence verification and source checks pass,
+full local preflight removes only its own six verified image archives. Manifests,
+hashes, command logs and results remain; `runtime.json` records
+`production_image_archives_retained: false`. Failures before that point retain
+any archives already created. GitHub's `run-suite` entrypoint does not perform
+this local cleanup, so hosted deployment artifacts and retention are unchanged.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Tool setup retains `GODEBUG=asyncpreemptoff=1`; this runtime
