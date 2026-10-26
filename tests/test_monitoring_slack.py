@@ -49,9 +49,9 @@ class Bucket:
         return Blob()
 
 
-def envelope(state="open", key="0.oe73n791vhsd"):
+def envelope(state="open", incident_id="0.oe73n791vhsd"):
     payload = {"version": "1.2", "incident": {
-        "incident_id": key, "scoping_project_id": relay.PROJECT,
+        "incident_id": incident_id, "scoping_project_id": relay.PROJECT,
         "scoping_project_number": 12345, "state": state,
         "policy_name": "WDPA execution observations are stale",
         "summary": "Observer <example> & missing data", "started_at": 1792830681,
@@ -149,7 +149,7 @@ class ReceiverTests(unittest.TestCase):
     def test_closed_arriving_first_stays_closed_and_distinct_incidents_stay_separate(self):
         for state in ("closed", "open"):
             self.assertEqual(self.send(envelope(state)), 204)
-        self.assertEqual(self.send(envelope(key="0.other")), 204)
+        self.assertEqual(self.send(envelope(incident_id="0.other")), 204)
         self.assertEqual(len(self.messages), 2)
         self.assertIn("Closed by Monitoring", next(iter(self.messages.values()))["text"])
 
@@ -167,7 +167,7 @@ class ReceiverTests(unittest.TestCase):
             with self.subTest(drop_response=drop):
                 self.drop_post, self.bucket.fail_receipt = drop, not drop
                 key = "0.drop" if drop else "0.receipt"
-                self.assertEqual(self.send(envelope(key=key)), 503)
+                self.assertEqual(self.send(envelope(incident_id=key)), 503)
                 self.drop_post, self.bucket.fail_receipt = False, False
                 before = len(self.messages)
                 self.assertEqual(self.send(envelope("closed", key)), 503)

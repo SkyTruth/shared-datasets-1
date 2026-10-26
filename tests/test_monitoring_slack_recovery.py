@@ -12,7 +12,7 @@ from services.monitoring_slack import run as relay
 from test_monitoring_slack import Bucket
 from workflow_helpers import load_workflow, workflow_triggers
 
-KEY = '0.oe73n791vhsd'
+INCIDENT_ID = '0.oe73n791vhsd'
 IDENTITY = {'team': 'T12345678', 'user': 'U12345678', 'channel': 'C12345678'}
 TS = '1792830681.000001'
 
@@ -22,24 +22,24 @@ def test_one_closure_read_never_creates_parent_or_marks_open_incident_closed(sta
     bucket = Bucket()
     store = relay.Store(bucket)
     if known:
-        store.save(KEY, {'schema': relay.SCHEMA, 'identity': IDENTITY, 'ts': TS, 'closed': False}, 0)
+        store.save(INCIDENT_ID, {'schema': relay.SCHEMA, 'identity': IDENTITY, 'ts': TS, 'closed': False}, 0)
     session = Mock()
     session.get.return_value.json.return_value = {
-        'name': f'projects/{relay.PROJECT}/alerts/{KEY}', 'state': state,
+        'name': f'projects/{relay.PROJECT}/alerts/{INCIDENT_ID}', 'state': state,
         'closeTime': '2026-10-24T11:11:50Z', 'policy': {'displayName': 'WDPA observer'},
     }
     slack = Mock(spec=Slack)
     if state == 'CLOSED' and known:
-        recovery.reconcile(KEY, session, store, slack, IDENTITY)
+        recovery.reconcile(INCIDENT_ID, session, store, slack, IDENTITY)
         slack.update.assert_called_once()
         assert slack.update.call_args.args[0] == TS
-        assert store.load(KEY)[0]['closed'] is True
+        assert store.load(INCIDENT_ID)[0]['closed'] is True
     else:
         with pytest.raises(ValueError):
-            recovery.reconcile(KEY, session, store, slack, IDENTITY)
+            recovery.reconcile(INCIDENT_ID, session, store, slack, IDENTITY)
         slack.update.assert_not_called()
     slack.post.assert_not_called()
-    session.get.assert_called_once_with(f'https://monitoring.googleapis.com/v3/projects/{relay.PROJECT}/alerts/{KEY}', timeout=30)
+    session.get.assert_called_once_with(f'https://monitoring.googleapis.com/v3/projects/{relay.PROJECT}/alerts/{INCIDENT_ID}', timeout=30)
 
 
 def test_monitoring_resolution_is_manual_owner_only_main_and_protected():
