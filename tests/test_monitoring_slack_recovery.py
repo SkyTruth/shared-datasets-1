@@ -7,6 +7,7 @@ import pytest
 
 from scripts import monitoring_slack_prepare as prepare
 from scripts import monitoring_slack_reconcile as recovery
+from scripts.repo_guardrails import has_guarded_main_workflow_checkout
 from scripts.slack_incident_api import Slack
 from services.monitoring_slack import run as relay
 from test_monitoring_slack import Bucket
@@ -47,6 +48,7 @@ def test_monitoring_resolution_is_manual_owner_only_main_and_protected():
     assert set(workflow_triggers(workflow)) == {'workflow_dispatch'}
     job = workflow['jobs']['monitoring']
     assert job['if'] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id != ''"
+    assert has_guarded_main_workflow_checkout(workflow, '.github/workflows/resolve-workflow-alert.yml')
     assert job['environment'] == 'shared-datasets-production'
     assert job['permissions'] == {'contents': 'read', 'id-token': 'write'}
     assert '${{ inputs.' not in job['steps'][-1]['run']

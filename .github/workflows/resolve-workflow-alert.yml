@@ -61,6 +61,14 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/resolve-workflow-alert.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
