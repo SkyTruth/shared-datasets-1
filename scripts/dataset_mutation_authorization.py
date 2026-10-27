@@ -566,20 +566,39 @@ def capture(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> dict[str
 
 
 def discover_push_prs(api: GitHub, event: dict[str, Any], env: dict[str, str], *, documents_only: bool = True) -> list[int]:
-    """Enumerate Git history locally, avoiding the compare API's commit cap."""
+    """Skip PR reads only when complete immutable history proves plan absence."""
     repository = repository_context(event)
     before, after = sha(event.get("before")), sha(event.get("after"))
     require(before != "0" * 40 and env.get("GITHUB_REF") == event.get("ref") == "refs/heads/main"
             and env.get("GITHUB_SHA") == after and env.get("GITHUB_EVENT_NAME") == "push"
             and event.get("forced") is False and event.get("deleted") is False,
             "cannot completely enumerate an ordinary main push")
-    subprocess.run(["git", "merge-base", "--is-ancestor", before, after], check=True)
-    commits = subprocess.check_output(["git", "rev-list", "--reverse", f"{before}..{after}"], text=True).splitlines()
+    git = ["git", "--no-replace-objects"] if documents_only else ["git"]
+    if documents_only:
+        require(subprocess.check_output([*git, "rev-parse", "--is-shallow-repository"], text=True).strip() == "false",
+                "plan absence requires complete non-shallow history")
+    subprocess.run([*git, "merge-base", "--is-ancestor", before, after], check=True)
+    commits = subprocess.check_output([*git, "rev-list", "--reverse", f"{before}..{after}"], text=True).splitlines()
     require(bool(commits) and len(commits) == len(set(commits)), "invalid push range")
+    for commit in commits:
+        sha(commit)
+    if documents_only:
+        changed_plan = False
+        prefix = (plans.PLAN_DIRECTORY + "/").encode()
+        for commit in commits:
+            # Every parent delta matters: endpoint/combined diffs can hide an
+            # intermediate plan or a merge-only change. Renames expose both paths.
+            raw = subprocess.check_output([*git, "diff-tree", "--root", "-m", "-r", "--no-renames",
+                                           "--no-commit-id", "--name-only", "-z", commit])
+            require(isinstance(raw, bytes) and (not raw or raw.endswith(b"\0")), "incomplete changed-path enumeration")
+            paths = raw[:-1].split(b"\0") if raw else []
+            require(all(paths), "invalid changed-path enumeration")
+            changed_plan |= any(path.startswith(prefix) and path.endswith(b".json") for path in paths)
+        if not changed_plan:
+            return []  # Local absence proves no document; it never authorizes mutation.
     commit_set = set(commits)
     candidates = {}
     for commit in commits:
-        sha(commit)
         for associated in api.pages(f"repos/{repository['full_name']}/commits/{commit}/pulls?per_page=100"):
             number = positive_int(associated.get("number"))
             if associated.get("merged_at") and associated.get("merge_commit_sha") in commit_set:
