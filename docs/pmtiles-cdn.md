@@ -479,12 +479,12 @@ terraform -chdir=terraform/envs/prod validate
 terraform -chdir=terraform/envs/prod plan ...
 ```
 
-The automatic PMTiles CDN sync workflow fails loudly when Terraform
+The automatic `Catalog / PMTiles CDN sync` workflow fails loudly when Terraform
 authentication is not configured. Repository variables must include
 `GCP_TERRAFORM_SERVICE_ACCOUNT` and
 `GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER`; otherwise PMTiles access-tier
 changes are not allowed to merge as silently skipped post-merge work. Catalog
-and asset-documentation changes trigger PMTiles CDN sync only after the catalog
+and asset-documentation changes trigger `Catalog / PMTiles CDN sync` only after the catalog
 web deploy workflow completes, so route verification sees the refreshed
 `_catalog/web/` objects. The protected sync plan covers both the PMTiles URL
 map and the catalog-driven public managed-folder IAM resources needed when an
@@ -495,7 +495,7 @@ object access or managed-folder deletion. PMTiles Terraform-file changes still
 trigger the protected sync workflow directly after merge. Workflow-only changes to
 `.github/workflows/pmtiles-cdn-sync.yml` trigger the consolidated
 `Protected Terraform readiness` workflow on PRs, but do not trigger the
-protected apply workflow after merge. Dispatch `PMTiles CDN sync` manually from
+protected apply workflow after merge. Dispatch `Catalog / PMTiles CDN sync` manually from
 `main` when a workflow-only change is intended to apply already-merged URL-map
 or public managed-folder IAM configuration.
 

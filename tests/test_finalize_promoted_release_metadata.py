@@ -59,6 +59,7 @@ class JsonStore:
         self.before_download = lambda: None
         self.after_upload = lambda: None
         self.uploads = []
+        self.cache_control = "no-cache, max-age=0, must-revalidate"
         self.client = mock.Mock()
         self.client.bucket.return_value.blob.side_effect = self.blob
 
@@ -70,6 +71,7 @@ class JsonStore:
                 self.generation = store.generation
                 self.content_type = "application/json"
                 self.size = len(json.dumps(store.payload))
+                self.cache_control = store.cache_control
 
             def download_as_text(self, *, if_generation_match=None):
                 store.before_download()
@@ -83,6 +85,7 @@ class JsonStore:
                 store.uploads.append(if_generation_match)
                 store.generation += 1
                 store.payload = json.loads(text)
+                store.cache_control = self.cache_control
                 self.generation = store.generation
                 self.content_type = content_type
                 self.size = len(text.encode())
@@ -134,6 +137,7 @@ class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(result["finalized_manifests"][0]["generation"], 11)
         self.assertEqual(store.generation, 12)
         self.assertEqual(store.payload, {"concurrent": True})
+        self.assertEqual(store.cache_control, "no-cache, max-age=0, must-revalidate")
 
     def test_finalizer_run_record_also_uses_original_generation(self):
         manifest_store = JsonStore()

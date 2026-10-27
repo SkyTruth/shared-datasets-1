@@ -163,7 +163,7 @@ class CatalogDriftGuardTests(unittest.TestCase):
     def test_scratch_cleanup_audit_uses_protected_publisher_path(self):
         workflow = (REPO_ROOT / ".github/workflows/scratch-cleanup-audit.yml").read_text()
 
-        self.assertIn("name: Scratch cleanup audit", workflow)
+        self.assertIn("name: Data / Scratch cleanup audit", workflow)
         self.assertIn("schedule:", workflow)
         self.assertIn("environment: shared-datasets-production", workflow)
         self.assertIn("GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)

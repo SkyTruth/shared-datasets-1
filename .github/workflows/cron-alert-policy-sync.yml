@@ -1,4 +1,4 @@
-name: Cron alert policy sync
+name: Infrastructure / Cron alert policy sync
 
 on:
   workflow_call:

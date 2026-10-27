@@ -7,9 +7,9 @@ Verified recovery edits the original parent to green **Resolved**, retaining the
 original failure and recovery evidence. It creates no reply or new channel
 message. Healthy runs stay quiet. There is no live synthetic notification test.
 
-The `Workflow health and Slack reconciliation` workflow runs on both successful
+The `Alerts / Workflow health and Slack reconciliation` workflow runs on both successful
 and failed workflow completions. Its presence in Actions does not mean a failure
-occurred or a Slack message was sent. `Deployment completion check` runs hourly;
+occurred or a Slack message was sent. `Deployments / Completion check` runs hourly;
 its completion also triggers the incident replay described below. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
 under the same workflow and incident identity.
@@ -20,6 +20,12 @@ credential service) and authoritative same-attempt jobs prove the publisher was
 skipped, it remains a failed Actions check without opening or resolving a Slack
 incident. An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
+
+When inputs changed, the scheduled probe also checks passing main CI for its
+exact revision before selecting the publisher. Pending CI defers the refresh
+until a later hourly probe, with a job summary and no deployment incident.
+Missing or invalid CI evidence and failed API reads still fail the probe; the
+publisher retains its own full source authorization checks.
 
 ## Recovery contract
 
@@ -73,7 +79,7 @@ authority.
 
 When promotion, metadata finalization and index rebuild succeeded but the live
 breaking-change PR comment failed with GitHub's integration-permission 403, do
-not rerun the mutation. `Approved dataset mutation` has an owner-only,
+not rerun the mutation. `Data / Approved mutation` has an owner-only,
 protected receipt recovery: supply the original `pr_number`,
 `receipt_recovery_run_id` and `receipt_recovery_attempt` on tested `main`.
 Leave `authorization_rehearsal` false. The ordinary mutation jobs are excluded.
@@ -303,7 +309,7 @@ configuration; ambiguous non-idempotent sends still require owner inspection.
 ### Closing a legacy webhook parent
 
 Webhook alerts sent while incident management is disabled have no managed message
-record. After recovery, the owner may dispatch `Resolve legacy workflow alert`
+record. After recovery, the owner may dispatch `Alerts / Legacy workflow resolution`
 from `main` with the original failed run ID and its inspected Slack parent
 `message_ts`. The action uses read-only GitHub permissions to verify every failed job maps to a
 registered deployment and that each latest signed terminal success is newer and

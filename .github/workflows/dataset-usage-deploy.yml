@@ -1,4 +1,4 @@
-name: Dataset usage deploy
+name: Data / Usage collector deploy
 permissions:
   actions: read
   deployments: write

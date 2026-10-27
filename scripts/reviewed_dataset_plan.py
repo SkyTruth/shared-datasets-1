@@ -334,6 +334,7 @@ def normalize_publish_plan(
             "breaking_changes",
             "release_index_asset_slugs",
             "identity_reset",
+            "source_loss_review",
         },
         label="publish plan",
     )
@@ -435,6 +436,14 @@ def normalize_publish_plan(
         [item["destination_uri"] for item in normalized["promotions"]],
         label="promotions",
     )
+    if "source_loss_review" in plan:
+        from ingestion.eamlis_monthly import source_quality as source_loss
+        try:
+            if asset_slug != source_loss.SLUG:
+                raise source_loss.SourceLossError("source-quality review is only supported for EAMLIS")
+            normalized["source_loss_review"] = source_loss.normalize_review(plan["source_loss_review"])
+        except (source_loss.SourceLossError, KeyError, TypeError) as exc:
+            raise PlanValidationError(f"invalid source-loss review: {exc}") from exc
     if "identity_reset" in plan:
         from ingestion.common.reset_installation import validate_reset_plan
         from ingestion.common.publication import PublicationError

@@ -1,5 +1,11 @@
 # Feature preview
 
+Held EAMLIS source downloads can be inspected using the main-only **Inspect held
+EAMLIS candidate** workflow. It copies the exact candidate and published baseline
+into this private environment and refreshes its catalog without deploying
+infrastructure or changing production publication authority. See the
+[source-quality review procedure](eamlis-source-quality.md).
+
 The [feature preview skill](../.claude/skills/feature-preview/SKILL.md)
 owns the procedure for maintainers and agents.
 Upload, deployment and viewer QA instructions live there; load only the selected route.
@@ -23,7 +29,7 @@ artifacts still require authorized signed URLs. A published-catalog failure is
 shown next to the toggle and leaves preview browsing available. Production
 viewers do not enable these routes or show the toggle.
 
-The protected **Preview Terraform IAM sync** must provision the conditional
+The protected **Infrastructure / Preview Terraform IAM sync** must provision the conditional
 `feature_preview_published_reader` grant after merge, before deploying the new
 preview viewer. The protected **PMTiles CDN route sync** must also apply the
 production bucket CORS allowlist, which includes the preview viewer origin

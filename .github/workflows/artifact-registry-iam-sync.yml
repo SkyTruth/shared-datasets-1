@@ -1,4 +1,4 @@
-name: Artifact Registry IAM sync
+name: Infrastructure / Artifact Registry IAM sync
 
 on:
   workflow_call:

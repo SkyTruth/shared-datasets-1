@@ -694,8 +694,9 @@ def test_saved_recovery_requires_exact_signed_historical_status_not_latest_statu
 
 
 @pytest.mark.parametrize("name,recovered_name,filename", [
-    ("Catalog viewer deploy", "Catalog viewer deploy", "catalog-viewer-deploy.yml"),
-    ("Deployment terminal verification", "Deployment completion check", "deployment-verification.yml"),
+    ("Catalog viewer deploy", "Catalog / Viewer deploy", "catalog-viewer-deploy.yml"),
+    ("Deployment terminal verification", "Deployments / Completion check", "deployment-verification.yml"),
+    ("Scratch cleanup audit", "Data / Scratch cleanup audit", "scratch-cleanup-audit.yml"),
 ])
 def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity(name, recovered_name, filename):
     api = mock.Mock()
@@ -719,9 +720,10 @@ def test_unattended_startup_failure_with_no_jobs_retains_workflow_identity(name,
 
 
 @pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled", "timed_out"])
-def test_idle_catalog_probe_neither_opens_nor_resolves_an_incident(conclusion):
+@pytest.mark.parametrize("name", incidents.alerts.WORKFLOW_NAMES["catalog-web-deploy.yml"])
+def test_idle_catalog_probe_neither_opens_nor_resolves_an_incident(conclusion, name):
     api = mock.Mock()
-    run = {"id": 100, "run_attempt": 1, "name": "Catalog web deploy", "event": "schedule", "head_sha": SHA,
+    run = {"id": 100, "run_attempt": 1, "name": name, "event": "schedule", "head_sha": SHA,
            "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
            "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}
     event = {"workflow_run": run, "repository": {"full_name": incidents.REPOSITORY}}

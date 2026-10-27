@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.slack_notify import build_slack_payload, notify
 from scripts.dataset_mutation_authorization import GitHub
+from scripts.workflow_identity import WORKFLOW_NAMES
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
@@ -24,29 +25,31 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Apply Translation notice secret IAM bootstrap")
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-OBSERVER_WORKFLOWS = {"Deployment completion check", "Deployment terminal verification", "Deployment read-only reconciliation"}
-WORKFLOW_PATHS = {
-    "CI": "ci.yml", "Bucket hygiene audit": "bucket-hygiene-audit.yml",
-    "Scratch cleanup audit": "scratch-cleanup-audit.yml", "Catalog web deploy": "catalog-web-deploy.yml",
-    "Catalog viewer deploy": "catalog-viewer-deploy.yml", "PMTiles CDN sync": "pmtiles-cdn-sync.yml",
-    "Publish TypeScript SDK": "publish-typescript-sdk.yml",
-    "Deployment completion check": "deployment-verification.yml",
-    # Historical runs retain their old display name during replay and reruns.
-    "Deployment terminal verification": "deployment-verification.yml",
-    "Deployment read-only reconciliation": "deployment-recovery.yml",
-    "MPAtlas monthly deploy": "mpatlas-monthly-deploy.yml",
-    "EAMLIS monthly deploy": "eamlis-monthly-deploy.yml",
-    "WDPA monthly deploy": "wdpa-monthly-deploy.yml",
-    "Sea ice daily deploy": "sea-ice-daily-deploy.yml",
-    "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
-    "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
-    "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
-    "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
-    "Prod Terraform state reconciliation": "prod-terraform-state-reconcile.yml",
-    "Terraform state read IAM sync": "terraform-state-read-iam-sync.yml",
-    "Cron alert policy sync": "cron-alert-policy-sync.yml",
-    "Approved dataset mutation": "publish-dataset.yml",
+MONITORED_WORKFLOWS = {
+    "artifact-registry-iam-sync.yml",
+    "bucket-hygiene-audit.yml",
+    "catalog-viewer-deploy.yml",
+    "catalog-web-deploy.yml",
+    "ci.yml",
+    "cron-alert-policy-sync.yml",
+    "deployment-recovery.yml",
+    "deployment-verification.yml",
+    "eamlis-monthly-deploy.yml",
+    "mpatlas-monthly-deploy.yml",
+    "pmtiles-cdn-sync.yml",
+    "preview-terraform-iam-sync.yml",
+    "prod-terraform-state-reconcile.yml",
+    "publish-dataset.yml",
+    "publish-typescript-sdk.yml",
+    "scheduled-ingestion-deploy-iam-sync.yml",
+    "scratch-cleanup-audit.yml",
+    "scratch-cleanup-iam-sync.yml",
+    "sea-ice-daily-deploy.yml",
+    "terraform-state-read-iam-sync.yml",
+    "wdpa-monthly-deploy.yml",
 }
+WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
+OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
 
 
 def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
@@ -60,7 +63,7 @@ def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
 
 def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
     """Recognize an idle scheduled probe from authoritative same-attempt jobs."""
-    if run["name"] != "Catalog web deploy" or run["event"] != "schedule":
+    if run["name"] not in WORKFLOW_NAMES["catalog-web-deploy.yml"] or run["event"] != "schedule":
         return False
     probes = [job for job in jobs if job["name"] == "Check for catalog input changes"]
     publishers = [job for job in jobs if job["name"] == "Build and publish catalog web"]
@@ -76,7 +79,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     # publication jobs share that coverage; other supervised checks stay in GitHub.
     if (
         not (run["event"] in {"schedule", "workflow_run"}
-             or (run["event"] == "push" and run["name"] == "CI")
+             or (run["event"] == "push" and run["name"] in WORKFLOW_NAMES["ci.yml"])
              or (run["event"] == "workflow_dispatch" and run["name"] in OBSERVER_WORKFLOWS))
         or run["conclusion"] not in FAILED_CONCLUSIONS
         or run["status"] != "completed"
@@ -90,7 +93,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         raise ValueError("workflow run ID must be a positive integer")
     if catalog_probe_only(run, jobs or []):
         return None
-    if run["name"] == "CI":
+    if run["name"] in WORKFLOW_NAMES["ci.yml"]:
         # CI now owns reusable publication/catalog jobs. A validation failure
         # alone still belongs in GitHub; inspect only this exact run attempt.
         if not failed_ci_delivery_jobs(jobs or []):
@@ -201,8 +204,8 @@ def main() -> None:
     jobs = None
     alert = alert_for_run(event)
     # Both CI publication and scheduled catalog activity need exact job evidence.
-    needs_jobs = ((run["name"] == "CI" and run["event"] == "push"
-                   or run["name"] == "Catalog web deploy" and run["event"] == "schedule")
+    needs_jobs = ((run["name"] in WORKFLOW_NAMES["ci.yml"] and run["event"] == "push"
+                   or run["name"] in WORKFLOW_NAMES["catalog-web-deploy.yml"] and run["event"] == "schedule")
                    and run["conclusion"] in FAILED_CONCLUSIONS and run["status"] == "completed"
                    and run["head_branch"] == "main" and run["head_repository"]["full_name"] == REPOSITORY
                    and event["repository"]["full_name"] == REPOSITORY)

@@ -17,6 +17,13 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
+| EAMLIS source-quality hold | One persisted decision-alert attempt; delivery failure retains the hold and existing job-failure coverage |
+
+The [EAMLIS source-quality guard](eamlis-source-quality.md) pauses automatic
+publication after a greater-than-5% geometry-record loss and retains exact
+candidate bytes for staging review. Scheduler checks continue. A hold is cleared
+only after the immutable approved candidate is published and verified; Slack
+delivery or a healthy subsequent download cannot clear it.
 
 The Cloud Run policy retains the project/region-wide failure condition and
 `protoPayload.status.code>0`, including OOM/system failures. The frequent WDPA
@@ -80,7 +87,7 @@ Google's original Slack app messages cannot be adopted by a different bot.
 The WDPA metric policy requests `OPENED` and `CLOSED`. Google supports only
 `OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
 Those alerts are bot-owned too. After investigating recovery, the owner can use
-**Resolve legacy workflow alert**, supplying only `monitoring_incident_id`.
+**Alerts / Legacy workflow resolution**, supplying only `monitoring_incident_id`.
 That protected, owner-only main workflow reads Monitoring once, requires its
 exact incident to be `CLOSED`, and edits the recorded parent. It does not poll,
 accept arbitrary Slack timestamps, create parents, or treat log expiry as proof

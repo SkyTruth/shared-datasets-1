@@ -60,6 +60,7 @@ class FakeBlob:
         self.size = 0
         self.metadata = None
         self.content_type = None
+        self.cache_control = None
         self.text = ""
         self.data = b""
         self.uploads = []
@@ -68,13 +69,15 @@ class FakeBlob:
         if not self.exists:
             raise NotFound("not found")
 
-    def download_as_text(self) -> str:
+    def download_as_text(self, *, if_generation_match=None) -> str:
         self.reload()
+        self._check_generation(if_generation_match)
         return self.text
 
-    def download_as_bytes(self) -> bytes:
+    def download_as_bytes(self, *, if_generation_match=None) -> bytes:
         self.reload()
-        return self.data
+        self._check_generation(if_generation_match)
+        return self.data or self.text.encode()
 
     def download_to_filename(self, filename, *, if_generation_match):
         self.reload()
@@ -96,9 +99,9 @@ class FakeBlob:
         self.exists = True
         self.generation += 1
         self.content_type = content_type
-        self.text = data
-        self.data = data.encode()
-        self.size = len(data.encode())
+        self.text = data.decode(errors="replace") if isinstance(data, bytes) else data
+        self.data = data if isinstance(data, bytes) else data.encode()
+        self.size = len(self.data)
         self.uploads.append(("string", if_generation_match, content_type))
 
     def _check_generation(self, if_generation_match):
@@ -113,9 +116,11 @@ class FakeBucket:
         self.name = "test-bucket"
         self.blobs = {}
 
-    def blob(self, name: str) -> FakeBlob:
+    def blob(self, name: str, *, generation=None) -> FakeBlob:
         if name not in self.blobs:
             self.blobs[name] = FakeBlob(name)
+        if generation is not None and generation != self.blobs[name].generation:
+            raise PreconditionFailed("generation mismatch")
         return self.blobs[name]
 
     def list_blobs(self, *, prefix: str):
@@ -450,7 +455,8 @@ class EamlisMonthlyTests(unittest.TestCase):
                 build.assert_not_called()
                 self.assertEqual(index.call_count, int(status == "success"))
                 self.assertEqual(current.text, json.dumps(record))
-                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+                self.assertFalse(any(blob.uploads for name, blob in bucket.blobs.items()
+                                     if name != eamlis.source_loss.CONTROL))
 
     def test_same_date_noncompleted_record_fails_without_polling_or_writes(self):
         for record in ({}, *({"status": status} for status in ("failed", "partial", "running", "unknown", None))):
@@ -497,6 +503,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 "asset_slug": eamlis.ASSET.slug,
                 "latest_release": {
                     "date": "2026-04-02",
+                    "rows": 2,
                     "run_record_path": f"gs://test-bucket/{previous.name}",
                 },
             }
@@ -547,6 +554,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 "asset_slug": eamlis.ASSET.slug,
                 "latest_release": {
                     "date": "2026-04-02",
+                    "rows": 2,
                     "run_record_path": f"gs://test-bucket/{previous.name}",
                 },
             }
@@ -676,6 +684,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 "asset_slug": eamlis.ASSET.slug,
                 "latest_release": {
                     "date": "2026-04-02",
+                    "rows": 2,
                     "run_record_path": f"gs://test-bucket/{previous.name}",
                 },
             }

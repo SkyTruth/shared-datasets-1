@@ -1,31 +1,49 @@
-name: Workflow health and Slack reconciliation
+name: Alerts / Workflow health and Slack reconciliation
 
 on:
   workflow_run:
+    # Historical aliases keep reruns and incident replay observable.
     workflows:
-      - Bucket hygiene audit
-      - Scratch cleanup audit
-      - Catalog web deploy
-      - Catalog viewer deploy
-      - PMTiles CDN sync
-      - CI
-      - Publish TypeScript SDK
-      - Deployment completion check
-      # Retain coverage for reruns of historical workflow revisions.
-      - Deployment terminal verification
-      - Deployment read-only reconciliation
-      - MPAtlas monthly deploy
-      - EAMLIS monthly deploy
-      - WDPA monthly deploy
-      - Sea ice daily deploy
-      - Artifact Registry IAM sync
-      - Scheduled ingestion deploy IAM sync
-      - Preview Terraform IAM sync
-      - Scratch cleanup IAM sync
-      - Prod Terraform state reconciliation
-      - Terraform state read IAM sync
-      - Cron alert policy sync
-      - Approved dataset mutation
+      - "Approved dataset mutation"
+      - "Artifact Registry IAM sync"
+      - "Bucket hygiene audit"
+      - "CI"
+      - "CI / Validate and deliver"
+      - "Catalog / PMTiles CDN sync"
+      - "Catalog / Viewer deploy"
+      - "Catalog / Web deploy"
+      - "Catalog viewer deploy"
+      - "Catalog web deploy"
+      - "Cron alert policy sync"
+      - "Data / Approved mutation"
+      - "Data / Scratch cleanup audit"
+      - "Deployment completion check"
+      - "Deployment read-only reconciliation"
+      - "Deployment terminal verification"
+      - "Deployments / Completion check"
+      - "Deployments / Read-only reconciliation"
+      - "EAMLIS monthly deploy"
+      - "Infrastructure / Artifact Registry IAM sync"
+      - "Infrastructure / Cron alert policy sync"
+      - "Infrastructure / Ingestion deploy IAM sync"
+      - "Infrastructure / Preview Terraform IAM sync"
+      - "Infrastructure / Scratch cleanup IAM sync"
+      - "Ingestion / EAMLIS monthly deploy"
+      - "Ingestion / MPAtlas monthly deploy"
+      - "Ingestion / Sea ice daily deploy"
+      - "Ingestion / WDPA monthly deploy"
+      - "MPAtlas monthly deploy"
+      - "PMTiles CDN sync"
+      - "Preview Terraform IAM sync"
+      - "Prod Terraform state reconciliation"
+      - "Publish TypeScript SDK"
+      - "SDK / Publish TypeScript"
+      - "Scheduled ingestion deploy IAM sync"
+      - "Scratch cleanup IAM sync"
+      - "Scratch cleanup audit"
+      - "Sea ice daily deploy"
+      - "Terraform state read IAM sync"
+      - "WDPA monthly deploy"
     branches: [main]
     types: [completed]
   workflow_dispatch:
@@ -63,8 +81,8 @@ jobs:
       (
         github.event.workflow_run.event == 'schedule' ||
         github.event.workflow_run.event == 'workflow_run' ||
-        (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI') ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployment completion check","Deployment terminal verification","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
+        (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
+        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
       )
     runs-on: ubuntu-latest
     steps:
@@ -99,7 +117,7 @@ jobs:
             github.event.workflow_run.event == 'schedule' ||
             github.event.workflow_run.event == 'workflow_run' ||
             github.event.workflow_run.event == 'workflow_dispatch' ||
-            (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI')
+            (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name))
           )
         )
       )

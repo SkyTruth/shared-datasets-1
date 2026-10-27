@@ -1,4 +1,4 @@
-name: CI
+name: CI / Validate and deliver
 
 on:
   pull_request:

@@ -42,13 +42,13 @@ and the root `_catalog/shared-datasets-catalog.csv` contract with the approved
 publisher identity, generation preconditions, and
 `no-cache, max-age=0, must-revalidate`. This workflow is the normal PR-backed
 promotion path for repo-generated catalog web changes and the automatic refresh
-path after approved canonical data mutations. The protected PMTiles CDN sync
+path after approved canonical data mutations. The protected `Catalog / PMTiles CDN sync`
 workflow starts after catalog web deploy completes when the merged change
 touches catalog or asset documentation inputs that can affect PMTiles routes or
 public managed-folder IAM grants.
 The protected
 `.github/workflows/catalog-viewer-deploy.yml` workflow also starts after a
-successful `Approved dataset mutation` workflow so the IAP-protected viewer is
+successful `Data / Approved mutation` workflow so the IAP-protected viewer is
 rebuilt and reapplied through the production environment. Do not also add a
 `shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
 web deploy workflow will run from the same PR; that duplicates the promotion and
@@ -61,7 +61,7 @@ Use `scripts/gcs_asset.py` for every object write so generation preconditions ar
 explicit. Manual catalog web deployments should stage files under
 `_scratch/pending-publishes/catalog-web/{proposal-id}/` and promote approved
 objects only through an explicit PR with a fenced publish plan. After that PR
-merges, the `Approved dataset mutation` GitHub workflow applies the plan. Do not
+merges, the `Data / Approved mutation` GitHub workflow applies the plan. Do not
 use standalone workflow dispatch or single-object fallback inputs for catalog
 refreshes. New files should use no-clobber promotion. Existing files should be
 replaced only after reading the current generation. Set the publish-plan
