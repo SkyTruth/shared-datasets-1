@@ -10,3 +10,8 @@ matches are not proof of completed publication, and cleanup does not inspect PR
 status. Deletes use each listed object's exact generation; the prefix operation
 is not atomic. Dry-run reports list candidates without writing markers or
 deleting objects.
+
+EAMLIS `source-loss-{64-character SHA-256}` proposals are held review evidence,
+not abandoned uploads, and are exempt from this age-based policy. Their raw
+source/candidate records remain until explicit reviewed cleanup; successful
+publication retains the existing exact-promoted-source cleanup behavior.

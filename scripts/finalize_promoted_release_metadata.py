@@ -31,6 +31,7 @@ class BlobInfo:
     size: int
     content_type: str = ""
     sha256: str = ""
+    cache_control: str | None = None
 
     def to_record(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -83,6 +84,7 @@ def stat_blob(client: Any, uri: str, *, include_sha256: bool = False) -> BlobInf
         size=int(blob.size or 0),
         content_type=str(blob.content_type or ""),
         sha256=digest,
+        cache_control=blob.cache_control,
     )
 
 
@@ -182,6 +184,7 @@ def replace_json_object(
     gcs_asset.require_mutation_allowed(uri, operation="upload")
     bucket_name, object_name = gcs_asset.parse_gs_uri(uri)
     blob = client.bucket(bucket_name).blob(object_name)
+    blob.cache_control = original.cache_control
     text = json.dumps(dict(payload), indent=2, sort_keys=True) + "\n"
     try:
         blob.upload_from_string(
@@ -197,6 +200,7 @@ def replace_json_object(
         size=int(blob.size or 0),
         content_type=str(blob.content_type or ""),
         sha256=sha256_hex(text),
+        cache_control=original.cache_control,
     )
 
 
@@ -212,6 +216,7 @@ def load_json_object(client: Any, uri: str) -> LoadedJson:
         generation=int(blob.generation),
         size=int(blob.size or 0),
         content_type=str(blob.content_type or ""),
+        cache_control=blob.cache_control,
     )
     try:
         text = blob.download_as_text(if_generation_match=info.generation)

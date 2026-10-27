@@ -47,6 +47,11 @@ MONITORING_PERMISSIONS = (
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
 )
+TERRAFORM_STATE_READ_PERMISSIONS = (
+    "compute.globalAddresses.get", "compute.regionNetworkEndpointGroups.get",
+    "compute.sslCertificates.get", "compute.targetHttpProxies.get",
+    "iam.workloadIdentityPoolProviders.get",
+)
 
 
 def request(url, permissions, token):
@@ -81,6 +86,12 @@ def checks(target):
     project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
     if target == "iam-bootstrap":
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
+    if target == "terraform-state-read":
+        # These reads were denied in the first full state-only plan despite a
+        # successful IAM bootstrap probe. This target covers the shared project;
+        # foreign consumer-account access is outside the current recovery scope.
+        # The full refreshed plan remains authoritative for all other reads.
+        return [(project_url, TERRAFORM_STATE_READ_PERMISSIONS)]
     if target == "artifact-registry":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
     if target == "artifact-registry-images":
@@ -117,7 +128,8 @@ def checks(target):
     if target == "translation-bootstrap":
         return [secret]
     if target == "ingestion-iam":
-        return checks("iam-bootstrap") + checks("bucket-iam") + [secret]
+        job = f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/jobs/eamlis-monthly:testIamPermissions"
+        return checks("iam-bootstrap") + checks("bucket-iam") + [secret, (job, ("run.jobs.getIamPolicy", "run.jobs.setIamPolicy"))]
     project = (f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", PROJECT_PERMISSIONS)
     return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
 
@@ -145,7 +157,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "terraform-state-read", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):

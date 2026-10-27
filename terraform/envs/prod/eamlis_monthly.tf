@@ -25,12 +25,16 @@ resource "google_storage_bucket_iam_member" "eamlis_job_object_user" {
 
   condition {
     title       = "eamlis_owned_dataset_objects"
-    description = "Restrict eAMLIS monthly job writes to its asset root and release index."
+    description = "Restrict EAMLIS writes to its dataset, index, quality control and held candidates."
     expression = join(" || ", [
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')",
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')",
       "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/eamlis-abandoned-mine-land-inventory.json'",
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')",
+      "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/ingestion-holds/eamlis-abandoned-mine-land-inventory.json'",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/ingestion-holds/')",
+      "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/source-loss-')",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/')",
     ])
   }
 
@@ -69,6 +73,40 @@ module "eamlis_monthly_job" {
     google_secret_manager_secret_iam_member.translation_notice["eamlis"],
     google_storage_bucket_iam_member.translation_debt_writer["eamlis"],
   ]
+}
+
+resource "google_cloud_run_v2_job_iam_member" "eamlis_quality_execution_reader" {
+  project  = var.project_id
+  location = var.region
+  # Existing job identity is literal so the IAM sync cannot pull a job/image
+  # mutation into its dependency closure. This grants read access only.
+  name   = "eamlis-monthly"
+  role   = "roles/run.viewer"
+  member = module.eamlis_job_service_account.member
+}
+
+# Ordered bootstrap gives the protected Terraform identity policy access to
+# this one existing job before the runtime viewer binding is planned/applied.
+resource "google_project_iam_custom_role" "eamlis_quality_iam_manager" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsEamlisQualityIamManager"
+  title       = "EAMLIS quality job IAM manager"
+  description = "Manage the EAMLIS job policy for source-quality claim recovery."
+  permissions = ["run.jobs.getIamPolicy", "run.jobs.setIamPolicy"]
+}
+
+resource "google_project_iam_member" "github_actions_eamlis_quality_iam_manager" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.eamlis_quality_iam_manager.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  condition {
+    title       = "eamlis_quality_job_only"
+    description = "Limit policy management to the existing EAMLIS Cloud Run job."
+    expression = join(" || ", [
+      "resource.name == 'projects/${var.project_id}/locations/${var.region}/jobs/eamlis-monthly'",
+      "resource.name == 'projects/${data.google_project.current.number}/locations/${var.region}/jobs/eamlis-monthly'",
+    ])
+  }
 }
 
 resource "google_cloud_run_v2_job_iam_member" "eamlis_scheduler_invoker" {

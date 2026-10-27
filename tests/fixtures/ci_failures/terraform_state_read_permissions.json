@@ -1,0 +1,16 @@
+{
+  "run_id": 40564777085,
+  "run_attempt": 1,
+  "job_id": 122403014553,
+  "executor_sha": "ff87043bc8d5dd8917aec9ad66eb71a549655d8d",
+  "failed_step": "Terraform plan",
+  "claim": "skipped",
+  "apply": "skipped",
+  "project_permissions": [
+    "compute.globalAddresses.get",
+    "compute.regionNetworkEndpointGroups.get",
+    "compute.sslCertificates.get",
+    "compute.targetHttpProxies.get",
+    "iam.workloadIdentityPoolProviders.get"
+  ]
+}

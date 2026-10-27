@@ -423,7 +423,9 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
 
 
 def test_eamlis_partial_release_cannot_be_converted_to_a_skip(monkeypatch):
+    from tests.test_eamlis_monthly import FakeBucket
     publisher = Mock(spec=eamlis.GcsPublisher)
+    publisher.bucket = FakeBucket()
     publisher.load_json.return_value = None
     publisher.assert_no_partial_release.side_effect = RuntimeError("partial release")
     monkeypatch.setattr(eamlis, "GcsPublisher", Mock(return_value=publisher))

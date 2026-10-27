@@ -45,6 +45,7 @@ MONITORED_WORKFLOWS = {
     "scratch-cleanup-audit.yml",
     "scratch-cleanup-iam-sync.yml",
     "sea-ice-daily-deploy.yml",
+    "terraform-state-read-iam-sync.yml",
     "wdpa-monthly-deploy.yml",
 }
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}

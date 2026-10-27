@@ -161,13 +161,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("needs.check-inputs.outputs.changed == 'true'", job["if"])
         check = workflow["jobs"]["check-inputs"]
         self.assertEqual(check["if"], "${{ github.event_name == 'schedule' }}")
-        self.assertEqual(check["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(check["permissions"], {"contents": "read", "actions": "read", "id-token": "write"})
         self.assertEqual(check["outputs"]["changed"], "${{ steps.compare.outputs.changed }}")
         self.assertEqual(check["environment"], "shared-datasets-production")
         self.assertEqual(check["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "0")
         self.assertNotIn("continue-on-error", check)
         check_steps = workflow_steps_by_name(workflow, "check-inputs")
         self.assertIn("catalog_refresh_check.py", check_steps["Compare catalog inputs"]["run"])
+        self.assertEqual(check_steps["Compare catalog inputs"]["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertNotIn("deployment_revision.py", workflow_all_step_runs(workflow, "check-inputs"))
         selection = workflow["jobs"]["select-repo-changes"]
         self.assertEqual(selection["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read"})

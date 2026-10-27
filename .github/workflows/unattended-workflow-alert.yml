@@ -42,6 +42,7 @@ on:
       - "Scratch cleanup IAM sync"
       - "Scratch cleanup audit"
       - "Sea ice daily deploy"
+      - "Terraform state read IAM sync"
       - "WDPA monthly deploy"
     branches: [main]
     types: [completed]

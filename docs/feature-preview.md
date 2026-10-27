@@ -1,5 +1,11 @@
 # Feature preview
 
+Held EAMLIS source downloads can be inspected using the main-only **Inspect held
+EAMLIS candidate** workflow. It copies the exact candidate and published baseline
+into this private environment and refreshes its catalog without deploying
+infrastructure or changing production publication authority. See the
+[source-quality review procedure](eamlis-source-quality.md).
+
 The [feature preview skill](../.claude/skills/feature-preview/SKILL.md)
 owns the procedure for maintainers and agents.
 Upload, deployment and viewer QA instructions live there; load only the selected route.
