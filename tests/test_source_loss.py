@@ -322,7 +322,7 @@ def test_stale_candidate_baseline_corrupt_bytes_and_unapproved_plans_are_rejecte
     client = Client()
     staged(client)
     plan = review.prepare_plan(client)
-    with pytest.raises(Exception, match="trusted main"):
+    with mock.patch.dict("os.environ", {}, clear=True), pytest.raises(Exception, match="trusted main"):
         loss.begin_promotion(client, plan)
     with mock.patch.object(loss, "protected_authority", return_value="reviewed-key"):
         wrong = copy.deepcopy(plan)

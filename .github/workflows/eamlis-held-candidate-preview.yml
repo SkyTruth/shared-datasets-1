@@ -29,8 +29,9 @@ jobs:
       - name: Require trusted main workflow
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main || "$GITHUB_WORKFLOW_REF" != "$GITHUB_REPOSITORY/.github/workflows/eamlis-held-candidate-preview.yml@refs/heads/main" ]]; then
-            echo 'Held-candidate inspection must run from main.' >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/eamlis-held-candidate-preview.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
       - uses: actions/checkout@v4

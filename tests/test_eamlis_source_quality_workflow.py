@@ -3,7 +3,7 @@ from pathlib import Path
 
 from workflow_helpers import load_workflow, workflow_triggers
 
-from scripts import deployment_permissions
+from scripts import deployment_permissions, repo_guardrails
 from tests.test_scheduled_ingestion_iam_tf import terraform_resource_block
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,8 @@ def test_preview_downloads_production_then_switches_to_preview_writer():
     assert workflow["concurrency"] == {"group": "feature-branch-preview", "cancel-in-progress": False}
     steps = job["steps"]
     assert "refs/heads/main" in steps[0]["run"] and "GITHUB_WORKFLOW_REF" in steps[0]["run"]
+    assert repo_guardrails.has_guarded_main_workflow_checkout(
+        workflow, ".github/workflows/eamlis-held-candidate-preview.yml")
     checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["ref"] == "${{ github.workflow_sha }}"
     auth = [(n, step["with"]["service_account"]) for n, step in enumerate(steps)
