@@ -151,17 +151,17 @@ the reviewed main revision and its successful main-push CI run/attempt. It is no
 selected automatically by CI and adds no image, data, secret, token or resource
 mutation permission.
 
-The full plan also needs `iam.serviceAccounts.get` on the existing consumer
-account `shared-datasets-reader@x30-399415.iam.gserviceaccount.com`. That is an
-external prerequisite: an approved x30 IAM owner/deployment path must provision
-metadata read access for
-`shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com`. This
-shared-project bootstrap does not grant foreign-project IAM authority. It must
-not be replaced with impersonation, key, `actAs` or project-admin access.
+30x30 reconciliation is deferred. This repair does not grant or probe access to
+that project, change its existing service account, or remove its Terraform
+record. The full production state still contains
+`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`; refreshing it requires
+the previously denied `iam.serviceAccounts.get`. A clean full production plan
+therefore remains blocked while that work is deferred. Preserve the rollback
+backup until the original final verification gate is met.
 
 Before another state-only attempt, the `terraform-state-read` readiness probe
-checks the five shared-project permissions and tests the exact foreign service
-account separately. A project-level permission hint cannot satisfy the latter.
+checks the five shared-project permissions. It does not establish readiness for
+the deferred foreign account.
 The full refreshed plan still establishes the remaining provider read closure;
 the empty saved-plan allowlist still rejects every live resource mutation.
 Do not retry the unchanged failed run or use `-refresh=false` to avoid these

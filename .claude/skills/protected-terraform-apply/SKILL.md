@@ -58,7 +58,7 @@ explicit targets and allowed resource changes.
 | `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
 | `prod-terraform-target-apply.yml` | Reusable protected apply for the narrow sync callers below; refuses changes outside their declared resource allowlists. |
 | `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
-| `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. The foreign x30 consumer-account read remains an external prerequisite. |
+| `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. 30x30 work is deferred and is outside this bootstrap. |
 | `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
 | `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer/WDPA observer roles and bindings, retained-bundle read access, and translation notice/debt access. |
 | `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
@@ -81,10 +81,11 @@ For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.
 
 Full state reconciliation uses the deployer's `terraform-state-read` readiness
-probe, including metadata access to the exact x30 consumer service account. An
-operator's successful local plan or `iam-bootstrap` hint does not prove that the
-CI identity can refresh the full state. Provision missing reads through reviewed
-IAM paths before retrying; do not hide them with refresh disabled. See
+probe for the shared project. 30x30 reconciliation is deferred; the existing
+foreign-account Terraform record remains, so a full production plan is still
+blocked on that read. An operator's successful local plan or `iam-bootstrap`
+hint does not prove that the CI identity can refresh the full state. Do not
+retry while known reads are denied or hide them with refresh disabled. See
 `docs/terraform-reconciliation.md` for the observed failed boundary and scopes.
 
 The October operational retirement has explicit human approval for its temporary

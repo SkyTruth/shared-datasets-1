@@ -5,8 +5,7 @@ import io
 import json
 from pathlib import Path
 import re
-from unittest.mock import Mock, patch
-from urllib.error import HTTPError
+from unittest.mock import patch
 
 import pytest
 
@@ -19,10 +18,7 @@ from workflow_helpers import load_workflow
 ROOT = Path(__file__).resolve().parents[1]
 FAILURE = json.loads((ROOT / 'tests/fixtures/ci_failures/terraform_state_read_permissions.json').read_text())
 PROJECT_URL = f'https://cloudresourcemanager.googleapis.com/v1/projects/{live.PROJECT}:testIamPermissions'
-CONSUMER_URL = 'https://iam.googleapis.com/v1/' + FAILURE['consumer_resource'] + ':testIamPermissions'
-MISSING = {(PROJECT_URL, permission) for permission in FAILURE['project_permissions']} | {
-    (CONSUMER_URL, permission) for permission in FAILURE['consumer_permissions']
-}
+MISSING = {(PROJECT_URL, permission) for permission in FAILURE['project_permissions']}
 
 
 def response(missing):
@@ -60,33 +56,12 @@ def test_previous_bootstrap_hint_passed_but_real_state_read_cli_refuses_missing_
     assert capsys.readouterr().out == ''
 
 
-def test_complete_read_prerequisites_pass_cli_without_requesting_mutation(capsys):
+def test_shared_project_read_prerequisites_pass_cli_without_foreign_access_or_mutation(capsys):
     assert dict(live.checks('terraform-state-read')) == {
         PROJECT_URL: tuple(FAILURE['project_permissions']),
-        CONSUMER_URL: tuple(FAILURE['consumer_permissions']),
     }
     readiness_cli(set())
     assert capsys.readouterr().out == 'terraform-state-read: deployment permission prerequisites verified.\n'
-
-
-def test_project_get_hint_cannot_satisfy_foreign_service_account_read(capsys):
-    assert live.PROJECT not in CONSUMER_URL
-    with pytest.raises(RuntimeError, match='x30-399415'):
-        readiness_cli({(CONSUMER_URL, 'iam.serviceAccounts.get')})
-    assert capsys.readouterr().out == ''
-
-
-def test_foreign_http_denial_is_immediate_and_never_reports_ready(capsys):
-    def denied(request, **kwargs):
-        if request.full_url == CONSUMER_URL:
-            raise HTTPError(CONSUMER_URL, 403, 'Forbidden', {}, io.BytesIO(b'{"error":{"code":403}}'))
-        return response(set())(request, **kwargs)
-    pause = Mock()
-    with patch.object(live.urllib.request, 'urlopen', side_effect=denied), pytest.raises(RuntimeError, match='HTTP 403') as error:
-        live.verify('terraform-state-read', lambda url, required: live.request(url, required, 'fixture-token'), pause=pause)
-    pause.assert_not_called()
-    assert 'fixture-token' not in str(error.value)
-    assert capsys.readouterr().out == ''
 
 
 def test_new_role_grants_only_five_shared_project_metadata_reads():

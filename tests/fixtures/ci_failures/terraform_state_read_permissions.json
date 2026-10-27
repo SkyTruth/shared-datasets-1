@@ -12,7 +12,5 @@
     "compute.sslCertificates.get",
     "compute.targetHttpProxies.get",
     "iam.workloadIdentityPoolProviders.get"
-  ],
-  "consumer_resource": "projects/x30-399415/serviceAccounts/shared-datasets-reader@x30-399415.iam.gserviceaccount.com",
-  "consumer_permissions": ["iam.serviceAccounts.get"]
+  ]
 }

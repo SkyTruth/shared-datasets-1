@@ -88,15 +88,10 @@ def checks(target):
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
     if target == "terraform-state-read":
         # These reads were denied in the first full state-only plan despite a
-        # successful IAM bootstrap probe. The consumer account belongs to x30:
-        # shared-project authority cannot prove access to that foreign resource.
+        # successful IAM bootstrap probe. This target covers the shared project;
+        # foreign consumer-account access is outside the current recovery scope.
         # The full refreshed plan remains authoritative for all other reads.
-        # https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/testIamPermissions
-        consumer = "projects/x30-399415/serviceAccounts/shared-datasets-reader@x30-399415.iam.gserviceaccount.com"
-        return [
-            (project_url, TERRAFORM_STATE_READ_PERMISSIONS),
-            (f"https://iam.googleapis.com/v1/{consumer}:testIamPermissions", ("iam.serviceAccounts.get",)),
-        ]
+        return [(project_url, TERRAFORM_STATE_READ_PERMISSIONS)]
     if target == "artifact-registry":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
     if target == "artifact-registry-images":
