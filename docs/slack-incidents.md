@@ -21,6 +21,12 @@ skipped, it remains a failed Actions check without opening or resolving a Slack
 incident. An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
 
+When inputs changed, the scheduled probe also checks passing main CI for its
+exact revision before selecting the publisher. Pending CI defers the refresh
+until a later hourly probe, with a job summary and no deployment incident.
+Missing or invalid CI evidence and failed API reads still fail the probe; the
+publisher retains its own full source authorization checks.
+
 ## Recovery contract
 
 The scope includes the exact deployment target, or exact workflow and job when
