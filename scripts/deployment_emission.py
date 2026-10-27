@@ -31,7 +31,7 @@ OBSERVER = ".github/workflows/deployment-verification.yml"
 RECOVERY = ".github/workflows/deployment-recovery.yml"
 REHEARSAL_SIGNERS = {
     "dataset-usage-deploy.yml",
-    "deployment-receipt-rehearsal.yml", "prod-terraform-target-apply.yml",
+    "prod-terraform-target-apply.yml",
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
     "wdpa-monthly-deploy.yml",
     "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml", "publish-typescript-sdk.yml",
@@ -40,7 +40,7 @@ REHEARSAL_SIGNERS = {
 
 
 class ReadOnlyGitHub:
-    """Rehearsal can land before deployment writers and never creates a record."""
+    """Read-only API client for the current deployment's signing check."""
 
     def get(self, path):
         return json.loads(subprocess.check_output(["gh", "api", path]))

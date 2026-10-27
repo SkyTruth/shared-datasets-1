@@ -219,6 +219,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"mpatlas", "cron_alert_policy"})
         if path.startswith("ingestion/eamlis_monthly/") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
+            "catalog/ingestion-quality.json",
         }:
             selected.add("eamlis")
         if path.startswith("ingestion/sea_ice_daily/") or path in {
@@ -249,7 +250,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("pmtiles_cdn")
         if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
             selected.add("ingestion_iam")
-        if path == "terraform/envs/prod/wdpa_validation_retirement_iam.tf":
+        if path in {"terraform/envs/prod/wdpa_validation_retirement_iam.tf", "terraform/envs/prod/operational_retirement_iam.tf"}:
             selected.add("scratch_cleanup_iam")
         for target, filename in {
             "artifact_registry_iam": "artifact_registry_iam.tf",

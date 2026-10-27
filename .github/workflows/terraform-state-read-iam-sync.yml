@@ -1,0 +1,63 @@
+name: Terraform state read IAM sync
+
+on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  deployments: write
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  bootstrap:
+    name: Provision shared-project Terraform metadata reads
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: terraform-state-read-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Production Terraform state read IAM bootstrap
+      refusal_prefix: Refusing Terraform state read IAM changes outside the shared-project reader
+      block_deletes: true
+      targets: |
+        google_project_iam_custom_role.terraform_state_reader
+        google_project_iam_member.github_actions_terraform_state_reader
+      allowed_exact: |
+        google_project_iam_custom_role.terraform_state_reader
+        google_project_iam_member.github_actions_terraform_state_reader
+      tf_vars: |
+        wdpa_monthly_image=unused-by-state-read-iam-sync
+        sea_ice_daily_image=unused-by-state-read-iam-sync
+        eamlis_monthly_image=unused-by-state-read-iam-sync

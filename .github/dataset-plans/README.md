@@ -73,6 +73,15 @@ impact; they do not change publication approval authority.
 
 ## Existing proposals and retries
 
+EAMLIS held-source publication uses optional `publish.source_loss_review` with
+the exact hold ID, immutable candidate reference (URI, generation, size, SHA-256),
+and published-baseline token. Generate it with
+`uv run python scripts/eamlis_source_loss_review.py prepare-plan`. The protected
+publisher requires the complete candidate bundle and matching current hold and
+baseline, then resolves the hold only after finalization/index verification.
+This is part of the same exact-head PR authority, with no local or Slack bypass.
+See [source-quality review](../../docs/eamlis-source-quality.md).
+
 The three pre-launch generated-ID assets also support a constrained
 `publish.identity_reset` subtype containing only the complete reset `inventory`. It accepts exactly the evidence/adoption/state promotions
 with create-only destination expectations and explicit JSON/no-cache metadata.

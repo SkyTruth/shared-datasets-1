@@ -42,6 +42,8 @@ WORKFLOW_PATHS = {
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
     "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
+    "Prod Terraform state reconciliation": "prod-terraform-state-reconcile.yml",
+    "Terraform state read IAM sync": "terraform-state-read-iam-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
     "Approved dataset mutation": "publish-dataset.yml",
 }

@@ -22,6 +22,7 @@ from ingestion.common import feature_metadata
 from ingestion.common import source_fingerprint as fingerprints
 from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
 from ingestion.common import vector_pipeline
+from ingestion.eamlis_monthly import source_quality as source_loss
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
 from ingestion.common.runtime import (
@@ -222,8 +223,8 @@ def fetch_source_state(layer_url: str, where: str) -> SourceState:
     fields = normalized_fields(metadata)
     schema_hash = stable_hash(fields)
     stats = query_source_stats(layer_url, where)
-    if stats.feature_count <= 0:
-        raise RuntimeError(f"e-AMLIS source filter produced no rows: {where}")
+    if stats.feature_count < 0:
+        raise RuntimeError("e-AMLIS source returned a negative row count")
 
     editing_info = metadata.get("editingInfo") or {}
     return SourceState(
@@ -638,7 +639,7 @@ def fingerprint_source(source: SourceState, extract: SourceExtract, translation_
     return replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
 
 
-def publish_changed_asset(
+def prepare_changed_asset(
     *,
     publisher: GcsPublisher,
     run_date: dt.date,
@@ -646,7 +647,7 @@ def publish_changed_asset(
     output: AssetOutput,
     translation_source: Path | None = None,
     translation_inputs: Sequence[Mapping[str, Any]] = (),
-) -> dict[str, Any]:
+) -> tuple[SourceState, list[dict[str, Any]], Path, list[localization.LocalizationReport]]:
     # Prepare the whole language bundle before the first canonical write. A
     # missing source CSV is initial translation debt, not a failed dataset build.
     if translation_source is None:
@@ -662,13 +663,24 @@ def publish_changed_asset(
         **source.fingerprint["inputs"], "translation_source": fingerprints.csv_digest(translation_source),
     })
     source = replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
-    metadata = metadata_for_source(run_date=run_date, source=source)
     reports = localization.materialize_locale_sidecars(
         canonical_sidecar=output.metadata, translation_source=translation_source,
         output_dir=output.metadata.parent, locales=TRANSLATION_LOCALES,
         translatable_fields=set(TRANSLATION_FIELDS), expected_asset_slug=ASSET.slug,
         expected_release=run_date.isoformat(), protected_inputs=[output.schema],
     )
+    return source, source_inputs, translation_source, reports
+
+
+def publish_changed_asset(
+    *, publisher: GcsPublisher, run_date: dt.date, source: SourceState,
+    output: AssetOutput, translation_source: Path | None = None,
+    translation_inputs: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    source, source_inputs, translation_source, reports = prepare_changed_asset(
+        publisher=publisher, run_date=run_date, source=source, output=output,
+        translation_source=translation_source, translation_inputs=translation_inputs)
+    metadata = metadata_for_source(run_date=run_date, source=source)
     bundle = vector_pipeline.publish_vector_bundle(
         publisher=publisher,
         asset=ASSET,
@@ -787,62 +799,97 @@ def run() -> list[dict[str, Any]]:
         run_date=run_date,
     )
     if existing_record:
-        if existing_record.get("status") == "success":
-            existing_record = dict(existing_record)
-            release_index_info = publisher.record_existing_successful_release(
-                ASSET,
-                run_date,
-            )
-            if release_index_info:
-                existing_record["release_index"] = release_index_info
-        else:
-            existing_record = dict(existing_record)
-            blob = publisher.bucket.blob(ASSET.run_record_object(run_date))
-            blob.reload()
-            info = {"path": f"gs://{publisher.bucket.name}/{blob.name}", "generation": int(blob.generation), "size": int(blob.size or 0)}
-            existing_record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=existing_record, run_record_info=info)
-        return [existing_record]
+        with source_loss.Guard(publisher.bucket) as gate:
+            if gate.held:
+                return [gate.record()]
+            gate.check_publication()
+            if existing_record.get("status") == "success":
+                existing_record = dict(existing_record)
+                release_index_info = publisher.record_existing_successful_release(
+                    ASSET,
+                    run_date,
+                )
+                if release_index_info:
+                    existing_record["release_index"] = release_index_info
+            else:
+                existing_record = dict(existing_record)
+                blob = publisher.bucket.blob(ASSET.run_record_object(run_date))
+                blob.reload()
+                info = {"path": f"gs://{publisher.bucket.name}/{blob.name}", "generation": int(blob.generation), "size": int(blob.size or 0)}
+                existing_record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=existing_record, run_record_info=info)
+            return [existing_record]
 
-    publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
-    previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
-    source = fetch_source_state(layer_url, where)
-    work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
-    work_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
-        workdir = Path(tmp)
-        extract = download_source_geojson(
-            source=source,
-            dest=workdir / f"{ASSET.slug}.geojson",
-            page_size=page_size,
-        )
-        translation_source, translation_inputs = translation_input(publisher, workdir)
-        source = fingerprint_source(source, extract, translation_source)
-        fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], source.fingerprint["inputs"])
-        if fingerprint.matches(previous_record) and not needs_metadata_contract_refresh(publisher, previous_record):
-            return [skipped_record(publisher=publisher, run_date=run_date, source=source,
-                                   previous_record=previous_record, reason="source fingerprint unchanged")]
-        output = build_asset_output(
-            source=source,
-            extract=extract,
-            workdir=workdir,
-            release_date=run_date,
-            # EAMLIS feature IDs are copied directly from the source OBJECTID
-            # field, so prior generated-ID mappings are not needed. Older live
-            # EAMLIS sidecars used a retired feature_id shape and must not block
-            # a source-field contract refresh.
-            previous_records=None,
-        )
-        record = publish_changed_asset(
-            publisher=publisher,
-            run_date=run_date,
-            source=source,
-            output=output,
-            translation_source=translation_source,
-            translation_inputs=translation_inputs,
-        )
-        remove_if_exists(output.fgb)
-        remove_if_exists(output.pmtiles)
-        return [record]
+    with source_loss.Guard(publisher.bucket) as gate:
+        try:
+            publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
+            previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
+            source = fetch_source_state(layer_url, where)
+            selection = {"layer_url": source.layer_url, "where": source.where, "service_item_id": source.service_item_id}
+            previous_inputs = (previous_record or {}).get("source_fingerprint", {}).get("inputs", {})
+            previous_selection = ({key: previous_inputs.get(key) for key in selection}
+                                  if "layer_url" in previous_inputs else None)
+            gate.assess(source.stats.feature_count, selection=selection, previous_selection=previous_selection)
+            if source.stats.feature_count == 0:
+                gate.notify()
+                return [gate.record()]
+            work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
+            work_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
+                workdir = Path(tmp)
+                extract = download_source_geojson(
+                    source=source,
+                    dest=workdir / f"{ASSET.slug}.geojson",
+                    page_size=page_size,
+                )
+                gate.assess(extract.row_count, selection=selection, previous_selection=previous_selection)
+                translation_source, translation_inputs = translation_input(publisher, workdir)
+                source = fingerprint_source(source, extract, translation_source)
+                fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], source.fingerprint["inputs"])
+                if not gate.held and fingerprint.matches(previous_record) and not needs_metadata_contract_refresh(publisher, previous_record):
+                    return [skipped_record(publisher=publisher, run_date=run_date, source=source,
+                                           previous_record=previous_record, reason="source fingerprint unchanged")]
+                output = build_asset_output(
+                    source=source,
+                    extract=extract,
+                    workdir=workdir,
+                    release_date=run_date,
+                    # EAMLIS feature IDs are copied directly from the source OBJECTID
+                    # field, so prior generated-ID mappings are not needed. Older live
+                    # EAMLIS sidecars used a retired feature_id shape and must not block
+                    # a source-field contract refresh.
+                    previous_records=None,
+                )
+                source_loss.require(output.row_count == extract.row_count,
+                                    "built geometry count differs from complete source extract")
+                if gate.held:
+                    source, source_inputs, translation_source, reports = prepare_changed_asset(
+                        publisher=publisher, run_date=run_date, source=source, output=output,
+                        translation_source=translation_source, translation_inputs=translation_inputs)
+                    source_loss.stage_candidate(gate, output=output, source=source, release=run_date.isoformat(),
+                        source_inputs=source_inputs, translations=localization.translations_payload(reports),
+                        extra_files=[(".metadata-translations.csv", translation_source),
+                                     *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in reports)], extract=extract)
+                    gate.notify()
+                    return [gate.record()]
+                gate.check_publication()
+                record = publish_changed_asset(
+                    publisher=publisher,
+                    run_date=run_date,
+                    source=source,
+                    output=output,
+                    translation_source=translation_source,
+                    translation_inputs=translation_inputs,
+                )
+                remove_if_exists(output.fgb)
+                remove_if_exists(output.pmtiles)
+                return [record]
+        except Exception as exc:
+            if gate.held:
+                observation = dict(gate.state["hold"]["observation"])
+                observation.update(error=str(exc)[:1000], checked_at=source_loss.now())
+                gate.block(gate.state["hold"]["reason"], observation)
+                gate.notify()
+            raise
 
 
 def main() -> None:

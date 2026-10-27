@@ -283,7 +283,7 @@ job.
 9. Verify alert coverage for the deployed job and future jobs:
    - Read the live Cloud Run and Scheduler failure alert filters.
    - Confirm the new job is covered without depending on a stale allowlist.
-   - If a controlled failure test is safe, run it and verify the matching log and Slack delivery.
+   - Verify actual failure incidents against terminal execution logs, Monitoring delivery receipts and matching Slack messages. Do not deliberately fail production jobs; report delivery as unverified when matching evidence is unavailable.
    - Confirm any bad one-off env overrides were not persisted to the job.
 
 ## Completion notes

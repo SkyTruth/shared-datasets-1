@@ -124,6 +124,8 @@ def commands(target, executor, *, image_id=None):
     ]
     if target == "wdpa-monthly":
         checks += [run + ["python", "scripts/wdpa_input_memory_probe.py", "--help"], run + ["python", "scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
+    if target == "eamlis-monthly":
+        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import source_quality; assert 0 <= source_quality.policy() < 100"]]
     return [build, *checks]
 
 

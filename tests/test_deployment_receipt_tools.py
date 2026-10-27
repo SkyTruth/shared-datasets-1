@@ -1,11 +1,10 @@
-"""Standalone non-mutating receipt bootstrap and verifier installation contracts."""
+"""Deployment signing checks and pinned verifier installation contracts."""
 from __future__ import annotations
 
 import io
 import json
 import os
 from pathlib import Path
-import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -14,13 +13,12 @@ from unittest.mock import Mock, patch
 import yaml
 from scripts import deployment_emission as emission
 from scripts import install_deployment_verifier as installer
-from scripts.repo_guardrails import has_guarded_main_workflow_checkout
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "SkyTruth/shared-datasets-1"
 
 
-class ReceiptBootstrapTests(unittest.TestCase):
+class ReceiptSigningTests(unittest.TestCase):
     def test_real_current_cli_verified_certificate_shape_matches_original_api_run(self):
         # This is a shape regression, not a replacement for cryptographic
         # verification. The checked official archive was actually verified
@@ -72,72 +70,11 @@ class ReceiptBootstrapTests(unittest.TestCase):
         self.assertNotIn("deployment_revision.py", runs)
         self.assertNotIn("--method POST", runs)
 
-    def test_rehearsal_workflow_is_protected_main_only_and_non_mutating(self):
-        relative = ".github/workflows/deployment-receipt-rehearsal.yml"
-        text = (ROOT / relative).read_text()
-        value = yaml.safe_load(text)
-        self.assertEqual(value.get("on", value.get(True)), {"workflow_dispatch": None, "workflow_call": None})
-        self.assertEqual(value["permissions"], {
-            "contents": "read", "actions": "read", "id-token": "write", "attestations": "write",
-        })
-        self.assertTrue(has_guarded_main_workflow_checkout(value, relative))
-        self.assertEqual(set(value["jobs"]), {"rehearsal"})
-        job = value["jobs"]["rehearsal"]
-        self.assertEqual(job["environment"], "shared-datasets-production")
-        steps = job["steps"]
-        self.assertEqual(steps[1]["with"]["fetch-depth"], 0)
-        self.assertIs(steps[1]["with"]["persist-credentials"], False)
-        signer = steps[-1]
-        self.assertEqual(signer["uses"], "./.github/actions/deployment-receipt")
-        self.assertEqual(signer["with"], {
-            "mode": "rehearsal", "signer-workflow": "deployment-receipt-rehearsal.yml",
-        })
-        for forbidden in ("google-github-actions/auth", "deployment_revision.py", "terraform", "--method POST", "receipt-path:"):
-            self.assertNotIn(forbidden, text)
-
-        caller_text = (ROOT / ".github/workflows/deployment-receipt-rehearsal-call.yml").read_text()
-        caller = yaml.safe_load(caller_text)
-        self.assertEqual(caller.get("on", caller.get(True)), {"workflow_dispatch": None})
-        self.assertEqual(caller["permissions"], value["permissions"])
-        self.assertEqual(caller["jobs"], {"rehearsal": {
-            "if": "github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' && github.triggering_actor == 'jonaraphael'",
-            "uses": "./.github/workflows/deployment-receipt-rehearsal.yml",
-        }})
-
-    def test_workflow_guards_reject_wrong_ref_signer_actor_event_or_checkout(self):
-        value = yaml.safe_load((ROOT / ".github/workflows/deployment-receipt-rehearsal.yml").read_text())
-        steps = value["jobs"]["rehearsal"]["steps"]
-        environment = {
-            **os.environ, "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO,
-            "GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main",
-            "GITHUB_EVENT_NAME": "workflow_dispatch", "ACTOR": "jonaraphael", "TRIGGERING_ACTOR": "jonaraphael",
-            "WORKFLOW_SHA": "a" * 40, "GITHUB_WORKFLOW_SHA": "a" * 40, "GITHUB_SHA": "a" * 40,
-        }
-        # Replace the Git read at the test boundary; the real workflow compares
-        # its actual checkout against GitHub's immutable workflow revision.
-        owner_guard = "git() { printf '%s\\n' '" + "a" * 40 + "'; }\n" + steps[2]["run"]
-        for guard, changes, denied in (
-            (steps[0]["run"], {}, False), (owner_guard, {}, False),
-            (steps[0]["run"], {"GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/main"}, False),
-            (steps[0]["run"], {"GITHUB_REF": "refs/pull/1/merge"}, True),
-            (steps[0]["run"], {"GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/other.yml@refs/heads/main"}, True),
-            (steps[0]["run"], {"GITHUB_WORKFLOW_REF": "other/fork/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/main"}, True),
-            (steps[0]["run"], {"GITHUB_WORKFLOW_REF": REPO + "/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/feature"}, True),
-            (steps[0]["run"], {"GITHUB_WORKFLOW_SHA": "b" * 40}, True),
-            (owner_guard, {"ACTOR": "other"}, True),
-            (owner_guard, {"TRIGGERING_ACTOR": "other"}, True),
-            (owner_guard, {"GITHUB_EVENT_NAME": "push"}, True),
-            (owner_guard, {"WORKFLOW_SHA": "b" * 40}, True),
-        ):
-            with self.subTest(changes=changes):
-                result = subprocess.run(["bash", "-c", guard], env={**environment, **changes}, capture_output=True)
-                self.assertEqual(result.returncode, 1 if denied else 0)
-
     def test_reusable_signer_and_caller_are_independently_bound_to_main_revision(self):
-        signer = ".github/workflows/deployment-receipt-rehearsal.yml"
-        caller = ".github/workflows/deployment-receipt-rehearsal-call.yml"
+        signer = ".github/workflows/prod-terraform-target-apply.yml"
+        caller = ".github/workflows/ci.yml"
         run = {"id": 13, "run_attempt": 2, "head_branch": "main", "head_sha": "a" * 40,
-               "event": "workflow_dispatch", "path": caller,
+               "event": "push", "path": caller,
                "repository": {"id": 9, "full_name": REPO}, "head_repository": {"id": 9, "full_name": REPO}}
         record = {"id": 1, "sha": "a" * 40, "environment": "receipt-rehearsal", "payload": {}}
         status = {"id": 1, "state": "in_progress", "description": "started", "log_url": emission.invocation(REPO, 13, 2)}
@@ -146,8 +83,7 @@ class ReceiptBootstrapTests(unittest.TestCase):
         self.assertEqual(policy["buildSignerURI"], f"https://github.com/{REPO}/{signer}@refs/heads/main")
         self.assertEqual(policy["buildConfigURI"], f"https://github.com/{REPO}/{caller}@refs/heads/main")
         self.assertEqual(policy["buildSignerDigest"], policy["buildConfigDigest"])
-        # This tests the structural boundary after gh's cryptographic verifier;
-        # it cannot serve as live signing evidence for the rollout.
+        # This tests the structural boundary after gh's cryptographic verifier.
         verified = {"signature": {"certificate": policy}, "verifiedTimestamps": [{}], "statement": {
             "_type": "https://in-toto.io/Statement/v1", "predicateType": emission.PREDICATE,
             "subject": [{"name": emission.name(value), "digest": {"sha256": emission.hashlib.sha256(emission.canonical(value)).hexdigest()}}],

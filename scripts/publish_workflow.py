@@ -60,6 +60,8 @@ def require_unmanaged_plan(plan: dict[str, Any]) -> None:
     uris.extend(item["uri"] for item in plan.get("deletions", []))
     for uri in uris:
         _bucket, name = split_uri(uri)
+        from ingestion.eamlis_monthly.source_quality import control_target
+        require(not control_target(name), "source-quality control requires its own reviewed resolver")
         require_unmanaged_target(name)
         require(not is_protocol_namespace(name), "publication operational objects require their own executor")
 
@@ -399,7 +401,14 @@ def command_promote(args: argparse.Namespace) -> int:
                 expected = artifact_prefix + ".manifest.json"
                 latest = expected.replace(f"/releases/{manifest['release']}/", "/latest/")
                 require(promotion["destination_uri"] in {expected, latest}, "prepared manifest belongs to another release")
+    from ingestion.eamlis_monthly import source_quality as source_loss
+    source_quality_claim = source_loss.touches_asset(plan) or "source_loss_review" in plan
+    if source_quality_claim:
+        source_loss.begin_promotion(gcs_asset.get_client(), plan)
     for index, promotion in enumerate(plan["promotions"], start=1):
+        if source_quality_claim and source_loss.already_promoted(gcs_asset.get_client(), promotion, plan):
+            print(f"Verified already-promoted source-quality object: {promotion['destination_uri']}")
+            continue
         print(f"Promoting object {index} of {len(plan['promotions'])}: {promotion['destination_uri']}")
         subprocess.run(gcs_asset_args("stat", promotion["source_uri"]), check=True)
         if catalog_json_destination_already_current(promotion):

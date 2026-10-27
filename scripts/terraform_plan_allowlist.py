@@ -50,6 +50,7 @@ def blocked_changes(
     allowed_patterns: list[re.Pattern[str]],
     block_deletes: bool,
     job_image: tuple[str, str] | None = None,
+    delete_only: bool = False,
 ) -> list[str]:
     blocked = []
     for resource in plan.get("resource_changes", []):
@@ -57,6 +58,9 @@ def blocked_changes(
         if actions in IGNORED_ACTIONS:
             continue
         address = resource.get("address", "")
+        if delete_only and actions != ["delete"]:
+            blocked.append(f"{'/'.join(actions)} {address}")
+            continue
         if block_deletes and "delete" in actions:
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
@@ -91,10 +95,16 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Newline-separated regexes; addresses matching any are allowed to change.",
     )
-    parser.add_argument(
+    action_policy = parser.add_mutually_exclusive_group()
+    action_policy.add_argument(
         "--block-deletes",
         action="store_true",
         help="Refuse deletes, including replaces, even for allowlisted addresses.",
+    )
+    action_policy.add_argument(
+        "--delete-only",
+        action="store_true",
+        help="Permit only deletion of allowlisted retired resources; refuse creates, updates and replacements.",
     )
     parser.add_argument(
         "--job-image-target",
@@ -140,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         allowed_patterns=allowed_patterns,
         block_deletes=args.block_deletes,
         job_image=job_image,
+        delete_only=args.delete_only,
     )
     if blocked:
         print(f"{args.refusal_prefix} because the Terraform plan changes non-allowlisted resources:")

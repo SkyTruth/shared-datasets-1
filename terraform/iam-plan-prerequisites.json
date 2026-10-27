@@ -11,9 +11,26 @@
       "google_service_account_iam_member.wdpa_validation_deployer",
       "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
       "module.wdpa_validation_service_account.google_service_account.this"
+    ],
+    "scratch-cleanup-iam-sync.yml/retire-operational-infrastructure": [
+      "google_iam_workload_identity_pool_provider.operational_observer",
+      "google_logging_log_view.operational_observations",
+      "google_monitoring_alert_policy.dataset_schema_changed",
+      "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
+      "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
+      "google_project_iam_custom_role.operational_log_view_manager",
+      "google_project_iam_custom_role.operational_metric_descriptor_manager",
+      "google_project_iam_custom_role.operational_observer_reader",
+      "google_project_iam_custom_role.operational_observer_receipts",
+      "google_project_iam_custom_role.operational_provider_creator",
+      "google_project_iam_custom_role.operational_provider_reader",
+      "google_project_iam_custom_role.readonly_provider_updater",
+      "module.operational_observer_service_account.google_service_account.this"
     ]
   },
   "jobs": {
+    "prod-terraform-state-reconcile.yml/reconcile": [],
+    "terraform-state-read-iam-sync.yml/bootstrap": [],
     "artifact-registry-iam-sync.yml/bootstrap": [],
     "artifact-registry-iam-sync.yml/writer": [
       "google_artifact_registry_repository.jobs",
@@ -54,7 +71,7 @@
       "google_project_iam_custom_role.catalog_viewer_sign_blob",
       "google_project_service.required"
     ],
-    "scheduled-ingestion-deploy-iam-sync.yml/bootstrap": [],
+    "scheduled-ingestion-deploy-iam-sync.yml/bootstrap": ["data.google_project.current"],
     "scheduled-ingestion-deploy-iam-sync.yml/sync": [
       "google_project_service.required",
       "google_secret_manager_secret.slack_webhook_url",
@@ -77,6 +94,10 @@
     ],
     "cron-alert-policy-sync.yml/resources": [
       "google_project_service.required"
-    ]
+    ],
+    "scratch-cleanup-iam-sync.yml/operational-retirement-bootstrap": [],
+    "scratch-cleanup-iam-sync.yml/retire-operational-infrastructure": [],
+    "scratch-cleanup-iam-sync.yml/revoke-operational-retirement": [],
+    "scratch-cleanup-iam-sync.yml/operational-retirement-grant": []
   }
 }
