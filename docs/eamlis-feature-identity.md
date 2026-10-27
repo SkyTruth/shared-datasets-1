@@ -114,8 +114,8 @@ installation needs a later maintainer-directed immutable plan PR.
    metadata/CSV against their concrete legacy manifest, and installs ledger,
    marker, then control with create/CAS preconditions. Only the ledger generation
    placeholders in the reviewed control template are finalized. It publishes no
-   FGB, tiles, catalog or release data. No new IAM or local Terraform apply is
-   required.
+   FGB, tiles, catalog or release data. Installation reuses the existing identities
+   and protected workflow; infrastructure changes retain their reviewed PR path.
 5. Keep the schedule paused. On the maintainer's explicit instruction, execute
    the already deployed, verified EAMLIS Cloud Run job once with a `RUN_DATE`
    execution override matching the reviewed first release. Verify the deployed

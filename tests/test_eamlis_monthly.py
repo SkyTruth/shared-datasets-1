@@ -785,7 +785,9 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workdir = Path(temporary)
             path = workdir / "source.geojson"
-            path.write_text(json.dumps({"type": "FeatureCollection", "features": [feature(p) for p in properties]}))
+            path.write_text(json.dumps({"type": "FeatureCollection", "features": [
+                feature(p, (-87.7, 34.1) if n < 2 else (-86.8, 35.2))
+                for n, p in enumerate(properties)]}))
             reservation = identity_state.Reservation(ledger, {"path": "fixture"}, 1, None)
             output = eamlis.build_asset_output(source=source, extract=eamlis.SourceExtract(path, 3, 0),
                 workdir=workdir, release_date=dt.date(2026, 5, 2), identity_reservation=reservation)
