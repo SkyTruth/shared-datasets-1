@@ -34,7 +34,10 @@ def producer_steps(workflow, suite):
 
 def package_upload(step, runner, suite, attempt, directory):
     """Package actual configured files, using upload-artifact's relative paths."""
-    source = Path(expand(step["with"]["path"], runner, suite, attempt))
+    patterns = expand(step["with"]["path"], runner, suite, attempt).splitlines()
+    source = Path(patterns[0])
+    exclusions = [pattern[1:] for pattern in patterns[1:]]
+    assert all(pattern.startswith("!") for pattern in patterns[1:])
     assert source.exists(), f"missing configured upload source: {source}"
     paths = sorted(source.rglob("*")) if source.is_dir() else [source]
     base = source if source.is_dir() else source.parent
@@ -42,7 +45,7 @@ def package_upload(step, runner, suite, attempt, directory):
     archive = directory / (name + ".zip")
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
         for path in paths:
-            if path.is_file():
+            if path.is_file() and not any(fnmatch.fnmatchcase(str(path), pattern) for pattern in exclusions):
                 bundle.write(path, path.relative_to(base).as_posix())
     return name, archive
 
@@ -121,6 +124,8 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
     jobs = {job: {"result": "success"} for job in (
         "geospatial-changes", "lint", "tests", "geospatial-integration", "production-images", "sdk-validation", "browser",
     )}
+    if defect == "image-retention-failure":
+        jobs["production-images"]["result"] = "failure"
     jobs_path.write_text(json.dumps(jobs))
     requests = []
     def api(path):
@@ -160,13 +165,18 @@ def test_gate_packages_only_results_and_verifier_retains_original_bundle_identit
     retained = transport["uploaded"]["ci-result-production-images-attempt1"]
     with zipfile.ZipFile(retained) as bundle:
         assert "images/manifest.json" in bundle.namelist()
-        assert len([name for name in bundle.namelist() if name.endswith(".docker.tar")]) == 6
+        assert not any(name.endswith(".docker.tar") for name in bundle.namelist())
         assert "runner.log" in bundle.namelist()
+    for target in production_images(transport["plan"]["tested_sha"])["images"]:
+        with zipfile.ZipFile(transport["uploaded"][f"ci-image-{target}-attempt1"]) as bundle:
+            assert bundle.namelist() == [f"{target}.docker.tar"]
+            assert bundle.read(f"{target}.docker.tar") == b"fixture-image-bytes" * 1024
     for node in (22, 24):
         with zipfile.ZipFile(transport["uploaded"][f"ci-result-sdk-node{node}-attempt1"]) as bundle:
             assert "package/candidate.json" in bundle.namelist()
             assert bundle.read("package/skytruth-shared-datasets.tgz") == b"fixture-package-bytes" * 1024
-    assert sum(path.stat().st_size for path in transport["selected"].values()) < retained.stat().st_size
+    assert sum(path.stat().st_size for path in transport["selected"].values()) < sum(
+        path.stat().st_size for name, path in transport["uploaded"].items() if name.startswith(("ci-result-", "ci-image-")))
     outcome, evidence, requests = invoke_verifier(transport, tmp_path, monkeypatch)
     assert outcome == 0
     result = json.loads(evidence.read_text())
@@ -184,8 +194,13 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     receipt = next(step for step in steps if step.get("with", {}).get("name", "").startswith("ci-gate-result-"))
     assert retained["id"] == "retained-results"
     assert steps.index(retained) < steps.index(receipt)
-    assert receipt["if"] == "${{ always() && steps.retained-results.outcome == 'success' }}"
-    assert receipt["with"]["path"] == retained["with"]["path"] + "/result.json"
+    condition = "always() && steps.retained-results.outcome == 'success'"
+    if suite == "production-images":
+        for step in steps:
+            if step.get("with", {}).get("name", "").startswith("ci-image-"):
+                condition += f" && steps.{step['id']}.outcome == 'success'"
+    assert receipt["if"] == "${{ " + condition + " }}"
+    assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"
     assert receipt["with"]["retention-days"] == retained["with"]["retention-days"] == 14
 
@@ -200,9 +215,45 @@ def test_missing_result_cannot_form_a_compact_gate_archive(tmp_path):
         package_upload(receipt, tmp_path, "production-images", 1, tmp_path)
 
 
+def test_hosted_handoff_benchmark_is_read_only_and_separate_from_deployments():
+    workflow = load_workflow(WORKFLOW)
+    selection = workflow["jobs"]["geospatial-changes"]["outputs"]["image_handoff_benchmark"]
+    assert "github.event_name == 'pull_request'" in selection
+    for name in ("tested_image_authorization.py", "tested_image_bundle.py", "benchmark_image_handoff.py"):
+        assert name in selection
+    job = workflow["jobs"]["image-handoff-benchmark"]
+    assert job["permissions"] == {"contents": "read", "actions": "read"}
+    assert "environment" not in job and "secrets" not in job
+    assert job["needs"] == ["geospatial-changes", "production-images"]
+    assert "needs.production-images.result == 'success'" in job["if"]
+    assert not any("google-github-actions/" in step.get("uses", "") for step in job["steps"])
+    run = next(step for step in job["steps"] if "benchmark_image_handoff.py" in step.get("run", ""))
+    assert run["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert "--run-id \"$GITHUB_RUN_ID\"" in run["run"]
+    assert "--attempt \"$GITHUB_RUN_ATTEMPT\"" in run["run"]
+    assert "--sha \"$GITHUB_SHA\"" in run["run"]
+    assert "image-handoff-benchmark" not in workflow["jobs"]["ci-ready"]["needs"]
+
+
+@pytest.mark.parametrize("level", [0, 1])
+def test_hosted_compression_comparison_uses_identical_tars_and_is_pr_only(level):
+    steps = producer_steps(load_workflow(WORKFLOW), "production-images")
+    prefix = "benchmark-image-mpatlas-level0-" if level == 0 else "ci-image-mpatlas-monthly-"
+    step = next(step for step in steps if step.get("with", {}).get("name", "").startswith(prefix))
+    if level == 0:
+        assert step["if"] == "needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'"
+    else:
+        assert "if" not in step
+    assert step["with"]["path"] == "${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar"
+    assert step["with"]["compression-level"] == level
+    assert step["with"]["if-no-files-found"] == "error"
+    assert not step.get("continue-on-error")
+
+
 @pytest.mark.parametrize("defect", [
     "missing-result", "failure", "cancelled", "skipped", "stale-sha", "other-run", "wrong-source-sha",
     "producer-failure", "producer-cancelled", "producer-skipped",
+    "image-retention-failure",
 ])
 def test_compact_result_loader_still_rejects_invalid_or_unproven_producers(transport, tmp_path, monkeypatch, defect):
     outcome, evidence, _ = invoke_verifier(transport, tmp_path, monkeypatch, defect=defect)

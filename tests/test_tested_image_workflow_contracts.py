@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from scripts.ci_contract import ALWAYS, expected_tools, verify_results
+from scripts.tested_image_bundle import TARGETS as IMAGE_TARGETS
 from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow
 
@@ -163,5 +164,59 @@ def test_production_cache_keeps_deployment_artifacts():
     assert buildx < runtime < producer
     assert steps[producer]['env']['SHARED_DATASETS_GITHUB_IMAGE_CACHE'] == 'true'
     retained = next(step['with'] for step in steps if step.get('id') == 'retained-results')
-    assert retained['compression-level'] == 0 and retained['retention-days'] == 14
-    assert retained['path'] == '${{ runner.temp }}/ci-results/production-images'
+    assert retained['retention-days'] == 14
+    assert '!${{ runner.temp }}/ci-results/production-images/images/*.docker.tar' in retained['path'].splitlines()
+
+
+def image_retention_steps():
+    steps = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']['steps']
+    images = {}
+    for step in steps:
+        name = step.get('with', {}).get('name', '')
+        match = re.fullmatch(r'ci-image-(.+)-attempt\$\{\{ github\.run_attempt \}\}', name)
+        if match:
+            assert match[1] not in images, 'image target must have one immutable upload'
+            images[match[1]] = step
+    assert set(images) == IMAGE_TARGETS, 'all six tested images must be retained'
+    return steps, images
+
+
+def test_each_image_upload_is_required_and_contains_only_its_tar():
+    steps, images = image_retention_steps()
+    producer = next(step for step in steps if step.get('name') == 'Test the actual production image recipes')
+    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
+    for target, step in images.items():
+        assert step['uses'] == 'actions/upload-artifact@v4'
+        assert step.get('id') and not step.get('continue-on-error')
+        assert step.get('if', '${{ success() }}') in {'${{ success() }}', 'success()', '${{ always() }}', 'always()'}
+        assert step['with']['path'] == '${{ runner.temp }}/ci-results/production-images/images/' + target + '.docker.tar'
+        assert step['with']['if-no-files-found'] == 'error'
+        assert step['with']['retention-days'] == 14
+        assert steps.index(producer) < steps.index(step) < steps.index(compact)
+    assert len({step['id'] for step in images.values()}) == len(IMAGE_TARGETS)
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
+def test_compact_image_gate_result_requires_every_upload_outcome(outcome):
+    steps, images = image_retention_steps()
+    small = next(step for step in steps if step.get('id') == 'retained-results')
+    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
+    expression = compact['if'].removeprefix('${{').removesuffix('}}').strip()
+    uploads = [small, *images.values()]
+    for failed in uploads:
+        evaluated = expression.replace('always()', 'True')
+        for step in uploads:
+            reference = f"steps.{step['id']}.outcome"
+            assert reference in expression, 'compact evidence must wait for every required upload'
+            evaluated = evaluated.replace(reference, repr(outcome if step is failed else 'success'))
+        assert eval(evaluated.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (outcome == 'success')
+
+
+@pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])
+def test_successful_local_image_checks_cannot_hide_failed_hosted_retention(retention_outcome):
+    plan, results, _ = image_results()
+    jobs = {name: {'result': 'success'} for name in ('geospatial-changes', 'lint', 'tests')}
+    jobs.update({name: {'result': 'skipped'} for name in ('geospatial-integration', 'browser', 'sdk-validation')})
+    jobs['production-images'] = {'result': retention_outcome}
+    with pytest.raises(ValueError, match='job production-images'):
+        verify_results(plan, results, jobs)

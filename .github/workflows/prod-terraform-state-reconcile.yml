@@ -1,0 +1,66 @@
+name: Prod Terraform state reconciliation
+
+# A full saved plan with an empty mutation allowlist may update state/outputs
+# only. Supply current state-recorded deployment variables; any live resource
+# create, update, replacement or deletion fails in the existing protected leaf.
+on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+      tf_vars:
+        description: Current recorded deployment variables, one key=value per line
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+      tf_vars:
+        description: Current recorded deployment variables, one key=value per line
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  id-token: write
+  attestations: write
+
+jobs:
+  reconcile:
+    name: Reconcile production state without changing resources
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: prod-terraform-state-reconcile.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: terraform-state-read
+      sync_name: Production Terraform state reconciliation
+      refusal_prefix: Refusing production state reconciliation with resource mutations
+      targets: ""
+      allowed_exact: ""
+      tf_vars: ${{ inputs.tf_vars }}
