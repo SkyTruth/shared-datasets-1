@@ -21,7 +21,7 @@ RUN --mount=type=cache,id=mpatlas-go-modules,target=/go/pkg/mod,sharing=locked \
     echo "pmtiles binary not found" >&2; \
     exit 1
 
-FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+FROM python:3.12.15-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 
