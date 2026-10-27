@@ -201,7 +201,7 @@ Remote GCS objects:
   publish.
 - Preview test data for the feature preview does not use production
   `_scratch/pending-publishes/`, `shared-datasets-publish-plan`, or the
-  `Approved dataset mutation` workflow. Use `feature-preview`: upload
+  `Data / Approved mutation` workflow. Use `feature-preview`: upload
   disposable preview release bundles directly to
   `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, record
   exact preview-bucket URIs and generations in concierge upload evidence, and

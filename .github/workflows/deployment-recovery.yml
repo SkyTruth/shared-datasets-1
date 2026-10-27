@@ -1,4 +1,4 @@
-name: Deployment read-only reconciliation
+name: Deployments / Read-only reconciliation
 
 on:
   workflow_dispatch:

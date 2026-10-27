@@ -102,14 +102,15 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
 
 
-def test_ci_publication_failure_alerts_without_alerting_validation_only():
-    payload = event(name="CI", event="push")
+@pytest.mark.parametrize("name", alerts.WORKFLOW_NAMES["ci.yml"])
+def test_ci_publication_failure_alerts_without_alerting_validation_only(name):
+    payload = event(name=name, event="push")
     publication = {"name": "publish (208) / Apply approved PR mutation plans (PR #208)",
                    "status": "completed", "conclusion": "failure"}
     validation = {"name": "tests", "status": "completed", "conclusion": "failure"}
     assert alerts.alert_for_run(payload, jobs=[validation]) is None
     assert alerts.alert_for_run(payload, jobs=[publication]) is not None
-    assert alerts.alert_for_run(event(name="CI", event="pull_request"), jobs=[publication]) is None
+    assert alerts.alert_for_run(event(name=name, event="pull_request"), jobs=[publication]) is None
     assert alerts.alert_for_run(payload, jobs=[{**publication, "conclusion": "skipped"}]) is None
 
 
@@ -122,9 +123,18 @@ def source_api(run, **updates):
     return api
 
 
+@pytest.mark.parametrize("name", sorted(alerts.WORKFLOW_PATHS))
+def test_display_aliases_still_require_the_registered_workflow_path(name):
+    run = event(name=name, head_sha="a" * 40, run_attempt=1)["workflow_run"]
+    assert alerts.verify_source_event(source_api(run), run)
+    with pytest.raises(ValueError, match="trusted main source"):
+        alerts.verify_source_event(source_api(run, path=".github/workflows/untrusted.yml"), run)
+
+
 @pytest.mark.parametrize("conclusion", ["success", "failure", "timed_out", "cancelled"])
-def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusion):
-    payload = event(name="Catalog web deploy")
+@pytest.mark.parametrize("name", alerts.WORKFLOW_NAMES["catalog-web-deploy.yml"])
+def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusion, name):
+    payload = event(name=name)
     jobs = [
         {"name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
@@ -136,7 +146,7 @@ def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusi
     assert alerts.alert_for_run(payload, jobs=jobs) is not None
     assert alerts.alert_for_run(payload, jobs=jobs[1:]) is not None
     jobs[1]["conclusion"] = "skipped"
-    assert alerts.alert_for_run(event(name="Catalog web deploy", event="workflow_run"), jobs=jobs) is not None
+    assert alerts.alert_for_run(event(name=name, event="workflow_run"), jobs=jobs) is not None
 
 
 def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_path, monkeypatch):

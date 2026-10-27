@@ -1,4 +1,4 @@
-name: Approved dataset mutation
+name: Data / Approved mutation
 
 on:
   workflow_call:

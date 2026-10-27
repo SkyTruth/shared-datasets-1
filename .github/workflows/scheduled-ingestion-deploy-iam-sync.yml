@@ -1,4 +1,4 @@
-name: Scheduled ingestion deploy IAM sync
+name: Infrastructure / Ingestion deploy IAM sync
 
 on:
   workflow_dispatch:

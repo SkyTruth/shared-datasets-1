@@ -1,4 +1,4 @@
-name: Deployment receipt rehearsal
+name: Deployments / Receipt rehearsal
 
 on:
   workflow_dispatch:

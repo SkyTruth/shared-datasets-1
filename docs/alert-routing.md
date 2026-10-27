@@ -80,7 +80,7 @@ Google's original Slack app messages cannot be adopted by a different bot.
 The WDPA metric policy requests `OPENED` and `CLOSED`. Google supports only
 `OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
 Those alerts are bot-owned too. After investigating recovery, the owner can use
-**Resolve legacy workflow alert**, supplying only `monitoring_incident_id`.
+**Alerts / Legacy workflow resolution**, supplying only `monitoring_incident_id`.
 That protected, owner-only main workflow reads Monitoring once, requires its
 exact incident to be `CLOSED`, and edits the recorded parent. It does not poll,
 accept arbitrary Slack timestamps, create parents, or treat log expiry as proof

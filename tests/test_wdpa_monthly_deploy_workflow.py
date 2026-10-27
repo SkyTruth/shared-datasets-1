@@ -109,7 +109,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         steps = workflow_steps_by_name(workflow, "deploy")
         step_names = list(steps)
 
-        self.assertEqual(workflow["name"], "WDPA monthly deploy")
+        self.assertEqual(workflow["name"], "Ingestion / WDPA monthly deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
         for name in ("executor_sha", "source_run_id", "source_run_attempt"):

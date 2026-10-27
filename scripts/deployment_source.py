@@ -10,11 +10,12 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.deployment_revision import DeploymentError, GitHub, require, verify_ci, verify_context
 
 
 def resolve(api, repository, sha, event, current_id, current_attempt):
-    if event.get("workflow_run", {}).get("name") == "CI":
+    if event.get("workflow_run", {}).get("name") in WORKFLOW_NAMES["ci.yml"]:
         source = event["workflow_run"]
         verify_ci(api, repository, sha, source["id"], source["run_attempt"])
         return source["id"], source["run_attempt"]

@@ -1,4 +1,4 @@
-name: Cron alert delivery test
+name: Alerts / Cron delivery test
 
 on:
   workflow_dispatch:

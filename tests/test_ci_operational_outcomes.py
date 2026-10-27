@@ -97,8 +97,8 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert "needs.apply-approved-pr-plans.outputs.mutation_completed == 'true'" in refresh['if']
     assert refresh['with']['mutation_completed'] is True
     catalog = load_workflow(ROOT / '.github/workflows/catalog-web-deploy.yml')
-    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Release index rebuild', 'CI']
-    assert "github.event.workflow_run.name == 'Release index rebuild'" in catalog['jobs']['deploy']['if']
+    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Catalog / Release index rebuild', 'Release index rebuild', 'CI / Validate and deliver', 'CI']
+    assert "contains(fromJSON('[\"Catalog / Release index rebuild\",\"Release index rebuild\"]'), github.event.workflow_run.name)" in catalog['jobs']['deploy']['if']
     assert "needs.select-repo-changes.outputs.should_deploy == 'true'" in catalog['jobs']['deploy']['if']
     viewer = load_workflow(ROOT / '.github/workflows/catalog-viewer-deploy.yml')
     triggers = workflow_triggers(viewer)

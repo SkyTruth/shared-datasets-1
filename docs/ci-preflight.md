@@ -1,5 +1,27 @@
 # Complete validation before pushing
 
+## Workflow display names
+
+Actions display names use `Domain / Purpose` to group related workflows
+alphabetically. Keep workflow filenames, job names, required check contexts and
+Terraform `sync_name` labels stable; deployment records use these identities.
+`scripts/workflow_identity.py` records current labels followed by explicit
+historical aliases. Update that registry, `workflow_run` subscriptions, worker
+filters and operator documentation together when renaming a workflow. Historical
+aliases preserve reruns and incident replay; they do not bypass verification of
+the actual workflow path, ID, repository or run attempt.
+
+Three workflows retain their existing names: `Bucket hygiene audit`,
+`Catalog drift guard` and `Dataset breaking change alert`. Their exact labels
+appear in the GCP read-only OIDC provider's condition in
+`terraform/envs/prod/github_readonly_iam.tf`. Before renaming those labels, add a
+constrained protected IAM deployment path, approve and apply an overlapping
+old/new-name condition, and verify that policy is live. A display-name-only
+change would otherwise break their authentication. Follow
+the [protected Terraform skill](../.claude/skills/protected-terraform-apply/SKILL.md).
+
+## Validation boundary
+
 For concurrent work, follow [agent integration](agent-integration.md). Finish
 known overlapping prerequisites and any required main synchronization before
 committing the final head and starting this command.
@@ -273,8 +295,8 @@ production workflow files and concurrency behavior are unchanged.
 
 The receipt bootstrap lands before dependent deployments adopt signed deployment
 records. After this workflow is on main, `jonaraphael` dispatches
-`Deployment receipt rehearsal` through the existing protected production
-environment, then dispatches `Reusable deployment receipt rehearsal`. The same
+`Deployments / Receipt rehearsal` through the existing protected production
+environment, then dispatches `Deployments / Receipt rehearsal via reusable workflow`. The same
 protected leaf signs a synthetic receipt and verifies its exact bytes, main
 revision, distinct caller and signer identities and producing run with the pinned
 official verifier. Both direct and reusable invocation must pass.
