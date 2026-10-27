@@ -72,6 +72,7 @@ they apply, after explicit user instructions and this file.
 | [shared-datasets-compliance-audit](.claude/skills/shared-datasets-compliance-audit/SKILL.md) | Perform a read-only repo/bucket compliance walkthrough of layout, READMEs, formats, releases, and catalog freshness. |
 | [static-catalog-web-preview](.claude/skills/static-catalog-web-preview/SKILL.md) | Build, update, QA, or deploy the static catalog web preview under _catalog/web, including PMTiles, caching, and docs rendering. |
 | [sync-docs-with-code](.claude/skills/sync-docs-with-code/SKILL.md) | Align repository documentation with implementation, tests, CLIs, workflows, Terraform, schemas, and generated outputs. |
+| [tidy-local-development](.claude/skills/tidy-local-development/SKILL.md) | Clean merged local and remote Git branches, synchronize main within cleanup scope, and remove obsolete repository-owned Docker artifacts while protecting active work. |
 | [update-feature-metadata-translations](.claude/skills/update-feature-metadata-translations/SKILL.md) | Add, edit, review, regenerate, or publish release feature metadata translation sources and locale sidecars. |
 
 Keep skill examples repo-relative and maintainer-neutral. Avoid usernames,
