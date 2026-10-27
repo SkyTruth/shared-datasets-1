@@ -105,10 +105,10 @@ receipt. Unavailable attestations and invalid signatures fail closed.
 
 Receipts are reconstructed from durable Deployment API records and verified by
 their digest through the repository attestation API; ordinary Actions artifact
-retention does not discard their authorization evidence. The non-mutating
-protected receipt rehearsal lands before deployment rewiring, and each leaf
-must complete an exact-current-run rehearsal before starting a record. Its
-signed claim must verify before infrastructure, SDK or catalog mutation. Image
+retention does not discard their authorization evidence. Each protected leaf
+must complete a non-mutating signing rehearsal in its exact current run before
+starting a record. Its signed claim must verify before infrastructure, SDK or
+catalog mutation. Image
 staging first verifies the rehearsal and replay guard, then loads and pushes the
 same immutable bytes; ingestion claims retain the resolved registry digest.
 If claim signing fails, the same protected run may sign its failed/unknown

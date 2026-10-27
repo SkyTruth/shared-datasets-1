@@ -245,6 +245,24 @@ def plan_checks(plan, *, project_number, target=None):
             elif kind == "google_project_iam_audit_config":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
+            elif kind == "google_iam_workload_identity_pool_provider":
+                project(current)
+                require(action == "delete", "only retired identity provider deletion is supported")
+                text(current.get("workload_identity_pool_id"), "workload identity pool")
+                text(current.get("workload_identity_pool_provider_id"), "workload identity provider")
+                add(PROJECT_URL, ("iam.workloadIdentityPoolProviders.get", "iam.workloadIdentityPoolProviders.delete"))
+            elif kind == "google_logging_log_view":
+                require(action == "delete", "only retired log view deletion is supported")
+                require(re.fullmatch(r"projects/(?:" + PROJECT + "|" + str(project_number)
+                                     + r")/locations/global/buckets/[^/]+/views/[A-Za-z0-9_.-]+",
+                                     str(current.get("id", ""))), "foreign or malformed log view")
+                add(PROJECT_URL, ("logging.views.get", "logging.views.delete"))
+            elif kind == "google_monitoring_metric_descriptor":
+                project(current)
+                require(action == "delete", "only retired metric descriptor deletion is supported")
+                require(re.fullmatch(r"custom\.googleapis\.com/[A-Za-z0-9_/.-]+", str(current.get("type", "")))
+                        and ".." not in current["type"].split("/"), "foreign or malformed custom metric")
+                add(PROJECT_URL, ("monitoring.metricDescriptors.get", "monitoring.metricDescriptors.delete"))
             elif kind == "google_logging_project_sink":
                 project(current)
                 add(PROJECT_URL, ("logging.sinks.get", "logging.sinks." + action))

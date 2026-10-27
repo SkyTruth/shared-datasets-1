@@ -227,6 +227,30 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             with self.subTest(actions=actions):
                 self.assertEqual(self.run_main(plan_with(("allowed.resource", actions)), "--allowed-exact", "allowed.resource"), (0, ""))
 
+    def test_delete_only_accepts_empty_partial_and_completed_retirement_plans(self):
+        for entries in ([], [("retired.first", ["delete"])],
+                        [("retired.first", ["delete"]), ("retired.second", ["delete"])],
+                        [("retired.first", ["no-op"])]):
+            with self.subTest(entries=entries):
+                self.assertEqual(self.run_main(plan_with(*entries), "--allowed-exact",
+                                               "retired.first\nretired.second", "--delete-only"), (0, ""))
+
+    def test_delete_only_rejects_creates_updates_replacements_and_other_resources(self):
+        for address, actions in [("retired.first", ["create"]), ("retired.first", ["update"]),
+                                 ("retired.first", ["delete", "create"]),
+                                 ("retired.first", ["create", "delete"]), ("active.resource", ["delete"])]:
+            with self.subTest(address=address, actions=actions):
+                code, output = self.run_main(plan_with((address, actions)), "--allowed-exact",
+                                             "retired.first", "--delete-only")
+                self.assertEqual(code, 1)
+                self.assertIn(address, output)
+
+    def test_conflicting_action_policies_fail_before_reading_a_plan(self):
+        with self.assertRaises(SystemExit) as failure:
+            terraform_plan_allowlist.main(["unused.json", "--allowed-exact", "retired.first",
+                                           "--refusal-prefix", "refuse", "--block-deletes", "--delete-only"])
+        self.assertEqual(failure.exception.code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

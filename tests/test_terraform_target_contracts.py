@@ -134,6 +134,50 @@ def test_yaml_narrow_callers_cannot_bypass_policy_enumeration(policy):
         contracts.check_graph(root, {OWNER: {ROLE}, ROLE: set()})
 
 
+def state_only_job(policy):
+    root, value, workflow = policy
+    workflow['jobs']['state'] = {'uses': contracts.CALLER, 'with': {'targets': '', 'allowed_exact': ''}}
+    value['jobs']['owned.yml/state'] = []
+    write_policy(root, value)
+    return root, value, workflow
+
+
+def test_paired_empty_scope_has_no_managed_mutation_dependencies(policy):
+    root, _, workflow = state_only_job(policy)
+    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    graph = {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()}
+    assert contracts.check_graph(root, graph)['owned.yml/state'] == {
+        'targets': [], 'managed_prerequisites': [], 'state_only': True,
+    }
+
+
+@pytest.mark.parametrize('change', [
+    {'allowed_patterns': '.*'}, {'prepare_monitoring_slack': True},
+    {'targets': OWNER}, {'allowed_exact': OWNER},
+])
+def test_state_only_cannot_acquire_resource_scope_or_prepare_external_mutations(policy, change):
+    root, _, workflow = state_only_job(policy)
+    workflow['jobs']['state']['with'].update(change)
+    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    with pytest.raises(ValueError, match='state-only|nonempty'):
+        contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
+
+
+@pytest.mark.parametrize('kind', ['prerequisite', 'retirement', 'bootstrap'])
+def test_state_only_has_no_hidden_ownership_or_bootstrap_edges(policy, kind):
+    root, value, workflow = state_only_job(policy)
+    if kind == 'prerequisite':
+        value['jobs']['owned.yml/state'] = [OWNER]
+    elif kind == 'retirement':
+        value['retired_targets']['owned.yml/state'] = [OWNER]
+    else:
+        workflow['jobs']['state']['needs'] = 'bootstrap'
+    write_policy(root, value)
+    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    with pytest.raises(ValueError, match='state-only'):
+        contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
+
+
 def test_real_simplified_graph_parser_preserves_module_and_data_edges():
     dot = '''digraph G {
   rankdir = "RL";

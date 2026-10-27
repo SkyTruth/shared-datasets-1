@@ -1,0 +1,397 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "google_iam_workload_identity_pool_provider.operational_observer",
+      "mode": "managed",
+      "type": "google_iam_workload_identity_pool_provider",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/locations/global/workloadIdentityPools/github/providers/github-operational-observer",
+          "name": "projects/12695949518/locations/global/workloadIdentityPools/github/providers/github-operational-observer",
+          "project": "shared-datasets-1",
+          "workload_identity_pool_id": "github",
+          "workload_identity_pool_provider_id": "github-operational-observer"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Default-run-activity\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Default",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-activity",
+          "location": "global",
+          "name": "shared-datasets-operations-run-activity",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Default-run-data-access\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Default",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-data-access",
+          "location": "global",
+          "name": "shared-datasets-operations-run-data-access",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Default-run-stderr\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Default",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-stderr",
+          "location": "global",
+          "name": "shared-datasets-operations-run-stderr",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Default-scheduler-executions\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Default",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-scheduler-executions",
+          "location": "global",
+          "name": "shared-datasets-operations-scheduler-executions",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Required-run-activity\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Required",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-activity",
+          "location": "global",
+          "name": "shared-datasets-operations-run-activity",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Required-run-data-access\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Required",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-data-access",
+          "location": "global",
+          "name": "shared-datasets-operations-run-data-access",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Required-run-stderr\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Required",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-stderr",
+          "location": "global",
+          "name": "shared-datasets-operations-run-stderr",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_logging_log_view.operational_observations[\"_Required-scheduler-executions\"]",
+      "mode": "managed",
+      "type": "google_logging_log_view",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "_Required",
+          "id": "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-scheduler-executions",
+          "location": "global",
+          "name": "shared-datasets-operations-scheduler-executions",
+          "parent": "projects/shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_monitoring_alert_policy.dataset_schema_changed",
+      "mode": "managed",
+      "type": "google_monitoring_alert_policy",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "conditions": [
+            {
+              "condition_absent": [],
+              "condition_matched_log": [
+                {
+                  "filter": "resource.type=\"global\"\nlogName=\"projects/shared-datasets-1/logs/shared-datasets-alerts\"\nseverity>=WARNING\njsonPayload.alert_type=\"dataset_schema_changed\"\n",
+                  "label_extractors": {
+                    "asset_slug": "EXTRACT(jsonPayload.asset_slug)",
+                    "changes": "EXTRACT(jsonPayload.changes_text)",
+                    "new_fields": "EXTRACT(jsonPayload.new_fields_text)",
+                    "old_fields": "EXTRACT(jsonPayload.old_fields_text)"
+                  }
+                }
+              ],
+              "condition_monitoring_query_language": [],
+              "condition_prometheus_query_language": [],
+              "condition_sql": [],
+              "condition_threshold": [],
+              "display_name": "Manual publish detected a canonical field/schema delta",
+              "name": "projects/shared-datasets-1/alertPolicies/10109535963709095250/conditions/10109535963709095885"
+            }
+          ],
+          "id": "projects/shared-datasets-1/alertPolicies/10109535963709095250",
+          "name": "projects/shared-datasets-1/alertPolicies/10109535963709095250",
+          "notification_channels": [],
+          "project": "shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
+      "mode": "managed",
+      "type": "google_monitoring_metric_descriptor",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/metricDescriptors/custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat",
+          "name": "projects/shared-datasets-1/metricDescriptors/custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat",
+          "project": "shared-datasets-1",
+          "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
+      "mode": "managed",
+      "type": "google_monitoring_metric_descriptor",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/metricDescriptors/custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2",
+          "name": "projects/shared-datasets-1/metricDescriptors/custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2",
+          "project": "shared-datasets-1",
+          "type": "custom.googleapis.com/shared_datasets/operational_reconciliation_heartbeat_v2"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_log_view_manager",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalLogViewManager",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalLogViewManager",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalLogViewManager"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_metric_descriptor_manager",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalMetricDescriptorManager",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalMetricDescriptorManager",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalMetricDescriptorManager"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_observer_reader",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalObserver",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalObserver",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalObserver"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_observer_receipts",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalReceiptReader",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalReceiptReader",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalReceiptReader"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_provider_creator",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalProviderCreator",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalProviderCreator",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalProviderCreator"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.operational_provider_reader",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsOperationalProviderReader",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsOperationalProviderReader",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsOperationalProviderReader"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.readonly_provider_updater",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsReadonlyTrustUpdater",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsReadonlyTrustUpdater",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsReadonlyTrustUpdater"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "module.operational_observer_service_account.google_service_account.this",
+      "mode": "managed",
+      "type": "google_service_account",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "account_id": "shared-datasets-alert-observer",
+          "email": "shared-datasets-alert-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "id": "projects/shared-datasets-1/serviceAccounts/shared-datasets-alert-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "name": "projects/shared-datasets-1/serviceAccounts/shared-datasets-alert-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    }
+  ]
+}

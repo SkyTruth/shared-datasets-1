@@ -226,14 +226,44 @@ gate's start/completion window and verify the same execution in its declared
 producing attempt. Plan and suite references cannot be newer than that gate.
 A newly executed gate with missing evidence fails; it cannot reuse an older gate.
 
-Each suite first uploads its complete `ci-result-<suite>-attempt<N>` artifact,
+Each suite first uploads its `ci-result-<suite>-attempt<N>` artifact,
 then uploads `ci-gate-result-<suite>-attempt<N>` containing only `result.json`.
-The compact upload requires successful retention of the complete artifact and
+Production images are retained separately as six
+`ci-image-<target>-attempt<N>` artifacts, each containing exactly one
+`<target>.docker.tar` with compression level 1. Its result artifact retains
+the complete six-image manifest, result and diagnostic logs, excluding the TARs.
+The compact production-image upload requires all six image uploads and the
+diagnostic upload to succeed; every missing source file fails retention.
+Other suites retain their existing complete result bundles. The compact upload
 fails if its result file is missing. `ci-ready` downloads only compact results,
 preserving its revision, tree, contract, toolchain and producing-job checks.
-Its `suite_artifacts` evidence still names the complete artifacts. Deployment
-consumers continue verifying and loading the retained image or SDK bytes;
+Its `suite_artifacts` evidence names each suite's result artifact. Image
+deployment consumers verify the small result and complete manifest, then download
+only the selected target artifact from that same producing attempt. Both ZIPs
+must match their GitHub API SHA-256 digests; TAR, config, platform, rootfs-layer,
+loaded-image and registry-image verification remain required. Missing, ambiguous,
+expired or incompatible artifacts fail without rebuilding or falling back.
+SDK consumers retain their existing package-byte verification;
 diagnostic logs and deployment bundles remain available for 14 days.
+
+The loader prints `TESTED_IMAGE_HANDOFF` JSON phase timings for source
+authorization, result verification, image download, ZIP verification/extraction,
+TAR/rootfs verification, Docker loading and loaded-config verification. These
+logs do not grant deployment authority or replace signed terminal evidence.
+
+Same-repository PRs changing the image loader, bundle verifier or benchmark script
+run a read-only hosted handoff benchmark. It retains a full-bundle compression-zero
+baseline and MPAtlas-only artifacts at compression levels zero and one, all
+from the same successful image producer. A separate Ubuntu runner measures two
+trials per variant in forward/reverse order after a separately recorded warm-up,
+preserving image checks and recording cache state, actual artifact IDs, Docker
+versions and phase timings. Level one uses the normal retained deployment image;
+only the full baseline and level-zero image require additional uploads.
+The original baseline loader is read from revision `7bcded0`. Main-only production
+authorization is excluded from this PR diagnostic; no production environment,
+GCP authentication, image push or deployment runs in the benchmark job. Its
+`image-handoff-benchmark-attempt<N>` artifact contains the measurements. Other
+changes and main runs do not select this extra benchmark.
 
 The pinned actionlint version predates GitHub's `concurrency.queue` field.
 `scripts/check_workflow_syntax.py` independently requires `queue: max` together
@@ -241,16 +271,12 @@ with explicit `cancel-in-progress: false`, then omits only that validated scalar
 line in disposable parser input. All remaining syntax errors fail normally;
 production workflow files and concurrency behavior are unchanged.
 
-The receipt bootstrap lands before dependent deployments adopt signed deployment
-records. After this workflow is on main, `jonaraphael` dispatches
-`Deployment receipt rehearsal` through the existing protected production
-environment, then dispatches `Reusable deployment receipt rehearsal`. The same
-protected leaf signs a synthetic receipt and verifies its exact bytes, main
-revision, distinct caller and signer identities and producing run with the pinned
-official verifier. Both direct and reusable invocation must pass.
-It has no GCP authentication or deployment-write permission. A successful
-protected rehearsal is required before enabling dependent production mutations;
-an unsigned fixture or a locally passing test cannot replace this live proof.
+Each protected deployment signs and verifies a synthetic receipt in its own run
+before creating a deployment record or mutating production. The pinned official
+verifier checks the exact bytes, main revision, distinct caller and signer
+identities and producing run. An unsigned fixture or a locally passing test
+cannot replace this live check. See [deployment contracts](deployment-contracts.md)
+for the claim and outcome signing requirements.
 
 ## Focused local checks
 
