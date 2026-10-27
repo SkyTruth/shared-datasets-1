@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:e70237b264442328526ff29d6b3c43bd8abcf6cbab78a949322fb69b7d91d6b6
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
 WORKDIR /app
 RUN python -m pip install --no-cache-dir "google-cloud-storage>=2.19.0,<3"

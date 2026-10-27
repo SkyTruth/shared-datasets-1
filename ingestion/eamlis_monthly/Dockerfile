@@ -23,7 +23,7 @@ RUN set -eux; \
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
         go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .
 
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:fc169880a4d941f3142c0e2e623f05f246150add19dc36fc9224df20fb19e5fd
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 

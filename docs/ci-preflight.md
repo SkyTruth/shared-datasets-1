@@ -92,6 +92,16 @@ Caches never substitute for validation evidence or deployment artifacts. Cache
 export errors are optional acceleration failures; image or validation failures
 still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
 
+The seven production recipes pin their Python base tags to reviewed multi-platform
+index digests. This prevents an upstream tag move from silently invalidating the
+dependency layers during unrelated changes. It does not speed up an existing
+cache hit or eliminate registry reads. `.github/dependabot.yml` checks those
+recipes weekly for Python digest and patch updates within Python 3.12, grouping
+compatible updates into reviewable PRs. Go and uv updates are outside this entry.
+Base updates still rebuild affected layers and pass the selected CI suites,
+exact-image handoff and existing deployment approvals; there is no automatic
+merge. WDPA retains its separate accepted-build deployment path.
+
 After all selected suites, final evidence verification and source checks pass,
 full local preflight removes only its own six verified image archives. Manifests,
 hashes, command logs and results remain; `runtime.json` records
@@ -139,6 +149,11 @@ reviewed activation may enable shared-bucket logging.
 Browser validation removes its process-owned uv download cache after installing
 the locked fixture environment, reducing Chromium's peak disk use without
 removing installed dependencies or changing test coverage.
+The managed Ubuntu runner and local preflight image supply browser system
+libraries and fonts. The shared suite installs the lockfile-pinned Chromium
+without reinstalling OS packages. Missing libraries or browser launch/rendering
+failures still fail the complete browser suite; there is no automatic OS-install
+fallback.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
 scanning, admission and diff/static guardrails, local catalog compliance,
