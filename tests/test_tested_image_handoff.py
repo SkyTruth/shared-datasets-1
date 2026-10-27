@@ -1,4 +1,5 @@
 """Retained bytes must survive a producer/consumer round trip and reject substitution."""
+import copy
 import hashlib
 import gzip
 import io
@@ -109,9 +110,9 @@ def containerd_tar(raw, *, config_change=None):
     return output.getvalue(), manifest_descriptor
 
 
-def zipped(files):
+def zipped(files, compression=zipfile.ZIP_STORED):
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
+    with zipfile.ZipFile(output, "w", compression=compression, compresslevel=1) as archive:
         for name, value in files.items():
             archive.writestr(name, json.dumps(value) if isinstance(value, dict) else value)
     return output.getvalue()
@@ -121,7 +122,7 @@ def zipped(files):
 def handoff(tmp_path, monkeypatch):
     images = {}
     files = {}
-    for target in bundle.TARGETS:
+    for target in sorted(bundle.TARGETS):
         raw, images[target] = docker_tar(target)
         files["images/" + images[target]["archive"]] = raw
     manifest = {"schema_version": 1, "tested_sha": SHA, "images": images}
@@ -133,10 +134,17 @@ def handoff(tmp_path, monkeypatch):
     result = {**identity, "source": {"run_id": "123", "run_attempt": 1}, "status": "success", "suite": "production-images",
               "tools": proof.expected_tools("production-images"), "commands": [{"argv": ["images"], "exit_code": 0}], "production_images": manifest}
     files.update({"result.json": result, "images/manifest.json": manifest, "logs/untrusted-script.py": b"never extract me"})
-    payloads = [zipped({"evidence.json": evidence}), zipped({"plan.json": plan}), zipped(files)]
+    result_files = {name: content for name, content in files.items() if not name.endswith(".docker.tar")}
+    payloads = [zipped({"evidence.json": evidence}), zipped({"plan.json": plan}), zipped(result_files)]
+    artifact_names = ["ci-ready-evidence-attempt2", "ci-validation-plan-attempt1", "ci-result-production-images-attempt1"]
+    image_artifact_ids = {}
+    for target, image in images.items():
+        payloads.append(zipped({image["archive"]: files["images/" + image["archive"]]}))
+        artifact_names.append(f"ci-image-{target}-attempt1")
+        image_artifact_ids[target] = len(payloads)
     artifacts = [{"id": index, "name": name, "expired": False, "created_at": "2026-10-14T01:31:53Z", "workflow_run": {"id": 123},
                   "size_in_bytes": len(raw), "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
-                 for index, (name, raw) in enumerate(zip(["ci-ready-evidence-attempt2", "ci-validation-plan-attempt1", "ci-result-production-images-attempt1"], payloads), 1)]
+                 for index, (name, raw) in enumerate(zip(artifact_names, payloads), 1)]
     repository = {"id": 9, "full_name": REPO}
     workflow = {"id": 7, "path": ".github/workflows/ci.yml"}
     run = {"id": 123, "workflow_id": 7, "repository": repository, "head_repository": repository, "event": "push", "head_branch": "main",
@@ -145,7 +153,7 @@ def handoff(tmp_path, monkeypatch):
     api = Mock()
     api.get.side_effect = lambda endpoint: repository if endpoint == f"repos/{REPO}" else workflow if "/workflows/" in endpoint else {**run, "run_attempt": int(endpoint.rsplit("/", 1)[-1])}
     api.pages.side_effect = lambda endpoint, field=None: artifacts if field == "artifacts" else jobs
-    api.archive.side_effect = lambda repo, artifact: payloads[artifact - 1] if artifact < 3 else pytest.fail("large ZIP must not be loaded into memory")
+    api.archive.side_effect = lambda repo, artifact: payloads[artifact - 1] if artifact <= 3 else pytest.fail("image ZIP must not be loaded into memory")
     api.archive_to.side_effect = lambda repo, artifact, path: path.write_bytes(payloads[artifact - 1])
     monkeypatch.setattr(proof, "contract_digest", lambda root: "contract")
     calls = []
@@ -159,28 +167,51 @@ def handoff(tmp_path, monkeypatch):
     monkeypatch.setattr(bundle.subprocess, "check_output", output)
     monkeypatch.setattr(bundle.subprocess, "run", lambda args, **kwargs: calls.append(args))
     return {"api": api, "manifest": manifest, "files": files, "result": result, "payloads": payloads, "artifacts": artifacts,
-            "jobs": jobs, "run": run, "calls": calls, "root": tmp_path}
+            "jobs": jobs, "run": run, "calls": calls, "root": tmp_path, "image_artifact_ids": image_artifact_ids}
 
 
 def refresh(fixture):
-    fixture["payloads"][2] = zipped(fixture["files"])
+    fixture["payloads"][2] = zipped({name: content for name, content in fixture["files"].items()
+                                    if not name.endswith(".docker.tar")})
     fixture["artifacts"][2].update(size_in_bytes=len(fixture["payloads"][2]), digest="sha256:" + hashlib.sha256(fixture["payloads"][2]).hexdigest())
+    for target, image in fixture["manifest"]["images"].items():
+        member = "images/" + image["archive"]
+        refresh_image(fixture, target, {image["archive"]: fixture["files"][member]} if member in fixture["files"] else {})
+
+
+def refresh_image(fixture, target, members):
+    artifact_id = fixture["image_artifact_ids"][target]
+    payload = zipped(members)
+    fixture["payloads"][artifact_id - 1] = payload
+    artifact = next(item for item in fixture["artifacts"] if item["id"] == artifact_id)
+    artifact.update(size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
 
 
 def download(fixture, target="sea-ice-daily"):
     return consumer.download(fixture["api"], REPO, 123, 2, SHA, target, fixture["root"] / "loaded", fixture["root"])
 
 
-def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff):
-    result = download(handoff)
-    image = handoff["manifest"]["images"]["sea-ice-daily"]
+@pytest.mark.parametrize("target", sorted(bundle.TARGETS))
+@pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
+def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff, target, compression):
+    image = handoff["manifest"]["images"][target]
+    artifact_id = handoff["image_artifact_ids"][target]
+    payload = zipped({image["archive"]: handoff["files"]["images/" + image["archive"]]}, compression)
+    handoff["payloads"][artifact_id - 1] = payload
+    next(artifact for artifact in handoff["artifacts"] if artifact["id"] == artifact_id).update(
+        size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
+    result = download(handoff, target)
+    image = handoff["manifest"]["images"][target]
     assert result["image_id"] == image["config_digest"]
-    assert result["artifact"] == "sea-ice-daily@" + image["config_digest"]
-    assert Path(result["archive"]).read_bytes() == handoff["files"]["images/sea-ice-daily.docker.tar"]
+    assert result["artifact"] == target + "@" + image["config_digest"]
+    assert Path(result["archive"]).read_bytes() == handoff["files"]["images/" + image["archive"]]
     assert list((handoff["root"] / "loaded").iterdir()) == [Path(result["archive"])]
     assert handoff["calls"] == [["docker", "image", "load", "--input", result["archive"]]]
-    assert handoff["api"].archive.call_count == 2
-    assert handoff["api"].archive_to.call_count == 1
+    assert handoff["api"].archive.call_count == 3
+    handoff["api"].archive_to.assert_called_once()
+    assert handoff["api"].archive_to.call_args.args[:2] == (REPO, handoff["image_artifact_ids"][target])
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][2])) as diagnostic:
+        assert not any(name.endswith(".docker.tar") for name in diagnostic.namelist())
 
 
 @pytest.mark.parametrize("trigger_attempt", [2, 3])
@@ -192,6 +223,29 @@ def test_downstream_only_rerun_loads_images_from_the_reused_original_gate(handof
     handoff["artifacts"][0].update(name="ci-ready-evidence-attempt1", digest="sha256:" + hashlib.sha256(handoff["payloads"][0]).hexdigest())
     result = consumer.download(handoff["api"], REPO, 123, trigger_attempt, SHA, "sea-ice-daily", handoff["root"] / "loaded", handoff["root"])
     assert Path(result["archive"]).read_bytes() == handoff["files"]["images/sea-ice-daily.docker.tar"]
+    assert handoff["api"].archive_to.call_args.args[1] == handoff["image_artifact_ids"]["sea-ice-daily"]
+
+
+def test_failed_selected_producer_does_not_fall_back_to_older_successful_image_artifacts(handoff):
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][0])) as archive:
+        evidence = json.loads(archive.read("evidence.json"))
+    evidence["suite_artifacts"]["production-images"] = "ci-result-production-images-attempt2"
+    handoff["payloads"][0] = zipped({"evidence.json": evidence})
+    handoff["artifacts"][0].update(digest="sha256:" + hashlib.sha256(handoff["payloads"][0]).hexdigest())
+    original_pages = handoff["api"].pages.side_effect
+
+    def pages(endpoint, field=None):
+        found = original_pages(endpoint, field=field)
+        if "/attempts/2/jobs?" in endpoint:
+            return [{**job, "conclusion": "failure" if job["name"] == "production-images" else job["conclusion"]}
+                    for job in found]
+        return found
+
+    handoff["api"].pages.side_effect = pages
+    with pytest.raises(DeploymentError, match="producing job did not complete successfully"):
+        download(handoff)
+    handoff["api"].archive_to.assert_not_called()
+    assert not handoff["calls"]
 
 
 @pytest.mark.parametrize("job", ["ci-ready", "geospatial-changes", "production-images"])
@@ -221,7 +275,7 @@ def test_result_must_bind_all_validation_identity_and_execution(handoff, field, 
     assert not handoff["calls"]
 
 
-@pytest.mark.parametrize("alteration", ["expired", "wrong_run", "digest", "missing_image", "wrong_manifest", "unsafe_path", "extra_image", "oversized"])
+@pytest.mark.parametrize("alteration", ["expired", "wrong_run", "digest", "missing_image", "wrong_manifest", "unsafe_path", "oversized"])
 def test_artifact_boundary_rejects_invalid_or_incomplete_retention(handoff, alteration):
     artifact = handoff["artifacts"][2]
     if alteration == "expired":
@@ -239,10 +293,87 @@ def test_artifact_boundary_rejects_invalid_or_incomplete_retention(handoff, alte
             handoff["files"]["images/manifest.json"] = {**handoff["manifest"], "tested_sha": "d" * 40}
         elif alteration == "unsafe_path":
             handoff["files"]["../malicious.py"] = b"bad"
-        elif alteration == "extra_image":
-            handoff["files"]["images/unreviewed.docker.tar"] = b"bad"
         refresh(handoff)
     with pytest.raises((DeploymentError, bundle.ImageError)):
+        download(handoff)
+    assert not handoff["calls"]
+
+
+@pytest.mark.parametrize("alteration", ["missing", "duplicate", "expired", "wrong-run", "wrong-target", "wrong-attempt", "digest", "oversized"])
+def test_selected_image_requires_one_exact_producer_attempt_artifact(handoff, alteration):
+    artifact_id = handoff["image_artifact_ids"]["sea-ice-daily"]
+    artifact = next(item for item in handoff["artifacts"] if item["id"] == artifact_id)
+    if alteration == "missing":
+        handoff["artifacts"].remove(artifact)
+    elif alteration == "duplicate":
+        handoff["artifacts"].append({**copy.deepcopy(artifact), "id": 999})
+    elif alteration == "expired":
+        artifact["expired"] = True
+    elif alteration == "wrong-run":
+        artifact["workflow_run"]["id"] = 999
+    elif alteration == "wrong-target":
+        artifact["name"] = "ci-image-eamlis-monthly-attempt1"
+    elif alteration == "wrong-attempt":
+        artifact["name"] = "ci-image-sea-ice-daily-attempt2"
+    elif alteration == "digest":
+        artifact["digest"] = "sha256:" + "0" * 64
+    else:
+        artifact["size_in_bytes"] = consumer.MAX_ARTIFACT + 1
+    with pytest.raises(DeploymentError):
+        download(handoff)
+    assert not handoff["calls"]
+    if alteration != "digest":
+        handoff["api"].archive_to.assert_not_called()
+
+
+@pytest.mark.parametrize("alteration", ["empty", "other-target", "nested", "unsafe", "extra", "duplicate", "invalid-zip"])
+def test_image_zip_contains_only_the_selected_tar_at_its_root(handoff, alteration):
+    target = "sea-ice-daily"
+    name = target + ".docker.tar"
+    raw = handoff["files"]["images/" + name]
+    members = {name: raw}
+    if alteration == "empty":
+        members = {}
+    elif alteration == "other-target":
+        members = {"eamlis-monthly.docker.tar": handoff["files"]["images/eamlis-monthly.docker.tar"]}
+    elif alteration == "nested":
+        members = {"images/" + name: raw}
+    elif alteration == "unsafe":
+        members = {"../" + name: raw}
+    elif alteration == "extra":
+        members["untrusted.py"] = b"never execute or extract"
+    refresh_image(handoff, target, members)
+    if alteration in {"duplicate", "invalid-zip"}:
+        artifact_id = handoff["image_artifact_ids"][target]
+        if alteration == "duplicate":
+            output = io.BytesIO()
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                with zipfile.ZipFile(output, "w") as archive:
+                    archive.writestr(name, raw)
+                    archive.writestr(name, raw)
+            payload = output.getvalue()
+        else:
+            payload = b"not a ZIP archive"
+        handoff["payloads"][artifact_id - 1] = payload
+        artifact = next(item for item in handoff["artifacts"] if item["id"] == artifact_id)
+        artifact.update(size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
+    with pytest.raises((DeploymentError, zipfile.BadZipFile)):
+        download(handoff)
+    assert not handoff["calls"]
+    assert not (handoff["root"] / name).exists()
+
+
+@pytest.mark.parametrize("kind", ["archive-hash", "layer-hash"])
+def test_split_image_transport_still_verifies_tar_and_runtime_hashes(handoff, kind):
+    target = "sea-ice-daily"
+    image = handoff["manifest"]["images"][target]
+    member = "images/" + image["archive"]
+    raw = handoff["files"][member].replace(b"rootfs tar bytes", b"changed tar XYZ ")
+    handoff["files"][member] = raw
+    if kind == "layer-hash":
+        image.update(archive_sha256=hashlib.sha256(raw).hexdigest(), archive_size=len(raw))
+    refresh(handoff)
+    with pytest.raises(bundle.ImageError):
         download(handoff)
     assert not handoff["calls"]
 
@@ -308,6 +439,8 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
             return handoff["manifest"]["images"].get(target, {"config_digest": "sha256:" + "c" * 64})["config_digest"]
         return original_output(args, **kwargs)
 
+    built_targets = []
+
     def run(args, **kwargs):
         if args[:2] == ["python", "scripts/production_image_contracts.py"]:
             with monkeypatch.context() as context:
@@ -316,14 +449,18 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
         elif args[:3] == ["docker", "image", "save"]:
             target = next(target for target, image in handoff["manifest"]["images"].items() if image["config_digest"] == args[-1])
             Path(args[4]).write_bytes(untagged_tar(handoff["files"]["images/" + target + ".docker.tar"]))
+        elif args[:2] == ["docker", "build"]:
+            built_targets.append(args[args.index("-t") + 1].partition("/")[2].partition(":")[0])
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(bundle.subprocess, "check_output", inspect)
     monkeypatch.setattr(bundle.subprocess, "run", run)
     actual = ci_preflight.run_suite(handoff["root"], plan, "production-images", output)
     assert actual["status"] == "success" and set(actual["production_images"]["images"]) == bundle.TARGETS
-    handoff["payloads"][2] = zipped({path.relative_to(output).as_posix(): path.read_bytes() for path in output.rglob("*") if path.is_file()})
-    handoff["artifacts"][2].update(size_in_bytes=len(handoff["payloads"][2]), digest="sha256:" + hashlib.sha256(handoff["payloads"][2]).hexdigest())
+    assert set(built_targets) == bundle.TARGETS | {"wdpa-monthly"}
+    handoff["files"] = {path.relative_to(output).as_posix(): path.read_bytes() for path in output.rglob("*") if path.is_file()}
+    handoff["manifest"] = actual["production_images"]
+    refresh(handoff)
     loaded = download(handoff)
     assert loaded["image_id"] == actual["production_images"]["images"]["sea-ice-daily"]["config_digest"]
 
