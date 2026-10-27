@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: docker
+    directories:
+      - /ingestion/wdpa_monthly
+      - /ingestion/mpatlas_monthly
+      - /ingestion/eamlis_monthly
+      - /ingestion/sea_ice_daily
+      - /services/catalog_viewer
+      - /ingestion/dataset_usage
+      - /services/monitoring_slack
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: python
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+    groups:
+      python-base-images:
+        patterns:
+          - python
+        group-by: dependency-name

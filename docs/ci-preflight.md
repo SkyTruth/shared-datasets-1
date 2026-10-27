@@ -92,6 +92,16 @@ Caches never substitute for validation evidence or deployment artifacts. Cache
 export errors are optional acceleration failures; image or validation failures
 still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
 
+The seven production recipes pin their Python base tags to reviewed multi-platform
+index digests. This prevents an upstream tag move from silently invalidating the
+dependency layers during unrelated changes. It does not speed up an existing
+cache hit or eliminate registry reads. `.github/dependabot.yml` checks those
+recipes weekly for Python digest and patch updates within Python 3.12, grouping
+compatible updates into reviewable PRs. Go and uv updates are outside this entry.
+Base updates still rebuild affected layers and pass the selected CI suites,
+exact-image handoff and existing deployment approvals; there is no automatic
+merge. WDPA retains its separate accepted-build deployment path.
+
 After all selected suites, final evidence verification and source checks pass,
 full local preflight removes only its own six verified image archives. Manifests,
 hashes, command logs and results remain; `runtime.json` records
