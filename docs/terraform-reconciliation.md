@@ -115,7 +115,8 @@ supplies an empty target list, so Terraform creates a full normal refreshed plan
 and an empty resource allowlist, so every resource create, update, replacement
 or deletion is refused before the saved plan can be applied. Terraform can then
 persist refreshed state and outputs without mutating live resources. There is no
-new apply implementation, executor flag, IAM grant, image preparation or retry.
+new apply implementation, executor flag, image preparation or retry in that
+state-only caller.
 The offline graph contract recognizes only a paired-empty scope without resource
 prerequisites or side-effect preparation. Nonempty IAM scopes retain their
 existing graph checks.
@@ -128,6 +129,44 @@ channel and numeric token version. These are planning inputs, not permission to
 redeploy images. Stale or incompatible inputs that propose any resource mutation
 fail the empty allowlist. The workflow is not wired to automatic main deployment,
 and it does not replay retirement or re-enable temporary authority.
+
+The first protected attempt, run `40564777085`/attempt 1 on PR #328's merged
+revision, failed during refresh before the deployment claim or apply. State
+remained unchanged. The local plan had used broader operator credentials, while
+the deployer's `iam-bootstrap` probe checked IAM writes rather than full-state
+reads. The failed plan exposed five missing shared-project metadata permissions:
+
+- `compute.globalAddresses.get`
+- `compute.regionNetworkEndpointGroups.get`
+- `compute.sslCertificates.get`
+- `compute.targetHttpProxies.get`
+- `iam.workloadIdentityPoolProviders.get`
+
+`terraform-state-read-iam-sync.yml` is a separate reviewed manual bootstrap for
+the custom role `sharedDatasetsTerraformStateReader` and its binding to the
+existing Terraform deployer. It uses the unchanged protected executor, targets
+only those two Terraform addresses, and blocks deletion/replacement. The role
+contains exactly the five reads above at shared-project scope. Dispatch requires
+the reviewed main revision and its successful main-push CI run/attempt. It is not
+selected automatically by CI and adds no image, data, secret, token or resource
+mutation permission.
+
+30x30 reconciliation is deferred. This repair does not grant or probe access to
+that project, change its existing service account, or remove its Terraform
+record. The full production state still contains
+`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`; refreshing it requires
+the previously denied `iam.serviceAccounts.get`. A clean full production plan
+therefore remains blocked while that work is deferred. Preserve the rollback
+backup until the original final verification gate is met.
+
+Before another state-only attempt, the `terraform-state-read` readiness probe
+checks the five shared-project permissions. It does not establish readiness for
+the deferred foreign account.
+The full refreshed plan still establishes the remaining provider read closure;
+the empty saved-plan allowlist still rejects every live resource mutation.
+Do not retry the unchanged failed run or use `-refresh=false` to avoid these
+prerequisites. The recorded failure fixture and CLI transport tests prove the
+previous bootstrap hint passed while each missing read now fails before planning.
 
 The normal saved-plan fixture is
 `tests/fixtures/terraform_targets/state-only-outputs.json`. Boundary tests run

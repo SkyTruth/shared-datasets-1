@@ -58,7 +58,7 @@ jobs:
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
+      readiness_target: terraform-state-read
       sync_name: Production Terraform state reconciliation
       refusal_prefix: Refusing production state reconciliation with resource mutations
       targets: ""

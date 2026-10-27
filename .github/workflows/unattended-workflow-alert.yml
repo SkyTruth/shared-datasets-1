@@ -23,6 +23,7 @@ on:
       - Preview Terraform IAM sync
       - Scratch cleanup IAM sync
       - Prod Terraform state reconciliation
+      - Terraform state read IAM sync
       - Cron alert policy sync
       - Approved dataset mutation
     branches: [main]
