@@ -323,8 +323,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("npm", "ci", "--ignore-scripts", "--prefix", "tests/browser")
         add("npm", "ci", "--ignore-scripts", "--prefix", "api/typescript")
         add("npm", "run", "build", "--prefix", "api/typescript")
-        # The lockfile pins Chromium; both boundaries use the same installer.
-        add("npx", "--no-install", "playwright", "install", "--with-deps", "chromium", cwd=root / "tests/browser")
+        # Managed runners/images supply system libraries; the lockfile pins Chromium.
+        add("npx", "--no-install", "playwright", "install", "chromium", cwd=root / "tests/browser")
         add("npm", "test", cwd=root / "tests/browser")
     elif suite == "geospatial-integration":
         add("gdalinfo", "--version")

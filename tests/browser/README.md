@@ -19,6 +19,11 @@ npx --no-install playwright install --with-deps chromium
 npm test
 ```
 
+The standalone setup above provisions system dependencies when needed. Shared
+validation uses the prepared Ubuntu runner or local preflight image and runs
+`playwright install chromium` without reinstalling OS packages. Browser launch
+and rendering failures still fail validation.
+
 The exact Playwright version pins Chromium. CI runs Node22 and Python3.12.
 MapLibre and PMTiles versions match `web/catalog/map-preview.js`; update both
 pins and the exact transport allowlist together when upgrading the product.
