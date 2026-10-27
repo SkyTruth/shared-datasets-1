@@ -27,6 +27,7 @@ WORKFLOW_NAMES = {
     'mpatlas-monthly-deploy.yml': ('Ingestion / MPAtlas monthly deploy', 'MPAtlas monthly deploy'),
     'pmtiles-cdn-sync.yml': ('Catalog / PMTiles CDN sync', 'PMTiles CDN sync'),
     'preview-terraform-iam-sync.yml': ('Infrastructure / Preview Terraform IAM sync', 'Preview Terraform IAM sync'),
+    'prod-terraform-state-reconcile.yml': ('Prod Terraform state reconciliation',),
     'prod-terraform-target-apply.yml': ('Infrastructure / Production Terraform target apply', 'Prod Terraform target apply'),
     'publish-dataset.yml': ('Data / Approved mutation', 'Approved dataset mutation'),
     'publish-typescript-sdk.yml': ('SDK / Publish TypeScript', 'Publish TypeScript SDK'),
@@ -40,4 +41,3 @@ WORKFLOW_NAMES = {
     'unattended-workflow-alert.yml': ('Alerts / Workflow health and Slack reconciliation', 'Workflow health and Slack reconciliation'),
     'wdpa-monthly-deploy.yml': ('Ingestion / WDPA monthly deploy', 'WDPA monthly deploy'),
 }
-

@@ -35,6 +35,7 @@ on:
       - "MPAtlas monthly deploy"
       - "PMTiles CDN sync"
       - "Preview Terraform IAM sync"
+      - "Prod Terraform state reconciliation"
       - "Publish TypeScript SDK"
       - "SDK / Publish TypeScript"
       - "Scheduled ingestion deploy IAM sync"

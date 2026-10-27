@@ -38,6 +38,7 @@ MONITORED_WORKFLOWS = {
     "mpatlas-monthly-deploy.yml",
     "pmtiles-cdn-sync.yml",
     "preview-terraform-iam-sync.yml",
+    "prod-terraform-state-reconcile.yml",
     "publish-dataset.yml",
     "publish-typescript-sdk.yml",
     "scheduled-ingestion-deploy-iam-sync.yml",

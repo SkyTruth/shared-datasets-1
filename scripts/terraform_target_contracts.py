@@ -111,6 +111,15 @@ def check_graph(root: Path, graph: dict[str, set[str]]) -> dict:
     results, errors = {}, []
     for key, job in jobs.items():
         inputs = job['with']
+        if inputs['targets'] == inputs['allowed_exact'] == '':
+            # No -target arguments produces a full plan. Its empty resource
+            # allowlist rejects every mutation, so only state/outputs can change.
+            # Image/secret preparation would violate that state-only boundary.
+            if (inputs.get('allowed_patterns', '') or inputs.get('prepare_monitoring_slack', False)
+                    or policy['jobs'][key] != [] or retired_by_job.get(key, []) or job.get('needs')):
+                raise ValueError(key + ': state-only reconciliation requires an empty mutation scope and no preparation or prerequisites')
+            results[key] = {'targets': [], 'managed_prerequisites': [], 'state_only': True}
+            continue
         targets, owned = declared(inputs['targets']), declared(inputs['allowed_exact'])
         if not targets <= owned or inputs.get('allowed_patterns', '').strip():
             raise ValueError(key + ': narrow targets require an exact mutation allowlist')
