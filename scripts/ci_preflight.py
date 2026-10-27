@@ -601,6 +601,7 @@ def main() -> int:
             write_json(args.output, plan)
             if args.github_output:
                 with args.github_output.open("a") as output:
+                    output.write("changed-paths=" + json.dumps(plan["changed_paths"]) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
                     for target in DEPLOYMENTS:
