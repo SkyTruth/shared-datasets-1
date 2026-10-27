@@ -56,6 +56,11 @@ on:
         required: false
         type: boolean
         default: false
+      delete_only:
+        description: "Permit only deletion of exact retired resource addresses; refuse creates, updates and replacements."
+        required: false
+        type: boolean
+        default: false
       tf_vars:
         description: "Newline-separated key=value Terraform variable assignments."
         required: false
@@ -298,6 +303,9 @@ jobs:
           )
           if [[ "${BLOCK_DELETES}" == "true" ]]; then
             enforce_args+=(--block-deletes)
+          fi
+          if [[ "${{ inputs.delete_only }}" == "true" ]]; then
+            enforce_args+=(--delete-only)
           fi
           python scripts/terraform_plan_allowlist.py "${enforce_args[@]}"
 

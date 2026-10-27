@@ -117,3 +117,138 @@ jobs:
         wdpa_monthly_image=unused-by-wdpa-validation-retirement
         sea_ice_daily_image=unused-by-wdpa-validation-retirement
         eamlis_monthly_image=unused-by-wdpa-validation-retirement
+
+  operational-retirement-bootstrap:
+    name: Bootstrap approved temporary operational retirement authority
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Operational retirement IAM bootstrap
+      refusal_prefix: Refusing changes outside reviewed operational retirement
+      block_deletes: true
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_custom_role.operational_retirement
+      allowed_exact: |
+        google_project_iam_custom_role.operational_retirement
+      tf_vars: |
+        operational_retirement_authority_enabled=false
+        wdpa_monthly_image=unused-by-operational-retirement
+        sea_ice_daily_image=unused-by-operational-retirement
+        eamlis_monthly_image=unused-by-operational-retirement
+
+  operational-retirement-grant:
+    name: Grant approved temporary operational retirement authority
+    needs: operational-retirement-bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Operational retirement authority grant
+      refusal_prefix: Refusing changes outside reviewed operational retirement
+      block_deletes: true
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_member.github_actions_operational_retirement[0]
+      allowed_exact: |
+        google_project_iam_member.github_actions_operational_retirement[0]
+      tf_vars: |
+        operational_retirement_authority_enabled=true
+        wdpa_monthly_image=unused-by-operational-retirement
+        sea_ice_daily_image=unused-by-operational-retirement
+        eamlis_monthly_image=unused-by-operational-retirement
+
+  retire-operational-infrastructure:
+    name: Retire the 20 reviewed legacy operational resources
+    needs: [operational-retirement-grant]
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Operational infrastructure retirement
+      refusal_prefix: Refusing changes outside reviewed operational retirement
+      delete_only: true
+      targets: |
+        google_iam_workload_identity_pool_provider.operational_observer
+        google_logging_log_view.operational_observations["_Default-run-activity"]
+        google_logging_log_view.operational_observations["_Default-run-data-access"]
+        google_logging_log_view.operational_observations["_Default-run-stderr"]
+        google_logging_log_view.operational_observations["_Default-scheduler-executions"]
+        google_logging_log_view.operational_observations["_Required-run-activity"]
+        google_logging_log_view.operational_observations["_Required-run-data-access"]
+        google_logging_log_view.operational_observations["_Required-run-stderr"]
+        google_logging_log_view.operational_observations["_Required-scheduler-executions"]
+        google_monitoring_alert_policy.dataset_schema_changed
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2
+        google_project_iam_custom_role.operational_log_view_manager
+        google_project_iam_custom_role.operational_metric_descriptor_manager
+        google_project_iam_custom_role.operational_observer_reader
+        google_project_iam_custom_role.operational_observer_receipts
+        google_project_iam_custom_role.operational_provider_creator
+        google_project_iam_custom_role.operational_provider_reader
+        google_project_iam_custom_role.readonly_provider_updater
+        module.operational_observer_service_account.google_service_account.this
+      allowed_exact: |
+        google_iam_workload_identity_pool_provider.operational_observer
+        google_logging_log_view.operational_observations["_Default-run-activity"]
+        google_logging_log_view.operational_observations["_Default-run-data-access"]
+        google_logging_log_view.operational_observations["_Default-run-stderr"]
+        google_logging_log_view.operational_observations["_Default-scheduler-executions"]
+        google_logging_log_view.operational_observations["_Required-run-activity"]
+        google_logging_log_view.operational_observations["_Required-run-data-access"]
+        google_logging_log_view.operational_observations["_Required-run-stderr"]
+        google_logging_log_view.operational_observations["_Required-scheduler-executions"]
+        google_monitoring_alert_policy.dataset_schema_changed
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat
+        google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2
+        google_project_iam_custom_role.operational_log_view_manager
+        google_project_iam_custom_role.operational_metric_descriptor_manager
+        google_project_iam_custom_role.operational_observer_reader
+        google_project_iam_custom_role.operational_observer_receipts
+        google_project_iam_custom_role.operational_provider_creator
+        google_project_iam_custom_role.operational_provider_reader
+        google_project_iam_custom_role.readonly_provider_updater
+        module.operational_observer_service_account.google_service_account.this
+      tf_vars: |
+        operational_retirement_authority_enabled=true
+        wdpa_monthly_image=unused-by-operational-retirement
+        sea_ice_daily_image=unused-by-operational-retirement
+        eamlis_monthly_image=unused-by-operational-retirement
+
+  revoke-operational-retirement:
+    name: Revoke temporary authority after the retirement attempt
+    needs: [operational-retirement-grant, retire-operational-infrastructure]
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.operational-retirement-grant.result != 'skipped' }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Operational retirement authority revocation
+      refusal_prefix: Refusing changes outside reviewed operational retirement
+      delete_only: true
+      targets: |
+        google_project_iam_member.github_actions_operational_retirement[0]
+      allowed_exact: |
+        google_project_iam_member.github_actions_operational_retirement[0]
+      tf_vars: |
+        operational_retirement_authority_enabled=false
+        wdpa_monthly_image=unused-by-operational-retirement
+        sea_ice_daily_image=unused-by-operational-retirement
+        eamlis_monthly_image=unused-by-operational-retirement

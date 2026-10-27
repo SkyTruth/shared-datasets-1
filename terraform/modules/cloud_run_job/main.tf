@@ -65,7 +65,7 @@ variable "command" {
 }
 
 variable "ephemeral_disk_size" {
-  description = "Optional Preview disk volume mounted at /work. Requires disk quota."
+  description = "Optional disk volume mounted at /work. Requires disk quota."
   type        = string
   default     = null
 }
@@ -75,7 +75,7 @@ resource "google_cloud_run_v2_job" "this" {
   location            = var.location
   name                = var.name
   deletion_protection = false
-  launch_stage        = var.ephemeral_disk_size == null ? "GA" : "BETA"
+  launch_stage        = "GA"
 
   template {
     task_count  = 1
