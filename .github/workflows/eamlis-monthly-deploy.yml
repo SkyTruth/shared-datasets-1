@@ -1,4 +1,4 @@
-name: EAMLIS monthly deploy
+name: Ingestion / EAMLIS monthly deploy
 
 on:
   workflow_dispatch:

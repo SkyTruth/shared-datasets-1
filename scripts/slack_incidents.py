@@ -185,7 +185,7 @@ def source_observations(api, event, targets):
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
     if alerts.catalog_probe_only(run, jobs):
         return []  # Neither a deployment failure nor evidence of recovery.
-    if run["name"] == "CI":
+    if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
         if run["event"] != "push":
             return []
         failures = alerts.failed_ci_delivery_jobs(jobs)
@@ -196,7 +196,7 @@ def source_observations(api, event, targets):
         return [from_job(run, job, targets) for job in failures + successes]
     if alerts.alert_for_run(event) is None and run["conclusion"] != "success":
         return []  # Supervised manual failures keep existing GitHub-only routing.
-    if run["name"] in {"Bucket hygiene audit", "Scratch cleanup audit"}:
+    if alerts.WORKFLOW_PATHS[run["name"]] in {"bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"}:
         return [from_workflow(run)]
     failures = [job for job in jobs if job["status"] == "completed" and job["conclusion"] in alerts.FAILED_CONCLUSIONS]
     # Observer failures need their own exact job scope. A healthy observer with
@@ -210,7 +210,7 @@ def source_observations(api, event, targets):
     result = [from_job(run, job, targets) for job in failures + successful]
     if not failures or run["conclusion"] == "success":
         result.append(from_workflow(run))  # Includes startup failures with no allocated jobs.
-    if run["name"] == "Approved dataset mutation":
+    if alerts.WORKFLOW_PATHS[run["name"]] == "publish-dataset.yml":
         prs = {match[1] for job in jobs if (match := re.fullmatch(r"Apply approved PR mutation plans \(PR #([1-9][0-9]*)\)", job["name"]))}
         if len(prs) == 1:
             for item in result:
@@ -243,7 +243,7 @@ def migrate_sdk_candidate(api, state):
     for item in observations:
         prefix = f"repos/{REPOSITORY}/actions/runs/{item['run_id']}/attempts/{item['attempt']}"
         run = api.get(prefix)
-        require(run.get("id") == item["run_id"] and run.get("name") == "Publish TypeScript SDK" and run.get("path") == ".github/workflows/" + SDK_WORKFLOW
+        require(run.get("id") == item["run_id"] and alerts.WORKFLOW_PATHS.get(run.get("name")) == SDK_WORKFLOW and run.get("path") == ".github/workflows/" + SDK_WORKFLOW
                 and run.get("run_attempt") == item["attempt"] and run.get("head_sha") == item["sha"]
                 and alerts.verify_source_event(api, run), "untrusted historical SDK candidate failure")
         jobs = api.pages(prefix + "/jobs?per_page=100", field="jobs")

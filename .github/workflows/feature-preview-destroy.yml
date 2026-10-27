@@ -1,4 +1,4 @@
-name: Destroy Preview Environment
+name: Preview / Destroy environment
 
 on:
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Destroy Preview Environment may only apply from main after reviewed changes have landed." >&2
+            echo "Preview / Destroy environment may only apply from main after reviewed changes have landed." >&2
             exit 1
           fi
 

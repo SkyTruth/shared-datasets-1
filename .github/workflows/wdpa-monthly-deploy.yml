@@ -1,4 +1,4 @@
-name: WDPA monthly deploy
+name: Ingestion / WDPA monthly deploy
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Ingestion schedule control
+name: Ingestion / Schedule control
 
 on:
   workflow_dispatch:

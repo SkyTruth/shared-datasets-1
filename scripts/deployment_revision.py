@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
 from scripts.github_api_read import read
 
@@ -255,7 +256,7 @@ def verify_context(args, api):
     if current.get("event") == "workflow_run":
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
         source = event.get("workflow_run", {})
-        if args.workflow == "catalog-web-deploy.yml" and source.get("name") == "Release index rebuild":
+        if args.workflow == "catalog-web-deploy.yml" and source.get("name") in WORKFLOW_NAMES["release-index-rebuild.yml"]:
             upstream = api.get(f"repos/{repository}/actions/runs/{source['id']}/attempts/{source['run_attempt']}")
             upstream_workflow = api.get(f"repos/{repository}/actions/workflows/release-index-rebuild.yml")
             require(upstream.get("workflow_id") == upstream_workflow.get("id") and upstream.get("path") == ".github/workflows/release-index-rebuild.yml"

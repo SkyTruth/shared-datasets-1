@@ -95,7 +95,7 @@ class FeaturePreviewTests(unittest.TestCase):
     def test_preview_deploy_workflow_keeps_control_plane_separate_from_source_ref(self):
         workflow = PREVIEW_WORKFLOW.read_text()
 
-        self.assertIn("name: Deploy Feature Branch to Preview", workflow)
+        self.assertIn("name: Preview / Deploy feature branch", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("preview_data_mode:", workflow)
         self.assertIn("Preview data handling", workflow)
@@ -194,13 +194,13 @@ class FeaturePreviewTests(unittest.TestCase):
     def test_preview_destroy_workflow_only_runs_destroy_path(self):
         workflow = PREVIEW_DESTROY_WORKFLOW.read_text()
 
-        self.assertIn("name: Destroy Preview Environment", workflow)
+        self.assertIn("name: Preview / Destroy environment", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("environment: shared-datasets-production", workflow)
         self.assertIn("name: Destroy feature branch preview", workflow)
         self.assertIn("Validate main ref", workflow)
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
-        self.assertIn("Destroy Preview Environment may only apply from main", workflow)
+        self.assertIn("Preview / Destroy environment may only apply from main", workflow)
         self.assertIn("ref: main", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
         self.assertIn("Release stable preview bootstrap state", workflow)

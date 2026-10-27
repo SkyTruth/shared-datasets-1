@@ -1,4 +1,4 @@
-name: Deployment completion check
+name: Deployments / Completion check
 
 on:
   schedule:
