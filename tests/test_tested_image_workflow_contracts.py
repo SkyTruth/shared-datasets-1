@@ -152,3 +152,16 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
         manifest["images"]["another-image"] = copy.deepcopy(manifest["images"]["catalog-viewer"])
     with pytest.raises(ValueError):
         verify_results(plan, results)
+
+
+def test_production_cache_keeps_deployment_artifacts():
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
+    steps = job['steps']
+    buildx = next(i for i, step in enumerate(steps) if step.get('uses') == 'docker/setup-buildx-action@v3')
+    runtime = next(i for i, step in enumerate(steps) if step.get('name') == 'Expose the ephemeral Actions cache runtime')
+    producer = next(i for i, step in enumerate(steps) if step.get('name') == 'Test the actual production image recipes')
+    assert buildx < runtime < producer
+    assert steps[producer]['env']['SHARED_DATASETS_GITHUB_IMAGE_CACHE'] == 'true'
+    retained = next(step['with'] for step in steps if step.get('id') == 'retained-results')
+    assert retained['compression-level'] == 0 and retained['retention-days'] == 14
+    assert retained['path'] == '${{ runner.temp }}/ci-results/production-images'
