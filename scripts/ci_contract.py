@@ -219,6 +219,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"mpatlas", "cron_alert_policy"})
         if path.startswith("ingestion/eamlis_monthly/") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
+            "catalog/ingestion-quality.json",
         }:
             selected.add("eamlis")
         if path.startswith("ingestion/sea_ice_daily/") or path in {
