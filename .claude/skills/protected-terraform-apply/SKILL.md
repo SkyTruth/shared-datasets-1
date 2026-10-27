@@ -47,7 +47,7 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 ### Which workflow applies what
 
 Workflow filenames below are under `.github/workflows/`. `ci.yml` routes selected
-main-push changes after successful `ci-ready`; the five sync callers delegate
+main-push changes after successful `ci-ready`; the narrow sync callers delegate
 their applies to `prod-terraform-target-apply.yml`. That reusable workflow owns
 the `shared-datasets-production` environment, production-state queue, saved-plan
 apply, and `scripts/terraform_plan_allowlist.py` enforcement of each caller's
@@ -56,8 +56,9 @@ explicit targets and allowed resource changes.
 | Workflow | Apply scope and enforcement |
 |---|---|
 | `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
-| `prod-terraform-target-apply.yml` | Reusable protected apply for the five sync callers below; refuses changes outside their declared resource allowlists. |
+| `prod-terraform-target-apply.yml` | Reusable protected apply for the narrow sync callers below; refuses changes outside their declared resource allowlists. |
 | `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
+| `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. The foreign x30 consumer-account read remains an external prerequisite. |
 | `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
 | `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer/WDPA observer roles and bindings, retained-bundle read access, and translation notice/debt access. |
 | `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
@@ -78,6 +79,13 @@ Other protected publication paths:
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.
+
+Full state reconciliation uses the deployer's `terraform-state-read` readiness
+probe, including metadata access to the exact x30 consumer service account. An
+operator's successful local plan or `iam-bootstrap` hint does not prove that the
+CI identity can refresh the full state. Provision missing reads through reviewed
+IAM paths before retrying; do not hide them with refresh disabled. See
+`docs/terraform-reconciliation.md` for the observed failed boundary and scopes.
 
 The October operational retirement has explicit human approval for its temporary
 project-level delete/read scope through `2026-11-03T00:00:00Z`. Its Terraform

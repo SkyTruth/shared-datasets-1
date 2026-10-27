@@ -47,6 +47,11 @@ MONITORING_PERMISSIONS = (
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
     "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
 )
+TERRAFORM_STATE_READ_PERMISSIONS = (
+    "compute.globalAddresses.get", "compute.regionNetworkEndpointGroups.get",
+    "compute.sslCertificates.get", "compute.targetHttpProxies.get",
+    "iam.workloadIdentityPoolProviders.get",
+)
 
 
 def request(url, permissions, token):
@@ -81,6 +86,17 @@ def checks(target):
     project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
     if target == "iam-bootstrap":
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
+    if target == "terraform-state-read":
+        # These reads were denied in the first full state-only plan despite a
+        # successful IAM bootstrap probe. The consumer account belongs to x30:
+        # shared-project authority cannot prove access to that foreign resource.
+        # The full refreshed plan remains authoritative for all other reads.
+        # https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/testIamPermissions
+        consumer = "projects/x30-399415/serviceAccounts/shared-datasets-reader@x30-399415.iam.gserviceaccount.com"
+        return [
+            (project_url, TERRAFORM_STATE_READ_PERMISSIONS),
+            (f"https://iam.googleapis.com/v1/{consumer}:testIamPermissions", ("iam.serviceAccounts.get",)),
+        ]
     if target == "artifact-registry":
         return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
     if target == "artifact-registry-images":
@@ -145,7 +161,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "terraform-state-read", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
     if not (args.target or args.plan_json):

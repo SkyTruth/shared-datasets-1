@@ -30,6 +30,7 @@
   },
   "jobs": {
     "prod-terraform-state-reconcile.yml/reconcile": [],
+    "terraform-state-read-iam-sync.yml/bootstrap": [],
     "artifact-registry-iam-sync.yml/bootstrap": [],
     "artifact-registry-iam-sync.yml/writer": [
       "google_artifact_registry_repository.jobs",
