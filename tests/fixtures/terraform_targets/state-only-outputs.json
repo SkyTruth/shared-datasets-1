@@ -1,0 +1,135 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "resource_changes": [
+    {
+      "address": "module.dataset_usage_job.google_cloud_run_v2_job.this",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_job",
+      "name": "this",
+      "change": {
+        "actions": [
+          "no-op"
+        ]
+      }
+    },
+    {
+      "address": "google_storage_managed_folder.shared_bucket_public_prefixes[\"100-geographic-reference/110-boundaries/lsib/\"]",
+      "mode": "managed",
+      "type": "google_storage_managed_folder",
+      "name": "shared_bucket_public_prefixes",
+      "change": {
+        "actions": [
+          "no-op"
+        ]
+      }
+    },
+    {
+      "address": "google_project_iam_member.dataset_usage_health",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "dataset_usage_health",
+      "change": {
+        "actions": [
+          "no-op"
+        ]
+      }
+    }
+  ],
+  "output_changes": {
+    "metadata_index_loader_service_account": {
+      "actions": [
+        "delete"
+      ],
+      "before": "metadata-index-loader@shared-datasets-1.iam.gserviceaccount.com",
+      "after": null,
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "operational_observer_log_views": {
+      "actions": [
+        "delete"
+      ],
+      "before": [
+        "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-activity",
+        "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-data-access",
+        "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-run-stderr",
+        "projects/shared-datasets-1/locations/global/buckets/_Default/views/shared-datasets-operations-scheduler-executions",
+        "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-activity",
+        "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-data-access",
+        "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-run-stderr",
+        "projects/shared-datasets-1/locations/global/buckets/_Required/views/shared-datasets-operations-scheduler-executions"
+      ],
+      "after": null,
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "operational_observer_service_account": {
+      "actions": [
+        "delete"
+      ],
+      "before": "shared-datasets-alert-observer@shared-datasets-1.iam.gserviceaccount.com",
+      "after": null,
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "operational_observer_workload_identity_provider": {
+      "actions": [
+        "delete"
+      ],
+      "before": "projects/12695949518/locations/global/workloadIdentityPools/github/providers/github-operational-observer",
+      "after": null,
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    },
+    "shared_bucket_public_managed_folders": {
+      "actions": [
+        "update"
+      ],
+      "before": [
+        "100-geographic-reference/110-boundaries/natural-earth-10m-land/",
+        "100-geographic-reference/120-marine-boundaries/iho-world-seas/",
+        "100-geographic-reference/120-marine-boundaries/marine-regions-eez/",
+        "100-geographic-reference/130-protected-areas/wdpa-marine/",
+        "100-geographic-reference/130-protected-areas/wdpa-terrestrial/",
+        "200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/",
+        "200-imagery-derived/250-weather-climate/ims-sea-ice-extent/",
+        "300-infrastructure-industrial/310-energy/gogi/",
+        "300-infrastructure-industrial/310-energy/petrodata/",
+        "300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/",
+        "300-infrastructure-industrial/330-offshore-platforms/gfw-fixed-infrastructure/",
+        "500-conservation-ecosystems/530-habitat-condition/global-coral-reefs/",
+        "600-maritime-ocean/640-ocean-activity/gfw-anchorages/",
+        "_catalog/"
+      ],
+      "after": [
+        "100-geographic-reference/110-boundaries/lsib/",
+        "100-geographic-reference/110-boundaries/natural-earth-10m-land/",
+        "100-geographic-reference/110-boundaries/world-polygons/",
+        "100-geographic-reference/120-marine-boundaries/iho-world-seas/",
+        "100-geographic-reference/120-marine-boundaries/marine-regions-eez/",
+        "100-geographic-reference/130-protected-areas/wdpa-marine/",
+        "100-geographic-reference/130-protected-areas/wdpa-terrestrial/",
+        "200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope/",
+        "200-imagery-derived/250-weather-climate/ims-sea-ice-extent/",
+        "300-infrastructure-industrial/310-energy/gogi/",
+        "300-infrastructure-industrial/310-energy/petrodata/",
+        "300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/",
+        "300-infrastructure-industrial/320-mining/ipis-drc-artisanal-mining-sites/",
+        "300-infrastructure-industrial/330-offshore-platforms/gfw-fixed-infrastructure/",
+        "400-events-observations/440-field-observations/ucdp-ged-events/",
+        "500-conservation-ecosystems/530-habitat-condition/global-coral-reefs/",
+        "600-maritime-ocean/640-ocean-activity/gfw-anchorages/",
+        "800-derived-ml-products/810-labels/drc-asm-mask-polygons/",
+        "_catalog/"
+      ],
+      "after_unknown": false,
+      "before_sensitive": false,
+      "after_sensitive": false
+    }
+  }
+}

@@ -51,6 +51,7 @@ TERRAFORM_SYNCS = {
     "Operational retirement authority grant": "scratch-cleanup-iam-sync.yml",
     "Operational infrastructure retirement": "scratch-cleanup-iam-sync.yml",
     "Operational retirement authority revocation": "scratch-cleanup-iam-sync.yml",
+    "Production Terraform state reconciliation": "prod-terraform-state-reconcile.yml",
     "Monitoring Slack transport resources": "cron-alert-policy-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
