@@ -11,6 +11,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+from time import perf_counter
 
 TARGETS = frozenset({"monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
 MAX_IMAGE = 2 * 1024 ** 3
@@ -53,6 +54,10 @@ def hash_stream(stream):
 def hash_file(path):
     with Path(path).open("rb") as stream:
         return hash_stream(stream)
+
+
+def report_timing(phase, started):
+    print("TESTED_IMAGE_HANDOFF " + json.dumps({"phase": phase, "seconds": round(perf_counter() - started, 3)}), flush=True)
 
 
 def source_tag(target, sha):
@@ -250,9 +255,16 @@ def pack_image(target, sha, image_id, directory):
 
 
 def load_image(path, image):
+    started = perf_counter()
     verify_archive(path, image)
+    report_timing("tar-and-rootfs-verification", started)
+    started = perf_counter()
     subprocess.run(["docker", "image", "load", "--input", str(path)], check=True)
-    return verify_local_config(image["source_tag"], image["config_digest"], require_manifest=True, directory=Path(path).parent)
+    report_timing("docker-load", started)
+    started = perf_counter()
+    image_id = verify_local_config(image["source_tag"], image["config_digest"], require_manifest=True, directory=Path(path).parent)
+    report_timing("loaded-config-verification", started)
+    return image_id
 
 
 def verify_local_config(reference, config_digest, *, require_manifest=False, directory=None):

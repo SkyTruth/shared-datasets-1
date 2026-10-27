@@ -109,7 +109,7 @@ def artifact_files(api, repository, run_id, artifacts, name):
         require(sum(entry.file_size for entry in archive.infolist()) <= MAX_ARCHIVE, "artifact expansion exceeds limit")
         # Only JSON evidence and the selected package bytes are consumed. Logs,
         # fixture workspaces and executable artifact members are never extracted.
-        return {name: archive.read(name) for name in names if name in {"plan.json", "evidence.json", "result.json", "package/candidate.json"} or re.fullmatch(r"package/[A-Za-z0-9_.-]+\.tgz", name)}
+        return {name: archive.read(name) for name in names if name in {"plan.json", "evidence.json", "result.json", "images/manifest.json", "package/candidate.json"} or re.fullmatch(r"package/[A-Za-z0-9_.-]+\.tgz", name)}
 
 
 def producing_job(api, repository, run_id, attempt, sha, name, workflow_id, repository_id):
