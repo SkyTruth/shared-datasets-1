@@ -532,7 +532,7 @@ class RepoGuardrailsTests(unittest.TestCase):
             workflows = root / ".github/workflows"
             workflows.mkdir(parents=True)
             (workflows / "feature-preview-deploy.yml").write_text(
-                "name: Deploy Feature Branch to Preview\n"
+                "name: Preview / Deploy feature branch\n"
                 "on:\n"
                 "  workflow_dispatch:\n"
                 "jobs:\n"

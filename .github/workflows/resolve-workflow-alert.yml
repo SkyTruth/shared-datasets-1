@@ -1,4 +1,4 @@
-name: Resolve legacy workflow alert
+name: Alerts / Legacy workflow resolution
 
 on:
   workflow_dispatch:

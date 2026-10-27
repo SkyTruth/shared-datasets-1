@@ -1,7 +1,7 @@
 # Deploy and viewer QA
 
 - Deploy or replace the preview with the GitHub Actions workflow named
-  `Deploy Feature Branch to Preview`.
+  `Preview / Deploy feature branch`.
 - Select the feature branch or tag to deploy from the GitHub **Run workflow**
   branch dropdown.
 - Select `preview_data_mode=preserve` when redeploying preview service or
@@ -19,7 +19,7 @@
   workflow.
 - The deploy reports both the preview API URL and the preview catalog viewer
   URL.
-- Destroy the preview with `Destroy Preview Environment`.
+- Destroy the preview with `Preview / Destroy environment`.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
 

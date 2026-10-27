@@ -1,4 +1,4 @@
-name: MPAtlas monthly deploy
+name: Ingestion / MPAtlas monthly deploy
 
 on:
   workflow_dispatch:

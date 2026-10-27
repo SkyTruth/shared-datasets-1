@@ -30,7 +30,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         plan_run = steps["Terraform plan"]["run"]
         enforce_run = steps["Enforce catalog-viewer resource-change allowlist"]["run"]
 
-        self.assertEqual(workflow["name"], "Catalog viewer deploy")
+        self.assertEqual(workflow["name"], "Catalog / Viewer deploy")
         self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
         self.assertNotIn("workflow_run", trigger)
         self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})

@@ -35,6 +35,6 @@ def test_moved_procedures_keep_resolvable_references_and_publisher_boundary():
         for target in linked_markdown(path):
             assert target.is_file(), (path, target)
     proposal = (SKILL.parent / 'references/reviewed-proposal.md').read_text()
-    assert 'Approved dataset mutation' in proposal
+    assert 'Data / Approved mutation' in proposal
     assert 'shared-datasets-production' in proposal
     assert '.github/dataset-plans/' in proposal

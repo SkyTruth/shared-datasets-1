@@ -59,7 +59,7 @@ The deploy workflow does not own the stable preview service accounts, the
 preview service self-signing grant used for catalog viewer signed URLs, or the
 preview loader Workload Identity binding.
 Those bootstrap resources are managed by the protected GitHub Actions workflow
-named `Preview Terraform IAM sync` from
+named `Infrastructure / Preview Terraform IAM sync` from
 `terraform/envs/prod/preview_terraform_iam.tf`.
 That sync owns creation of `feature-preview-service` and
 `feature-preview-loader`; deploy and destroy only validate or use those stable
@@ -90,7 +90,7 @@ retirement modes and temporary IAM root are removed; do not recreate them. See
 
 ## Destroy boundary
 
-Use the GitHub Actions workflow named `Destroy Preview Environment`. The
+Use the GitHub Actions workflow named `Preview / Destroy environment`. The
 protected workflow applies only from `main`, checks out the reviewed `main`
 control plane, plans `terraform/envs/preview` with `-destroy`, enforces the
 preview-resource allowlist, and applies only that saved destroy plan. This

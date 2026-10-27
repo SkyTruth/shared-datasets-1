@@ -1,5 +1,32 @@
 # Complete validation before pushing
 
+## Workflow display names
+
+Actions display names use `Domain / Purpose` to group related workflows
+alphabetically. Keep workflow filenames, job names, required check contexts and
+Terraform `sync_name` labels stable; deployment records use these identities.
+`scripts/workflow_identity.py` records current labels followed by explicit
+historical aliases. Update that registry, `workflow_run` subscriptions, worker
+filters and operator documentation together when renaming a workflow. Historical
+aliases preserve reruns and incident replay; they do not bypass verification of
+the actual workflow path, ID, repository or run attempt.
+
+The SDK package README retains its released workflow label until a versioned
+SDK release updates that packaged file. The current display name is
+`SDK / Publish TypeScript`; the old `Publish TypeScript SDK` name remains a
+historical alias. Renaming Actions alone must not change published package bytes.
+
+Three workflows retain their existing names: `Bucket hygiene audit`,
+`Catalog drift guard` and `Dataset breaking change alert`. Their exact labels
+appear in the GCP read-only OIDC provider's condition in
+`terraform/envs/prod/github_readonly_iam.tf`. Before renaming those labels, add a
+constrained protected IAM deployment path, approve and apply an overlapping
+old/new-name condition, and verify that policy is live. A display-name-only
+change would otherwise break their authentication. Follow
+the [protected Terraform skill](../.claude/skills/protected-terraform-apply/SKILL.md).
+
+## Validation boundary
+
 For concurrent work, follow [agent integration](agent-integration.md). Finish
 known overlapping prerequisites and any required main synchronization before
 committing the final head and starting this command.

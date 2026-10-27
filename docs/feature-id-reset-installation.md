@@ -26,10 +26,10 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
 
 ## Deployment sequence
 
-1. Let `Scheduled ingestion deploy IAM sync` apply the deployer's scheduler-pause
+1. Let `Infrastructure / Ingestion deploy IAM sync` apply the deployer's scheduler-pause
    and dated-canary permissions, plus WDPA's exact-object read grant for the
    approved translation supplement in `terraform/envs/prod/wdpa_reset_iam.tf`.
-   Run `Ingestion schedule control` from `main`, selecting the affected job and
+   Run `Ingestion / Schedule control` from `main`, selecting the affected job and
    `pause`. It operates only on the two ingestion schedules in project
    `shared-datasets-1`, region `us-central1`. Wait for
    its running/pending Cloud Run executions and earlier publisher/deployment
@@ -39,7 +39,7 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    and submit the immutable reset plan described below. WDPA requires one plan
    per asset. The corrected translation supplement is already staged; use the
    exact generation and SHA in the [translation evidence](history/wdpa-translation-reset-evidence.md).
-3. After review and merge, `Approved dataset mutation` installs the reset. It
+3. After review and merge, `Data / Approved mutation` installs the reset. It
    verifies the immutable authority before authentication and rechecks review
    acceptance, the paused schedule, and every page of execution status before
    each write. A running/pending/reconciling execution or failed read stops it.
@@ -62,7 +62,7 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    Before image build or Terraform, it verifies the same publication state and
    receipts as the runtime. Both WDPA resets must be complete; sea ice is independent.
 5. Validate the first release using the checks below before resuming the affected
-   schedule with `Ingestion schedule control`.
+   schedule with `Ingestion / Schedule control`.
    Its `resume` action requires a completed first-publication receipt. WDPA's
    canary is asynchronous:
    a successful dispatch is not successful publication. Preserve the paused
@@ -87,7 +87,7 @@ all inherited permissions. Pausing a schedule alone does not drain running jobs.
 
 ## Immutable authority
 
-The `Approved dataset mutation` workflow routes an accepted `identity_reset`
+The `Data / Approved mutation` workflow routes an accepted `identity_reset`
 plan to `install-approved-identity-reset`, rather than generic promotion or
 localization. It runs in `shared-datasets-production`, checks out the captured
 executor SHA, and verifies the captured authorization artifact. There is no local

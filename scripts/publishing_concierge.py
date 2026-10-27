@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_csv
+from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.admission_check import parse_footprint_gb
 from scripts.concierge_profiling import (
     CuratorFieldOptions,
@@ -1444,8 +1445,8 @@ def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> 
 def validate_preview_catalog_refresh(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     preview_ref = str(state.get("preview_ref") or "").strip()
     workflow_name = require_non_empty_string(evidence, "workflow_name")
-    if workflow_name not in {"feature-preview-deploy.yml", "Deploy Feature Branch to Preview"}:
-        raise WorkflowError("evidence.workflow_name must be feature-preview-deploy.yml or Deploy Feature Branch to Preview")
+    if workflow_name not in ("feature-preview-deploy.yml", *WORKFLOW_NAMES["feature-preview-deploy.yml"]):
+        raise WorkflowError("evidence.workflow_name must identify feature-preview-deploy.yml (Preview / Deploy feature branch)")
     dispatched_ref = require_non_empty_string(evidence, "dispatched_ref")
     if preview_ref and dispatched_ref != preview_ref:
         raise WorkflowError(f"evidence.dispatched_ref must match preview_ref {preview_ref!r}")

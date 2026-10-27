@@ -142,7 +142,7 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
 
 6. Safe GCS deployment (for full deploy, read [deployment](references/deployment.md)):
    - Stage manual deployment files under `_scratch/pending-publishes/catalog-web/{proposal-id}/`.
-   - Promote approved objects through the GitHub `Approved dataset mutation` workflow.
+   - Promote approved objects through the GitHub `Data / Approved mutation` workflow.
    - For repo-generated catalog web changes that will trigger
      `.github/workflows/catalog-web-deploy.yml` after the PR merges, treat that
      workflow as the PR-backed promotion path and do not also include

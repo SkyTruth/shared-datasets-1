@@ -1,4 +1,4 @@
-name: Repo functionality alert
+name: Alerts / Repository functionality
 
 on:
   workflow_call:

@@ -29,7 +29,7 @@ agent terminal; stage manual publish bytes under `_scratch/pending-publishes/`
 and promote approved objects only through an explicit PR with a checked-in
 immutable plan document and matching readable publish/delete fences. Use
 `publishing_concierge.py render-pr` or `reviewed_dataset_plan.py prepare`; see
-`.github/dataset-plans/README.md`. PR-body edits never change execution authority. After that PR merges, the GitHub `Approved dataset mutation`
+`.github/dataset-plans/README.md`. PR-body edits never change execution authority. After that PR merges, the GitHub `Data / Approved mutation`
 workflow runs under the `shared-datasets-production` environment. Do not use
 standalone workflow dispatch or single-object fallback inputs to bypass a PR.
 

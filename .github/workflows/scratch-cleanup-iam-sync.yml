@@ -1,4 +1,4 @@
-name: Scratch cleanup IAM sync
+name: Infrastructure / Scratch cleanup IAM sync
 
 on:
   workflow_call:

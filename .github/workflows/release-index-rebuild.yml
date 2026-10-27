@@ -1,4 +1,4 @@
-name: Release index rebuild
+name: Catalog / Release index rebuild
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Scratch cleanup audit
+name: Data / Scratch cleanup audit
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Scratch cleanup audit may only run with publisher identity from main." >&2
+            echo "Data / Scratch cleanup audit may only run with publisher identity from main." >&2
             exit 1
           fi
 

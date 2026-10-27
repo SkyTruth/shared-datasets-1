@@ -224,7 +224,7 @@ class AlertPolicyTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             ALERT_POLICY_SYNC,
-            expected_name="Cron alert policy sync",
+            expected_name="Infrastructure / Cron alert policy sync",
             push_paths=None,
             expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
             expected_needs=["bootstrap", "resources"],

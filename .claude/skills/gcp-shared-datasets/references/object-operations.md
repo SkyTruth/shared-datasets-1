@@ -180,7 +180,7 @@ If an upload fails due to `412 Precondition Failed`:
 4. Determine whether another process updated the object.
 5. Do not retry as unsafe overwrite unless explicitly approved.
 
-If the GitHub `Approved dataset mutation` workflow fails mid-promotion:
+If the GitHub `Data / Approved mutation` workflow fails mid-promotion:
 
 - Preserve the checked-in plan and captured authorization artifact.
 - Stat every source at its recorded generation and every destination at its
