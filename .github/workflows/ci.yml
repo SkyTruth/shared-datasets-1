@@ -465,9 +465,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Post-gate callers check selection and prerequisite results explicitly.
+  # Explicit status avoids implicit success() over skipped optional ancestors.
   dataset-mutation-selection:
     needs: ci-ready
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -502,7 +504,7 @@ jobs:
 
   announce-repo-functionality:
     needs: [ci-ready, dataset-mutation-selection]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' && needs.dataset-mutation-selection.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/repo-functionality-alert.yml
@@ -514,7 +516,7 @@ jobs:
   publish-reviewed-dataset:
     name: "Publish PR #${{ matrix.pr_number }}"
     needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') && needs.dataset-mutation-selection.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -535,7 +537,7 @@ jobs:
 
   ingestion-iam:
     needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -551,7 +553,7 @@ jobs:
 
   mpatlas:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ always() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
+    if: ${{ !cancelled() && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -567,7 +569,7 @@ jobs:
 
   eamlis:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -583,7 +585,7 @@ jobs:
 
   wdpa:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -600,7 +602,7 @@ jobs:
 
   sea-ice:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -616,7 +618,7 @@ jobs:
 
   pmtiles-cdn:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -633,7 +635,7 @@ jobs:
   dataset-usage:
     # Settle bucket CORS before the logging-only deployment plans the same bucket.
     needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -649,7 +651,7 @@ jobs:
 
   catalog-viewer:
     needs: [ci-ready, geospatial-changes, artifact-registry-iam]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' && needs.artifact-registry-iam.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -681,7 +683,7 @@ jobs:
 
   preview-terraform-iam:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.preview_terraform_iam == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.preview_terraform_iam == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -697,7 +699,7 @@ jobs:
 
   scratch-cleanup-iam:
     needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -713,7 +715,7 @@ jobs:
 
   cron-alert-policy:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ always() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
+    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.artifact-registry-iam.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
     permissions:
       contents: read
       actions: read
