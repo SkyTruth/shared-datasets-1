@@ -146,7 +146,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertEqual(trigger["schedule"], [{"cron": "17 * * * *"}])
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
-            ["Release index rebuild", "CI"],
+            ["Catalog / Release index rebuild", "Release index rebuild", "CI / Validate and deliver", "CI"],
         )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
@@ -161,13 +161,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("needs.check-inputs.outputs.changed == 'true'", job["if"])
         check = workflow["jobs"]["check-inputs"]
         self.assertEqual(check["if"], "${{ github.event_name == 'schedule' }}")
-        self.assertEqual(check["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(check["permissions"], {"contents": "read", "actions": "read", "id-token": "write"})
         self.assertEqual(check["outputs"]["changed"], "${{ steps.compare.outputs.changed }}")
         self.assertEqual(check["environment"], "shared-datasets-production")
         self.assertEqual(check["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "0")
         self.assertNotIn("continue-on-error", check)
         check_steps = workflow_steps_by_name(workflow, "check-inputs")
         self.assertIn("catalog_refresh_check.py", check_steps["Compare catalog inputs"]["run"])
+        self.assertEqual(check_steps["Compare catalog inputs"]["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertNotIn("deployment_revision.py", workflow_all_step_runs(workflow, "check-inputs"))
         selection = workflow["jobs"]["select-repo-changes"]
         self.assertEqual(selection["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read"})
@@ -195,7 +196,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
         self.assertEqual(env["CATALOG_WEB_CACHE_CONTROL"], "no-cache, max-age=0, must-revalidate")
-        self.assertIn("Catalog web deploy may only publish from main", steps["Validate main ref"]["run"])
+        self.assertIn("Catalog / Web deploy may only publish from main", steps["Validate main ref"]["run"])
         self.assertIn(
             "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER",
             steps["Validate publisher auth configuration"]["run"],
@@ -234,7 +235,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         job = workflow["jobs"]["rebuild"]
         steps = workflow_steps_by_name(workflow, "rebuild")
 
-        self.assertEqual(workflow["name"], "Release index rebuild")
+        self.assertEqual(workflow["name"], "Catalog / Release index rebuild")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_dispatch", trigger)
         self.assertEqual(trigger["workflow_dispatch"]["inputs"]["asset_slug"]["required"], True)
@@ -268,7 +269,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         workflow = assert_protected_terraform_sync(
             self,
             PMTILES_CDN_SYNC,
-            expected_name="PMTiles CDN sync",
+            expected_name="Catalog / PMTiles CDN sync",
             push_paths={
                 "terraform/envs/prod/pmtiles_cdn.tf",
                 "terraform/envs/prod/shared_bucket_public.tf",

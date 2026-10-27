@@ -1,4 +1,4 @@
-name: Deploy Feature Branch to Preview
+name: Preview / Deploy feature branch
 
 on:
   workflow_dispatch:
@@ -145,7 +145,7 @@ jobs:
             missing_bootstrap=1
           fi
           if [[ "${missing_bootstrap}" == "1" ]]; then
-            echo "Preview IAM bootstrap is incomplete. Run the protected 'Preview Terraform IAM sync' workflow first." >&2
+            echo "Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first." >&2
             exit 1
           fi
 
@@ -194,7 +194,7 @@ jobs:
               missing.append("preview loader Workload Identity binding")
 
           if missing:
-              print("Preview IAM bootstrap is incomplete. Run the protected 'Preview Terraform IAM sync' workflow first.")
+              print("Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first.")
               for item in missing:
                   print(f"- {item}")
               raise SystemExit(1)

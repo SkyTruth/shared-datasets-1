@@ -16,6 +16,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.ci_contract import contract_digest, expected_tools
 from scripts.dataset_mutation_authorization import GitHub as ArtifactGitHub
 from scripts.deployment_revision import DeploymentError, require, verify_ci, verify_context
@@ -44,7 +45,7 @@ def admit_source(api, repository, run_id, attempt, sha, event):
     original = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
     for run in (source, current, original):
         require(run.get("id") == run_id and run.get("head_sha") == sha
-                and run.get("name") == "CI" and run.get("path") == workflow["path"]
+                and run.get("name") in WORKFLOW_NAMES["ci.yml"] and run.get("path") == workflow["path"]
                 and run.get("workflow_id") == workflow["id"] and run.get("event") == "push"
                 and run.get("head_branch") == "main"
                 and all(run.get(key, {}).get("id") == repo["id"] and run.get(key, {}).get("full_name") == repository

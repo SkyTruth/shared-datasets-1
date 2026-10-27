@@ -44,7 +44,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         steps = workflow_steps_by_name(workflow, "deploy")
         step_names = list(steps)
 
-        self.assertEqual(workflow["name"], "Sea ice daily deploy")
+        self.assertEqual(workflow["name"], "Ingestion / Sea ice daily deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
         for name in ("executor_sha", "source_run_id", "source_run_attempt"):

@@ -1,6 +1,6 @@
 # Standing scratch cleanup
 
-The scheduled `Scratch cleanup audit` workflow is the only standing automated
+The scheduled `Data / Scratch cleanup audit` workflow is the only standing automated
 prefix cleanup. Its age-based abandonment policy writes a warning when the
 newest object in a `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` prefix
 is 60 days old. At 90 days, the prefix becomes a deletion candidate only if that

@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts import catalog_drift_guard as guard
+from scripts import catalog_drift_guard as guard, deployment_source
 from scripts.collect_release_indexes import collect
 
 
@@ -30,13 +30,20 @@ def main(argv=None):
         "--release-index-dir", str(indexes.resolve()), "--latest-from-release-index",
     ]))
     changed = any(not check.ok for check in checks)
-    message = ("Catalog inputs changed; selecting the protected deployment."
-               if changed else "Catalog inputs unchanged; deployment skipped.")
+    try:
+        if changed:
+            deployment_source.resolve_main_ci(deployment_source.GitHub(),
+                os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"])
+    except deployment_source.PendingCI:
+        message = "Catalog refresh deferred: main CI is still pending. The next hourly probe will check again."
+    else:
+        message = ("Catalog inputs changed; selecting the protected deployment."
+                   if changed else "Catalog inputs unchanged; deployment skipped.")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+            stream.write(f"changed={str(changed).lower()}\n")
     print(message)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
         stream.write(message + "\n")
-    with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-        stream.write(f"changed={str(changed).lower()}\n")
 
 
 if __name__ == "__main__":

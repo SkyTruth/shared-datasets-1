@@ -110,7 +110,7 @@ class TargetApplyCallerTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             SCHEDULED_INGESTION,
-            expected_name="Scheduled ingestion deploy IAM sync",
+            expected_name="Infrastructure / Ingestion deploy IAM sync",
             push_paths=None,
             sync_name="Scheduled ingestion deploy IAM sync",
             expected_needs="bootstrap",
@@ -172,7 +172,7 @@ class TargetApplyCallerTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             PREVIEW_TERRAFORM,
-            expected_name="Preview Terraform IAM sync",
+            expected_name="Infrastructure / Preview Terraform IAM sync",
             push_paths=None,
             sync_name="Preview Terraform IAM sync",
             refusal_prefix="Refusing automatic preview Terraform IAM sync",
@@ -207,7 +207,7 @@ class TargetApplyCallerTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             SCRATCH_CLEANUP,
-            expected_name="Scratch cleanup IAM sync",
+            expected_name="Infrastructure / Scratch cleanup IAM sync",
             push_paths=None,
             sync_name="Scratch cleanup IAM sync",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
@@ -237,7 +237,7 @@ class TargetApplyCallerTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             ARTIFACT_REGISTRY,
-            expected_name="Artifact Registry IAM sync",
+            expected_name="Infrastructure / Artifact Registry IAM sync",
             push_paths=None,
             job_name="bootstrap",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
@@ -253,7 +253,7 @@ class TargetApplyCallerTests(unittest.TestCase):
         assert_target_apply_caller(
             self,
             ARTIFACT_REGISTRY,
-            expected_name="Artifact Registry IAM sync",
+            expected_name="Infrastructure / Artifact Registry IAM sync",
             push_paths=None,
             job_name="writer",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,

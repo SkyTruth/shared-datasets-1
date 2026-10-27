@@ -1,4 +1,4 @@
-name: Publish TypeScript SDK
+name: SDK / Publish TypeScript
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
         required: true
         type: string
   workflow_run:
-    workflows: [CI]
+    workflows: ["CI / Validate and deliver", "CI"]
     branches: [main]
     types: [completed]
 

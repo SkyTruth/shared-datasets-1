@@ -1,4 +1,4 @@
-name: Preview Terraform IAM sync
+name: Infrastructure / Preview Terraform IAM sync
 
 on:
   workflow_call:

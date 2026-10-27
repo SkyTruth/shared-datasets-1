@@ -101,7 +101,7 @@ self-acceptance in the body instead of issuing a known-failing reviewer request.
 
 Do not promote canonical objects from the local terminal. After a same-repo
 PR containing the publish-plan block is merged to `main`, the GitHub
-`Approved dataset mutation` workflow verifies `jonaraphael` acceptance and
+`Data / Approved mutation` workflow verifies `jonaraphael` acceptance and
 promotes the listed staged objects under the `shared-datasets-production`
 environment. If GitHub blocks self-review because `jonaraphael` authored the
 PR, the merged PR is treated as restricted self-acceptance. Promotion still

@@ -17,8 +17,8 @@ SCOPE = incidents.scope_for_job('candidate', {}, 'publish-typescript-sdk.yml')[0
 RUNS = (38496427534, 38497808852, 38504179673)
 
 
-@pytest.fixture
-def history(tmp_path, monkeypatch):
+@pytest.fixture(params=incidents.alerts.WORKFLOW_NAMES['publish-typescript-sdk.yml'])
+def history(tmp_path, monkeypatch, request):
     failures = [observation(scope=OLD_SCOPE, label='typescript-sdk', job_name='candidate',
                             run_id=run_id, job_id=100 + index, time=f'2026-10-14T0{index + 1}:00:00Z')
                 for index, run_id in enumerate(RUNS)]
@@ -36,7 +36,7 @@ def history(tmp_path, monkeypatch):
     records = [record]
     repo = {'id': 9, 'full_name': incidents.REPOSITORY}
     workflow = {'id': 7, 'path': '.github/workflows/publish-typescript-sdk.yml'}
-    runs = {item['run_id']: {'id': item['run_id'], 'name': 'Publish TypeScript SDK', 'path': workflow['path'],
+    runs = {item['run_id']: {'id': item['run_id'], 'name': request.param, 'path': workflow['path'],
                             'workflow_id': 7, 'head_sha': SHA, 'head_branch': 'main', 'event': 'workflow_run',
                             'run_attempt': 1, 'status': 'completed', 'conclusion': 'failure', 'updated_at': item['time'],
                             'repository': repo, 'head_repository': repo} for item in failures}

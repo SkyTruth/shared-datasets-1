@@ -1,4 +1,4 @@
-name: Prod Terraform target apply
+name: Infrastructure / Production Terraform target apply
 
 # Reusable constrained apply for prod Terraform IAM syncs. Callers pass an
 # explicit -target list plus a resource-change allowlist; the plan is refused

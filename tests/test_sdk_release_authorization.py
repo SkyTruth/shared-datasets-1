@@ -191,10 +191,10 @@ def test_candidate_must_match_recorded_test_result_even_with_consistent_new_hash
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
 
 
-def admission_fixture(*, ready='success', conclusion='failure', current_attempt=1):
+def admission_fixture(*, ready='success', conclusion='failure', current_attempt=1, name='CI'):
     repository = {'id': 9, 'full_name': REPO}
     workflow = {'id': 7, 'path': '.github/workflows/ci.yml'}
-    run = {'id': 123, 'run_attempt': 1, 'workflow_id': 7, 'path': workflow['path'], 'name': 'CI',
+    run = {'id': 123, 'run_attempt': 1, 'workflow_id': 7, 'path': workflow['path'], 'name': name,
            'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'status': 'completed', 'conclusion': conclusion,
            'repository': repository, 'head_repository': repository}
     api = Mock()
@@ -212,8 +212,9 @@ def test_verified_validation_failure_does_not_authorize_or_fail_an_sdk_release(r
     api.archive.assert_not_called()
 
 
-def test_failed_post_validation_deployment_keeps_tested_sdk_eligible():
-    api, event = admission_fixture()
+@pytest.mark.parametrize('name', release.WORKFLOW_NAMES['ci.yml'])
+def test_failed_post_validation_deployment_keeps_tested_sdk_eligible(name):
+    api, event = admission_fixture(name=name)
     assert release.admit_source(api, REPO, 123, 1, SHA, event)
 
 
@@ -224,9 +225,10 @@ def test_cancelled_or_verified_obsolete_ci_completion_is_an_sdk_noop(conclusion,
     api.pages.assert_called_once()
 
 
-@pytest.mark.parametrize('change', ['head_sha', 'workflow_id', 'path', 'event', 'repository', 'run_attempt'])
-def test_sdk_admission_rejects_forged_event_identity_even_when_validation_failed(change):
-    api, event = admission_fixture(ready='failure')
+@pytest.mark.parametrize('name', release.WORKFLOW_NAMES['ci.yml'])
+@pytest.mark.parametrize('change', ['name', 'head_sha', 'workflow_id', 'path', 'event', 'repository', 'run_attempt'])
+def test_sdk_admission_rejects_forged_event_identity_even_when_validation_failed(change, name):
+    api, event = admission_fixture(ready='failure', name=name)
     event['workflow_run'][change] = {'id': 100, 'full_name': 'evil/fork'} if change == 'repository' else 'forged'
     with pytest.raises(DeploymentError):
         release.admit_source(api, REPO, 123, 1, SHA, event)

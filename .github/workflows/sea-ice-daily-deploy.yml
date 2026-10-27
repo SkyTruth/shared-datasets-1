@@ -1,4 +1,4 @@
-name: Sea ice daily deploy
+name: Ingestion / Sea ice daily deploy
 
 on:
   workflow_dispatch:

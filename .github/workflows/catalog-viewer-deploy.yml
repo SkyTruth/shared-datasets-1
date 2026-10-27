@@ -1,4 +1,4 @@
-name: Catalog viewer deploy
+name: Catalog / Viewer deploy
 
 on:
   workflow_dispatch:

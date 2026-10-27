@@ -1,4 +1,4 @@
-name: Catalog web deploy
+name: Catalog / Web deploy
 
 on:
   schedule:
@@ -22,8 +22,10 @@ on:
         type: boolean
   workflow_run:
     workflows:
-      - Release index rebuild
-      - CI
+      - "Catalog / Release index rebuild"
+      - "Release index rebuild"
+      - "CI / Validate and deliver"
+      - "CI"
     branches:
       - main
     types:
@@ -59,6 +61,7 @@ jobs:
       SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "0"
     permissions:
       contents: read
+      actions: read
       id-token: write
     outputs:
       changed: ${{ steps.compare.outputs.changed }}
@@ -92,12 +95,14 @@ jobs:
           service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
       - name: Compare catalog inputs
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/catalog_refresh_check.py --work-dir "$RUNNER_TEMP/catalog-refresh-check"
 
   select-repo-changes:
     name: Select reviewed catalog changes
     if: >-
-      ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'CI' &&
+      ${{ github.event_name == 'workflow_run' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name) &&
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -145,7 +150,7 @@ jobs:
         needs.select-repo-changes.outputs.should_deploy == 'true' ||
         (
           github.event_name == 'workflow_run' &&
-          github.event.workflow_run.name == 'Release index rebuild' &&
+          contains(fromJSON('["Catalog / Release index rebuild","Release index rebuild"]'), github.event.workflow_run.name) &&
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -163,7 +168,7 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Catalog web deploy may only publish from main after reviewed changes have landed." >&2
+            echo "Catalog / Web deploy may only publish from main after reviewed changes have landed." >&2
             exit 1
           fi
 
@@ -230,7 +235,7 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --pr-number "$PR_NUMBER"
 
       - name: Verify successful release index rebuild provenance
-        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Release index rebuild' }}
+        if: ${{ github.event_name == 'workflow_run' && contains(fromJSON('["Catalog / Release index rebuild","Release index rebuild"]'), github.event.workflow_run.name) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

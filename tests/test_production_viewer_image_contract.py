@@ -158,7 +158,8 @@ def test_main_resolves_built_bytes_before_any_installed_code_check(monkeypatch):
 
 
 @pytest.mark.parametrize('cache', [None, 'true'])
-def test_failed_build_cannot_run_old_tagged_image(monkeypatch, cache):
+@pytest.mark.parametrize('target', ['wdpa-monthly', 'catalog-viewer', 'monitoring-slack'])
+def test_failed_build_cannot_run_or_retain_old_tagged_image(tmp_path, monkeypatch, cache, target):
     monkeypatch.delenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', raising=False)
     if cache is not None:
         monkeypatch.setenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', cache)
@@ -167,14 +168,21 @@ def test_failed_build_cannot_run_old_tagged_image(monkeypatch, cache):
         calls.append(args)
         if args[:2] == ['docker', 'build'] or args[:3] == ['docker', 'buildx', 'build']:
             raise subprocess.CalledProcessError(1, args)
-    monkeypatch.setattr('sys.argv', ['production_image_contracts.py', '--target', 'wdpa-monthly'])
+    monkeypatch.setattr('sys.argv', ['production_image_contracts.py', '--target', target, '--output', str(tmp_path)])
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.run', run)
     lookup = Mock(return_value='b' * 40)
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output', lookup)
+    packed, loaded = Mock(), Mock()
+    monkeypatch.setattr('scripts.production_image_contracts.pack_image', packed)
+    monkeypatch.setattr('scripts.production_image_contracts.load_image', loaded)
     with pytest.raises(subprocess.CalledProcessError):
         main()
-    assert lookup.call_count == 1
+    lookup.assert_called_once_with(['git', 'rev-parse', 'HEAD'], text=True)
     assert not any(args[:2] == ['docker', 'run'] for args in calls)
+    assert not any('--viewer-image' in args for args in calls)
+    packed.assert_not_called()
+    loaded.assert_not_called()
+    assert not (tmp_path / 'images/manifest.json').exists()
 
 
 @pytest.mark.parametrize('body,valid', [(b'ok', True), (b'wrong', False)])
@@ -210,7 +218,7 @@ def test_gdal_actual_shebang_interpreter_dependency_failure_is_not_hidden(tmp_pa
 
 @pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily', 'catalog-viewer', 'dataset-usage', 'monitoring-slack'])
 @pytest.mark.parametrize('enabled', [False, True])
-def test_build_cache_preserves_actual_recipe_and_uses_separate_image_scopes(monkeypatch, target, enabled):
+def test_build_cache_policy_preserves_actual_recipe_and_target_scopes(monkeypatch, target, enabled):
     monkeypatch.delenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', raising=False)
     original = commands(target, 'b' * 40)[0]
     if enabled:
@@ -218,6 +226,9 @@ def test_build_cache_preserves_actual_recipe_and_uses_separate_image_scopes(monk
     actual = cached_build(original, target)
     if not enabled:
         assert actual == original
+        return
+    if target in {'catalog-viewer', 'monitoring-slack'}:
+        assert actual == ['docker', 'buildx', 'build', '--load', *original[2:]]
         return
     cache = f'type=gha,version=2,scope=production-{target}'
     assert actual == ['docker', 'buildx', 'build', '--load', '--cache-from', cache,

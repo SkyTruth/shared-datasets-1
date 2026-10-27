@@ -29,7 +29,7 @@ artifacts still require authorized signed URLs. A published-catalog failure is
 shown next to the toggle and leaves preview browsing available. Production
 viewers do not enable these routes or show the toggle.
 
-The protected **Preview Terraform IAM sync** must provision the conditional
+The protected **Infrastructure / Preview Terraform IAM sync** must provision the conditional
 `feature_preview_published_reader` grant after merge, before deploying the new
 preview viewer. The protected **PMTiles CDN route sync** must also apply the
 production bucket CORS allowlist, which includes the preview viewer origin

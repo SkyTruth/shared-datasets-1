@@ -831,6 +831,19 @@ class PublishingConciergeTests(unittest.TestCase):
             "catalog_generated_at": "2026-06-04T13:36:42Z",
         }
 
+    def test_preview_refresh_accepts_current_and_historical_workflow_evidence(self):
+        state = {"preview_ref": "feat/test-preview"}
+        for name in ("feature-preview-deploy.yml", "Preview / Deploy feature branch", "Deploy Feature Branch to Preview"):
+            with self.subTest(name=name):
+                evidence = {**self._preview_catalog_refresh_payload(), "workflow_name": name}
+                result = publishing_concierge.validate_preview_catalog_refresh(state, evidence)
+                self.assertEqual(result["workflow_name"], name)
+                with self.assertRaises(publishing_concierge.WorkflowError):
+                    publishing_concierge.validate_preview_catalog_refresh(state, {**evidence, "dispatched_ref": "wrong"})
+        with self.assertRaises(publishing_concierge.WorkflowError):
+            publishing_concierge.validate_preview_catalog_refresh(
+                state, {**self._preview_catalog_refresh_payload(), "workflow_name": "Preview / Untrusted"})
+
     def _preview_catalog_asset_payload(self, uploaded_objects: list[dict]) -> dict:
         release_files = [
             {
