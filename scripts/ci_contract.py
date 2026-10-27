@@ -97,49 +97,66 @@ NARROW_SCRIPTS = {
 }
 
 
+def classify_change(path: str) -> tuple[str, set[str]]:
+    """One path's tier and additional suites; deployment authority stays explicit."""
+    if path in CONTRACT_FILES or path.startswith(".github/"):
+        return "shared", set(SUITES)
+    if (
+        (path.startswith("scripts/") and path.count("/") == 1 and path.endswith(".md"))
+        or (path.startswith(("ingestion/", "services/")) and path.endswith(".md"))
+        or (path.startswith("api/") and path.endswith("/README.md"))
+    ):
+        return "documentation", set()
+    if path.startswith("ingestion/") or path in NATIVE_TESTS:
+        return "component", {"geospatial-integration", "production-images"}
+    if path.startswith("api/"):
+        suites = {"sdk-node22", "sdk-node24", "browser"}
+        if path.startswith("api/python/"):
+            suites.add("production-images")
+        return "component", suites
+    if path.startswith("services/catalog_viewer/"):
+        return "component", {"production-images", "browser"}
+    if path.startswith(("web/", "tests/browser/")):
+        return "component", {"sdk-node22", "sdk-node24", "browser"}
+    if path.startswith(("catalog/", "templates/", "docs/assets/")):
+        suites = {"sdk-node22", "sdk-node24", "browser"}
+        if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
+            suites.update({"geospatial-integration", "production-images"})
+        return "metadata", suites
+    if path in NARROW_SCRIPTS:
+        return "component", set(NARROW_SCRIPTS[path])
+    if path.startswith("scripts/"):
+        return "shared", set(SUITES)
+    if path.startswith("tests/"):
+        if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "mpatlas", "translation")):
+            return "component", {"geospatial-integration", "production-images"}
+        if any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
+            return "component", {"sdk-node22", "sdk-node24", "browser"}
+    if path in {
+        "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_slack.tf",
+        "terraform/envs/prod/monitoring_alert_policy_iam.tf", "terraform/envs/prod/monitoring_variables.tf",
+        "terraform/envs/prod/wdpa_execution_observer.tf", "terraform/envs/prod/canonical_mutation_iam.tf",
+        "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
+    }:
+        return "infrastructure", {"production-images"}
+    if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
+        return "infrastructure", set()
+    if (path.startswith(("docs/", ".claude/skills/", ".agents/")) and path.endswith(".md")) or path in {"README.md", "AGENTS.md", "CLAUDE.md", "LICENSE"}:
+        return "documentation", set()
+    return "unknown", set(SUITES)
+
+
 def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     if paths is None:
         return list(SUITES), "comparison history unavailable"
-    selected = set(ALWAYS)
+    selected, tiers = set(ALWAYS), set()
     for path in paths:
-        if path in {"pyproject.toml", "uv.lock"} or path.startswith(".github/"):
-            return list(SUITES), f"shared validation or workflow dependency: {path}"
-        if (
-            (path.startswith("scripts/") and path.count("/") == 1 and path.endswith(".md"))
-            or (path.startswith(("ingestion/", "services/")) and path.endswith(".md"))
-            or (path.startswith("api/") and path.endswith("/README.md"))
-        ):
-            continue
-        if path.startswith("ingestion/") or path in NATIVE_TESTS:
-            selected.update({"geospatial-integration", "production-images"})
-        elif path.startswith("api/"):
-            selected.update({"sdk-node22", "sdk-node24", "browser"})
-            if path.startswith("api/python/"):
-                selected.add("production-images")
-        elif path.startswith("services/catalog_viewer/"):
-            selected.update({"production-images", "browser"})
-        elif path.startswith(("web/", "tests/browser/", "catalog/", "templates/", "docs/assets/")):
-            selected.update({"sdk-node22", "sdk-node24", "browser"})
-            if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
-                selected.update({"geospatial-integration", "production-images"})
-        elif path.startswith("scripts/"):
-            if path not in NARROW_SCRIPTS:
-                return list(SUITES), f"shared script dependency: {path}"
-            selected.update(NARROW_SCRIPTS[path])
-        elif path.startswith("tests/"):
-            if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "mpatlas", "translation")):
-                selected.update({"geospatial-integration", "production-images"})
-            elif any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
-                selected.update({"sdk-node22", "sdk-node24", "browser"})
-            else:
-                return list(SUITES), f"test dependency is not classified: {path}"
-        elif path.startswith(("terraform/", "docs/", ".claude/skills/", ".agents/")):
-            pass
-        elif path in {"README.md", "AGENTS.md", "CLAUDE.md", "LICENSE", ".gitignore", ".gitleaksignore"}:
-            pass
-        else:
-            return list(SUITES), f"unknown path: {path}"
-    return [suite for suite in SUITES if suite in selected], "complete path classification"
+        tier, suites = classify_change(path)
+        if tier in {"shared", "unknown"}:
+            return list(SUITES), f"{tier} dependency: {path}"
+        selected.update(suites)
+        tiers.add(tier)
+    return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
 
 
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
@@ -176,10 +193,12 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
     iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
     ingestion = {"mpatlas", "eamlis", "sea_ice", "wdpa"}
     for path in paths or []:
+        if classify_change(path)[0] == "documentation":
+            continue
         if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
+            selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
         if path.startswith("ingestion/common/") or path in {
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
             "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
@@ -196,19 +215,17 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
-        if (path.startswith("ingestion/mpatlas_monthly/") and path != "ingestion/mpatlas_monthly/README.md") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
+        if path.startswith("ingestion/mpatlas_monthly/") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
             selected.update({"mpatlas", "cron_alert_policy"})
-        if (path.startswith("ingestion/eamlis_monthly/") and path != "ingestion/eamlis_monthly/README.md") or path in {
+        if path.startswith("ingestion/eamlis_monthly/") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
         }:
             selected.add("eamlis")
-        if (path.startswith("ingestion/sea_ice_daily/") and path != "ingestion/sea_ice_daily/README.md") or path in {
+        if path.startswith("ingestion/sea_ice_daily/") or path in {
             ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
         }:
             selected.add("sea_ice")
-        if (path.startswith("ingestion/wdpa_monthly/") and path not in {
-            "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/README.md",
-        }) or path in {
+        if (path.startswith("ingestion/wdpa_monthly/") and path != "ingestion/wdpa_monthly/Dockerfile") or path in {
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
         }:
             selected.add("wdpa")
@@ -247,6 +264,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
         }:
             selected.add("cron_alert_policy")
+        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/slack_incident_api.py", "scripts/monitoring_slack_prepare.py"}:
+            selected.add("cron_alert_policy")
         if path == "catalog/categories.yaml":
             selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
         if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
@@ -264,7 +283,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "dataset_usage"}):
+    if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

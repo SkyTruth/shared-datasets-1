@@ -124,6 +124,16 @@ the last acknowledged parent view. A changed view remains pending until Slack
 acknowledges its update; an interrupted update safely retries the same parent.
 Version 1 snapshots are signature-verified before migration. Existing timestamps
 and historical recovery replies remain audit evidence and are never sent again.
+Retired version 3 snapshots are also signature-verified before reading their
+incident core. Only historical IDs through the reviewed retirement boundary are
+accepted; a newly emitted retired-format checkpoint fails as a state downgrade.
+Only a single scope with all failure and recovery evidence
+represented in that core is accepted. Original parents and delivery claims stay
+intact; their old view acknowledgements are cleared so the current bot updates
+the same messages. Proven-empty registrations with released supervision have no
+incident to carry forward. Original signed snapshots remain audit history;
+unknown fields, merged scopes, active empty registrations and unrepresented
+evidence fail closed. New checkpoints retain the current version 2 format.
 Newer observations cannot replace a resolved incident until its original
 parent's green update is acknowledged. They remain in the signed deferred queue
 and replay on a later reconciliation, preserving both incident parents.
@@ -135,6 +145,12 @@ starting no earlier than the explicit activation timestamp. Complete API
 enumeration and authoritative source-attempt checks are required. Longer
 GitHub outages require reviewed replay of the missing interval; blanket
 production retries are never a notification recovery mechanism.
+For the owner-reviewed cutover, dispatch the same main workflow with
+`delivery_result=replay-window`, `incident_id=workflow-bot-cutover`,
+`operation=replay:START..END` (exact UTC timestamps), and no `message_ts`.
+The closed past interval is limited to seven days and enumerated in daily
+windows. This reads authoritative source attempts and uses the existing signed
+checkpoint, recovery and delivery gates. It does not rerun a source workflow.
 
 Before posting, the worker persists and signs the claim. After Slack returns a
 valid channel and message timestamp, it persists an acknowledgement; confirmed
@@ -282,3 +298,17 @@ historical v1 snapshots and recovery posts retain persisted audit evidence; the
 existing webhook supports disabled mode and established ingestion notifications.
 Remaining uncertainty: actual delivery depends on Slack availability and bot
 configuration; ambiguous non-idempotent sends still require owner inspection.
+
+
+### Closing a legacy webhook parent
+
+Webhook alerts sent while incident management is disabled have no managed message
+record. After recovery, the owner may dispatch `Resolve legacy workflow alert`
+from `main` with the original failed run ID and its inspected Slack parent
+`message_ts`. The action uses read-only GitHub permissions to verify every failed job maps to a
+registered deployment and that each latest signed terminal success is newer and
+covers the failed revision. Runtime targets, including dataset usage, require
+`verified`, not merely `applied`. It updates only the supplied original parent;
+it never posts a replacement or reply. Unsupported failures remain unresolved.
+This action does not enable incident management or reinterpret retained incident
+records from other protocol versions.

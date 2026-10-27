@@ -33,14 +33,14 @@ on:
         required: true
         type: string
       operation:
-        description: Exact first claimed operation, or checkpoint:ID:SHA256 for reviewed checkpoint sealing
+        description: Claimed operation, checkpoint:ID:SHA256, or replay:START..END for an owner-reviewed UTC catch-up
         required: true
         type: string
       delivery_result:
         description: Owner confirmation after inspecting the incident in Slack
         required: true
         type: choice
-        options: [delivered, not-delivered, seal-checkpoint]
+        options: [delivered, not-delivered, seal-checkpoint, replay-window]
       message_ts:
         description: Exact message timestamp when confirming delivered; empty otherwise
         required: false

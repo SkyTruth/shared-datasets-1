@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts.production_image_contracts import INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, commands, main, resolve_image, verify_viewer_image
+from scripts.production_image_contracts import INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, cached_build, commands, main, resolve_image, verify_viewer_image
 
 IMAGE_ID = 'sha256:' + 'a' * 64
 
@@ -157,11 +157,15 @@ def test_main_resolves_built_bytes_before_any_installed_code_check(monkeypatch):
     assert all(IMAGE_ID in calls[i] for i in checks)
 
 
-def test_failed_build_cannot_run_old_tagged_image(monkeypatch):
+@pytest.mark.parametrize('cache', [None, 'true'])
+def test_failed_build_cannot_run_old_tagged_image(monkeypatch, cache):
+    monkeypatch.delenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', raising=False)
+    if cache is not None:
+        monkeypatch.setenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', cache)
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-        if args[:2] == ['docker', 'build']:
+        if args[:2] == ['docker', 'build'] or args[:3] == ['docker', 'buildx', 'build']:
             raise subprocess.CalledProcessError(1, args)
     monkeypatch.setattr('sys.argv', ['production_image_contracts.py', '--target', 'wdpa-monthly'])
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.run', run)
@@ -202,3 +206,19 @@ def test_gdal_actual_shebang_interpreter_dependency_failure_is_not_hidden(tmp_pa
         exec(INTERPRETER_PROBE)
     assert calls[0][0] == '/actual/gdal/python'
     assert 'import numpy; from osgeo import gdal_array' in calls[0][-1]
+
+
+@pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily', 'catalog-viewer', 'dataset-usage', 'monitoring-slack'])
+@pytest.mark.parametrize('enabled', [False, True])
+def test_build_cache_preserves_actual_recipe_and_uses_separate_image_scopes(monkeypatch, target, enabled):
+    monkeypatch.delenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', raising=False)
+    original = commands(target, 'b' * 40)[0]
+    if enabled:
+        monkeypatch.setenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', 'true')
+    actual = cached_build(original, target)
+    if not enabled:
+        assert actual == original
+        return
+    cache = f'type=gha,version=2,scope=production-{target}'
+    assert actual == ['docker', 'buildx', 'build', '--load', '--cache-from', cache,
+                      '--cache-to', cache + ',mode=max,ignore-error=true', *original[2:]]

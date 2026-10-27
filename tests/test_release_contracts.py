@@ -55,6 +55,18 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("runWithOverrides" in item for item in errors))
         self.assertTrue(any("bootstrap" in item for item in errors))
 
+    def test_monitoring_private_resources_and_authority_must_precede_cutover(self):
+        path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        original = path.read_text()
+        self.assertEqual(contracts.iam_contract(self.root), [])
+        for child, needs in (("resources", []), ("sync", "bootstrap"), ("sync", "resources")):
+            with self.subTest(child=child, needs=needs):
+                value = yaml.safe_load(original)
+                value["jobs"][child]["needs"] = needs
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any("bootstrap authority" in item for item in contracts.iam_contract(self.root)))
+        path.write_text(original)
+
     def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
         path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
         text = path.read_text().replace("      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: true", "      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: false")

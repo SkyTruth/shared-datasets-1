@@ -127,6 +127,8 @@ def plan_checks(plan, *, project_number, target=None):
                 created[kind].add(text(value.get("name"), "service name"))
             elif kind == "google_cloud_run_v2_job":
                 created[kind].add(text(value.get("name"), "job name"))
+            elif kind in {"google_pubsub_topic", "google_pubsub_subscription"}:
+                created[kind].add(text(value.get("name"), "Pub/Sub resource name"))
             elif kind == "google_storage_managed_folder":
                 created[kind].add((bucket_name(value.get("bucket")), value.get("name")))
 
@@ -352,6 +354,51 @@ def plan_checks(plan, *, project_number, target=None):
                 if action != "delete":
                     backend_unknown(change.get("after_unknown", {}))
                     backend_references(current)
+            elif kind == "terraform_data":
+                require(row["address"] == "terraform_data.cron_alert_channel_configured" and action in {"create", "update"}, "unsupported local Terraform guard mutation")
+                # This guard changes Terraform state only; it makes no GCP call.
+            elif kind == "google_project_service":
+                project(current)
+                require(action == "create" and current.get("service") == "pubsub.googleapis.com", "unsupported API enablement mutation")
+                add(PROJECT_URL, ("serviceusage.services.enable", "serviceusage.services.get", "serviceusage.operations.get"))
+            elif kind == "google_secret_manager_secret":
+                project(current)
+                require(action == "create", "secret replacement/deletion requires separate authorization")
+                text(current.get("secret_id"), "secret_id")
+                add(PROJECT_URL, ("secretmanager.secrets.create", "secretmanager.secrets.get"))
+            elif kind == "google_monitoring_notification_channel":
+                project(current)
+                require(action in {"create", "update"}, "notification channel deletion is not authorized")
+                add(PROJECT_URL, ("monitoring.notificationChannels." + action, "monitoring.notificationChannels.get"))
+            elif kind == "google_pubsub_topic_iam_member":
+                project(current)
+                topic = current.get("topic")
+                if isinstance(topic, str) and topic.startswith("projects/"):
+                    match = re.fullmatch(r"projects/([^/]+)/topics/([^/]+)", topic)
+                    require(match and match[1] in {PROJECT, str(project_number)}, "foreign Pub/Sub topic")
+                    topic = match[2]
+                topic = text(topic, "Pub/Sub topic name")
+                needed = ("pubsub.topics.getIamPolicy", "pubsub.topics.setIamPolicy")
+                add(PROJECT_URL if topic in created["google_pubsub_topic"] else f"https://pubsub.googleapis.com/v1/projects/{PROJECT}/topics/{topic}:testIamPermissions", needed)
+            elif kind in {"google_pubsub_topic", "google_pubsub_subscription"}:
+                project(current)
+                require(action in {"create", "update"}, "Pub/Sub deletion is not authorized")
+                name = text(current.get("name"), "Pub/Sub resource name")
+                plural = "topics" if kind == "google_pubsub_topic" else "subscriptions"
+                needed = ("pubsub." + plural + "." + action, "pubsub." + plural + ".get")
+                add(PROJECT_URL if action == "create" else f"https://pubsub.googleapis.com/v1/projects/{PROJECT}/{plural}/{name}:testIamPermissions", needed)
+                if kind == "google_pubsub_subscription":
+                    topic = current.get("topic")
+                    if topic is None:
+                        require(future_unknown(row, "google_pubsub_topic"), "unknown Pub/Sub topic lacks creation dependency")
+                        add(PROJECT_URL, ("pubsub.topics.attachSubscription",))
+                    else:
+                        require(isinstance(topic, str) and re.fullmatch(f"projects/{PROJECT}/topics/[A-Za-z0-9_.@-]+", topic), "foreign or malformed Pub/Sub topic")
+                        topic_name = text(topic.split("/")[-1], "Pub/Sub topic name")
+                        add(PROJECT_URL if topic_name in created["google_pubsub_topic"] else f"https://pubsub.googleapis.com/v1/{topic}:testIamPermissions", ("pubsub.topics.attachSubscription",))
+                    for push in current.get("push_config", []):
+                        for token in push.get("oidc_token", []):
+                            sa(token.get("service_account_email"), ("iam.serviceAccounts.actAs",), row)
             elif kind == "google_monitoring_alert_policy":
                 project(current)
                 add(PROJECT_URL, ("monitoring.alertPolicies." + action, "monitoring.alertPolicies.get"))

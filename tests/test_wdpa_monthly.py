@@ -262,7 +262,7 @@ class WdpaMonthlyTests(unittest.TestCase):
             dest = Path(tmp) / "wdpa.zip"
             with (
                 mock.patch.object(wdpa.urllib.request, "urlopen", flaky),
-                mock.patch("ingestion.common.http.time.sleep"),
+                mock.patch("ingestion.common.http.time"),
             ):
                 wdpa.download_file("https://example/source.zip", dest)
 

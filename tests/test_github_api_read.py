@@ -45,52 +45,78 @@ def gh(tmp_path, monkeypatch):
     return configure
 
 
-def outage(status=502, *, stdout=""):
-    return {"code": 1, "stderr": f"gh: Server Error (HTTP {status})\n", "stdout": stdout}
+def outage(status=502, *, stdout="", plain=False):
+    stderr = f"gh: HTTP {status}\n" if plain else f"gh: Server Error (HTTP {status})\n"
+    return {"code": 1, "stderr": stderr, "stdout": stdout}
 
 
 @pytest.mark.parametrize("client", CLIENTS)
 def test_observed_502_recovers_same_exact_ci_attempt(client, gh):
     log = gh([outage(), outage(), {"stdout": '{"id": 38508512742, "run_attempt": 1}'}])
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         assert client().get(PATH) == {"id": 38508512742, "run_attempt": 1}
-    assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
+    assert [call.args for call in clock.sleep.call_args_list] == [(5,), (15,)]
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [calls[0]] * 3
     assert calls[0] == ["api", "--method", "GET", PATH]
 
 
 @pytest.mark.parametrize("client", CLIENTS)
+@pytest.mark.parametrize("path,paginate,response", [
+    # Repository read observed in 38495751381/2.
+    ("repos/SkyTruth/shared-datasets-1", False, {"id": 1213606315}),
+    # Deployment-history read observed in 38496427534/1.
+    ("repos/SkyTruth/shared-datasets-1/deployments?environment=production-typescript-sdk&per_page=100",
+     True, [[{"id": 7}]]),
+])
+def test_observed_plain_500_recovers_same_read(client, path, paginate, response, gh, capsys):
+    log = gh([outage(500, plain=True, stdout='{"untrusted": true}'), {"stdout": json.dumps(response)}])
+    with patch.object(transport, "time") as clock:
+        result = client().pages(path) if paginate else client().get(path)
+    assert result == ([{"id": 7}] if paginate else response)
+    clock.sleep.assert_called_once_with(5)
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    command = ["api", "--method", "GET"] + (["--paginate", "--slurp"] if paginate else []) + [path]
+    assert calls == [command, command]
+    assert "attempt 1/3 failed (HTTP 500); retrying in 5s" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("client", CLIENTS)
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
-def test_exhausted_server_errors_never_accept_stdout(client, status, gh, capsys):
-    log = gh([outage(status, stdout='{"id": 38508512742}')])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+@pytest.mark.parametrize("plain", [False, True])
+def test_exhausted_server_errors_never_accept_stdout(client, status, plain, gh, capsys):
+    log = gh([outage(status, plain=plain, stdout='{"id": 38508512742}')])
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
     assert len(log.read_text().splitlines()) == 3
-    assert [call.args for call in sleep.call_args_list] == [(5,), (15,)]
+    assert [call.args for call in clock.sleep.call_args_list] == [(5,), (15,)]
     assert "attempt 3/3 failed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("client", CLIENTS)
 @pytest.mark.parametrize("stderr", [
     *[f"gh: Rejected (HTTP {code})\n" for code in (400, 401, 403, 404, 422, 429, 501)],
+    *[f"gh: HTTP {code}\n" for code in (400, 401, 403, 404, 422, 429, 501)],
+    "gh: HTTP 500)\n",
+    "gh: Server Error (HTTP 500\n",
+    "gh: HTTP 500\nadditional unknown error\n",
     "not logged into GitHub\n",
     "gh: Server Error (HTTP 502)\nadditional unknown error\n",
 ])
 def test_non_transient_and_unknown_errors_fail_immediately(client, stderr, gh):
     log = gh([{"code": 1, "stderr": stderr}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         client().get(PATH)
-    sleep.assert_not_called()
+    clock.sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
 
 
 @pytest.mark.parametrize("client", CLIENTS)
 def test_connection_failure_recovers(client, gh):
     log = gh([{"code": 1, "stderr": transport.CONNECTION_ERROR.decode()}, {"stdout": "{}"}])
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         assert client().get(PATH) == {}
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
 
 
@@ -100,11 +126,12 @@ def test_connection_failure_recovers(client, gh):
     [{"total_count": 1, "jobs": [{"id": 1}]}],
     [{"total_count": 2, "jobs": [{"id": 1}]}, {"total_count": 2, "jobs": [{"id": 2}]}],
 ])
-def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, gh):
-    log = gh([outage(stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
-    with patch("time.sleep") as sleep:
+@pytest.mark.parametrize("plain", [False, True])
+def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pages, plain, gh):
+    log = gh([outage(500, plain=plain, stdout='[{"total_count": 1, "jobs": [{"id": 999}]}]'), {"stdout": json.dumps(pages)}])
+    with patch.object(transport, "time") as clock:
         assert client().pages(PATH, field="jobs") == [row for page in pages for row in page["jobs"]]
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls == [calls[0]] * 2
     assert calls[0] == ["api", "--method", "GET", "--paginate", "--slurp", PATH]
@@ -116,11 +143,12 @@ def test_pagination_discards_partial_failure_and_preserves_all_pages(client, pag
     '[{"total_count": 2, "jobs": [{"id": 1}]}]',
     '[{"total_count": 2, "jobs": []}, {"total_count": 3, "jobs": []}]',
 ])
-def test_response_validation_after_recovery_is_not_retried(client, response, gh):
-    log = gh([outage(), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
-    with patch("time.sleep") as sleep, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
+@pytest.mark.parametrize("plain", [False, True])
+def test_response_validation_after_recovery_is_not_retried(client, response, plain, gh):
+    log = gh([outage(500, plain=plain), {"stdout": response}, {"stdout": '[{"total_count": 0, "jobs": []}]'}])
+    with patch.object(transport, "time") as clock, pytest.raises((ValueError, authorization.Error, deployments.DeploymentError)):
         client().pages(PATH, field="jobs")
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     assert len(log.read_text().splitlines()) == 2
 
 
@@ -128,7 +156,7 @@ def test_response_validation_after_recovery_is_not_retried(client, response, gh)
 def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
     timeout = subprocess.TimeoutExpired(["gh", "api"], 60, output=b'{"partial": true}')
     responses = [timeout, b"{}"] if recover else [timeout] * 3
-    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch("time.sleep") as sleep:
+    with patch.object(transport.subprocess, "check_output", side_effect=responses) as command, patch.object(transport, "time") as clock:
         if recover:
             assert deployments.GitHub().get(PATH) == {}
         else:
@@ -136,19 +164,21 @@ def test_read_timeouts_are_bounded_and_never_accept_partial_output(recover):
                 deployments.GitHub().get(PATH)
     assert command.call_count == (2 if recover else 3)
     assert all(call.kwargs["timeout"] == 60 for call in command.call_args_list)
-    assert len(sleep.call_args_list) == (1 if recover else 2)
+    assert len(clock.sleep.call_args_list) == (1 if recover else 2)
 
 
-def test_deployment_write_is_never_replayed(gh):
-    log = gh([outage(), {"stdout": "{}"}])
-    with patch("time.sleep") as sleep, pytest.raises(subprocess.CalledProcessError):
+@pytest.mark.parametrize("plain", [False, True])
+def test_deployment_write_is_never_replayed(plain, gh):
+    log = gh([outage(500, plain=plain), {"stdout": "{}"}])
+    with patch.object(transport, "time") as clock, pytest.raises(subprocess.CalledProcessError):
         deployments.GitHub().post("repos/SkyTruth/shared-datasets-1/deployments", {"ref": "a" * 40})
-    sleep.assert_not_called()
+    clock.sleep.assert_not_called()
     assert len(log.read_text().splitlines()) == 1
 
 
 @pytest.mark.parametrize("wrong_revision", [False, True])
-def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wrong_revision, gh):
+@pytest.mark.parametrize("plain", [False, True])
+def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wrong_revision, plain, gh):
     repository = {"id": 17, "full_name": "SkyTruth/shared-datasets-1"}
     revision = "a" * 40
     run = {
@@ -160,18 +190,18 @@ def test_ci_evidence_still_requires_exact_revision_after_transport_recovery(wron
     evidence = [
         {"stdout": json.dumps(repository)},
         {"stdout": '{"id": 12, "path": ".github/workflows/ci.yml"}'},
-        outage(),
+        outage(500, plain=plain),
         {"stdout": json.dumps(run)},
         {"stdout": '[{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}]'},
     ]
     log = gh(evidence)
-    with patch("time.sleep") as sleep:
+    with patch.object(transport, "time") as clock:
         if wrong_revision:
             with pytest.raises(deployments.DeploymentError, match="executor differs"):
                 deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1)
         else:
             assert deployments.verify_ci(deployments.GitHub(), repository["full_name"], revision, run["id"], 1) == run
-    sleep.assert_called_once_with(5)
+    clock.sleep.assert_called_once_with(5)
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls[2] == calls[3] == ["api", "--method", "GET", PATH]
     assert len(calls) == (4 if wrong_revision else 5)

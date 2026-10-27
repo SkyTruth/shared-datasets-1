@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import json
@@ -160,7 +161,7 @@ def run_container(root: Path, work: Path, suite: str, image: str, platform: str)
     if image_platform != platform:
         raise ValueError(f"{suite}: image platform {image_platform} differs from native runtime {platform}")
     command = ["docker", "create", "--platform", platform, "-w", "/workspace",
-               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache",
+               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/opt/uv-cache",
                "-e", "UV_LINK_MODE=copy"]
     environment = {"CI": "true"}
     if platform == "linux/arm64":
@@ -307,7 +308,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
         if selected_targets:
             add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
-        add("uv", "run", "--no-sync", "pytest", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
+        add("uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
         add("node", "scripts/release-policy.mjs", "changes", base, head, cwd=package)
@@ -333,8 +334,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "sync", "--locked", "--all-groups", "--extra", "wdpa-native")
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
-        add("uv", "sync", "--locked", "--all-groups")
-        add("uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(output))
+        # Host checks use only the standard library; image dependencies stay in Docker.
+        add(sys.executable, "-I", "scripts/production_image_contracts.py", "--output", str(output))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -505,39 +506,55 @@ def preflight(args: argparse.Namespace) -> int:
         subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
     results = []
     runtime["suites"] = {}
-    for suite in plan["suites"]:
+
+    def execute(suite):
         output = work / suite
         output.mkdir()
         if suite == "production-images":
+            # Host imports must not write caches into other suites' source.
+            image_root = work / "production-image-repo"
+            shutil.copytree(root, image_root, symlinks=True)
             # The host owns Docker and source paths. A nested container would
             # need privileged Docker access and paths outside its namespace.
             with isolated_host_environment(work, dict(os.environ)) as environment:
-                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"], "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
+                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"],
                                     "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
-                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=root, env=environment, check=True)
-                command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
-                completed = subprocess.run(command, cwd=root, env=environment, check=False)
+                command = ["uv", "run", "--no-project", "--isolated", "--managed-python", "--python", TOOLCHAIN["python"],
+                           "python", "-I", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
+                completed = subprocess.run(command, cwd=image_root, env=environment, check=False)
             report = output / "result.json"
             if not report.exists():
                 raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
-            runtime["suites"][suite] = {"transport": "host-docker", "exit_code": completed.returncode}
+            suite_runtime = {"transport": "host-docker", "exit_code": completed.returncode}
         else:
             selected_image = native_image if suite == "geospatial-integration" else image
-            runtime["suites"][suite] = run_container(root, work, suite, selected_image, runtime["platform"])
-        write_json(work / "runtime.json", runtime)
+            suite_runtime = run_container(root, work, suite, selected_image, runtime["platform"])
         report = output / "result.json"
         if not report.exists():
             raise ValueError(f"{suite} did not produce evidence")
         result = json.loads(report.read_text())
-        results.append(result)
         if result.get("status") != "success":
             raise ValueError(f"{suite} failed; retained evidence: {report}")
-    verify_results(plan, results)
+        return result, suite_runtime
+
+    # Start the longest suite first; keep at most two isolated suites active.
+    order = sorted(plan["suites"], key=lambda suite: suite != "production-images")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        for result, suite_runtime in executor.map(execute, order):
+            results.append(result)
+            runtime["suites"][result["suite"]] = suite_runtime
+            write_json(work / "runtime.json", runtime)
+    verified = verify_results(plan, results)
     # Recheck the source identities after potentially lengthy validation.
     if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
         raise ValueError("base or head changed during preflight; evidence is stale")
     if git(source, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("source changed during preflight; evidence is stale")
+    if "production-images" in verified:
+        for image in verified["production-images"]["production_images"]["images"].values():
+            (work / "production-images/images" / image["archive"]).unlink()
+        runtime["production_image_archives_retained"] = False
+        write_json(work / "runtime.json", runtime)
     write_json(work / "preflight.json", {**plan, "status": "success", "results": results, "runtime": runtime})
     print(f"All {len(results)} selected suites passed. Evidence: {work / 'preflight.json'}")
     return 0

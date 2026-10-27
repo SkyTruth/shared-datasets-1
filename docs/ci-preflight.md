@@ -31,6 +31,14 @@ The lock coordinates cooperating local entrypoints on Unix hosts; it does not
 control other users, remote hosts, direct Docker commands, or old checkouts that
 predate this change.
 
+Within that single owner, local preflight runs at most two selected suites at a
+time, starting production-image validation first when selected. Each suite keeps
+its existing isolated runtime and evidence directory. The host image checker
+uses a separate source copy that preserves tracked symlinks, keeping its generated
+caches out of the checkout copied into other suites. A failure waits for started
+work to finish before releasing the slot and cannot produce passing preflight
+evidence. Suite selection and final evidence checks remain unchanged.
+
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
 the Docker socket are never mounted. All six container suites, including the full
@@ -46,11 +54,21 @@ Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require
-network access. Tool versions are owned by the dependency-free
+network access. The validation images prepare the locked Python dependency cache
+in a Docker layer keyed by pyproject.toml, uv.lock, the image recipe and its
+pinned runtime. Fresh lint, Python and native containers install from that image
+cache into their own environments; native CI uses the same cache. Locked sync,
+interpreter verification and every suite still run. This caches dependencies,
+not validation evidence. Browser downloads keep their disposable cache, and
+production-image checks keep their isolated host environment.
+Tool versions are owned by the dependency-free
 `scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
 CI setup and image pins are checked against that contract.
 The production-image suite uses the host Docker client and an isolated host
-environment with the same pinned Python and locked dependencies. Its process-owned
+environment with the same pinned Python. Host checks need only the standard
+library; application dependencies are installed inside the tested images. Local
+preflight uses an isolated uv environment without installing project dependencies.
+Its process-owned
 HOME, Docker, XDG and gcloud configuration directories contain no caller ADC or
 registry authentication. Only explicit tool paths, locale/temp settings, proxy/CA
 settings and the resolved Docker connection are retained; GitHub/cloud credentials,
@@ -59,12 +77,27 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests all six actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. Its evidence retains the five deployable
+tests all seven actual Linux AMD64 deployment recipes on every host without mounting the Docker
+socket into a validation container. GitHub CI evidence retains the six deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
 Docker daemon before admitting each retained image. Deployment consumes these
 tested bytes without rebuilding.
+
+Hosted production-image builds restore per-recipe GitHub Actions build caches.
+GitHub's branch restrictions isolate PR cache writes from main; PRs can restore
+main's cache. BuildKit invalidates layers when recipe inputs change. Every image
+is still built, checked by immutable identity, exported, hashed and loaded again.
+Caches never substitute for validation evidence or deployment artifacts. Cache
+export errors are optional acceleration failures; image or validation failures
+still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
+
+After all selected suites, final evidence verification and source checks pass,
+full local preflight removes only its own six verified image archives. Manifests,
+hashes, command logs and results remain; `runtime.json` records
+`production_image_archives_retained: false`. Failures before that point retain
+any archives already created. GitHub's `run-suite` entrypoint does not perform
+this local cleanup, so hosted deployment artifacts and retention are unchanged.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Tool setup retains `GODEBUG=asyncpreemptoff=1`; this runtime
@@ -113,13 +146,28 @@ offline feature-identity decision checks, and Python tests. The two local hygien
 checks run in the shared `tests` suite before pytest, replacing the separate
 bucket-hygiene PR workflow. A finding or invalid decision fails that suite.
 It adds native, SDK, image and browser suites according to component dependencies.
-Documentation-only component paths and proven script exceptions use the single
-selection contract in `scripts/ci_contract.py`; each `NARROW_SCRIPTS` entry records
-its consumer proof. Unclassified scripts, workflow changes, `pyproject.toml`,
-`uv.lock`, unknown paths and unavailable comparisons select all suites. Test
-selection does not change deployment selection.
-The standard Python run permits only the six named native fixtures to skip;
-native validation requires every selected test and every required fixture to pass.
+Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier
+and additional suites, with no separate policy file or persisted tier state.
+
+| Tier | Additional validation | Deployment selection |
+| --- | --- | --- |
+| Documentation | None beyond the mandatory suites above | None |
+| Metadata | Existing consumer suites | Explicit release dependencies |
+| Component | Existing component/consumer suites | Explicit release dependencies |
+| Infrastructure | Terraform checks in mandatory lint; shared contracts remain broad | Explicit protected infrastructure dependencies |
+| Shared or unknown | All suites | Explicit release dependencies only |
+
+Informational Markdown paths use the documentation tier; `docs/assets/` remains
+runtime metadata. Non-Markdown tools under guidance directories remain unknown.
+Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union their
+requirements. Workflow/shared-contract changes and unavailable comparisons select
+all suites. Tiers never grant mutation authority; tested-artifact, approval,
+permission and terminal-verification gates remain unchanged.
+The standard Python run permits only the six named native fixtures to skip
+and runs the complete collection in two worker processes. Worker crashes fail
+validation without replacement or retry. Subtest labels must be serializable,
+and clock mocks must stay local to the tested module. Native tests remain serial.
+Native validation requires every selected test and every required fixture to pass.
 Browser validation preserves its existing no-skips/no-retries report check.
 
 Each run prints its retained evidence directory. `plan.json` identifies base,

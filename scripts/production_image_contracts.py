@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -96,6 +97,11 @@ def verify_viewer_image(image):
 def commands(target, executor, *, image_id=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
+    if target == "monitoring-slack":
+        return [
+            ["docker", "build", "--platform", "linux/amd64", "-f", "services/monitoring_slack/Dockerfile", "-t", image, "."],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()],
+        ]
     if target == "catalog-viewer":
         return [
             ["docker", "build", "--platform", "linux/amd64", "-f", "services/catalog_viewer/Dockerfile", "-t", image, "."],
@@ -121,9 +127,18 @@ def commands(target, executor, *, image_id=None):
     return [build, *checks]
 
 
+def cached_build(command, target):
+    """Reuse build layers in Actions; checks and retained images always run anew."""
+    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true":
+        return command
+    cache = f"type=gha,version=2,scope=production-{target}"
+    return ["docker", "buildx", "build", "--load", "--cache-from", cache,
+            "--cache-to", cache + ",mode=max,ignore-error=true", *command[2:]]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"])
+    parser.add_argument("--target", action="append", choices=["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"])
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
     args = parser.parse_args()
@@ -135,8 +150,8 @@ def main():
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
-    for target in args.target or ["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"]:
-        subprocess.run(commands(target, executor)[0], check=True)
+    for target in args.target or ["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"]:
+        subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)
         for command in commands(target, executor, image_id=image_id)[1:]:

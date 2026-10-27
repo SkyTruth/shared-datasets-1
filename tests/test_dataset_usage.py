@@ -416,6 +416,59 @@ def test_mapping_policy_replay_keeps_missing_generations_as_historical_evidence(
         assert db.execute("SELECT COUNT(*) FROM coverage WHERE source='gcs_usage' AND state='gap'").fetchone()[0] == 458
 
 
+@pytest.mark.parametrize('name', ['unknown', 'storage-usage_usage_2026_01_01_00_00_00_abc_v1'])
+def test_unrecognized_log_name_cannot_be_excluded_from_replay(name):
+    assert run.usage_log_before(name, '2026-10-01') is False
+
+
+def test_invalid_hourly_timestamp_fails_instead_of_excluding_evidence():
+    with pytest.raises(ValueError):
+        run.usage_log_before('storage-usage_usage_2026_02_30_00_00_00_abc_v0', '2026-10-01')
+
+
+def test_replay_preserves_expired_history_processed_late_and_clears_pending(tmp_path):
+    store = Store(tmp_path)
+    old = NOW - dt.timedelta(days=6)
+    name = old.strftime('storage-usage_usage_%Y_%m_%d_%H_%M_%S_abc_v0')
+    store.items = [{'name': name, 'generation': '1', 'source': 'gcs_usage',
+                    'records': [raw(when=old, identity='historical')]}]
+    execute(store, tmp_path)
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        db.execute("INSERT OR REPLACE INTO settings VALUES('reconciliation_pending','1')")
+    later = NOW + dt.timedelta(days=2)
+    store.items = [{'name': later.strftime('storage-usage_usage_%Y_%m_%d_%H_%M_%S_def_v0'),
+                    'generation': '2', 'source': 'gcs_usage',
+                    'records': [raw(when=later, identity='new')]}]
+    directory = tmp_path / 'replay'
+    directory.mkdir()
+    c = classifier()
+    c.version = 'corrected-policy'
+    run.collect(store, c, activation(c), later, directory, configuration_healthy=True)
+    assert store.payload['collection_errors'] == []
+    assert sum(group['requests'] for group in store.payload['assets'][0]['windows']['30']) == 2
+    with sqlite3.connect(tmp_path / 'committed.sqlite') as db:
+        assert db.execute("SELECT value FROM settings WHERE key='reconciliation_pending'").fetchone()[0] == '0'
+        assert db.execute('SELECT COUNT(*) FROM inputs WHERE name=?', (name,)).fetchone()[0] == 1
+        assert db.execute('SELECT requests FROM daily WHERE day=?', (old.date().isoformat(),)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('age', [1, 7])
+def test_missing_hourly_generation_inside_or_on_replay_boundary_still_fails(tmp_path, age):
+    store = Store(tmp_path)
+    store.items = [{'name': NOW.strftime('storage-usage_usage_%Y_%m_%d_%H_%M_%S_abc_v0'),
+                    'generation': '1', 'source': 'gcs_usage', 'records': [raw()]}]
+    execute(store, tmp_path)
+    store.items = []
+    c = classifier()
+    c.version = 'corrected-policy'
+    directory = tmp_path / 'replay'
+    directory.mkdir()
+    with pytest.raises(ValueError, match='explicit gap'):
+        run.collect(store, c, activation(c), NOW + dt.timedelta(days=age), directory, configuration_healthy=True)
+    assert store.payload['collection_errors'] == ['IncompleteReconciliation']
+    assert store.payload['assets'][0]['windows']['30'][0]['requests'] == 1
+
+
 def test_retained_generation_replays_with_new_mapping_without_double_counts(tmp_path):
     store = Store(tmp_path)
     entry = raw()

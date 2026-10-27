@@ -17,7 +17,7 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
     assert ALWAYS <= set(select_suites(paths)[0])
 
 
-@pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly"])
+@pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly", "dataset_usage"])
 def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
     path = f"ingestion/{job}/README.md"
     assert select_deployments([path]) == []
@@ -125,7 +125,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
     command = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
-    assert command[-1] == ["uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(ROOT)]
+    assert command[-1][-3:] == ["scripts/production_image_contracts.py", "--output", str(ROOT)]
     suite = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["production-images"]
     assert "scripts/ci_preflight.py run-suite" in next(step["run"] for step in suite["steps"] if "run" in step)
     upload = next(step for step in suite["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
@@ -198,3 +198,37 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     }).static_order())
     assert order.index('pmtiles-cdn') < order.index('dataset-usage')
     assert 'needs.dataset-usage' not in jobs['pmtiles-cdn']['if']
+
+
+@pytest.mark.parametrize("path", [
+    "services/monitoring_slack/run.py", "terraform/envs/prod/monitoring_slack.tf",
+    "terraform/envs/prod/monitoring.tf", "scripts/slack_incident_api.py",
+    "scripts/monitoring_slack_prepare.py",
+])
+def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path):
+    assert select_deployments([path]) == ["artifact_registry_iam", "cron_alert_policy"]
+    assert "production-images" in select_suites([path])[0]
+
+
+@pytest.mark.parametrize("cancelled", [True, False])
+@pytest.mark.parametrize("gate", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("selected", [True, False])
+@pytest.mark.parametrize("event,ref", [
+    ("push", "refs/heads/main"), ("push", "refs/heads/topic"),
+    ("pull_request", "refs/heads/main"), ("workflow_dispatch", "refs/heads/main"),
+])
+def test_registry_bootstrap_survives_unselected_suites_without_bypassing_gate(cancelled, gate, selected, event, ref):
+    job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["artifact-registry-iam"]
+    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
+    # GitHub otherwise adds success() over skipped transitive ancestors.
+    assert "!cancelled()" in expression
+    values = {
+        "!cancelled()": repr(not cancelled), "github.event_name": repr(event), "github.ref": repr(ref),
+        "needs.ci-ready.result": repr(gate),
+        "needs.geospatial-changes.outputs.artifact_registry_iam": repr("true" if selected else "false"),
+    }
+    for name, value in values.items():
+        expression = expression.replace(name, value)
+    assert eval(expression.replace("&&", " and "), {"__builtins__": {}}) is (
+        not cancelled and gate == "success" and selected and event == "push" and ref == "refs/heads/main"
+    )

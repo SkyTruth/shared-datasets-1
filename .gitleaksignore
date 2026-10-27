@@ -5,3 +5,7 @@ ed7fc2a630f20dc0ef57bf86e4bfe86fc2b90dd6:scripts/publishing_concierge.py:generic
 # unchanged image configuration blob, not an API credential. Exact finding only.
 # Source: https://github.com/docker-library/python/blob/master/3.12/slim-bookworm/Dockerfile
 4706381e66dc4ac838a662996afd0f1bd4ca639b:docs/wdpa-processing-evidence/37095105175/image-config.json:generic-api-key:1
+# Public Google Monitoring incident ID used in the initial receiver fixtures,
+# not an API key. New fixtures use incident_id terminology. Exact history only.
+9cbd724efa029545920c64afe15567ba463faa22:tests/test_monitoring_slack_recovery.py:generic-api-key:15
+9cbd724efa029545920c64afe15567ba463faa22:tests/test_monitoring_slack.py:generic-api-key:52

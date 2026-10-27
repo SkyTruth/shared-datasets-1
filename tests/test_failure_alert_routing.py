@@ -1,5 +1,6 @@
 """Keep supervised failures in GitHub without losing unattended coverage."""
 
+import io
 import json
 import os
 from pathlib import Path
@@ -324,7 +325,7 @@ def test_observer_health_counts_successes_and_keeps_missing_data_unhealthy():
     assert 'threshold_value         = 1' in health
     assert 'duration                = "120s"' in health
     assert 'evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"' in health
-    assert 'notification_prompts = ["OPENED"]' in health
+    assert 'notification_prompts = ["OPENED", "CLOSED"]' in health
     # Zero-valued completion samples are not successful runs. Both repeated
     # failures and an absent metric must remain unhealthy.
     assert 'condition_absent' not in health
@@ -349,3 +350,127 @@ def test_alert_probes_are_explicit_and_routine_wdpa_runs_keep_async_coverage():
     assert MARKER not in run
     assert "WDPA_FAIL_BEFORE_WRITES=true" in run
     assert run.index("completionTime") < run.index("gcloud run jobs execute")
+
+
+@pytest.mark.parametrize("failure", [None, "missing", "applied", "older", "divergent", "unsigned", "unregistered"])
+def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure):
+    from scripts import slack_incidents as incidents
+    from scripts import deployment_revision as deployments
+    from scripts.slack_incident_api import Slack
+
+    run = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    repository = {"id": 9, "full_name": alerts.REPOSITORY}
+    run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
+    job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
+           "status": "completed", "conclusion": "failure", "completed_at": "2026-10-23T22:05:00Z"}
+    jobs = [{**job, "id": 11, "name": "ci-ready", "conclusion": "success"}, job]
+    if failure == "unregistered":
+        jobs.append({**job, "id": 12, "name": "Unknown failed job"})
+    record = {"id": 20, "sha": "b" * 40}
+    status = {"id": 21, "state": "success", "description": "applied" if failure == "applied" else "verified",
+              "created_at": "2026-10-22T22:05:00Z" if failure == "older" else "2026-10-25T12:00:00Z",
+              "log_url": incidents.emissions.invocation(alerts.REPOSITORY, 456, 1)}
+    api = mock.Mock()
+    api.get.side_effect = lambda path: ({"id": 7, "path": run["path"]} if path.endswith("/workflows/7")
+                                      else repository if path == "repos/" + alerts.REPOSITORY else run)
+    api.pages.side_effect = lambda path, **kwargs: jobs if "/jobs?" in path else ([] if failure == "missing" else [record])
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    opener = mock.Mock(return_value=Response(b'{"ok":true,"channel":"C0123456789","ts":"1792793158.506179"}'))
+    slack = Slack("test-token", "C0123456789", opener=opener)
+    monkeypatch.setattr("sys.argv", ["alert", "--resolve-run-id", "123", "--message-ts", "1792793158.506179"])
+    with mock.patch.object(alerts, "GitHub", return_value=api), \
+            mock.patch.object(deployments, "GitHub", return_value=api), \
+            mock.patch("scripts.slack_incident_api.Slack", return_value=slack), \
+            mock.patch.object(deployments, "verify_record", return_value={"target": "dataset-usage", "artifact": "image@sha256:" + "f" * 64},
+                              side_effect=deployments.DeploymentError("unsigned") if failure == "unsigned" else None), \
+            mock.patch.object(deployments, "verified_statuses", return_value=[status]), \
+            mock.patch.object(deployments, "git_ancestor", return_value=failure != "divergent"):
+        if failure:
+            with pytest.raises((incidents.IncidentError, deployments.DeploymentError)):
+                alerts.main()
+            opener.assert_not_called()
+        else:
+            alerts.main()
+            request = opener.call_args.args[0]
+            assert request.full_url == "https://slack.com/api/chat.update"
+            payload = json.loads(request.data)
+            assert payload["channel"] == "C0123456789" and payload["ts"] == "1792793158.506179"
+            assert payload["text"].startswith("✅ Unattended GitHub workflow resolved")
+            assert "actions/runs/123" in payload["text"] and "actions/runs/456/attempts/1" in payload["text"]
+            assert "thread_ts" not in payload and "reply_broadcast" not in payload
+            assert opener.call_count == 1
+
+
+def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
+    workflow = load_workflow(WORKFLOWS / "resolve-workflow-alert.yml")
+    assert set(workflow_triggers(workflow)) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "attestations": "read"}
+    job = workflow["jobs"]["resolve"]
+    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id == ''"
+    checkout = job["steps"][0]
+    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
+    step = job["steps"][-1]
+    assert '${{ inputs.' not in step["run"]
+    assert step["env"]["ORIGINAL_MESSAGE_TS"] == "${{ inputs.message_ts }}"
+
+
+def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(monkeypatch):
+    from scripts import dataset_mutation_authorization as authorization
+    from scripts import deployment_revision as deployments
+    from scripts import deployment_emission as emissions
+    from scripts.slack_incident_api import Slack
+
+    repository = {"id": 9, "full_name": alerts.REPOSITORY}
+    original = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    original.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
+    recovered = {**original, "id": 456, "head_sha": "b" * 40, "conclusion": "success"}
+    job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
+           "status": "completed", "conclusion": "failure", "completed_at": "2026-10-23T22:05:00Z"}
+    ready = {**job, "id": 11, "name": "ci-ready", "conclusion": "success"}
+    record = {"id": 20, "sha": "b" * 40, "ref": "b" * 40, "environment": "production-dataset-usage",
+              "creator": {"login": "github-actions[bot]", "type": "Bot"},
+              "payload": {"schema": deployments.SCHEMA, "target": "dataset-usage", "artifact": "image@sha256:" + "f" * 64,
+                          "ci_run_id": 456, "ci_run_attempt": 1, "execution_run_id": 456, "execution_run_attempt": 1}}
+    status = {"id": 21, "state": "success", "description": "verified", "created_at": "2026-10-25T12:00:00Z",
+              "log_url": emissions.invocation(alerts.REPOSITORY, 456, 1)}
+    prefix = "repos/" + alerts.REPOSITORY
+    responses = {
+        prefix: repository,
+        prefix + "/actions/workflows/7": {"id": 7, "path": original["path"]},
+        prefix + "/actions/workflows/ci.yml": {"id": 7, "path": original["path"]},
+        prefix + "/actions/runs/123": original,
+        prefix + "/actions/runs/123/attempts/1/jobs?per_page=100": {"total_count": 2, "jobs": [ready, job]},
+        prefix + "/actions/runs/456/attempts/1": recovered,
+        prefix + "/actions/runs/456/attempts/1/jobs?per_page=100": {"total_count": 1, "jobs": [ready]},
+        prefix + "/deployments?environment=production-dataset-usage&per_page=100": [record],
+        prefix + "/deployments/20/statuses?per_page=100": [status, {**status, "id": 19, "state": "in_progress", "description": "started"}],
+    }
+    def read(path, *, paginate=False):
+        value = responses[path]
+        return json.dumps([value] if paginate else value)
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    opener = mock.Mock(return_value=Response(b'{"ok":true,"channel":"C0123456789","ts":"1792793158.506179"}'))
+    slack = Slack("test-token", "C0123456789", opener=opener)
+    monkeypatch.setattr("sys.argv", ["alert", "--resolve-run-id", "123", "--message-ts", "1792793158.506179"])
+    with mock.patch.object(authorization, "read", side_effect=read), mock.patch.object(deployments, "read", side_effect=read), \
+            mock.patch.object(emissions, "verify") as verify_receipt, \
+            mock.patch.object(deployments, "git_ancestor", return_value=True), \
+            mock.patch("scripts.slack_incident_api.Slack", return_value=slack):
+        alerts.main()
+    assert [call.args[3]["description"] for call in verify_receipt.call_args_list] == ["started", "verified"]
+    assert opener.call_count == 1
+    assert opener.call_args.args[0].full_url == "https://slack.com/api/chat.update"

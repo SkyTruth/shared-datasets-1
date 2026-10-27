@@ -24,6 +24,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
+    "monitoring-slack": "cron-alert-policy-sync.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
@@ -46,6 +47,7 @@ TERRAFORM_SYNCS = {
     "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
     "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
+    "Monitoring Slack transport resources": "cron-alert-policy-sync.yml",
     "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
     "Cron alert policy sync": "cron-alert-policy-sync.yml",
 }

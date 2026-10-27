@@ -65,6 +65,10 @@ on:
         description: "Refusal message prefix, e.g. 'Refusing automatic X IAM sync'."
         required: true
         type: string
+      prepare_monitoring_slack:
+        description: Load tested Monitoring receiver and seed its bot secret before routing
+        type: boolean
+        default: false
       post_apply_wait_seconds:
         description: "Seconds to sleep after apply, e.g. for IAM propagation."
         required: false
@@ -209,6 +213,39 @@ jobs:
         env:
           READINESS_TARGET: ${{ inputs.readiness_target }}
         run: python scripts/deployment_permissions.py --target "$READINESS_TARGET"
+
+      - name: Set up uv for Monitoring image proof
+        if: ${{ steps.replay.outputs.proceed == 'true' && inputs.prepare_monitoring_slack }}
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.11.8
+
+      - name: Load exact tested Monitoring receiver
+        id: monitoring-image
+        if: ${{ steps.replay.outputs.proceed == 'true' && inputs.prepare_monitoring_slack }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$CALLER_WORKFLOW" == cron-alert-policy-sync.yml ]]
+          uv sync --locked --no-dev
+          uv run --no-sync python scripts/tested_image_authorization.py --workflow "$CALLER_WORKFLOW" --target monitoring-slack \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/tested-monitoring-slack"
+
+      - name: Prepare tested Monitoring image and bot credential
+        if: ${{ steps.replay.outputs.proceed == 'true' && inputs.prepare_monitoring_slack }}
+        env:
+          TESTED_IMAGE_ID: ${{ steps.monitoring-image.outputs.image_id }}
+          TESTED_IMAGE_CONFIG: ${{ steps.monitoring-image.outputs.config_digest }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+        run: |
+          python scripts/deployment_permissions.py --target artifact-registry-images
+          python scripts/deployment_permissions.py --target monitoring-slack-secret
+          uv run --no-sync python scripts/monitoring_slack_prepare.py
 
       - name: Set up Terraform
         if: ${{ steps.replay.outputs.proceed == 'true' }}

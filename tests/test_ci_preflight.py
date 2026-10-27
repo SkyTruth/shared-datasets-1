@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ast
 import copy
+from contextlib import nullcontext
 import json
 import os
 import shlex
 import subprocess
 from pathlib import Path
+from threading import Barrier, Lock
 from unittest import mock
 
 import pytest
@@ -282,6 +284,34 @@ def test_missing_tools_and_wrong_versions_fail_before_commands(tmp_path):
             preflight.probe_tools("tests", dict(os.environ))
 
 
+@pytest.mark.parametrize("outcome", ["pass", "fail", "crash"])
+def test_parallel_python_command_preserves_failures_and_worker_crashes(tmp_path, outcome):
+    fixture = tmp_path / "test_workers.py"
+    fixture.write_text(
+        "import os\nfrom pathlib import Path\nimport pytest\n"
+        "@pytest.mark.parametrize('case', range(4))\n"
+        "def test_case(case):\n"
+        f"    if case == 0 and {outcome!r} == 'crash': os._exit(7)\n"
+        f"    Path({str(tmp_path)!r}, f'case-{{case}}.txt').write_text(os.environ['PYTEST_XDIST_WORKER'])\n"
+        f"    assert case != 0 or {outcome!r} != 'fail'\n"
+    )
+    command = next(command for command, _ in preflight.suite_commands("tests", ROOT, plan(), tmp_path) if "pytest" in command)
+    completed = subprocess.run(
+        [*command, str(fixture)], cwd=ROOT, capture_output=True, text=True, timeout=60,
+        env={key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_WORKER")},
+    )
+    if outcome == "pass":
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        check_junit(tmp_path / "pytest.xml", native=False)
+        assert {path.name for path in tmp_path.glob("case-*.txt")} == {f"case-{case}.txt" for case in range(4)}
+        assert {path.read_text() for path in tmp_path.glob("case-*.txt")} == {"gw0", "gw1"}
+    else:
+        assert completed.returncode != 0
+        with pytest.raises(ValueError, match="failed test"):
+            check_junit(tmp_path / "pytest.xml", native=False)
+        assert "replacing crashed worker" not in completed.stdout.lower()
+
+
 @pytest.mark.parametrize("failed_check", ["audit_shared_datasets.py", "check_identity_resolutions.py"])
 def test_local_hygiene_failure_stops_python_validation(tmp_path, failed_check):
     validation = plan(["tests"])
@@ -302,6 +332,24 @@ def test_local_hygiene_failure_stops_python_validation(tmp_path, failed_check):
     assert "pytest" not in {argument for call in run.call_args_list for argument in call.args[0]}
 
 
+@pytest.mark.parametrize("script", ["scripts/ci_preflight.py", "scripts/production_image_contracts.py"])
+def test_image_host_entrypoints_require_only_standard_library(script):
+    completed = subprocess.run([preflight.sys.executable, "-I", "-S", script, "--help"],
+                               cwd=ROOT, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_image_suite_uses_verified_interpreter_without_installing_host_dependencies(tmp_path):
+    commands = preflight.suite_commands("production-images", ROOT, plan(), tmp_path)
+    assert len(commands) == 1
+    command, cwd = commands[0]
+    assert command[:2] == [preflight.sys.executable, "-I"]
+    # Exercise the actual command entrypoint with site packages disabled.
+    completed = subprocess.run([command[0], "-S", *command[1:command.index("--output")], "--help"],
+                               cwd=cwd, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+
+
 def fixture_repo(tmp_path):
     root = tmp_path / "source"
     root.mkdir()
@@ -319,6 +367,100 @@ def fixture_repo(tmp_path):
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
+
+
+@pytest.mark.parametrize("suites", [SUITES, ("lint", "tests")])
+@pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale", "source-change"])
+def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome):
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo" / "source.txt").write_text("tracked fixture")
+    (tmp_path / "repo" / "source-link").symlink_to("source.txt")
+    unrelated = tmp_path / "catalog-viewer.docker.tar"
+    unrelated.write_bytes(b"prior run")
+    validation = plan(suites)
+    reports = {report["suite"]: report for report in results_for(validation)}
+    barrier, lock = Barrier(2), Lock()
+    calls, outputs = [], []
+    active = peak = 0
+
+    def execute(suite, work):
+        nonlocal active, peak
+        with lock:
+            calls.append(suite)
+            active += 1
+            peak = max(peak, active)
+            first_pair = len(calls) <= 2
+        try:
+            if first_pair:
+                barrier.wait(timeout=5)
+            if suite == "lint":
+                if outcome == "crash":
+                    raise subprocess.CalledProcessError(7, ["docker", "start"])
+                if outcome == "missing":
+                    return
+                if outcome == "failure":
+                    reports[suite]["status"] = "failure"
+                if outcome == "stale":
+                    reports[suite]["tested_sha"] = "f" * 40
+            output = work / suite / "result.json"
+            outputs.append(output)
+            output.write_text(json.dumps(reports[suite]))
+        finally:
+            with lock:
+                active -= 1
+
+    def container(root, work, suite, image, platform):
+        execute(suite, work)
+        return {"transport": "container", "exit_code": 0}
+
+    def command(argv, **kwargs):
+        if "run-suite" in argv:
+            output = Path(argv[argv.index("--output") + 1])
+            assert kwargs["cwd"] == output.parent / "production-image-repo"
+            assert (kwargs["cwd"] / "source-link").is_symlink()
+            (kwargs["cwd"] / "host-cache").write_text("host-only")
+            images = output / "images"
+            images.mkdir()
+            for image in reports["production-images"]["production_images"]["images"].values():
+                (images / image["archive"]).write_bytes(b"verified fixture")
+            (images / "manifest.json").write_text(json.dumps(reports["production-images"]["production_images"]))
+            execute("production-images", output.parent)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(preflight, "LOCAL_COORDINATION_DIRECTORY", tmp_path / "coordination")
+    monkeypatch.setattr(preflight, "isolated_merge", lambda *args: (tmp_path / "repo", validation["base"], validation["head"]))
+    monkeypatch.setattr(preflight, "make_plan", lambda *args, **kwargs: validation)
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: "/tools/docker")
+    monkeypatch.setattr(preflight, "local_runtime", lambda: {"server_architecture": "amd64", "platform": "linux/amd64"})
+    monkeypatch.setattr(preflight, "isolated_host_environment", lambda *args: nullcontext({}))
+    monkeypatch.setattr(preflight, "run_container", container)
+    monkeypatch.setattr(preflight.subprocess, "run", command)
+    monkeypatch.setattr(preflight, "git", lambda root, *args: ("changed" if outcome == "source-change" else "") if args[0] == "status" else args[-1].split("^")[0])
+    monkeypatch.setattr(preflight.sys, "argv", ["ci_preflight.py", "--base", validation["base"], "--head", validation["head"]])
+    assert preflight.main() == (0 if outcome == "success" else 1)
+    assert len(calls) == len(set(calls)) and set(calls) <= set(suites)
+    if outcome in {"success", "stale", "source-change"}:
+        assert set(calls) == set(suites)
+    assert active == 0 and peak == 2
+    assert not (tmp_path / "repo" / "host-cache").exists()
+    assert unrelated.read_bytes() == b"prior run"
+    assert len(set(outputs)) == len(outputs)
+    if "production-images" in suites:
+        assert "production-images" in calls[:2]
+        image_dirs = list((tmp_path / "_scratch").glob("ci-preflight-*/production-images/images"))
+        assert len(image_dirs) == 1
+        archives = list(image_dirs[0].glob("*.docker.tar"))
+        assert len(archives) == (0 if outcome == "success" else 6)
+        assert json.loads((image_dirs[0] / "manifest.json").read_text()) == reports["production-images"]["production_images"]
+    evidence = list(tmp_path.rglob("preflight.json"))
+    assert len(evidence) == (1 if outcome == "success" else 0)
+    if evidence:
+        final = json.loads(evidence[0].read_text())
+        verify_results(validation, final["results"])
+        assert set(final["runtime"]["suites"]) == set(suites)
+        if "production-images" in suites:
+            assert final["runtime"]["production_image_archives_retained"] is False
 
 
 def test_prospective_merge_preserves_source_index_and_contains_both_branches(tmp_path):
@@ -373,16 +515,39 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     assert admission[admission.index("--base") + 1] == "f" * 40
 
 
-def test_real_diff_docs_only_does_not_select_suites_for_trailing_nul(tmp_path):
+@pytest.mark.parametrize("paths,suites,deployments", [
+    (["docs/guide.md"], ALWAYS, []),
+    (["ingestion/dataset_usage/README.md"], ALWAYS, []),
+    (["services/catalog_viewer/README.md"], ALWAYS, []),
+    (["ingestion/common/nested/operations.md"], ALWAYS, []),
+    (["ingestion/dataset_usage/README.md", "ingestion/dataset_usage/run.py"],
+     ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage", "artifact_registry_iam"]),
+    (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
+     ALWAYS | {"production-images", "browser"}, ["catalog_viewer", "dataset_usage", "artifact_registry_iam"]),
+    (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice", "ingestion_iam", "artifact_registry_iam"]),
+    (["docs/guide.md", "scripts/unproved.py"], set(SUITES), []),
+    (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
+    (["docs/new-tool.py"], set(SUITES), []),
+    ([".claude/skills/new-tool.py"], set(SUITES), []),
+    (["terraform/iam-plan-prerequisites.json"], set(SUITES), []),
+    ([".github/workflows/ci.yml"], set(SUITES), []),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
+    ([], ALWAYS, []),
+])
+def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path, paths, suites, deployments):
     source, run = fixture_repo(tmp_path)
     base = run("rev-parse", "HEAD")
-    (source / "docs").mkdir()
-    (source / "docs/guide.md").write_text("documentation\n")
-    run("add", ".")
-    run("commit", "-m", "docs")
-    validation = preflight.make_plan(source, base, "HEAD")
-    assert validation["changed_paths"] == ["docs/guide.md"]
-    assert set(validation["suites"]) == ALWAYS
+    for path in paths:
+        target = source / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed fixture\n")
+    if paths:
+        run("add", ".")
+        run("commit", "-m", "change")
+    validation = json.loads(json.dumps(preflight.make_plan(source, base, "HEAD")))
+    assert validation["changed_paths"] == sorted(paths)
+    assert set(validation["suites"]) == suites
+    assert validation["deployments"] == deployments
 
 
 def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
@@ -499,6 +664,8 @@ def test_every_local_suite_runs_in_ci_mode_without_forwarded_credentials(tmp_pat
         record = preflight.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64')
     create = execute.call_args_list[1].args[0]
     assert 'CI=true' in create
+    assert 'UV_CACHE_DIR=/opt/uv-cache' in create
+    assert 'UV_PROJECT_ENVIRONMENT=/evidence/venv' in create
     assert create[create.index('--platform') + 1] == 'linux/arm64'
     assert '--entrypoint' not in create
     assert record['environment']['CI'] == 'true'
