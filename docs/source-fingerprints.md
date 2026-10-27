@@ -59,6 +59,18 @@ can still yield a mixed snapshot. Polygon ring rotation/orientation and coordina
 sequence changes conservatively count as changes; no topological simplification
 or tolerance is applied. Source properties retain their JSON value types.
 
+## e-AMLIS after reviewed identity installation: `eamlis-keyed-content-v1`
+
+The installed [permanent-key contract](eamlis-feature-identity.md) uses the same
+complete content inputs, excluding only source `OBJECTID` values from feature
+properties. That field remains preserved in published data. Source field
+definitions, exact geometry and every other property still participate, so
+renumbering alone skips publication while a key, attribute or geometry change
+does not. The definition name changes at cutover, forcing the first new-contract
+release. The captured translation inputs are remapped through pinned old-release
+keys and hashes before comparison; the reconciled keyed CSV becomes the final
+successful fingerprint input. Legacy releases keep `eamlis-content-v1`.
+
 ## IMS sea ice: `ims-raster-v1`
 
 Inputs are the resolved source URL, **complete IMS filename**, raster dimensions,

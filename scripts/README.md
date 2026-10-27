@@ -20,6 +20,12 @@ their immutable approval plans, and supplies the protected staging-catalog and
 resolution workflow steps. See [source-quality review](../docs/eamlis-source-quality.md).
 Interface: `uv run python scripts/eamlis_source_loss_review.py --help`.
 
+`eamlis_identity_audit.py` replays checksum-pinned local historical releases;
+`eamlis_identity_transition.py` stages an explicit immutable identity-installation
+plan or verifies a complete first publication before schedule resume. Neither
+offers a local canonical installation command. See the
+[EAMLIS identity runbook](../docs/eamlis-feature-identity.md).
+
 `publishing_concierge.py` guides first uploads and preview bundles through evidence gates, then renders reports or immutable plan documents; it performs no remote or Git operations. Use the [publish routes](../.claude/skills/publish-shared-dataset/SKILL.md). Interface: `uv run python scripts/publishing_concierge.py --help`.
 
 `gcs_asset.py` inspects objects, validates paths and performs generation-safe transfers. Agents stage production bytes; only the protected publisher mutates canonical destinations. Existing release planning uses its dry-run path. Interface: `uv run python scripts/gcs_asset.py --help`.

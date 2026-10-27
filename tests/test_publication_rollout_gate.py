@@ -126,13 +126,25 @@ class ScheduleControlTests(unittest.TestCase):
             ("refs/heads/main", "wdpa-monthly", "pause", True),
             ("refs/heads/main", "sea-ice-daily", "resume", True),
             ("refs/heads/other", "wdpa-monthly", "pause", False),
-            ("refs/heads/main", "eamlis-monthly", "pause", False),
+            ("refs/heads/main", "eamlis-monthly", "pause", True),
+            ("refs/heads/main", "other-job", "pause", False),
             ("refs/heads/main", "wdpa-monthly", "delete", False),
         ):
             with self.subTest(ref=ref, job=job, action=action):
                 result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                                         env={**os.environ, "GITHUB_REF": ref, "JOB_NAME": job, "SCHEDULE_ACTION": action})
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
+
+    def test_eamlis_resume_executes_its_installed_identity_gate(self):
+        recorder = 'uv() { printf "%s\\n" "$*"; }\n'
+        script = recorder + self.steps["Verify publication before resuming"]["run"]
+        for job, tool in (("eamlis-monthly", "eamlis_identity_transition.py require-published"),
+                          ("wdpa-monthly", 'publication_rollout_gate.py --job wdpa-monthly --require-published')):
+            with self.subTest(job=job):
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                        env={**os.environ, "JOB_NAME": job})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(tool, result.stdout)
 
     def test_schedule_transitions_are_idempotent_and_reject_unknown_state(self):
         recorder = 'gcloud() { if [[ "$*" == *"value(state)"* ]]; then echo "$TEST_STATE"; else printf "%s\\n" "$*"; fi; }\n'

@@ -170,7 +170,7 @@ def write_manifest(payload: Mapping[str, Any], path: Path) -> None:
     path.write_text(json.dumps(dict(payload), sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
-def _feature_record(
+def feature_record(
     *,
     asset_slug: str,
     release: str,
@@ -182,6 +182,7 @@ def _feature_record(
     identity_excluded_properties: Sequence[str] = (),
     content_hash_pair: tuple[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Construct one canonical feature/sidecar pair from a validated assignment."""
     if content_hash_pair is None:
         geometry_hash, properties_hash = content_hashes(
             geometry=geometry,
@@ -232,7 +233,7 @@ def enrich_features_with_source_field_ids(
         if feature_id in seen:
             raise RuntimeError(f"duplicate {id_field} feature_id in {asset_slug}: {feature_id}")
         seen.add(feature_id)
-        next_feature, sidecar = _feature_record(
+        next_feature, sidecar = feature_record(
             asset_slug=asset_slug,
             release=release,
             feature_id=feature_id,
@@ -446,7 +447,7 @@ def write_generated_id_release(
                 }
                 if row.duplicate_source_row_numbers:
                     provenance_payload["duplicate_source_row_numbers"] = list(row.duplicate_source_row_numbers)
-                enriched_feature, sidecar = _feature_record(
+                enriched_feature, sidecar = feature_record(
                     asset_slug=asset_slug,
                     release=release,
                     feature_id=feature_id,

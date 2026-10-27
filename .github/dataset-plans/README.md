@@ -93,6 +93,16 @@ to that authority. See the [installation contract](../../docs/feature-id-reset-i
 for prerequisites, staging, review, ordering, and recovery. The installer rechecks the affected job is paused and drained before each write,
 using existing project identities; no organization IAM evidence is required.
 
+EAMLIS additionally supports `publish.identity_transition`, routed to the same
+protected installer job rather than generic promotions. It declares exactly
+three sources/destinations: content-addressed permanent ledger, immutable
+installation marker and generation-preconditioned existing quality control.
+The subtype hashes every source and binds the baseline, installation and first
+release date. The installer verifies the complete pinned historical replay and
+paused/drained EAMLIS job before writes; it cannot combine resets, source-loss
+approvals, deletions, unrelated indexes or waivers. See the
+[identity runbook](../../docs/eamlis-feature-identity.md) for staging and recovery.
+
 For an open body-only PR, save its body locally and run:
 
 ```bash

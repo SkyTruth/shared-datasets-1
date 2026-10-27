@@ -334,6 +334,7 @@ def normalize_publish_plan(
             "breaking_changes",
             "release_index_asset_slugs",
             "identity_reset",
+            "identity_transition",
             "source_loss_review",
         },
         label="publish plan",
@@ -452,6 +453,14 @@ def normalize_publish_plan(
             validate_reset_plan(normalized)
         except (PublicationError, KeyError, TypeError, ValueError) as exc:
             raise PlanValidationError(f"invalid identity reset: {exc}") from exc
+    if "identity_transition" in plan:
+        from ingestion.eamlis_monthly.identity_installation import validate_plan
+        from ingestion.eamlis_monthly.identity import IdentityError
+        normalized["identity_transition"] = plan["identity_transition"]
+        try:
+            validate_plan(normalized)
+        except (IdentityError, KeyError, TypeError, ValueError) as exc:
+            raise PlanValidationError(f"invalid EAMLIS identity transition: {exc}") from exc
     return normalized
 
 
@@ -533,7 +542,7 @@ def normalize_document(document: Any) -> dict[str, Any]:
     ]
     if not payloads:
         raise PlanValidationError("plan document needs publish and/or delete")
-    if "identity_reset" in normalized.get("publish", {}) and "delete" in normalized:
+    if {"identity_reset", "identity_transition"}.intersection(normalized.get("publish", {})) and "delete" in normalized:
         raise PlanValidationError("identity reset cannot be combined with deletion")
     if len({(p["asset_slug"], p["proposal_id"]) for p in payloads}) != 1:
         raise PlanValidationError(

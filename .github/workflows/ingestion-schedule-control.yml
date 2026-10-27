@@ -6,7 +6,7 @@ on:
       job:
         description: "Affected ingestion schedule"
         type: choice
-        options: [wdpa-monthly, sea-ice-daily]
+        options: [wdpa-monthly, sea-ice-daily, eamlis-monthly]
         required: true
       action:
         description: "Pause before reset; resume only after validated publication"
@@ -35,9 +35,9 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]] ||
-             [[ "${JOB_NAME}" != wdpa-monthly && "${JOB_NAME}" != sea-ice-daily ]] ||
+             [[ "${JOB_NAME}" != wdpa-monthly && "${JOB_NAME}" != sea-ice-daily && "${JOB_NAME}" != eamlis-monthly ]] ||
              [[ "${SCHEDULE_ACTION}" != pause && "${SCHEDULE_ACTION}" != resume ]]; then
-            echo "Only pause/resume of WDPA or sea ice from reviewed main is allowed." >&2
+            echo "Only pause/resume of WDPA, sea ice or EAMLIS from reviewed main is allowed." >&2
             exit 1
           fi
 
@@ -64,7 +64,11 @@ jobs:
         if: ${{ inputs.action == 'resume' }}
         run: |
           uv sync --frozen
-          uv run --no-sync python scripts/publication_rollout_gate.py --job "$JOB_NAME" --require-published
+          if [[ "${JOB_NAME}" == eamlis-monthly ]]; then
+            uv run --no-sync python scripts/eamlis_identity_transition.py require-published
+          else
+            uv run --no-sync python scripts/publication_rollout_gate.py --job "$JOB_NAME" --require-published
+          fi
 
       - name: Set schedule state
         run: |

@@ -65,8 +65,12 @@ writes an immutable skipped run and updates the release-index check-in. Edit
 metadata and summary statistics are diagnostic only. A missing metadata contract
 still requires a refresh. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
 
-The release feature identity is copied directly from the source `OBJECTID`
-field. Published `feature_id` values are plain alphanumeric strings such as
+Before explicit identity installation, release feature identity is copied from
+the source `OBJECTID`. These IDs can be renumbered between releases. The code
+supports a reviewed `PROBLEM_KEY`/area-key cutover with a permanent decimal-ID
+ledger; deploying code alone preserves legacy behavior. See the
+[identity evidence and cutover runbook](../../docs/eamlis-feature-identity.md).
+Published `feature_id` values are plain alphanumeric strings such as
 `1`, not legacy `src:OBJECTID:1` handles. The canonical FlatGeobuf includes all
 source fields plus `feature_id`, `geometry_hash`, and `properties_hash`; PMTiles
 are metadata-lookup tiles containing geometry and `feature_id` only.
@@ -99,7 +103,11 @@ locale sidecar once. Reconciliation preserves every existing row and its
 provenance, including successful current translations and historical rows. For
 missing current keys it reuses a translation only when the exact field, locale,
 and source-value hash have one distinct successful translated value across the
-CSV history. Feature IDs do not establish matches across source refreshes.
+CSV history. Legacy feature IDs do not establish matches across source refreshes.
+The first keyed release instead remaps only concrete old-release translations
+with matching typed source keys and source-value hashes. Unprovable historical
+rows remain archived in the old immutable CSV and are reported in the manifest
+inputs and execution logs; numerical ID equality never crosses contracts.
 Conflicting values, unavailable matches, and existing failed current tasks remain
 source-text fallback; failures and excluded untranslated labels never count as
 completed. Reused rows retain donor review state and notes with a reuse reference.

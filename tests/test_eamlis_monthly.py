@@ -775,6 +775,25 @@ DATE_REVISED: Date (0.0)
     "requires RUN_GDAL_INTEGRATION_TESTS=1 and runnable GDAL binaries",
 )
 class EamlisMonthlyIntegrationTests(unittest.TestCase):
+    def test_keyed_builder_preserves_colocated_problems_and_area_only_record(self):
+        from ingestion.eamlis_monthly import identity as ids, identity_state
+        from tests.test_eamlis_identity import area, feature, problem
+        properties = [problem("P1", OBJECTID=7), problem("P2", OBJECTID=9), area("AREA2", OBJECTID=11)]
+        ledger = ids.Ledger.genesis().reserve(ids.classify_release(properties))
+        source = sample_source_state(feature_count=3)
+        source = eamlis.replace(source, fields=())
+        with tempfile.TemporaryDirectory() as temporary:
+            workdir = Path(temporary)
+            path = workdir / "source.geojson"
+            path.write_text(json.dumps({"type": "FeatureCollection", "features": [feature(p) for p in properties]}))
+            reservation = identity_state.Reservation(ledger, {"path": "fixture"}, 1, None)
+            output = eamlis.build_asset_output(source=source, extract=eamlis.SourceExtract(path, 3, 0),
+                workdir=workdir, release_date=dt.date(2026, 5, 2), identity_reservation=reservation)
+            self.assertEqual(output.row_count, 3)
+            self.assertEqual({r["feature_id"] for r in output.sidecar_records}, {"1", "2", "3"})
+            self.assertTrue(set(ids.ASSIGNMENT_FIELDS) <= set(eamlis.output_layer_summary(output.fgb)["fields"]))
+            self.assertEqual(output.identity_metadata["contract_id"], ids.CONTRACT)
+
     def test_fixture_geojson_builds_stable_fgb_output(self):
         source = sample_source_state(feature_count=2)
         with tempfile.TemporaryDirectory() as tmp:
