@@ -4,8 +4,7 @@ Classify a failure before retrying it. A legitimate PR rejection demonstrates a
 working gate. A reproducible failure after merge is a coverage or release-contract
 defect that needs a regression test. Hosted-runner allocation, network, registry
 and authentication outages are operational failures; preserve their original
-run and attempt when recording recovery. Controlled alert probes belong in their
-explicit workflow and do not count as ordinary deployment failures.
+run and attempt when recording recovery.
 
 ## Validation and runner failures
 

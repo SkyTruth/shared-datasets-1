@@ -275,16 +275,12 @@ with explicit `cancel-in-progress: false`, then omits only that validated scalar
 line in disposable parser input. All remaining syntax errors fail normally;
 production workflow files and concurrency behavior are unchanged.
 
-The receipt bootstrap lands before dependent deployments adopt signed deployment
-records. After this workflow is on main, `jonaraphael` dispatches
-`Deployment receipt rehearsal` through the existing protected production
-environment, then dispatches `Reusable deployment receipt rehearsal`. The same
-protected leaf signs a synthetic receipt and verifies its exact bytes, main
-revision, distinct caller and signer identities and producing run with the pinned
-official verifier. Both direct and reusable invocation must pass.
-It has no GCP authentication or deployment-write permission. A successful
-protected rehearsal is required before enabling dependent production mutations;
-an unsigned fixture or a locally passing test cannot replace this live proof.
+Each protected deployment signs and verifies a synthetic receipt in its own run
+before creating a deployment record or mutating production. The pinned official
+verifier checks the exact bytes, main revision, distinct caller and signer
+identities and producing run. An unsigned fixture or a locally passing test
+cannot replace this live check. See [deployment contracts](deployment-contracts.md)
+for the claim and outcome signing requirements.
 
 ## Focused local checks
 
