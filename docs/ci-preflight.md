@@ -11,6 +11,11 @@ filters and operator documentation together when renaming a workflow. Historical
 aliases preserve reruns and incident replay; they do not bypass verification of
 the actual workflow path, ID, repository or run attempt.
 
+The SDK package README retains its released workflow label until a versioned
+SDK release updates that packaged file. The current display name is
+`SDK / Publish TypeScript`; the old `Publish TypeScript SDK` name remains a
+historical alias. Renaming Actions alone must not change published package bytes.
+
 Three workflows retain their existing names: `Bucket hygiene audit`,
 `Catalog drift guard` and `Dataset breaking change alert`. Their exact labels
 appear in the GCP read-only OIDC provider's condition in
