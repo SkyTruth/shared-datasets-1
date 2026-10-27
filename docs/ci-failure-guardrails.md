@@ -32,7 +32,7 @@ and `36e698e6fd5cd0bf2add760e26dd1c207fa7f84bf33fcd2efe05e3375c571576` for
 | Publication/reset/canary state contract mismatch | PRs 1 and 3: preserve immutable plan authorization, persisted transaction ownership and generation preconditions; test completed, interrupted, partial-realm and same-day outcomes. |
 | SDK publisher tried to push version edits directly to protected main | PRs 2–3: preserve the merged version-policy fix, validate Node 22/24 and package contents, and publish only the exact tested tarball. |
 | Cancelled or timed-out run | PRs 3–4: superseded PR validation may cancel; production queues never cancel active mutations automatically. Owner-cancelled benchmarks and setup/runtime timeouts remain separate outcomes. Incomplete records block replay until reconciliation. |
-| Controlled alert probe deliberately stopped for human verification | PR 4: separate the negative control from ordinary deployment; prove the expected terminal failure and require explicit delivery evidence. |
+| Controlled alert probe deliberately stopped for human verification | Historical diagnostic, now retired. Verify live delivery from actual failure incidents and matching delivery evidence; do not inject production failures. |
 | External service or runner failure | PR 4: retain visible external failures and selective recovery guidance; inspect mutation state before recovery and never blanket-retry production. |
 
 ## October 7 boundary regressions

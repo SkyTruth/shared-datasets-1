@@ -121,8 +121,8 @@ docker build --platform linux/amd64 -f ingestion/wdpa_monthly/Dockerfile -t wdpa
 Production uses `Dockerfile.promotion`, inheriting the accepted producer's native
 tools/dependencies and adding reviewed consumer/publication code and the current
 locale catalog. `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the producer fingerprint.
-The publication-only entrypoint rejects a missing bundle before source processing;
-`WDPA_FAIL_BEFORE_WRITES=true` supports the controlled alert-delivery probe.
+The publication-only entrypoint requires a reviewed retained bundle and
+publishes its existing artifacts.
 
 ## Observer health
 

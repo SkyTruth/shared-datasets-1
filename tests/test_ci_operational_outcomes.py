@@ -42,7 +42,7 @@ def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sour
     'publish-dataset.yml', 'catalog-web-deploy.yml', 'catalog-viewer-deploy.yml',
     'pmtiles-cdn-sync.yml', 'prod-terraform-target-apply.yml',
     'publish-typescript-sdk.yml', 'deployment-verification.yml',
-    'deployment-recovery.yml', 'cron-alert-delivery-test.yml',
+    'deployment-recovery.yml',
 ])
 def test_production_workers_keep_their_noncancelling_queues(filename):
     workflow = load_workflow(ROOT / '.github/workflows' / filename)
