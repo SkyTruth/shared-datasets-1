@@ -111,7 +111,11 @@ images with their config and rootfs hashes; missing image evidence fails
 Docker daemon before admitting each retained image. Deployment consumes these
 tested bytes without rebuilding.
 
-Hosted production-image builds restore per-recipe GitHub Actions build caches.
+Hosted native ingestion and dataset-usage image builds restore per-recipe GitHub
+Actions build caches. Catalog-viewer and monitoring-slack use the same Buildx
+`--load` path without remote cache import or export: their small Python dependency
+installs avoid the demonstrated long cache-read stalls. Local BuildKit reuse is
+still available within the job.
 GitHub's branch restrictions isolate PR cache writes from main; PRs can restore
 main's cache. BuildKit invalidates layers when recipe inputs change. Every image
 is still built, checked by immutable identity, exported, hashed and loaded again.
