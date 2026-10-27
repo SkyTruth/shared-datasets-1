@@ -26,6 +26,10 @@ REQUIRED_TESTS = (
         "test_fixture_geojson_builds_stable_fgb_output",
     ),
     (
+        "tests.test_eamlis_monthly.EamlisMonthlyIntegrationTests",
+        "test_keyed_builder_preserves_colocated_problems_and_area_only_record",
+    ),
+    (
         "tests.test_wdpa_disk_processing",
         "test_normalized_store_matches_old_export_semantically",
     ),

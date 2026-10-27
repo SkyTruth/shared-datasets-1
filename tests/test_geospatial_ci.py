@@ -146,10 +146,10 @@ class GeospatialResultTests(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 (self.work / "tests").mkdir(exist_ok=True)
                 (self.work / "pytest.ini").write_text("[pytest]\n")
+                modules = {}
                 for index, (classname, name) in enumerate(REQUIRED_TESTS):
                     if classname.count(".") == 1:
-                        path = self.work / f"{classname.replace('.', '/')}.py"
-                        path.write_text(f"def {name}():\n    pass\n")
+                        modules.setdefault(classname, {}).setdefault(None, []).append(f"def {name}():\n    pass\n")
                         continue
                     module, class_name = classname.rsplit(".", 1)
                     body = "pass"
@@ -168,12 +168,16 @@ class GeospatialResultTests(unittest.TestCase):
                             decorator = "    @pytest.mark.xfail(reason='known failure')\n"
                         if outcome == "error":
                             setup = "    def setUp(self):\n        raise RuntimeError('setup failed')\n"
+                    modules.setdefault(module, {}).setdefault(class_name, []).append(
+                        f"{setup}{decorator}    def {name}(self):\n        {body}\n")
+                for module, classes in modules.items():
                     path = self.work / f"{module.replace('.', '/')}.py"
-                    path.write_text(
-                        "import pytest\nimport unittest\n\n"
-                        f"class {class_name}(unittest.TestCase):\n"
-                        f"{setup}{decorator}    def {name}(self):\n        {body}\n"
-                    )
+                    source = "import pytest\nimport unittest\n\n"
+                    for class_name, methods in classes.items():
+                        if class_name is not None:
+                            source += f"class {class_name}(unittest.TestCase):\n"
+                        source += "\n".join(methods) + "\n"
+                    path.write_text(source)
                 run = subprocess.run(
                     [
                         sys.executable, "-m", "pytest", "-q", "-c", "pytest.ini",
