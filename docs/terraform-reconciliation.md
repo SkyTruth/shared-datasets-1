@@ -6,11 +6,11 @@ had no differences. Terraform's saved production state still tracked those
 resources; this reconciliation removes the live leftovers through the existing
 protected executor, then verifies both environments with full untargeted plans.
 
-The integration/recovery owner is the chat that opened this PR, on branch
-`codex/reconcile-production-terraform`. There are no prerequisite PRs. Concurrent
-image-artifact work owns `.github/workflows/ci.yml` and `docs/ci-preflight.md`;
-this change does not edit those files. Merge current main before final validation
-if either that work or another prerequisite lands first.
+The originating reconciliation chat owns integration and recovery. Retirement
+landed in PR #324 from `codex/reconcile-production-terraform`, after the image
+handoff and selector prerequisites merged. The state/output follow-up uses
+`codex/reconcile-terraform-state-outputs` and requires the completed retirement
+and revocation. Merge current main before final validation when necessary.
 
 ## Protected sequence
 
@@ -95,3 +95,48 @@ production/preview plans using recorded deployment image inputs. Only a clean
 plan in both environments satisfies completion. Then delete the rollback backup
 branch with its expected-OID guard and verified Git recovery evidence. Removing
 that Git bookmark alone never changes infrastructure or Terraform state.
+
+## Final state and output reconciliation
+
+The protected retirement in PR #324 completed all 20 deletions and revoked the
+temporary binding. A full post-deployment normal plan found no resource actions,
+but it still exited 2 for five saved root outputs. Targeted applies had retained
+four removed outputs and stale managed-folder metadata:
+
+- Delete `metadata_index_loader_service_account`.
+- Delete `operational_observer_log_views`.
+- Delete `operational_observer_service_account`.
+- Delete `operational_observer_workload_identity_provider`.
+- Refresh `shared_bucket_public_managed_folders` from the live folder metadata.
+
+`prod-terraform-state-reconcile.yml` reconciles this bookkeeping through the
+existing protected executor after a reviewed merge and successful main CI. It
+supplies an empty target list, so Terraform creates a full normal refreshed plan,
+and an empty resource allowlist, so every resource create, update, replacement
+or deletion is refused before the saved plan can be applied. Terraform can then
+persist refreshed state and outputs without mutating live resources. There is no
+new apply implementation, executor flag, IAM grant, image preparation or retry.
+The offline graph contract recognizes only a paired-empty scope without resource
+prerequisites or side-effect preparation. Nonempty IAM scopes retain their
+existing graph checks.
+
+Dispatch this workflow from reviewed `main` with `executor_sha`, `source_run_id`
+and `source_run_attempt` identifying that revision's successful main-push CI.
+Supply `tf_vars` as newline-separated current state-recorded production deployment
+variables, including immutable job/service images and the Monitoring receiver's
+channel and numeric token version. These are planning inputs, not permission to
+redeploy images. Stale or incompatible inputs that propose any resource mutation
+fail the empty allowlist. The workflow is not wired to automatic main deployment,
+and it does not replay retirement or re-enable temporary authority.
+
+The normal saved-plan fixture is
+`tests/fixtures/terraform_targets/state-only-outputs.json`. Boundary tests run
+the actual plan shell and resource guard, proving that the full plan omits
+targets, preserves variable arguments, accepts zero/one/all five output changes,
+and rejects every resource action, including revival of the retired grant.
+
+After the signed state-only apply succeeds, run fresh full normal production and
+preview plans again with current deployment inputs. Both must exit 0, with stable
+remote state, all 20 resources retired and the temporary binding absent, before
+the rollback backup can be deleted. A refresh-only plan or a zero-resource count
+with remaining output differences does not satisfy this final gate.

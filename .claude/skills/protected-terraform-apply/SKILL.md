@@ -57,6 +57,7 @@ explicit targets and allowed resource changes.
 |---|---|
 | `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
 | `prod-terraform-target-apply.yml` | Reusable protected apply for the five sync callers below; refuses changes outside their declared resource allowlists. |
+| `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
 | `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
 | `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer/WDPA observer roles and bindings, retained-bundle read access, and translation notice/debt access. |
 | `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
