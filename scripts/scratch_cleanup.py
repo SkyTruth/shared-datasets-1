@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -163,6 +164,8 @@ def classify_proposal(
     }
 
     # This is an age-based abandonment policy, not proof of publication or PR status.
+    if proposal.asset_slug == "eamlis-abandoned-mine-land-inventory" and re.fullmatch(r"source-loss-[0-9a-f]{64}", proposal.proposal_id):
+        return {**base, "action": "keep", "reason": "source-quality-review-evidence"}
     if age_days >= delete_age_days and warned_for_current_state:
         return {**base, "action": "delete", "reason": "stale-after-warning"}
     if age_days >= warn_age_days and not warned_for_current_state:

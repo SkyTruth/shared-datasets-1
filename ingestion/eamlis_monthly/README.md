@@ -42,10 +42,19 @@ the current UTC date.
 
 ## Publishing Behavior
 
+A persisted source-quality hold blocks automatic publication when geometry
+records drop by more than 5% against the last published release. Checks continue;
+the hold survives later healthy downloads. The first held check attempts one
+Slack decision alert and stages any valid complete candidate for private catalog
+comparison. A maintainer approves the exact candidate through the existing
+immutable publish-plan PR. See [source-quality review](../../docs/eamlis-source-quality.md)
+for state, staging, approval, interrupted execution recovery, and rollout.
+
 The job first checks the requested date's run record. An existing `success` or
 `skipped` record is a completed outcome: retries return that original record
 without polling ArcGIS, rebuilding artifacts, or replacing the record. This also
-applies when the source changes later that day. Such changes require a different,
+applies when the source changes later that day. A persisted hold or conflicting
+publication claim takes precedence over completed-date index repair. Such changes require a different,
 unused `RUN_DATE`, normally the next scheduled run. Other existing statuses fail
 and require investigation rather than being treated as completed.
 

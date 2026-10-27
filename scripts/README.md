@@ -15,6 +15,11 @@ evidence contract.
 
 ## Dataset operations
 
+`eamlis_source_loss_review.py` reads persistent EAMLIS quality holds, prepares
+their immutable approval plans, and supplies the protected staging-catalog and
+resolution workflow steps. See [source-quality review](../docs/eamlis-source-quality.md).
+Interface: `uv run python scripts/eamlis_source_loss_review.py --help`.
+
 `publishing_concierge.py` guides first uploads and preview bundles through evidence gates, then renders reports or immutable plan documents; it performs no remote or Git operations. Use the [publish routes](../.claude/skills/publish-shared-dataset/SKILL.md). Interface: `uv run python scripts/publishing_concierge.py --help`.
 
 `gcs_asset.py` inspects objects, validates paths and performs generation-safe transfers. Agents stage production bytes; only the protected publisher mutates canonical destinations. Existing release planning uses its dry-run path. Interface: `uv run python scripts/gcs_asset.py --help`.

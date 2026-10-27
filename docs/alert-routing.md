@@ -17,6 +17,13 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
+| EAMLIS source-quality hold | One persisted decision-alert attempt; delivery failure retains the hold and existing job-failure coverage |
+
+The [EAMLIS source-quality guard](eamlis-source-quality.md) pauses automatic
+publication after a greater-than-5% geometry-record loss and retains exact
+candidate bytes for staging review. Scheduler checks continue. A hold is cleared
+only after the immutable approved candidate is published and verified; Slack
+delivery or a healthy subsequent download cannot clear it.
 
 The Cloud Run policy retains the project/region-wide failure condition and
 `protoPayload.status.code>0`, including OOM/system failures. The frequent WDPA
