@@ -667,13 +667,31 @@ class MainPushDiscoveryTests(unittest.TestCase):
         self.api = FakeGitHub()
         self.event, self.env = context(self.api)
 
+    def git_output(self, commits, command, **kwargs):
+        git = ["git", "--no-replace-objects"]
+        if command == [*git, "rev-parse", "--is-shallow-repository"]:
+            self.assertEqual(kwargs, {"text": True})
+            return "false\n"
+        if command in ([*git, "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"],
+                       ["git", "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"]):
+            self.assertEqual(kwargs, {"text": True})
+            return "\n".join(commits) + "\n"
+        if command[:-1] == [*git, "diff-tree", "--root", "-m", "-r", "--no-renames", "--no-commit-id", "--name-only", "-z"]:
+            self.assertIn(command[-1], commits)
+            self.assertEqual(kwargs, {})
+            return b"".join(item["filename"].encode() + b"\0" for item in self.api.files)
+        self.fail(f"unexpected Git read: {command!r}")
+
     def discover(self, commits=None, *, documents_only=True):
+        commits = commits or [HEAD, MERGE, EXECUTOR]
         with mock.patch.object(auth.subprocess, "run") as ancestry, mock.patch.object(
-            auth.subprocess, "check_output", return_value="\n".join(commits or [HEAD, MERGE, EXECUTOR]) + "\n"
+            auth.subprocess, "check_output", side_effect=lambda command, **kwargs: self.git_output(commits, command, **kwargs)
         ) as history:
             result = auth.discover_push_prs(self.api, self.event, self.env, documents_only=documents_only)
-            ancestry.assert_called_once_with(["git", "merge-base", "--is-ancestor", self.event["before"], EXECUTOR], check=True)
-            history.assert_called_once_with(["git", "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"], text=True)
+            git = ["git", "--no-replace-objects"] if documents_only else ["git"]
+            ancestry.assert_called_once_with([*git, "merge-base", "--is-ancestor", self.event["before"], EXECUTOR], check=True)
+            history.assert_any_call([*git, "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"], text=True)
+            self.assertEqual(history.call_count, len(commits) + 2 if documents_only else 1)
             return result
 
     def run_discovery_cli(self, *, event=None, env=None, commits=None):
@@ -685,7 +703,8 @@ class MainPushDiscoveryTests(unittest.TestCase):
             with mock.patch.dict(auth.os.environ, context, clear=True), mock.patch.object(
                 auth, "GitHub", return_value=self.api
             ), mock.patch.object(auth.subprocess, "run"), mock.patch.object(
-                auth.subprocess, "check_output", return_value="\n".join(commits or [HEAD, MERGE, EXECUTOR]) + "\n"
+                auth.subprocess, "check_output", side_effect=lambda command, **kwargs: self.git_output(
+                    commits or [HEAD, MERGE, EXECUTOR], command, **kwargs)
             ):
                 result = auth.main(["discover"])
             return result, output.read_text() if output.exists() else ""
