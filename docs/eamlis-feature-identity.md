@@ -84,7 +84,8 @@ This code PR contains no installation plan and changes no remote data. Actual
 installation needs a later maintainer-directed immutable plan PR.
 
 1. Deploy the tested code through the existing protected EAMLIS deployment path.
-   Then pause `eamlis-monthly` with **Ingestion schedule control** and wait for
+   Then pause `eamlis-monthly` with the
+   [schedule-control workflow](../.github/workflows/ingestion-schedule-control.yml) and wait for
    all pending/running executions to finish. The installer verifies this itself
    with the existing deployer identity, including every execution-list page.
 2. Replay the pinned local inventory with `scripts/eamlis_identity_audit.py`.
@@ -115,14 +116,23 @@ installation needs a later maintainer-directed immutable plan PR.
    placeholders in the reviewed control template are finalized. It publishes no
    FGB, tiles, catalog or release data. No new IAM or local Terraform apply is
    required.
-5. Keep the schedule paused. Execute the deployed job once through the protected
-   EAMLIS deployment canary using its reviewed `canary_run_date`. Prepared state
+5. Keep the schedule paused. On the maintainer's explicit instruction, execute
+   the already deployed, verified EAMLIS Cloud Run job once with a `RUN_DATE`
+   execution override matching the reviewed first release. Verify the deployed
+   image/revision through the normal scheduled-ingestion procedure before running.
+   A replay of an already completed deployment deliberately skips its canary;
+   it does not request this new execution. Prepared state
    accepts only the chosen date. The existing source-quality hold remains fully
    enforced: if held, inspect the exact staged candidate in the private catalog
    and approve its separate normal held-candidate plan. A healthy download cannot
    release a hold. Verify new IDs, all area-only records, exact geometry, translation
    migration counts, manifest/ledger pins and the completed release index.
-6. Resume through **Ingestion schedule control**. Its EAMLIS resume gate requires
+6. Once the first release is active, update the asset document's structured
+   `feature_identity` to the generated strategy, assignment columns and contract,
+   describe the two new columns, then regenerate catalog docs and publish the
+   README/catalog through their normal approved route. Keep the legacy declaration
+   while legacy data is live. Resume through the schedule-control workflow.
+   Its EAMLIS resume gate requires
    active installed identity and complete pinned publication evidence. A later
    source-quality hold can remain, allowing scheduled checks to continue while
    publication is held. Prepared or incomplete installation cannot resume.
