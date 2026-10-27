@@ -97,10 +97,9 @@ image through `catalog-viewer-deploy.yml` before the web bundle through
 and protected catalog pages after deployment.
 
 Routine rollout does not inject a deliberate failure or require a previous
-Slack notification as an input. Monitoring delivery is tested separately with
-`cron-alert-delivery-test.yml` from reviewed `main`, using the pre-write failure
-overrides. Verify the terminal failed execution, observer JSON (for the worker),
-and actual Slack delivery before declaring an alert-policy change verified.
+Slack notification as an input. This rollout's separate pre-write failure probe
+has since been retired. Current delivery verification uses actual failure
+incidents and their delivery evidence; see [alert routing](../alert-routing.md).
 
 The multi-hour validation run and the worker canary remain unmarked and alertable:
 they run asynchronously, and the worker workflow watches only the first ten

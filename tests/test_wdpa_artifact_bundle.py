@@ -415,7 +415,6 @@ def test_wrong_producer_is_refused_before_artifact_downloads(
 
 def test_publication_image_cannot_fall_back_to_source_processing(monkeypatch):
     monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
-    monkeypatch.delenv("WDPA_FAIL_BEFORE_WRITES", raising=False)
     job = Mock()
     monkeypatch.setattr(wdpa, "run", job)
     with pytest.raises(PublicationError, match="source rebuilding is disabled"):
@@ -424,17 +423,6 @@ def test_publication_image_cannot_fall_back_to_source_processing(monkeypatch):
     monkeypatch.setenv("WDPA_PROMOTION_BUNDLE", "reviewed-reference")
     publication_only.run()
     job.assert_called_once_with()
-
-
-def test_publication_image_keeps_the_controlled_prewrite_failure(monkeypatch):
-    monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
-    monkeypatch.setenv("WDPA_FAIL_BEFORE_WRITES", "true")
-    monkeypatch.setattr(wdpa, "prepare_scratch", lambda: None)
-    client = Mock()
-    monkeypatch.setattr(wdpa.storage, "Client", client)
-    with pytest.raises(RuntimeError, match="Controlled WDPA execution failure"):
-        publication_only.run()
-    client.assert_not_called()
 
 
 @pytest.mark.parametrize(

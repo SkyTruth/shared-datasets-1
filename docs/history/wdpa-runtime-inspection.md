@@ -92,10 +92,10 @@ for a successful sea-ice, marine, or complete October benchmark.
 This diagnostic workflow changes the validation job's command. The normal
 `wdpa-processing-validation-deploy.yml` workflow restores the processing
 command when `wdpa_validation_runtime_inspection` uses its default `false`.
-Do not manually start a complete replay until that command is restored,
-the staged gate matches the current processing source, and the alert probe
-has actually reached Slack. Run one complete retaining build and preserve its
-raw report, terminal execution status and immutable bundle references. Promotion
+Do not manually start a complete replay until that command is restored
+and the staged gate matches the current processing source. Run one complete
+retaining build and preserve its raw report, terminal execution status and
+immutable bundle references. Promotion
 uses those same files without a second replay.
 
 A changed dependency lock changes the processing fingerprint. Existing reports
