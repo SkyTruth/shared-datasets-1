@@ -59,6 +59,7 @@ jobs:
       SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "0"
     permissions:
       contents: read
+      actions: read
       id-token: write
     outputs:
       changed: ${{ steps.compare.outputs.changed }}
@@ -92,6 +93,8 @@ jobs:
           service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
       - name: Compare catalog inputs
         id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/catalog_refresh_check.py --work-dir "$RUNNER_TEMP/catalog-refresh-check"
 
   select-repo-changes:
