@@ -534,6 +534,8 @@ def stage_candidate(guard, *, output, source, release, source_inputs, translatio
     hashes = {role: digest(path.read_bytes()) for role, path in files.items()}
     seed = {"builder_version": 1, "release": release, "baseline_token": baseline_token(guard.before),
             "source_fingerprint": source.fingerprint, "hashes": hashes}
+    if output.identity_metadata.get("contract_id"):
+        seed["identity"] = output.identity_metadata
     candidate_id = digest(encode(seed))
     prefix = f"_scratch/pending-publishes/{SLUG}/source-loss-{candidate_id}/"
     staged = {role: immutable_file(guard.bucket, prefix + "objects/" + path.name, path)

@@ -370,3 +370,15 @@ def test_metadata_tampering_and_unreviewed_replacements_are_refused(tmp_path):
             state.validate_records(ledger, records)
         with pytest.raises(ids.IdentityError, match="only the complete current translation"):
             state.require_translation_only(guard, {"promotions": [{"destination_uri": "unrelated"}]})
+
+
+def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_path):
+    client, plan, _ = prepared(tmp_path)
+    install(client, plan, tmp_path)
+    first = run(client, rows()[:2], "2026-05-02")
+    with quality.Guard(client.bucket(quality.BUCKET)) as guard:
+        state.reserve(guard, [*rows(), problem("NEW")], tmp_path)
+    second = run(client, rows()[:2], "2026-05-02")
+    assert first["hold"]["candidate"] != second["hold"]["candidate"]
+    assert first["hold"]["id"] == second["hold"]["id"]
+    assert quality.candidate(client, second["hold"]["candidate"])["geometry_count"] == 2
