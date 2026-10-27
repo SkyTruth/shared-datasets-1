@@ -13,6 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.deployment_revision import DeploymentError, GitHub, require, verify_ci, verify_context
 
 
+class PendingCI(DeploymentError):
+    """The exact revision has main CI in progress, but no complete passing attempt."""
+
+
 def resolve(api, repository, sha, event, current_id, current_attempt):
     if event.get("workflow_run", {}).get("name") == "CI":
         source = event["workflow_run"]
@@ -21,11 +25,18 @@ def resolve(api, repository, sha, event, current_id, current_attempt):
     if event.get("after") == sha:
         verify_ci(api, repository, sha, current_id, current_attempt)
         return current_id, current_attempt
+    return resolve_main_ci(api, repository, sha)
+
+
+def resolve_main_ci(api, repository, sha):
     # Manual mutation recovery and index-rebuild follow-ups retain their original
     # executor. Overall CI can be red because publication failed after ci-ready.
     runs = api.pages(f"repos/{repository}/actions/workflows/ci.yml/runs?head_sha={sha}&event=push&branch=main&per_page=100", "workflow_runs")
+    runs = [run for run in runs if run.get("head_sha") == sha]
+    if runs and all(run.get("status") in {"queued", "in_progress", "waiting", "pending", "requested"} for run in runs):
+        raise PendingCI("main CI is still pending for executor")
     for run in sorted(runs, key=lambda item: (item["id"], item["run_attempt"]), reverse=True):
-        if run.get("head_sha") != sha or run.get("status") != "completed":
+        if run.get("status") != "completed":
             continue
         try:
             verify_ci(api, repository, sha, run["id"], run["run_attempt"])

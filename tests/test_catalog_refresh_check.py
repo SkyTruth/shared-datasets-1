@@ -7,12 +7,40 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts import catalog_drift_guard as guard, catalog_refresh_check as probe, catalog_site
+from scripts import catalog_drift_guard as guard, catalog_refresh_check as probe, catalog_site, deployment_revision, deployment_source
 from test_catalog_site import DOC
 
 
 @pytest.fixture
-def workspace(tmp_path, monkeypatch):
+def main_ci(monkeypatch):
+    repository, sha = "SkyTruth/shared-datasets-1", "a" * 40
+    monkeypatch.setenv("GITHUB_REPOSITORY", repository)
+    monkeypatch.setenv("GITHUB_SHA", sha)
+    repo = {"id": 1, "full_name": repository}
+    run = {"id": 11, "run_attempt": 1, "workflow_id": 7, "path": ".github/workflows/ci.yml",
+           "head_sha": sha, "status": "completed", "event": "push", "head_branch": "main",
+           "repository": repo, "head_repository": repo}
+    ready = {"name": "ci-ready", "status": "completed", "conclusion": "success"}
+    runs = {"total_count": 1, "workflow_runs": [run]}
+
+    def read(path, *, paginate=False):
+        prefix = f"repos/{repository}"
+        payload = {
+            prefix: repo,
+            f"{prefix}/actions/workflows/ci.yml": {"id": 7, "path": ".github/workflows/ci.yml"},
+            f"{prefix}/actions/runs/11/attempts/1": run,
+            f"{prefix}/actions/workflows/ci.yml/runs?head_sha={sha}&event=push&branch=main&per_page=100": runs,
+            f"{prefix}/actions/runs/11/attempts/1/jobs?per_page=100": {"total_count": 1, "jobs": [ready]},
+        }[path]
+        return json.dumps([payload] if paginate else payload).encode()
+
+    transport = Mock(side_effect=read)
+    monkeypatch.setattr(deployment_revision, "read", transport)
+    return SimpleNamespace(run=run, ready=ready, runs=runs, transport=transport)
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch, main_ci):
     monkeypatch.chdir(tmp_path)
     Path("catalog").mkdir()
     Path("docs/assets").mkdir(parents=True)
@@ -68,11 +96,12 @@ def workspace(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("count", [0, 1, 2])
-def test_unchanged_catalog_writes_false_even_with_a_new_generated_at(workspace, tmp_path, count):
+def test_unchanged_catalog_writes_false_even_with_a_new_generated_at(workspace, tmp_path, count, main_ci):
     state = workspace(count)
     probe.main(["--work-dir", str(tmp_path / "probe")])
     assert state.output.read_text() == "changed=false\n"
     assert "unchanged" in state.summary.read_text()
+    main_ci.transport.assert_not_called()
 
 
 @pytest.mark.parametrize("change", ["metadata", "release", "run", "csv"])
@@ -103,6 +132,65 @@ def test_actual_catalog_inputs_select_a_refresh(workspace, tmp_path, change):
         state.client.list_blobs.return_value = [SimpleNamespace(name=name, generation=7, size=len(state.objects[name]))]
     probe.main(["--work-dir", str(tmp_path / "probe")])
     assert state.output.read_text() == "changed=true\n"
+
+
+@pytest.mark.parametrize("status", ["queued", "in_progress", "waiting", "pending", "requested"])
+def test_pending_ci_defers_changed_catalog_until_a_later_probe(workspace, tmp_path, main_ci, status):
+    state = workspace(1)
+    state.objects[guard.REMOTE_CSV_OBJECT] = b"older CSV"
+    main_ci.run["status"] = status
+    probe.main(["--work-dir", str(tmp_path / "pending")])
+    assert not state.output.exists()  # The workflow must not select the publisher.
+    assert "deferred" in state.summary.read_text()
+
+    main_ci.run["status"] = "completed"
+    probe.main(["--work-dir", str(tmp_path / "ready")])
+    assert state.output.read_text() == "changed=true\n"
+
+
+@pytest.mark.parametrize("failure", ["missing", "failed", "cancelled", "wrong-sha", "wrong-repository",
+                                     "unknown-status", "incomplete-list", "api", "failed-and-pending"])
+def test_unproven_ci_fails_without_selecting_the_publisher(workspace, tmp_path, main_ci, failure):
+    state = workspace(1)
+    state.objects[guard.REMOTE_CSV_OBJECT] = b"older CSV"
+    if failure == "missing":
+        main_ci.runs.update(total_count=0, workflow_runs=[])
+    elif failure in {"failed", "cancelled"}:
+        main_ci.ready["conclusion"] = "failure" if failure == "failed" else "cancelled"
+    elif failure == "wrong-sha":
+        main_ci.run.update(head_sha="b" * 40, status="in_progress")
+    elif failure == "wrong-repository":
+        main_ci.run["head_repository"] = {"id": 2, "full_name": "someone/fork"}
+    elif failure == "unknown-status":
+        main_ci.run["status"] = "unknown"
+    elif failure == "incomplete-list":
+        main_ci.runs["total_count"] = 2
+    elif failure == "failed-and-pending":
+        main_ci.ready["conclusion"] = "failure"
+        main_ci.runs["workflow_runs"].append({**main_ci.run, "id": 12, "status": "in_progress"})
+        main_ci.runs["total_count"] = 2
+    else:
+        main_ci.transport.side_effect = RuntimeError("GitHub unavailable")
+    with pytest.raises(RuntimeError):
+        probe.main(["--work-dir", str(tmp_path / "probe")])
+    assert not state.output.exists()
+    assert not state.summary.exists()
+
+
+def test_deployment_cli_still_rejects_pending_ci(main_ci, tmp_path, monkeypatch):
+    main_ci.run["status"] = "in_progress"
+    event = tmp_path / "event.json"
+    event.write_text('{"schedule": "17 * * * *"}')
+    output = tmp_path / "output"
+    for name, value in {"GITHUB_EVENT_PATH": str(event), "GITHUB_OUTPUT": str(output),
+                        "GITHUB_RUN_ID": "12", "GITHUB_RUN_ATTEMPT": "1"}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr("sys.argv", ["deployment_source.py", "--bootstrap", "--workflow",
+                                    "catalog-web-deploy.yml", "--executor-sha", main_ci.run["head_sha"]])
+    with pytest.raises(SystemExit) as error:
+        deployment_source.main()
+    assert error.value.code == 1
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("failure", ["listing", "catalog-read", "malformed-catalog", "malformed-index"])
