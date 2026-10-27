@@ -128,7 +128,8 @@ def checks(target):
     if target == "translation-bootstrap":
         return [secret]
     if target == "ingestion-iam":
-        return checks("iam-bootstrap") + checks("bucket-iam") + [secret]
+        job = f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/jobs/eamlis-monthly:testIamPermissions"
+        return checks("iam-bootstrap") + checks("bucket-iam") + [secret, (job, ("run.jobs.getIamPolicy", "run.jobs.setIamPolicy"))]
     project = (f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", PROJECT_PERMISSIONS)
     return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
 

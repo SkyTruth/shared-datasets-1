@@ -127,6 +127,8 @@ class TargetApplyCallerTests(unittest.TestCase):
                 'google_storage_bucket_iam_member.translation_debt_writer["wdpa"]',
                 'google_storage_bucket_iam_member.translation_debt_writer["eamlis"]',
                 "google_storage_bucket_iam_member.publisher_translation_debt_writer",
+                "google_storage_bucket_iam_member.eamlis_job_object_user",
+                "google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader",
                 "module.mpatlas_job_service_account.google_service_account.this",
                 "module.mpatlas_scheduler_service_account.google_service_account.this",
                 "google_storage_bucket_iam_member.mpatlas_job_object_user",
@@ -151,6 +153,8 @@ class TargetApplyCallerTests(unittest.TestCase):
         expected = {
             "google_project_iam_custom_role.translation_notice_iam_manager",
             "google_project_iam_member.github_actions_translation_notice_iam_manager",
+            "google_project_iam_custom_role.eamlis_quality_iam_manager",
+            "google_project_iam_member.github_actions_eamlis_quality_iam_manager",
         }
         self.assertEqual(set(inputs["targets"].split()), expected)
         self.assertEqual(set(inputs["allowed_exact"].split()), expected)

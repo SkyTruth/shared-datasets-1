@@ -80,6 +80,9 @@ def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool
     _bucket_name, name = parse_gs_uri(uri)
     if not name:
         raise typer.BadParameter(f"{operation} requires an object URI, not a bucket root")
+    from ingestion.eamlis_monthly.source_quality import control_target
+    if control_target(name):
+        raise typer.BadParameter("source-quality control requires its own reviewed resolver")
     require_unmanaged_target(name)
     if is_protocol_namespace(name):
         raise typer.BadParameter("publication state, receipts, and checkpoints require the publication executor")
