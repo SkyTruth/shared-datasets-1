@@ -109,5 +109,8 @@ def test_actual_saved_plan_permissions_are_verified_before_mutation(filename, jo
     if guard == 'deployment':
         expected_guard += " && steps.claim-receipt.outcome == 'success'"
         assert names.index('Attest serialized deployment claim before mutation') < names.index(check)
+    if filename == 'catalog-viewer-deploy.yml' and target == 'iam-bootstrap':
+        expected_guard += " && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)"
+        assert steps[allowlist]['if'] == steps[mutation]['if'] == expected_guard
     assert steps[check]['if'] == expected_guard
     assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']

@@ -238,11 +238,15 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     ([], set()),
     (["docs/ci-preflight.md"], set()),
     ([".github/workflows/ci.yml", "tests/test_ci_deployments.py"], set()),
+    (["ingestion/mpatlas_monthly/run.py"], {"mpatlas"}),
     (["ingestion/wdpa_monthly/run.py"], {"wdpa"}),
+    (["ingestion/wdpa_monthly/run.py", "terraform/README.md"], {"wdpa"}),
     (["ingestion/wdpa_monthly/run.py", "ingestion/eamlis_monthly/run.py"],
      {"wdpa", "eamlis"}),
     (["ingestion/wdpa_monthly/run.py", "terraform/envs/prod/wdpa_monthly.tf"],
      {"wdpa", "ingestion_iam", "artifact_registry_iam"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"],
+     {"mpatlas", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}),
 ])
 def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
     from test_ci_preflight import fixture_repo

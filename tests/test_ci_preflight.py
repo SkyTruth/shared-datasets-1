@@ -67,14 +67,16 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     "ingestion/common/nested/operations.md", "services/README.md",
     "services/catalog_viewer/README.md", "services/nested/docs/operations.md",
     "api/python/README.md", "api/typescript/README.md", "api/nested/package/README.md",
+    "scripts/nested/README.md", ".github/README.md", "terraform/modules/cloud_run_job/README.md",
+    "web/README.md", "tests/browser/README.md", "api/python/notes.md",
 ])
 def test_component_documentation_only_selects_always(path):
     assert set(select_suites([path])[0]) == ALWAYS
 
 
 @pytest.mark.parametrize("path", [
-    "scripts/nested/README.md", "scripts/README.md.py", "pyproject.toml",
-    ".github/README.md", ".github/workflows/ci.yml",
+    "tests/fixtures/README.md", "scripts/README.md.py", "pyproject.toml",
+    ".github/workflows/ci.yml",
 ])
 def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
     assert select_suites([path])[0] == list(SUITES)
@@ -517,6 +519,8 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
 
 @pytest.mark.parametrize("paths,suites,deployments", [
     (["docs/guide.md"], ALWAYS, []),
+    (["terraform/modules/cloud_run_job/README.md"], ALWAYS, []),
+    ([".github/README.md"], ALWAYS, []),
     (["ingestion/dataset_usage/README.md"], ALWAYS, []),
     (["services/catalog_viewer/README.md"], ALWAYS, []),
     (["ingestion/common/nested/operations.md"], ALWAYS, []),

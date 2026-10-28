@@ -204,8 +204,9 @@ and additional suites, with no separate policy file or persisted tier state.
 | Infrastructure | Terraform checks in mandatory lint; shared contracts remain broad | Explicit protected infrastructure dependencies |
 | Shared or unknown | All suites | Explicit release dependencies only |
 
-Informational Markdown paths use the documentation tier; `docs/assets/` remains
-runtime metadata. Non-Markdown tools under guidance directories remain unknown.
+Markdown files use the documentation tier, including workflow and Terraform
+READMEs. Catalog inputs, templates, asset metadata and test fixtures retain their
+consumer validation. Non-Markdown tools under guidance directories remain unknown.
 Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union their
 requirements. Workflow/shared-contract changes and unavailable comparisons select
 all suites. Runtime-only deployments reuse installed IAM. Terraform changes and explicit
