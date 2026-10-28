@@ -786,7 +786,7 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
             workdir = Path(temporary)
             path = workdir / "source.geojson"
             path.write_text(json.dumps({"type": "FeatureCollection", "features": [
-                feature(p, (-87.7, 34.1) if n < 2 else (-86.8, 35.2))
+                feature(p, (-81.038888888889, 38) if n < 2 else (-86.8, 35.2))
                 for n, p in enumerate(properties)]}))
             reservation = identity_state.Reservation(ledger, {"path": "fixture"}, 1, None)
             output = eamlis.build_asset_output(source=source, extract=eamlis.SourceExtract(path, 3, 0),
@@ -795,6 +795,15 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
             self.assertEqual({r["feature_id"] for r in output.sidecar_records}, {"1", "2", "3"})
             self.assertTrue(set(ids.ASSIGNMENT_FIELDS) <= set(eamlis.output_layer_summary(output.fgb)["fields"]))
             self.assertEqual(output.identity_metadata["contract_id"], ids.CONTRACT)
+            # Read the real ogr2ogr FGB output: integer coordinates become doubles.
+            import geopandas as gpd
+            from scripts import release_feature_model as model
+            stored = gpd.read_file(output.fgb).set_index("feature_id")
+            for record in output.sidecar_records:
+                row = stored.loc[record["feature_id"]]
+                geometry = {"type": "Point", "coordinates": [row.geometry.x, row.geometry.y]}
+                self.assertEqual(record["geometry_hash"], model.geometry_hash(geometry, algorithm=output.geometry_hash_algorithm))
+                self.assertEqual(row.geometry_hash, record["geometry_hash"])
 
     def test_fixture_geojson_builds_stable_fgb_output(self):
         source = sample_source_state(feature_count=2)

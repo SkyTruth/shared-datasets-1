@@ -75,6 +75,26 @@ Published `feature_id` values are plain alphanumeric strings such as
 source fields plus `feature_id`, `geometry_hash`, and `properties_hash`; PMTiles
 are metadata-lookup tiles containing geometry and `feature_id` only.
 
+The first keyed publication is `2026-10-29`. The current producer uses
+`sha256:canonical-geometry:v2` for keyed geometry hashes: integer and decimal
+spellings of the same coordinate hash equally, with no rounding of actual
+coordinate changes. Both ordinary publications and staged held candidates name
+that algorithm in their manifests. Legacy EAMLIS and other producers retain v1
+unless separately migrated. The source definition `eamlis-keyed-content-v2`
+includes this algorithm so the next unused date refreshes older hash output.
+IDs still come from the same installed ledger; no sequence or namespace reset
+is involved. Old releases are not rewritten. Release comparisons refuse mixed
+hash versions and accept two releases using the same supported version.
+
+After activation, a reviewed metadata-only plan may replace exactly the asset
+README, or the complete current translation bundle. A README plan cannot include
+feature artifacts, ledgers or a release-index rebuild. The source-quality hold
+and approved-publisher gates still apply. Scheduler resumption remains a separate
+maintainer action; this hash/metadata follow-up keeps cron paused.
+The protected deploy checks Scheduler state and defers its automatic canary
+while paused. An explicit `canary_run_date` authorizes a manual execution
+without resuming cron. A missing/unknown Scheduler state fails deployment.
+
 When changed, the job writes:
 
 ```text

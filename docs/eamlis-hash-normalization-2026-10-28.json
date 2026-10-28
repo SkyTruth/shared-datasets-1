@@ -1,0 +1,44 @@
+{
+  "identity_ledger_resets": 0,
+  "keyed_geometry_hash_algorithm": "sha256:canonical-geometry:v2",
+  "keyed_source_fingerprint": "eamlis-keyed-content-v2",
+  "legacy_geometry_hash_algorithm_preserved": "sha256:canonical-geometry:v1",
+  "native_image": "sha256:9290435153801e4d49b968214c02b3ed689434d1712bda4ed9ae8f57a691f5cd",
+  "native_sample": {
+    "all_feature_ids_match_ledger": true,
+    "all_fgb_hashes_recomputed": true,
+    "area_only": 25,
+    "feature_count": 65,
+    "geometry_hash_algorithm": "sha256:canonical-geometry:v2",
+    "geometry_unchanged": true,
+    "producer": "ingestion.eamlis_monthly.run.build_asset_output"
+  },
+  "native_tests": "35 passed, 10 subtests passed",
+  "new_provider_translation_requests": 0,
+  "planned_readme": {
+    "cache_control": "no-cache, max-age=0, must-revalidate",
+    "content_type": "text/markdown",
+    "destination_generation": "1777619582695763",
+    "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/README.md",
+    "source_generation": "1793223118263955",
+    "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/eamlis-hash-metadata-20261028/README.md"
+  },
+  "production_changes_in_this_preparation": "only no-clobber scratch README staging; no canonical mutations or executions",
+  "published_release_rewrites": 0,
+  "scheduler_state_observed": "PAUSED",
+  "scope": "EAMLIS keyed hash normalization and activated metadata, scheduler remains paused",
+  "snapshot_replay": {
+    "all_ids_unchanged": true,
+    "all_properties_hashes_unchanged": true,
+    "all_v2_hashes_match_serialized_coordinates": true,
+    "feature_count": 64515,
+    "ledger_bytes_unchanged": true,
+    "old_release_rewritten": false,
+    "sample_area_only": 25,
+    "sample_decimal_coordinate_problems": 20,
+    "sample_features": 65,
+    "sample_integer_coordinate_problems": 20,
+    "snapshot": "2026-10-29",
+    "v2_hashes_differing_from_published_v1": 0
+  }
+}

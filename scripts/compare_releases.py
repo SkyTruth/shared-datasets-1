@@ -200,10 +200,11 @@ def identity_compatibility(
             "compatible": False,
             "reason": "Source-property hash exclusions differ.",
         }
-    if before.get("hashes") != after.get("hashes") or before.get("hashes") != {
-        "geometry_hash_algorithm": model.GEOMETRY_HASH_ALGORITHM,
+    hashes = before.get("hashes")
+    if hashes != after.get("hashes") or not any(hashes == {
+        "geometry_hash_algorithm": algorithm,
         "properties_hash_algorithm": model.PROPERTIES_HASH_ALGORITHM,
-    }:
+    } for algorithm in model.GEOMETRY_HASH_ALGORITHMS):
         return {
             "compatible": False,
             "reason": "Hash semantics are missing or incompatible.",

@@ -162,7 +162,9 @@ def enrich(features, *, ledger: Ledger, release: str, asset_slug: str, provenanc
         item, record = feature_metadata.feature_record(
             asset_slug=asset_slug, release=release, feature_id=assignments[row.key], geometry=feature["geometry"],
             source_properties=properties, provenance=provenance, identity_key=row.key,
-            identity_excluded_properties=EXCLUDED_PROPERTIES)
+            identity_excluded_properties=EXCLUDED_PROPERTIES,
+            content_hash_pair=(model.geometry_hash(feature["geometry"], algorithm=model.GEOMETRY_HASH_ALGORITHM_V2),
+                               model.properties_hash(properties, exclude_properties=EXCLUDED_PROPERTIES)))
         enriched.append(item)
         records.append(record)
     return enriched, records

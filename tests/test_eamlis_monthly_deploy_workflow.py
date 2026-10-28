@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import os
+import subprocess
 from pathlib import Path
 
 from workflow_helpers import (
@@ -22,6 +24,30 @@ REQUIRED_SCRIPT_COPIES = (
     "scripts/slack_notify.py",
     "scripts/vector_asset.py",
 )
+
+
+def test_paused_scheduler_defers_automatic_deploy_canary(tmp_path):
+    step = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Resolve in-flight canary"]
+    fake = tmp_path / "gcloud"
+    fake.write_text("#!/bin/sh\ncase \"$1 $2 $3\" in\n'scheduler jobs describe') echo \"$TEST_SCHEDULER_STATE\";;\n'run jobs executions') exit 0;;\n*) exit 91;;\nesac\n")
+    fake.chmod(0o755)
+    for state, date, expected, successful in [
+        ("PAUSED", "", "false", True),
+        ("PAUSED", "2026-11-01", "true", True),
+        ("ENABLED", "", "true", True),
+        ("", "", None, False),
+        ("UPDATE_FAILED", "", None, False),
+    ]:
+        output = tmp_path / "outputs"
+        output.write_text("")
+        result = subprocess.run(["bash", "-c", step["run"]], env={
+            **os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "JOB_NAME": "eamlis-monthly", "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
+            "CANCEL_RUNNING_CANARY": "false", "CANARY_RUN_DATE": date, "GITHUB_OUTPUT": str(output),
+            "TEST_SCHEDULER_STATE": state,
+        }, capture_output=True, text=True)
+        assert (result.returncode == 0) == successful, result.stderr
+        assert output.read_text() == (f"run_canary={expected}\n" if expected is not None else "")
 
 
 class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):

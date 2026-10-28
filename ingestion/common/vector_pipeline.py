@@ -111,6 +111,7 @@ def publish_vector_bundle(
     identity: Mapping[str, Any],
     extra_suffix_paths: Sequence[tuple[str, Path]] = (),
     translations: Mapping[str, Any] | None = None,
+    geometry_hash_algorithm: str = feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM,
 ) -> PublishedVectorBundle:
     """Upload the standard FGB/PMTiles/metadata/schema/manifest release bundle.
 
@@ -191,6 +192,7 @@ def publish_vector_bundle(
             manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
             manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
             translations=translations,
+            geometry_hash_algorithm=geometry_hash_algorithm,
             extra_artifacts=[
                 {"role": f"extra-{index}", "format": "metadata", **release_info,
                  "latest_path": latest_info["path"], "latest_generation": latest_info["generation"],

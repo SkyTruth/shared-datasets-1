@@ -13,6 +13,22 @@ from tests.comparison_fixtures import bundle, record, generated
 A, B = "2026-01-01", "2026-02-01"
 
 
+@pytest.mark.parametrize("before_algorithm,after_algorithm,compatible", [
+    (model.GEOMETRY_HASH_ALGORITHM, model.GEOMETRY_HASH_ALGORITHM, True),
+    (model.GEOMETRY_HASH_ALGORITHM_V2, model.GEOMETRY_HASH_ALGORITHM_V2, True),
+    (model.GEOMETRY_HASH_ALGORITHM, model.GEOMETRY_HASH_ALGORITHM_V2, False),
+    ("sha256:unknown", "sha256:unknown", False),
+])
+def test_geometry_hash_versions_require_equal_known_semantics(before_algorithm, after_algorithm, compatible):
+    def manifest(algorithm):
+        return {"release_feature_model_schema_version": 2,
+                "identity": model.build_identity_metadata(strategy="source_field", source_fields=["feature_id"]),
+                "hashes": {"geometry_hash_algorithm": algorithm,
+                           "properties_hash_algorithm": model.PROPERTIES_HASH_ALGORITHM}}
+    fields = {"feature_id": model.ReleaseSchemaField("feature_id", "string", False)}
+    assert compare.identity_compatibility(manifest(before_algorithm), manifest(after_algorithm), fields, fields)["compatible"] == compatible
+
+
 def run(tmp_path, a, b, **kwargs):
     engine = compare.Comparison(tmp_path / "index", **kwargs)
     engine.run(a[0], b[0], a[1], b[1])

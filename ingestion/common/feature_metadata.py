@@ -773,6 +773,7 @@ def manifest_payload(
     source_inputs: Sequence[Mapping[str, Any]],
     identity: Mapping[str, Any],
     feature_count: int,
+    geometry_hash_algorithm: str = release_feature_model.GEOMETRY_HASH_ALGORITHM,
 ) -> dict[str, Any]:
     release_base = f"gs://{bucket_name}/{asset_root}/releases/{release}/{asset_slug}"
     artifacts = []
@@ -793,6 +794,7 @@ def manifest_payload(
         schema=schema,
         identity=identity,
         validation={"valid": True, "feature_count": feature_count},
+        geometry_hash_algorithm=geometry_hash_algorithm,
     )
 
 
@@ -844,6 +846,7 @@ def final_manifest_payload(
     manifest_latest_path: str | None = None,
     translations: Mapping[str, Any] | None = None,
     extra_artifacts: Sequence[Mapping[str, Any]] = (),
+    geometry_hash_algorithm: str = release_feature_model.GEOMETRY_HASH_ALGORITHM,
 ) -> dict[str, Any]:
     payload = manifest_payload(
         asset_slug=asset_slug,
@@ -855,6 +858,7 @@ def final_manifest_payload(
         source_inputs=source_inputs,
         identity=identity,
         feature_count=feature_count,
+        geometry_hash_algorithm=geometry_hash_algorithm,
     )
     latest_blob_info_by_role = latest_blob_info_by_role or {}
     artifacts_by_role = {str(artifact["role"]): dict(artifact) for artifact in payload["artifacts"]}

@@ -31,6 +31,12 @@ dispatch input for a deliberate backfill or metadata-contract repair run. Do
 not deploy this job with a local `terraform apply` or by pushing hand-built
 images.
 
+When EAMLIS Scheduler is paused, deployment defers its automatic canary unless
+an explicit `canary_run_date` is supplied. It still verifies the deployed digest
+and existing release contract. This preserves a maintenance pause and avoids
+trying a legacy completed run date after identity activation. It never resumes
+the schedule. Missing or unexpected Scheduler state fails the gate.
+
 ## eamlis-monthly schedule control and teardown
 
 Immediate stop:
