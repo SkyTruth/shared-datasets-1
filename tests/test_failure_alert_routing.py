@@ -295,8 +295,8 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
   protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
-    # The frequent observer has persistent-health coverage. Every other job,
-    # including future jobs, retains the immediate failure policy.
+    # The retired observer remains excluded while its schedule is paused.
+    # Every actual ingestion job, including WDPA and future jobs, stays covered.
     assert filter_text.count("resource.labels.job_name") == 1
     assert 'NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in filter_text
     scheduler = text.split('"scheduled_ingestion_scheduler_failure"', 1)[1].split("\nresource ", 1)[0]
@@ -304,7 +304,7 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
     assert scheduler_filter.count("resource.labels.job_id") == 1
     assert 'NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"' in scheduler_filter
     health = text.split('"wdpa_execution_observer_unhealthy"', 1)[1].split("\nresource ", 1)[0]
-    assert 'enabled      = var.cron_alerts_enabled' in health
+    assert 'enabled      = false' in health
     assert 'notification_channels = local.cron_alert_notification_channels' in health
     assert 'resource.labels.job_name="${local.wdpa_execution_observer_job_name}"' in health
     # An alert-only target plan must not pull in the Cloud Run job and its
@@ -313,6 +313,8 @@ def test_cloud_policy_suppresses_trusted_marked_executions_and_covered_observer(
     observer = (ROOT / "terraform/envs/prod/wdpa_execution_observer.tf").read_text()
     assert 'wdpa_execution_observer_job_name = "wdpa-execution-observer"' in observer
     assert observer.count('name                  = local.wdpa_execution_observer_job_name') == 2
+    scheduler_config = observer.split('module "wdpa_execution_observer_scheduler"', 1)[1]
+    assert 'paused                = true' in scheduler_config
     write = text.split('"dataset_object_written_by_unapproved_principal"', 1)[1]
     assert '''NOT (
   protoPayload.authenticationInfo.principalEmail="${module.wdpa_observer_service_account.email}"

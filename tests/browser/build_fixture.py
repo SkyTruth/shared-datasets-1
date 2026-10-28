@@ -119,8 +119,8 @@ def build(work: Path) -> None:
         )
         index = json.loads(json.dumps(contract["index"]))
         if slug.startswith("wdpa-"):
-            # One execution can publish marine successfully, then fail before
-            # terrestrial publishes. The UI must keep both facts visible.
+            # Partial publication must not make terrestrial inherit the newer
+            # marine release date. Each asset keeps its own release index.
             latest = "2026-10-01" if slug == "wdpa-marine" else "2026-09-30"
             index = json.loads(json.dumps(index).replace("2026-09-22", latest))
         index["asset_slug"] = slug

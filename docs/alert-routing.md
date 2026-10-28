@@ -14,7 +14,6 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | PR CI, build checks, manual GitHub checks | GitHub |
 | Synchronous EAMLIS/sea-ice/MPAtlas deployment canary or WDPA upload preflight | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
-| Five-minute WDPA execution observer or its Scheduler dispatch | Monitoring Slack only after persistent loss of successful completions |
 | Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
@@ -27,8 +26,7 @@ only after the immutable approved candidate is published and verified; Slack
 delivery or a healthy subsequent download cannot clear it.
 
 The Cloud Run policy retains the project/region-wide failure condition and
-`protoPayload.status.code>0`, including OOM/system failures. The frequent WDPA
-observer uses the health policy described below. Its only supervision
+`protoPayload.status.code>0`, including OOM/system failures. Its supervision
 exception requires both the authenticated execution creator in
 `protoPayload.response.metadata.annotations."run.googleapis.com/creator"` and the
 execution marker name in `protoPayload.response.spec.template.spec.containers.env`.
@@ -45,36 +43,27 @@ command loses connectivity, times out, or its runner is cancelled, GitHub report
 an unsuccessful workflow; the execution may still need manual inspection. A
 successful workflow is not permitted to abandon a marked execution.
 
-## Observer recovery window
+## WDPA execution-driven monitoring
 
-`wdpa-execution-observer` runs every five minutes. Its execution and Scheduler
-dispatch failures are excluded by exact job name from the immediate failure
-policies and covered by `wdpa_execution_observer_unhealthy`. Other jobs retain
-immediate failure coverage, including jobs added later.
+WDPA uses the same Cloud Run execution-failure and Scheduler dispatch-failure
+policies as the other ingestion jobs. Successes and meaningful skips update
+each asset's release index, which supplies the catalog's **Last check-in**.
+An old check-in while no update is scheduled is not an observer outage.
+The hourly deployment-completion workflow verifies only pending deployment
+records; it does not launch a per-dataset observer while WDPA is idle.
 
-The health policy sums `run.googleapis.com/job/completed_execution_count` with
-`result="succeeded"` over a rolling 15-minute window. It notifies only when that
-sum stays below one for two minutes. Cloud Run metric ingestion and alert
-evaluation add latency. A later successful completion clears the condition;
-healthy runs and brief failures send no Slack messages. Opening and closure notifications use the editable bot transport described below.
+The former `wdpa-execution-observer` schedule is permanently paused and
+`wdpa_execution_observer_unhealthy` is disabled. Their definitions, narrow IAM
+and old status endpoint remain for an update-only rollout: the existing
+protected deployment paths block resource deletion. The catalog no longer
+reads or polls that endpoint. Do not resume the observer in routine deployment.
+Its exact-name exclusions do not exclude `wdpa-monthly` or any other worker.
 
-Missing metric data counts as unhealthy. The completion metric also emits zero
-samples, so metric absence alone would not establish absence of successful runs.
-Repeated startup failures and a stopped Scheduler are both covered without
-relying on Python starting or an application log being emitted. Verify a recent
-successful metric sample after policy installation; never infer health from
-failure logs being absent.
-
-The grace period relies on the observer's five-minute cadence. Daily and monthly
-publishers currently have no Cloud Run task retries and need their own recovery
-and delivery deadlines before adopting delayed notifications. Do not add retries
-or suppress their failure alerts to emulate observer recovery.
-
-Before declaring the observer policy live, inspect its success selector, rolling
-window and missing-data behavior, replay historical metrics covering healthy
-operation and a brief failure, and verify the protected sync deployed the new
-policy together with both exact-job exclusions. Do not deliberately interrupt
-the production observer to test an outage notification.
+When both changes deploy, the main CI graph disables the health policy before
+the WDPA deployment pauses the schedule. Verify the live policy is disabled
+and the schedule is `PAUSED` before declaring the retirement deployed. A
+separately dispatched WDPA deployment must follow the same order. A later
+infrastructure teardown needs a reviewed, constrained deletion path.
 
 ## Editable Monitoring messages
 
@@ -93,7 +82,8 @@ execution; closure still requires separate recovery verification. Existing
 Monitoring parents receive these fields on their next closure update; duplicate
 open events remain quiet. Receipt state and delivery safeguards are unchanged.
 
-The WDPA metric policy requests `OPENED` and `CLOSED`. Google supports only
+The retired WDPA metric policy retains `OPENED` and `CLOSED` for its existing
+incident history. Google supports only
 `OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
 Those alerts are bot-owned too. After investigating recovery, the owner can use
 **Alerts / Legacy workflow resolution**, supplying only `monitoring_incident_id`.
@@ -133,7 +123,7 @@ with that evidence. Policy configuration and local tests alone do not prove live
 delivery; report it as unverified when matching failure evidence is unavailable.
 Do not deliberately fail production jobs to test routing.
 
-The unapproved-writer policy exempts the WDPA observer only for the exact
+The unapproved-writer policy retains the dormant WDPA observer exception only for the exact
 `_catalog/wdpa-monthly-execution.json` object. It grants no permissions and does
 not suppress other writes or delete alerts. Its protected sync watches
 `canonical_mutation_iam.tf` and `wdpa_execution_observer.tf` as policy inputs.
