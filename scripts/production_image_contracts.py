@@ -126,6 +126,7 @@ def commands(target, executor, *, image_id=None):
         checks += [run + ["python", "scripts/wdpa_input_memory_probe.py", "--help"], run + ["python", "scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
     if target == "eamlis-monthly":
         checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import source_quality; assert 0 <= source_quality.policy() < 100"]]
+        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import identity, identity_installation, identity_translations; import json; assert identity.Ledger.parse(json.loads(identity.encoded(identity.Ledger.genesis()))).next_feature_id == 1"]]
     return [build, *checks]
 
 

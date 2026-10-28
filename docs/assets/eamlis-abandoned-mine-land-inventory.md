@@ -193,6 +193,14 @@ Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date 
 
 The 2026-06-05 PMTiles artifact is a lightweight metadata-lookup tile archive with only `feature_id` properties. The canonical FGB and metadata sidecar preserve full feature attributes.
 
+Legacy `OBJECTID` feature IDs can be renumbered across releases. The job supports
+a separately reviewed permanent `PROBLEM_KEY`/area-key identity installation;
+consult each concrete release manifest for its contract. Equal numeric IDs
+across the cutover do not establish continuity. The
+[identity evidence and runbook](../eamlis-feature-identity.md) explains the 25
+area-only records and the explicit migration. This document's structured identity
+metadata continues to describe the published legacy contract until activation.
+
 ## Properties / columns
 
 | Name | Type | Description |

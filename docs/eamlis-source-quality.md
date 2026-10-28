@@ -6,6 +6,8 @@ is allowed. `catalog/ingestion-quality.json` owns the threshold. The count is
 records with geometry under the same source selection, not distinct coordinates:
 several mining problems can share a point. This guard does not fix ArcGIS
 `OBJECTID` reuse or establish stable feature identity across releases.
+The separately reviewed [permanent-key installation](eamlis-feature-identity.md)
+addresses that identity problem while retaining this hold and approval contract.
 
 The scheduled job continues checking the source. A hold stays active even after
 a later healthy download; recovery always requires review of an exact candidate.

@@ -144,6 +144,24 @@ def execution_completed(owner):
     return bool(value.get("completionTime")) and not value.get("reconciling", False) and value.get("runningCount", 0) == 0
 
 
+def validate_control(state):
+    from ingestion.eamlis_monthly import identity_state
+    require(isinstance(state, dict) and type(state.get("schema_version")) is int
+            and state["schema_version"] in {1, 2}, "invalid source-loss control version")
+    fields = {"schema_version", "asset_slug", "owner", "hold"}
+    if state["schema_version"] == 2:
+        fields.add("identity")
+    require(set(state) == fields and state["asset_slug"] == SLUG, "invalid source-loss control state")
+    require(state["owner"] is None or isinstance(state["owner"], str), "invalid publication claim")
+    if state["hold"] is not None:
+        h = state["hold"]
+        require(isinstance(h, dict) and h.get("id") and h.get("notification") in
+                {"pending", "sending", "sent", "failed", "unknown"}, "invalid source-loss hold")
+    if state["schema_version"] == 2:
+        identity_state.validate(state["identity"])
+    return state
+
+
 class Guard(AbstractContextManager):
     """Serialize the asset's checks/publications and retain holds across executions.
 
@@ -161,23 +179,21 @@ class Guard(AbstractContextManager):
         data, ref = read(self.bucket, CONTROL)
         if data is None:
             return {"schema_version": 1, "asset_slug": SLUG, "owner": None, "hold": None}, 0
-        state = json.loads(data)
-        require(set(state) == {"schema_version", "asset_slug", "owner", "hold"}
-                and state["schema_version"] == 1 and state["asset_slug"] == SLUG,
-                "invalid source-loss control state")
-        require(state["owner"] is None or isinstance(state["owner"], str), "invalid publication claim")
-        if state["hold"] is not None:
-            h = state["hold"]
-            require(isinstance(h, dict) and h.get("id") and h.get("notification") in
-                    {"pending", "sending", "sent", "failed", "unknown"}, "invalid source-loss hold")
-        return state, int(ref["generation"])
+        return validate_control(json.loads(data)), int(ref["generation"])
 
     def save(self):
+        validate_control(self.state)
         ref = put(self.bucket, CONTROL, encode(self.state), generation=self.generation)
         self.generation = int(ref["generation"])
 
     def __enter__(self):
         self.state, self.generation = self.load()
+        from ingestion.eamlis_monthly import identity_state
+        if self.state["schema_version"] == 1:
+            # An incomplete installation must not change the captured legacy
+            # generation: an exact reviewed retry can still finish its CAS.
+            self.before = baseline(self.bucket)
+            identity_state.selected_ledger(self)
         interrupted = self.state["owner"]
         if interrupted is not None:
             require(execution_completed(interrupted), "EAMLIS has an active or interrupted source-quality claim; inspect it before retrying")
@@ -185,6 +201,7 @@ class Guard(AbstractContextManager):
         self.save()
         try:
             self.before = baseline(self.bucket)
+            identity_state.selected_ledger(self)
         except Exception:
             self.state["owner"] = None
             self.save()
@@ -233,6 +250,9 @@ class Guard(AbstractContextManager):
     def check_publication(self):
         require(not self.held, "source-quality hold forbids automatic publication")
         require(baseline_token(baseline(self.bucket)) == baseline_token(self.before), "published baseline changed during extraction")
+        self.require_owner()
+
+    def require_owner(self):
         state, generation = self.load()
         require(generation == self.generation and state["owner"] == self.owner, "source-quality claim changed")
 
@@ -410,8 +430,12 @@ def begin_promotion(client, plan):
             require("source_loss_review" in plan, "EAMLIS publishing is held; review its exact candidate")
             assert_review(guard, plan["source_loss_review"])
             validate_candidate_plan(client, plan)
+            from ingestion.eamlis_monthly import identity_state
+            identity_state.validate_candidate(guard, candidate(client, plan["source_loss_review"]["candidate"]))
         else:
             require("source_loss_review" not in plan, "source-quality hold was already resolved")
+            from ingestion.eamlis_monthly import identity_state
+            identity_state.require_translation_only(guard, plan)
     except Exception:
         if not resuming:
             guard.__exit__(None, None, None)
@@ -492,6 +516,9 @@ def finish_promotion(client, plan):
         manifest = json.loads(manifest_data)
         model.validate_release_manifest(manifest, expected_asset_slug=SLUG, expected_release=value["release"], require_generations=True)
         require(manifest["validation"]["feature_count"] == value["geometry_count"], "published manifest count differs from approval")
+        if guard.state.get("identity") is not None:
+            from ingestion.eamlis_monthly import identity_state
+            identity_state.activate(guard)
         guard.state["hold"] = None
     else:
         require(not guard.held, "cannot clear an unreviewed hold")
@@ -507,6 +534,8 @@ def stage_candidate(guard, *, output, source, release, source_inputs, translatio
     hashes = {role: digest(path.read_bytes()) for role, path in files.items()}
     seed = {"builder_version": 1, "release": release, "baseline_token": baseline_token(guard.before),
             "source_fingerprint": source.fingerprint, "hashes": hashes}
+    if output.identity_metadata.get("contract_id"):
+        seed["identity"] = output.identity_metadata
     candidate_id = digest(encode(seed))
     prefix = f"_scratch/pending-publishes/{SLUG}/source-loss-{candidate_id}/"
     staged = {role: immutable_file(guard.bucket, prefix + "objects/" + path.name, path)
@@ -525,7 +554,7 @@ def stage_candidate(guard, *, output, source, release, source_inputs, translatio
         asset_slug=SLUG, release=release, bucket_name=guard.bucket.name, asset_root=ROOT,
         sha256_by_role={role: hashes[role] for role in core_roles}, schema=output.schema_payload,
         source_inputs=source_inputs,
-        identity=feature_metadata.release_feature_model.build_identity_metadata(strategy="source_field", source_fields=["OBJECTID"]),
+        identity=output.identity_metadata,
         feature_count=output.row_count,
         release_blob_info_by_role={r: release_info[r] for r in core_roles},
         latest_blob_info_by_role={r: latest_info[r] for r in core_roles},
@@ -550,6 +579,8 @@ def stage_candidate(guard, *, output, source, release, source_inputs, translatio
         "sha256": {r: ref["sha256"] for r, ref in staged.items()},
         "notes": "Prepared held candidate; publication requires its exact reviewed PR plan."}
     record_path = output.manifest.parent / "run-record.json"
+    if output.identity_metadata.get("contract_id"):
+        record["identity_contract"] = output.identity_metadata["contract_id"]
     record_path.write_bytes(encode(record))
     staged["run_record"] = immutable_file(guard.bucket, prefix + "objects/run-record.json", record_path)
     raw = immutable_file(guard.bucket, prefix + "source/source.geojson", extract.geojson)

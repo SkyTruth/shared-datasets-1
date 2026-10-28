@@ -17,6 +17,7 @@ from ingestion.common import publication as p
 from ingestion.common.reset_controls import GoogleControlReader, PROJECT, PUBLISHER_ACCOUNT, DEPLOYER_ACCOUNT
 from ingestion.common.reset_installation import install_reset, validate_reset_plan
 from scripts import dataset_mutation_authorization as auth
+from ingestion.eamlis_monthly import identity_installation as eamlis
 
 
 def authorized_plan(directory: Path, digest: str, *, api, env):
@@ -25,7 +26,10 @@ def authorized_plan(directory: Path, digest: str, *, api, env):
     p.require(envelope["outcome"] == "mutation" and set(envelope["document"]) == {"plan_version", "finalization_version", "publish"},
               "reset requires one immutable publish plan")
     plan = envelope["document"]["publish"]
-    validate_reset_plan(plan)
+    if "identity_transition" in plan:
+        eamlis.validate_plan(plan)
+    else:
+        validate_reset_plan(plan)
     return envelope, plan
 
 
@@ -58,10 +62,20 @@ def main(argv=None):
 
     def guard():
         auth.revalidate(api, envelope)
-        reader.check_quiescent(plan["asset_slug"])
+        if "identity_transition" in plan:
+            reader.check_job_quiescent("eamlis-monthly")
+        else:
+            reader.check_quiescent(plan["asset_slug"])
 
-    result = install_reset(GcsStore(storage.Client(project=PROJECT, credentials=credentials)), plan,
-                           authorization=auth.identity_digests(envelope), check_authority_and_jobs=guard)
+    client = storage.Client(project=PROJECT, credentials=credentials)
+    if "identity_transition" in plan:
+        from ingestion.common.publication_gcs import work_root
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="eamlis-install-", dir=work_root()) as temporary:
+            result = eamlis.install(client, plan, check_authority_and_jobs=guard, directory=Path(temporary))
+    else:
+        result = install_reset(GcsStore(client), plan,
+                               authorization=auth.identity_digests(envelope), check_authority_and_jobs=guard)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

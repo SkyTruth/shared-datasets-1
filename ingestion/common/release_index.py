@@ -369,6 +369,8 @@ def run_entry_from_record(
         "run_record_path": run_record_path(record, run_record_info),
         "rows": record.get("row_count"),
     }
+    if record.get("identity_contract"):
+        entry["identity_contract"] = record["identity_contract"]
     return {key: value for key, value in entry.items() if value not in ("", None)}
 
 
@@ -387,14 +389,17 @@ def release_entry_from_record(
     if not release_date:
         raise ReleaseIndexError("successful run record is missing release_date")
     files = files_from_run_record(record)
-    return add_index_status_policy({
+    entry = {
         "date": release_date,
         "release_path": str(record.get("release_path") or ""),
         "files": files,
         "run_record_path": run_record_path(record, run_record_info),
         "rows": record.get("row_count"),
         "source_version": str(record.get("source_version") or ""),
-    })
+    }
+    if record.get("identity_contract"):
+        entry["identity_contract"] = record["identity_contract"]
+    return add_index_status_policy(entry)
 
 
 def merge_latest_run(

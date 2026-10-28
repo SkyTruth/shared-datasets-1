@@ -37,6 +37,8 @@ def prepare_plan(client):
     plan = {"asset_slug": loss.SLUG, "proposal_id": "source-loss-" + value["candidate_id"],
             "promotions": promotions, "source_loss_review": review}
     loss.validate_candidate_plan(client, plan)
+    from ingestion.eamlis_monthly import identity_state
+    identity_state.validate_candidate(guard, value)
     return plan
 
 

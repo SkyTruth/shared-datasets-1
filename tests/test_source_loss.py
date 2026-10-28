@@ -28,6 +28,7 @@ class Client:
         if name not in self.buckets:
             b = FakeBucket()
             b.name = name
+            b.client = self
             self.buckets[name] = b
         return self.buckets[name]
 
