@@ -23,7 +23,7 @@ env:
 jobs:
   bootstrap:
     name: Apply dataset usage deploy IAM bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' || inputs.sync_iam) }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: dataset-usage-deploy.yml
@@ -47,7 +47,7 @@ jobs:
         eamlis_monthly_image=unused-by-dataset-usage-bootstrap
   deploy:
     name: Deploy tested dataset usage image and private telemetry resources
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || needs.bootstrap.result == 'success') }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
@@ -303,6 +303,9 @@ jobs:
         type: string
   workflow_call:
     inputs:
+      sync_iam:
+        required: true
+        type: boolean
       executor_sha:
         description: Exact tested main revision
         required: true

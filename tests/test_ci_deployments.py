@@ -32,7 +32,7 @@ def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
 @pytest.mark.parametrize("runtime_file", ["run.py", "Dockerfile", "README.md.py"])
 def test_readme_exclusion_keeps_mixed_runtime_changes_deployable(job, target, runtime_file):
     paths = [f"ingestion/{job}/README.md", f"ingestion/{job}/{runtime_file}"]
-    assert set(select_deployments(paths)) == {target, "ingestion_iam", "artifact_registry_iam"}
+    assert set(select_deployments(paths)) == {target}
     assert {"geospatial-integration", "production-images"} <= set(select_suites(paths)[0])
 
 
@@ -43,8 +43,8 @@ def test_producer_changes_require_staged_evidence_before_launching_production_va
 
 
 @pytest.mark.parametrize("path,target", [("ingestion/eamlis_monthly/run.py", "eamlis"), ("ingestion/sea_ice_daily/run.py", "sea_ice"), ("ingestion/wdpa_monthly/Dockerfile.promotion", "wdpa")])
-def test_ingestion_release_selects_its_shared_bootstrap_dependency_once(path, target):
-    assert set(select_deployments([path])) == {target, "ingestion_iam", "artifact_registry_iam"}
+def test_runtime_release_does_not_select_iam_syncs(path, target):
+    assert set(select_deployments([path])) == {target}
 
 
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
@@ -52,9 +52,9 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
-    assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
+    assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
-    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam", "dataset_usage"}
+    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"}
 
 
 @pytest.mark.parametrize("path,targets", [
@@ -66,7 +66,7 @@ def test_shared_runtime_and_terraform_modules_select_cross_component_dependents(
     ("docs/assets/ims-sea-ice-extent.md", {"sea_ice"}),
 ])
 def test_image_copies_are_release_and_native_validation_dependencies(path, targets):
-    assert set(select_deployments([path])) == targets | {"ingestion_iam", "artifact_registry_iam"}
+    assert set(select_deployments([path])) == targets
     assert {"geospatial-integration", "production-images"} <= set(select_suites([path])[0])
 
 
@@ -79,15 +79,15 @@ def test_catalog_metadata_updates_do_not_redeploy_consumers_but_contract_changes
     before = "asset_slug,title,canonical_path,translation_locales,translation_fields,access_tier,status,has_pmtiles,available_formats\neamlis-abandoned-mine-land-inventory,Original,gs://skytruth-shared-datasets-1/example/latest/a.fgb,es,PA_NAME,public,active,true,fgb;pmtiles\n"
     path = ["catalog/shared-datasets-catalog.csv"]
     assert select_deployments(path, catalog_snapshots=(before, before.replace("Original", "Updated"))) == []
-    assert set(select_deployments(path, catalog_snapshots=(before, before.replace(",es,", ",es;fr,")))) == {"eamlis", "ingestion_iam", "artifact_registry_iam"}
-    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn", "dataset_usage", "artifact_registry_iam"]
+    assert set(select_deployments(path, catalog_snapshots=(before, before.replace(",es,", ",es;fr,")))) == {"eamlis"}
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn", "dataset_usage"]
     assert "catalog_viewer" not in select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/")))
     assert "catalog_viewer" in select_deployments(path + ["scripts/compare_releases.py"], catalog_snapshots=(before, before))
 
 
 def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_validation():
     path = ["catalog/shared-datasets-catalog.csv"]
-    assert set(select_deployments(path)) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam", "dataset_usage"}
+    assert set(select_deployments(path)) == {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"}
     duplicate = "asset_slug,title\nwdpa-marine,One\nwdpa-marine,Two\n"
     with pytest.raises(ValueError, match="unique nonempty"):
         select_deployments(path, catalog_snapshots=(duplicate, duplicate))
@@ -151,8 +151,8 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     "terraform/envs/prod/monitoring.tf", "scripts/slack_incident_api.py",
     "scripts/monitoring_slack_prepare.py",
 ])
-def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path):
-    assert select_deployments([path]) == ["artifact_registry_iam", "cron_alert_policy"]
+def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path):
+    assert select_deployments([path]) == (["artifact_registry_iam", "cron_alert_policy"] if path.startswith("terraform/") else ["cron_alert_policy"])
     assert "production-images" in select_suites([path])[0]
 
 
@@ -161,10 +161,13 @@ def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path
 OPTIONAL_NEEDS = {
     "ingestion-iam": ("dataset-usage",),
     "scratch-cleanup-iam": ("dataset-usage",),
-    "mpatlas": ("cron-alert-policy",),
-    "wdpa": ("cron-alert-policy",),
-    "dataset-usage": ("catalog-viewer", "pmtiles-cdn"),
-    "cron-alert-policy": ("ingestion-iam",),
+    "mpatlas": ("ingestion-iam", "artifact-registry-iam", "cron-alert-policy"),
+    "wdpa": ("ingestion-iam", "artifact-registry-iam", "cron-alert-policy"),
+    "dataset-usage": ("artifact-registry-iam", "catalog-viewer", "pmtiles-cdn"),
+    "cron-alert-policy": ("ingestion-iam", "artifact-registry-iam"),
+    "eamlis": ("ingestion-iam", "artifact-registry-iam"),
+    "sea-ice": ("ingestion-iam", "artifact-registry-iam"),
+    "catalog-viewer": ("artifact-registry-iam",),
     "publish-reviewed-dataset": ("pmtiles-cdn",),
 }
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
@@ -179,10 +182,11 @@ def condition_result(job, values, *, cancelled=False):
     # propagates skipped ancestors even when the explicit condition is true.
     assert "!cancelled()" in expression
     expression = expression.replace("!cancelled()", repr(not cancelled))
-    expression = re.sub(r"(?:needs|github)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
+    expression = re.sub(r"(?:needs|github|inputs)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
+    expression = re.sub(r"!(?!=)", "not ", expression)
     tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
     assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or,
-                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant)) for node in ast.walk(tree))
+                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.UnaryOp, ast.Not)) for node in ast.walk(tree))
     return eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}})
 
 
@@ -234,9 +238,15 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     ([], set()),
     (["docs/ci-preflight.md"], set()),
     ([".github/workflows/ci.yml", "tests/test_ci_deployments.py"], set()),
-    (["ingestion/wdpa_monthly/run.py"], {"wdpa", "ingestion_iam", "artifact_registry_iam"}),
+    (["ingestion/mpatlas_monthly/run.py"], {"mpatlas"}),
+    (["ingestion/wdpa_monthly/run.py"], {"wdpa"}),
+    (["ingestion/wdpa_monthly/run.py", "terraform/README.md"], {"wdpa"}),
     (["ingestion/wdpa_monthly/run.py", "ingestion/eamlis_monthly/run.py"],
-     {"wdpa", "eamlis", "ingestion_iam", "artifact_registry_iam"}),
+     {"wdpa", "eamlis"}),
+    (["ingestion/wdpa_monthly/run.py", "terraform/envs/prod/wdpa_monthly.tf"],
+     {"wdpa", "ingestion_iam", "artifact_registry_iam"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"],
+     {"mpatlas", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}),
 ])
 def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
     from test_ci_preflight import fixture_repo
@@ -264,8 +274,38 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
            for name in jobs},
         "needs.ci-ready.result": "success", "needs.geospatial-changes.result": "success",
     }
-    # Reproduce the observed chain: dataset-usage is unselected, IAM succeeds,
-    # and WDPA must still run. Independent deployments must stay unselected.
+    # Selected runtime jobs must run while unrelated and unselected IAM jobs skip.
     assert values["needs.dataset-usage.result"] == "skipped"
     for target in DEPLOYMENTS:
         assert condition_result(jobs[target.replace("_", "-")], values) is (target in expected)
+
+
+@pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
+def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
+    caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][target]
+    assert caller["with"]["sync_iam"] == "${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}"
+    workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
+    assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}
+    if target == "catalog-viewer":
+        steps = workflow["jobs"]["deploy"]["steps"]
+        start = next(i for i, step in enumerate(steps) if step.get("name") == "Verify existing project IAM bootstrap authority")
+        end = next(i for i, step in enumerate(steps) if step.get("name") == "Verify catalog-viewer live dependencies")
+        for step in steps[start:end]:
+            assert "(github.event_name == 'workflow_dispatch' || inputs.sync_iam)" in step["if"]
+        return
+    jobs = workflow["jobs"]
+    values = {"github.event_name": "push", "github.ref": "refs/heads/main", "inputs.sync_iam": False,
+              "needs.bootstrap.result": "skipped", "needs.resources.result": "skipped"}
+    assert condition_result(jobs["bootstrap"], values) is False
+    consumer = jobs["deploy" if target == "dataset-usage" else "sync"]
+    assert condition_result(consumer, values) is True
+    values["inputs.sync_iam"] = True
+    assert condition_result(jobs["bootstrap"], values) is True
+    assert condition_result(consumer, values) is False
+    values.update({"needs.bootstrap.result": "success", "needs.resources.result": "success"})
+    assert condition_result(consumer, values) is True
+    manual = {**values, "github.event_name": "workflow_dispatch", "inputs.sync_iam": False}
+    assert condition_result(jobs["bootstrap"], manual) is True
+    assert condition_result(consumer, {**manual, "needs.bootstrap.result": "skipped"}) is False
+    for dependency in consumer["needs"] if isinstance(consumer["needs"], list) else [consumer["needs"]]:
+        assert condition_result(consumer, {**values, f"needs.{dependency}.result": "failure"}) is False

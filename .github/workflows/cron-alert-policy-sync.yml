@@ -3,6 +3,9 @@ name: Infrastructure / Cron alert policy sync
 on:
   workflow_call:
     inputs:
+      sync_iam:
+        required: true
+        type: boolean
       executor_sha:
         description: Exact tested main revision
         required: true
@@ -40,7 +43,7 @@ permissions:
 jobs:
   bootstrap:
     name: Apply Monitoring alert policy IAM bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' || inputs.sync_iam) }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml
@@ -70,7 +73,7 @@ jobs:
   resources:
     name: Provision private Monitoring Slack transport resources
     needs: bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.bootstrap.result == 'success' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml
@@ -115,7 +118,7 @@ jobs:
   sync:
     name: Apply cron alert policy sync
     needs: [bootstrap, resources]
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || (needs.bootstrap.result == 'success' && needs.resources.result == 'success')) }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     secrets: inherit
     with:

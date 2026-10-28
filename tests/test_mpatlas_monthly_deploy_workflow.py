@@ -31,7 +31,7 @@ def test_new_cron_has_exact_deployment_scope_and_consumes_tested_image():
     assert "--wait" in steps["Execute mpatlas-monthly canary"]["run"]
     assert "mpatlas-zone-assessments" in steps["Validate latest MPAtlas release contract"]["run"]
     targets = set(ci_contract.select_deployments(["ingestion/mpatlas_monthly/run.py"]))
-    assert targets == {"mpatlas", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}
+    assert targets == {"mpatlas"}
     caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["mpatlas"]
     assert "cron-alert-policy" in caller["needs"] and "ingestion-iam" in caller["needs"]
     tf = (ROOT / "terraform/envs/prod/mpatlas_monthly_variables.tf").read_text()

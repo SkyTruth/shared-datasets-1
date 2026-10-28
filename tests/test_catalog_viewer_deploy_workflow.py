@@ -33,7 +33,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Catalog / Viewer deploy")
         self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
         self.assertNotIn("workflow_run", trigger)
-        self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})
+        self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt", "sync_iam"})
         for name in ("executor_sha", "source_run_id", "source_run_attempt"):
             self.assertTrue(trigger["workflow_dispatch"]["inputs"][name]["required"])
             self.assertEqual(trigger["workflow_dispatch"]["inputs"][name]["type"], "string")

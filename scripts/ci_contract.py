@@ -99,14 +99,17 @@ NARROW_SCRIPTS = {
 
 def classify_change(path: str) -> tuple[str, set[str]]:
     """One path's tier and additional suites; deployment authority stays explicit."""
-    if path in CONTRACT_FILES or path.startswith(".github/"):
+    if path in CONTRACT_FILES or path.startswith("tests/fixtures/") and path.endswith(".md"):
         return "shared", set(SUITES)
-    if (
-        (path.startswith("scripts/") and path.count("/") == 1 and path.endswith(".md"))
-        or (path.startswith(("ingestion/", "services/")) and path.endswith(".md"))
-        or (path.startswith("api/") and path.endswith("/README.md"))
-    ):
+    if path.startswith(("catalog/", "templates/", "docs/assets/")):
+        suites = {"sdk-node22", "sdk-node24", "browser"}
+        if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
+            suites.update({"geospatial-integration", "production-images"})
+        return "metadata", suites
+    if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
+    if path.startswith(".github/"):
+        return "shared", set(SUITES)
     if path.startswith("ingestion/") or path in NATIVE_TESTS:
         return "component", {"geospatial-integration", "production-images"}
     if path.startswith("api/"):
@@ -118,11 +121,6 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         return "component", {"production-images", "browser"}
     if path.startswith(("web/", "tests/browser/")):
         return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path.startswith(("catalog/", "templates/", "docs/assets/")):
-        suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
-            suites.update({"geospatial-integration", "production-images"})
-        return "metadata", suites
     if path in NARROW_SCRIPTS:
         return "component", set(NARROW_SCRIPTS[path])
     if path.startswith("scripts/"):
@@ -141,9 +139,11 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         return "infrastructure", {"production-images"}
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
         return "infrastructure", set()
-    if (path.startswith(("docs/", ".claude/skills/", ".agents/")) and path.endswith(".md")) or path in {"README.md", "AGENTS.md", "CLAUDE.md", "LICENSE"}:
-        return "documentation", set()
     return "unknown", set(SUITES)
+
+
+def documentation_only(paths: list[str] | None) -> bool:
+    return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
 
 
 def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
@@ -216,7 +216,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
         if path.startswith("ingestion/mpatlas_monthly/") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
-            selected.update({"mpatlas", "cron_alert_policy"})
+            selected.add("mpatlas")
         if path.startswith("ingestion/eamlis_monthly/") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
             "catalog/ingestion-quality.json",
@@ -282,10 +282,15 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
     # this also gives the worker the current catalog baked into its tested image.
     if "catalog_viewer" in selected:
         selected.add("dataset_usage")
-    if selected & ingestion:
-        selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
-        selected.add("artifact_registry_iam")
+    # Runtime deployment reuses installed IAM. Only infrastructure edits select
+    # bootstrap syncs; direct IAM workflow/input rules above stay explicit.
+    if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
+        if "mpatlas" in selected:
+            selected.add("cron_alert_policy")
+        if selected & ingestion:
+            selected.add("ingestion_iam")
+        if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
+            selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 
 

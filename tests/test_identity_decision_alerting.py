@@ -226,7 +226,7 @@ class AlertPolicyTests(unittest.TestCase):
             ALERT_POLICY_SYNC,
             expected_name="Infrastructure / Cron alert policy sync",
             push_paths=None,
-            expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
+            expected_job_if="${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || (needs.bootstrap.result == 'success' && needs.resources.result == 'success')) }}",
             expected_needs=["bootstrap", "resources"],
             sync_name="Cron alert policy sync",
             refusal_prefix="Refusing automatic cron alert policy sync",
