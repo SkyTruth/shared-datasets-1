@@ -2,10 +2,26 @@
 
 Operational failures have one searchable incident ID (`SD-` plus twelve hex
 characters). The first failure creates an **Open** parent message. Additional
-failed attempts go in its thread, with **Also send to channel** always disabled.
+failed attempts update that parent's count and latest evidence; the worker
+creates no automatic per-attempt replies.
 Verified recovery edits the original parent to green **Resolved**, retaining the
 original failure and recovery evidence. It creates no reply or new channel
 message. Healthy runs stay quiet. There is no live synthetic notification test.
+
+Parents include **Impact**, **Mutation state**, **Owner**, and **Required action**.
+Consumer impact and unverified mutations are explicitly unknown. `jonaraphael`
+owns triage; the operation owner is marked unknown because existing incident
+records do not identify the originating agent. Triage assigns that owner and
+checks the exact failed attempt and authoritative mutation records before replay.
+Signed terminal deployment success and verified publication-receipt repair receive
+specific outcome text. A successful job/workflow alone does not establish
+published-data state. These fields use existing evidence without changing the
+checkpoint schema or recovery authorization.
+
+The existing parent-view acknowledgement causes eligible GitHub parents to
+receive the new rendering on their next reconciliation. Historical reply records
+remain readable and uncertain sends retain their owner-reconciliation barrier.
+Confirming an old reply was not delivered never authorizes a replacement reply.
 
 The `Alerts / Workflow health and Slack reconciliation` workflow runs on both successful
 and failed workflow completions. Its presence in Actions does not mean a failure
@@ -212,7 +228,7 @@ a command argument. The incoming webhook secret remains in place for disabled
 mode and other existing notifications. Enabled mode fails visibly on missing or
 invalid configuration rather than silently choosing another transport.
 
-Observe the next real failure/recovery sequence: one parent, thread-only retry
+Observe the next real failure/recovery sequence: one parent, a parent update
 if another attempt fails, that same parent edited green, matching SHA/artifact,
 and incident permalink in the notification run summary. Tests exercise the
 actual HTTP request construction offline, including negative controls for
@@ -289,18 +305,20 @@ healthy deployment does not invalidate the original recovery history.
   method-specific HTTP request contracts and permalink-only resumption after
   acknowledged delivery.
 - `tests/test_slack_incident_api.py` exercises a complete real-client request
-  sequence offline: parent, permalink, thread-only failure and green parent
-  update. No production channel test is needed.
+  sequence offline, including explicit thread routing without broadcast. The
+  incident lifecycle test exercises parent, permalink, repeated-failure update
+  and green parent update through serialized state and the real Slack client.
+  No production channel test is needed.
 
-Invariant enforced: real open incidents may create messages; verified recovery
-only updates their original parent. Exact scope/revision evidence and signed
+Invariant enforced: real open incidents may create one parent; further failures
+and verified recovery only update it. Exact scope/revision evidence and signed
 claims remain required. Boundary changed: fixed thread routing and a versioned,
 signed acknowledgement of the parent view. Code removed: the live synthetic
-workflow, script and tests, recovery reply generation and broadcast option.
-Internal handling removed: recovery posts no longer participate in the active
+workflow, script and tests, automatic reply generation and broadcast option.
+Internal handling removed: reply posts no longer participate in the active
 outbox. Fallbacks added: none. Fallbacks rejected: broadcast replies, new green
 messages, blind reposts and inferred recovery. Deletion candidates left in place:
-historical v1 snapshots and recovery posts retain persisted audit evidence; the
+historical snapshots and replies retain persisted audit evidence; the
 existing webhook supports disabled mode and established ingestion notifications.
 Remaining uncertainty: actual delivery depends on Slack availability and bot
 configuration; ambiguous non-idempotent sends still require owner inspection.

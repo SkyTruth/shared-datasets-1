@@ -4,6 +4,7 @@ Slack reports unattended failures. A supervised execution can be quiet only
 when its GitHub workflow waits for its result and reports failure itself.
 
 GitHub incident recovery follows the [Slack incident lifecycle](slack-incidents.md):
+additional failed attempts update the parent without automatic replies;
 verified recovery edits the original parent to **Resolved** and creates no reply
 or new channel message. That document owns configuration and reconciliation;
 the existing failure-only webhook remains active until incident mode is enabled.
@@ -83,6 +84,14 @@ closure edits that exact parent to **Closed by Monitoring**, with no recovery
 reply or new parent. Duplicate events are quiet, closure is permanent for that
 incident ID, and an out-of-order open cannot turn the message red again.
 Google's original Slack app messages cannot be adopted by a different bot.
+
+Messages include impact, mutation state, owner and required action. Monitoring
+cannot establish consumer impact or mutation outcome, so both remain explicitly
+unknown, including after closure. `jonaraphael` owns triage while the operation
+owner is unknown. The action directs triage to the linked incident and affected
+execution; closure still requires separate recovery verification. Existing
+Monitoring parents receive these fields on their next closure update; duplicate
+open events remain quiet. Receipt state and delivery safeguards are unchanged.
 
 The WDPA metric policy requests `OPENED` and `CLOSED`. Google supports only
 `OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
