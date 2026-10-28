@@ -14,3 +14,12 @@ regexTarget = "secret"
 # Recomputed by test_checked_in_shared_fixture_preserves_replay_contract.
 # This is a SHA-256 of synthetic approval identity fields, not a credential.
 regexes = ['''^0b49eae079e3dbf8ca625d6612909872e665f68c4f46557eb6668fb9d84b9ae1$''']
+
+[[rules.allowlists]]
+description = "Public deterministic EAMLIS release digest in the immutable identity installation plan"
+condition = "AND"
+paths = ['''^\.github/dataset-plans/eamlis-abandoned-mine-land-inventory/eamlis-key-cutover-20261028/6acf9b0cff74b07614e807d9bd16e76e8dccf320a42f942d9fcc8bbe123d8680\.json$''']
+regexTarget = "secret"
+# Recomputed from the pinned published release by identity_installation.
+# Exact immutable document and SHA-256 only; independent of Git merge strategy.
+regexes = ['''^4f07e9de4ff2b8c78184132370c45357f999097527e9fcc59801c6e8192d0fb6$''']

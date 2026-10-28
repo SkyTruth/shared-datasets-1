@@ -1,0 +1,49 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "eamlis-abandoned-mine-land-inventory",
+    "breaking_changes": [],
+    "identity_transition": {
+      "baseline_token": "4f07e9de4ff2b8c78184132370c45357f999097527e9fcc59801c6e8192d0fb6",
+      "contract_id": "eamlis-problem-key-v1",
+      "control_sha256": "f9de78c5b4a9b6b47098500d1e6314df5525006d7c67e911b626bdba6c824d38",
+      "first_release": "2026-10-29",
+      "installation_id": "c68c8bf90ed6c996bb51d4976af678fd7714d80b169dba8b0fdcc5e8f23a94c3",
+      "ledger_sha256": "a5a5028f00b545503c969d253ec50d3cdbfa04fe486215cfe33e820690339455",
+      "marker_sha256": "ab0732c2ce8b3e657c3e0b2c62255e820c09490ee1fe91c1b164a57c3e8ae081",
+      "schema_version": 1
+    },
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/publications/identity-ledgers/a5a5028f00b545503c969d253ec50d3cdbfa04fe486215cfe33e820690339455.json",
+        "source_generation": "1793202967118331",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/eamlis-key-cutover-20261028/ledger.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/publications/identity-installation.json",
+        "source_generation": "1793202967525256",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/eamlis-key-cutover-20261028/marker.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1793167112477426",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/ingestion-holds/eamlis-abandoned-mine-land-inventory.json",
+        "source_generation": "1793202967818457",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/eamlis-key-cutover-20261028/control.json"
+      }
+    ],
+    "proposal_id": "eamlis-key-cutover-20261028",
+    "release_index_asset_slugs": []
+  }
+}

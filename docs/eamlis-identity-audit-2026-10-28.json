@@ -1,0 +1,607 @@
+{
+  "contract_id": "eamlis-problem-key-v1",
+  "next_feature_id": 64564,
+  "permanent_allocations": 64563,
+  "releases": [
+    {
+      "columns": 51,
+      "date": "2026-04-30",
+      "reason": "PROBLEM_KEY column absent; no historical inference",
+      "rows": 62220,
+      "source": {
+        "generation": 1777577614200556,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-04-30/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "0da1ecfd89d5d981350dfb76416044659421e4af827dc9a980a2fc0c34696a01",
+        "size": 39478320
+      },
+      "status": "unsupported"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 63110,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-05-01",
+      "next_feature_id": 63111,
+      "permanent_allocations": 63110,
+      "problems": 63085,
+      "reappeared": 0,
+      "retained_from_previous": 0,
+      "rows": 63110,
+      "source": {
+        "generation": 1777581499264871,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-05-01/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "556cabc1d073f4d165d1ad13a5539cbd095951096a17cb9f61520a7f8d1f2e41",
+        "size": 44042552
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 2,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-05-02",
+      "next_feature_id": 63113,
+      "permanent_allocations": 63112,
+      "problems": 63087,
+      "reappeared": 0,
+      "retained_from_previous": 63110,
+      "rows": 63112,
+      "source": {
+        "generation": 1777716168068737,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-05-02/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "23c517e741d86b0e9e676f699ae7f1345118c21dbc728d88edcbf086f0c3af80",
+        "size": 44044200
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 56,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-06-02",
+      "next_feature_id": 63169,
+      "permanent_allocations": 63168,
+      "problems": 63143,
+      "reappeared": 0,
+      "retained_from_previous": 63112,
+      "rows": 63168,
+      "source": {
+        "generation": 1780394593890074,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-02/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "1fc123a260485d3b3a035313e426a4af09b1d384224c3daf1517a05112630048",
+        "size": 44086120
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 0,
+      "area_only": 25,
+      "columns": 58,
+      "date": "2026-06-05",
+      "next_feature_id": 63169,
+      "permanent_allocations": 63168,
+      "problems": 63143,
+      "reappeared": 0,
+      "retained_from_previous": 63168,
+      "rows": 63168,
+      "source": {
+        "generation": 1780643762101799,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46",
+        "size": 7355758
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 22,
+      "added": 164,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-07-02",
+      "next_feature_id": 63333,
+      "permanent_allocations": 63332,
+      "problems": 63285,
+      "reappeared": 0,
+      "retained_from_previous": 63146,
+      "rows": 63310,
+      "source": {
+        "generation": 1782986600157288,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-07-02/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "4d0d450b03ba70fcd8da6022915d1e68e7cb4d619ea338144044ae29cce5cf1a",
+        "size": 44190536
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 4,
+      "added": 220,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-08-02",
+      "next_feature_id": 63553,
+      "permanent_allocations": 63552,
+      "problems": 63501,
+      "reappeared": 0,
+      "retained_from_previous": 63306,
+      "rows": 63526,
+      "source": {
+        "generation": 1785664934646328,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-08-02/eamlis-abandoned-mine-land-inventory.fgb",
+        "sha256": "6827ace539406f2e7ea555892eaf4033e6d265b17de0f9395f0031ec0ba44165",
+        "size": 44350136
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 0,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-08-03",
+      "next_feature_id": 63553,
+      "permanent_allocations": 63552,
+      "problems": 63501,
+      "reappeared": 0,
+      "retained_from_previous": 63526,
+      "rows": 63526,
+      "source": {
+        "generation": 1785724574427525,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-08-03/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "3b4a7968cffaea3c7b8fee8ac6259d9789958b864889600721b5990d65b6b78b",
+        "size": 8460100
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 3,
+      "added": 41,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-08-05",
+      "next_feature_id": 63594,
+      "permanent_allocations": 63593,
+      "problems": 63539,
+      "reappeared": 0,
+      "retained_from_previous": 63523,
+      "rows": 63564,
+      "source": {
+        "generation": 1785956431615121,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-08-05/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "1c89fdca02046fee51353ee6bd006a7ef27ace9b2f53b820ae6627d56cfed8ac",
+        "size": 8465130
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 7,
+      "added": 326,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-09-02",
+      "next_feature_id": 63920,
+      "permanent_allocations": 63919,
+      "problems": 63858,
+      "reappeared": 0,
+      "retained_from_previous": 63557,
+      "rows": 63883,
+      "source": {
+        "generation": 1788343546849183,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-09-02/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "cc5815ba2e05d814f08bde88a60e91146c63897ae4a9031466ffb8a7e360ed19",
+        "size": 8610700
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 10,
+      "added": 321,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-09-22",
+      "next_feature_id": 64241,
+      "permanent_allocations": 64240,
+      "problems": 64169,
+      "reappeared": 0,
+      "retained_from_previous": 63873,
+      "rows": 64194,
+      "source": {
+        "generation": 1790114262839652,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-09-22/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "1d01ced310bbb22a703155b4e0dfcb41a82cc2fd4a0b3ce60bce72351fbf57a6",
+        "size": 8636534
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 3,
+      "added": 6,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-09-24",
+      "next_feature_id": 64247,
+      "permanent_allocations": 64246,
+      "problems": 64172,
+      "reappeared": 0,
+      "retained_from_previous": 64191,
+      "rows": 64197,
+      "source": {
+        "generation": 1790214820801550,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-09-24/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "94a9517030ea8b6993e65b7c14e803645ba8b7b6e5c7b8c2f07073365b15a539",
+        "size": 8637334
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 3,
+      "added": 183,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-09-30",
+      "next_feature_id": 64430,
+      "permanent_allocations": 64429,
+      "problems": 64352,
+      "reappeared": 0,
+      "retained_from_previous": 64194,
+      "rows": 64377,
+      "source": {
+        "generation": 1790746106010981,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-09-30/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "780783f08822aa20b7311ac392437877b885fd284eb35069eb5b2942ea194313",
+        "size": 8653681
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 2,
+      "added": 11,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-01",
+      "next_feature_id": 64441,
+      "permanent_allocations": 64440,
+      "problems": 64361,
+      "reappeared": 0,
+      "retained_from_previous": 64375,
+      "rows": 64386,
+      "source": {
+        "generation": 1790821470921084,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-01/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "c1fd06e010af2f122f301033ff295913911c606e664dc3a649a0c3944937c32b",
+        "size": 8654791
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 1,
+      "added": 15,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-02",
+      "next_feature_id": 64456,
+      "permanent_allocations": 64455,
+      "problems": 64375,
+      "reappeared": 0,
+      "retained_from_previous": 64385,
+      "rows": 64400,
+      "source": {
+        "generation": 1790913837375897,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-02/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "a67ca421676dbc81137af5eb43a46728fff43092e70628baa41b56d22a82cd27",
+        "size": 8656612
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 6,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-05",
+      "next_feature_id": 64462,
+      "permanent_allocations": 64461,
+      "problems": 64381,
+      "reappeared": 0,
+      "retained_from_previous": 64400,
+      "rows": 64406,
+      "source": {
+        "generation": 1791242704319335,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-05/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "d0408d5175ea89c7377150bbbbce0a3dfa9c9b3351e870a8c7841f4554815b63",
+        "size": 8657265
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 2,
+      "added": 48,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-21",
+      "next_feature_id": 64510,
+      "permanent_allocations": 64509,
+      "problems": 64427,
+      "reappeared": 0,
+      "retained_from_previous": 64404,
+      "rows": 64452,
+      "source": {
+        "generation": 1792606935182462,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-21/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "33bbed7bdc2fde694e5535dedaad30c9105a0f6f4ec7c1b459b88a187380a268",
+        "size": 8872468
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 0,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-22",
+      "next_feature_id": 64510,
+      "permanent_allocations": 64509,
+      "problems": 64427,
+      "reappeared": 0,
+      "retained_from_previous": 64452,
+      "rows": 64452,
+      "source": {
+        "generation": 1792644557184754,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-22/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "41895ac76ea171f0c9aa07d619bb6fa892c22ddbeea0aa92d967bc6c2f6a31c9",
+        "size": 8878668
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 42,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-27",
+      "next_feature_id": 64552,
+      "permanent_allocations": 64551,
+      "problems": 64469,
+      "reappeared": 0,
+      "retained_from_previous": 64452,
+      "rows": 64494,
+      "source": {
+        "generation": 1793076989594202,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-27/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "5f9313869069c8afb6158a87ad819bb60363f677afc841fa7e11204cc73f5efe",
+        "size": 8905822
+      },
+      "status": "verified"
+    },
+    {
+      "absent_since_previous": 0,
+      "added": 12,
+      "area_only": 25,
+      "columns": 57,
+      "date": "2026-10-28",
+      "identity_candidates": [
+        {
+          "average_value_length": 4.83,
+          "datatype": "integer",
+          "distinct_values": 64506,
+          "distinction_percent": 100.0,
+          "domination_percent": 0.0,
+          "duplicate_row_count": 0,
+          "duplicate_value_count": 0,
+          "emptiness_percent": 0.0,
+          "empty_values": 0,
+          "hidden_reason": null,
+          "name": "OBJECTID",
+          "non_empty_values": 64506,
+          "role_hint": "source feature_id candidate",
+          "sentinel_value_count": 0,
+          "sentinel_value_percent": 0.0,
+          "skew_ratio": 1.0,
+          "top_examples": [
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "1"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "2"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "3"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "4"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "5"
+            }
+          ],
+          "top_value_count": 1
+        },
+        {
+          "average_value_length": 9.08,
+          "datatype": "string",
+          "distinct_values": 64481,
+          "distinction_percent": 99.96,
+          "domination_percent": 0.0,
+          "duplicate_row_count": 0,
+          "duplicate_value_count": 0,
+          "emptiness_percent": 0.04,
+          "empty_values": 25,
+          "hidden_reason": null,
+          "name": "PROBLEM_KEY",
+          "non_empty_values": 64481,
+          "role_hint": "source feature_id candidate",
+          "sentinel_value_count": 0,
+          "sentinel_value_percent": 0.0,
+          "skew_ratio": 1.0,
+          "top_examples": [
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "AK0000014"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "AK0000015"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "AK0000016"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "AK0000022"
+            },
+            {
+              "count": 1,
+              "is_sentinel": false,
+              "percent": 0.0,
+              "value": "AK0000023"
+            }
+          ],
+          "top_value_count": 1
+        },
+        {
+          "average_value_length": 8.0,
+          "datatype": "string",
+          "distinct_values": 24714,
+          "distinction_percent": 38.31,
+          "domination_percent": 0.48,
+          "duplicate_row_count": 53010,
+          "duplicate_value_count": 13218,
+          "emptiness_percent": 0.0,
+          "empty_values": 0,
+          "hidden_reason": null,
+          "name": "AMLIS_KEY",
+          "non_empty_values": 64506,
+          "role_hint": "source feature_id candidate",
+          "sentinel_value_count": 0,
+          "sentinel_value_percent": 0.0,
+          "skew_ratio": 117.62,
+          "top_examples": [
+            {
+              "count": 307,
+              "is_sentinel": false,
+              "percent": 0.48,
+              "value": "PA942003"
+            },
+            {
+              "count": 243,
+              "is_sentinel": false,
+              "percent": 0.38,
+              "value": "PA942069"
+            },
+            {
+              "count": 224,
+              "is_sentinel": false,
+              "percent": 0.35,
+              "value": "KS920037"
+            },
+            {
+              "count": 168,
+              "is_sentinel": false,
+              "percent": 0.26,
+              "value": "PA942079"
+            },
+            {
+              "count": 133,
+              "is_sentinel": false,
+              "percent": 0.21,
+              "value": "KY921195"
+            }
+          ],
+          "top_value_count": 307
+        },
+        {
+          "average_value_length": 1.08,
+          "datatype": "integer",
+          "distinct_values": 307,
+          "distinction_percent": 0.48,
+          "domination_percent": 37.95,
+          "duplicate_row_count": 64421,
+          "duplicate_value_count": 247,
+          "emptiness_percent": 0.04,
+          "empty_values": 25,
+          "hidden_reason": "does not match source field ID or grouping/search heuristics",
+          "name": "NUMBER",
+          "non_empty_values": 64481,
+          "role_hint": "unlikely",
+          "sentinel_value_count": 0,
+          "sentinel_value_percent": 0.0,
+          "skew_ratio": 116.57,
+          "top_examples": [
+            {
+              "count": 24483,
+              "is_sentinel": false,
+              "percent": 37.95,
+              "value": "1"
+            },
+            {
+              "count": 12982,
+              "is_sentinel": false,
+              "percent": 20.13,
+              "value": "2"
+            },
+            {
+              "count": 7956,
+              "is_sentinel": false,
+              "percent": 12.33,
+              "value": "3"
+            },
+            {
+              "count": 5075,
+              "is_sentinel": false,
+              "percent": 7.87,
+              "value": "4"
+            },
+            {
+              "count": 3263,
+              "is_sentinel": false,
+              "percent": 5.06,
+              "value": "5"
+            }
+          ],
+          "top_value_count": 24483
+        }
+      ],
+      "next_feature_id": 64564,
+      "permanent_allocations": 64563,
+      "problems": 64481,
+      "reappeared": 0,
+      "retained_from_previous": 64494,
+      "rows": 64506,
+      "source": {
+        "generation": 1793167104671113,
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-28/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+        "sha256": "9e5b59c124b3d88cecbd4b2c3a2f2f1f5bab1b5db8b4025fa7063ed8c5034e8f",
+        "size": 8866280
+      },
+      "status": "verified"
+    }
+  ],
+  "schema_version": 1
+}
