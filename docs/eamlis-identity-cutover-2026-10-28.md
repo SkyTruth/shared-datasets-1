@@ -187,6 +187,10 @@ Preparation used the locked `uv` environment, `eamlis_identity_audit.py`,
 `reviewed_dataset_plan.read_document`, and independent GCS rereads of the exact
 staged generations and current destination preconditions. The required frozen-head
 preflight evidence and hosted checks are recorded in the PR body.
+Secret scanning classified the public baseline digest as a generic API key.
+`.gitleaksignore` excludes only the exact original commit/path/rule/line finding,
+following the existing historical-finding pattern; all other findings remain
+subject to the complete full-history scan. The immutable plan is unchanged.
 
 Only scratch sources were uploaded. The scheduler pause is recorded above.
 No canonical GCS object was changed, no first-identity execution was started,
