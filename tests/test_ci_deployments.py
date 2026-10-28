@@ -1,10 +1,14 @@
 import ast
+import json
+import re
+import sys
 from graphlib import TopologicalSorter
 from pathlib import Path
 
 import pytest
 
 from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_suites
+from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import load_workflow, workflow_triggers
 
@@ -117,7 +121,6 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         assert "artifact-registry-iam" in jobs[target]["needs"]
     publisher = jobs["publish-reviewed-dataset"]
     assert "pmtiles-cdn" in publisher["needs"]
-    assert "always()" in publisher["if"]  # A legitimately unselected CDN job is skipped.
     assert "needs.ci-ready.result == 'success'" in publisher["if"]
     assert "needs.pmtiles-cdn.result == 'success'" in publisher["if"]
     assert "needs.geospatial-changes.outputs.pmtiles_cdn != 'true'" in publisher["if"]
@@ -131,63 +134,6 @@ def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_comman
     upload = next(step for step in suite["steps"] if step.get("id") == "retained-results")
     assert upload["with"]["compression-level"] == 0
     assert upload["with"]["if-no-files-found"] == "error"
-
-
-@pytest.mark.parametrize("target", ["ingestion-iam", "scratch-cleanup-iam"])
-@pytest.mark.parametrize("owner_selected,owner_result,expected", [
-    (False, "skipped", True),
-    (True, "success", True),
-    (True, "failure", False),
-    (True, "cancelled", False),
-    (True, "skipped", False),
-])
-def test_shared_bucket_iam_waits_for_selected_logging_owner(target, owner_selected, owner_result, expected):
-    jobs = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
-    job = jobs[target]
-    assert "dataset-usage" in job["needs"]
-    assert "always()" in job["if"]  # An unselected owner is legitimately skipped.
-    assert target not in jobs["dataset-usage"]["needs"]  # No dependency cycle.
-    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
-    values = {
-        "always()": "True",
-        "github.event_name": repr("push"),
-        "github.ref": repr("refs/heads/main"),
-        "needs.ci-ready.result": repr("success"),
-        f"needs.geospatial-changes.outputs.{target.replace('-', '_')}": repr("true"),
-        "needs.geospatial-changes.outputs.dataset_usage": repr("true" if owner_selected else "false"),
-        "needs.dataset-usage.result": repr(owner_result),
-    }
-    for name, value in values.items():
-        expression = expression.replace(name, value)
-    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
-    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare,
-                                 ast.Eq, ast.NotEq, ast.Constant)) for node in ast.walk(tree))
-    assert eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}}) is expected
-
-
-@pytest.mark.parametrize("selected,result,expected", [(False, "skipped", True), (True, "success", True), (True, "failure", False), (True, "skipped", False)])
-@pytest.mark.parametrize('registry_result', ['success', 'failure', 'cancelled', 'skipped'])
-@pytest.mark.parametrize('cdn_selected,cdn_result,cdn_ready', [
-    (False, 'skipped', True), (True, 'success', True), (True, 'failure', False),
-    (True, 'cancelled', False), (True, 'skipped', False),
-])
-def test_usage_writer_waits_for_reader_and_bucket_cors(selected, result, expected, registry_result, cdn_selected, cdn_result, cdn_ready):
-    jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    assert {'catalog-viewer', 'pmtiles-cdn'} <= set(jobs['dataset-usage']['needs'])
-    assert 'dataset-usage' not in jobs['catalog-viewer']['needs']
-    expression = jobs['dataset-usage']['if'].removeprefix('${{').removesuffix('}}').strip()
-    values = {
-        'always()': 'True', 'github.event_name': repr('push'), 'github.ref': repr('refs/heads/main'),
-        'needs.ci-ready.result': repr('success'), 'needs.geospatial-changes.outputs.dataset_usage': repr('true'),
-        'needs.artifact-registry-iam.result': repr(registry_result),
-        'needs.geospatial-changes.outputs.catalog_viewer': repr('true' if selected else 'false'),
-        'needs.catalog-viewer.result': repr(result),
-        'needs.geospatial-changes.outputs.pmtiles_cdn': repr('true' if cdn_selected else 'false'),
-        'needs.pmtiles-cdn.result': repr(cdn_result),
-    }
-    for name, value in values.items():
-        expression = expression.replace(name, value)
-    assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (expected and cdn_ready and registry_result == 'success')
 
 
 def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
@@ -210,25 +156,115 @@ def test_monitoring_transport_requires_tested_images_and_registry_bootstrap(path
     assert "production-images" in select_suites([path])[0]
 
 
-@pytest.mark.parametrize("cancelled", [True, False])
-@pytest.mark.parametrize("gate", ["success", "failure", "cancelled", "skipped"])
-@pytest.mark.parametrize("selected", [True, False])
-@pytest.mark.parametrize("event,ref", [
-    ("push", "refs/heads/main"), ("push", "refs/heads/topic"),
-    ("pull_request", "refs/heads/main"), ("workflow_dispatch", "refs/heads/main"),
-])
-def test_registry_bootstrap_survives_unselected_suites_without_bypassing_gate(cancelled, gate, selected, event, ref):
-    job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["artifact-registry-iam"]
+# These edges order mutations only when both owners are selected. Other direct
+# prerequisites (apart from the selector already verified by ci-ready) must pass.
+OPTIONAL_NEEDS = {
+    "ingestion-iam": ("dataset-usage",),
+    "scratch-cleanup-iam": ("dataset-usage",),
+    "mpatlas": ("cron-alert-policy",),
+    "dataset-usage": ("catalog-viewer", "pmtiles-cdn"),
+    "cron-alert-policy": ("ingestion-iam",),
+    "publish-reviewed-dataset": ("pmtiles-cdn",),
+}
+MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
+    "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset",
+]
+
+
+def condition_result(job, values, *, cancelled=False):
     expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
-    # GitHub otherwise adds success() over skipped transitive ancestors.
+    # This is a required Actions scheduling contract, not a local reimplementation
+    # of its scheduler: without a status function GitHub injects success(), which
+    # propagates skipped ancestors even when the explicit condition is true.
     assert "!cancelled()" in expression
+    expression = expression.replace("!cancelled()", repr(not cancelled))
+    expression = re.sub(r"(?:needs|github)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
+    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
+    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or,
+                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant)) for node in ast.walk(tree))
+    return eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}})
+
+
+@pytest.mark.parametrize("job_id", MAIN_CALLERS)
+def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests):
+    job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][job_id]
+    needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+    optional = OPTIONAL_NEEDS.get(job_id, ())
+    assert set(optional) <= set(needs)
     values = {
-        "!cancelled()": repr(not cancelled), "github.event_name": repr(event), "github.ref": repr(ref),
-        "needs.ci-ready.result": repr(gate),
-        "needs.geospatial-changes.outputs.artifact_registry_iam": repr("true" if selected else "false"),
+        "github.event_name": "push", "github.ref": "refs/heads/main",
+        **{f"needs.{name}.result": "success" for name in needs},
+        **{f"needs.geospatial-changes.outputs.{target}": "true" for target in DEPLOYMENTS},
+        "needs.dataset-mutation-selection.outputs.has_repo_alert": "true",
+        "needs.dataset-mutation-selection.outputs.has_mutations": "true",
     }
-    for name, value in values.items():
-        expression = expression.replace(name, value)
-    assert eval(expression.replace("&&", " and "), {"__builtins__": {}}) is (
-        not cancelled and gate == "success" and selected and event == "push" and ref == "refs/heads/main"
-    )
+    assert condition_result(job, values) is True
+    assert condition_result(job, values, cancelled=True) is False
+    selection = {
+        "announce-repo-functionality": "needs.dataset-mutation-selection.outputs.has_repo_alert",
+        "publish-reviewed-dataset": "needs.dataset-mutation-selection.outputs.has_mutations",
+    }.get(job_id, f"needs.geospatial-changes.outputs.{job_id.replace('-', '_')}")
+    if job_id != "dataset-mutation-selection":
+        with subtests.test(selection="unselected"):
+            assert condition_result(job, {**values, selection: "false"}) is False
+    for event, ref in [("pull_request", "refs/heads/main"), ("workflow_dispatch", "refs/heads/main"),
+                       ("push", "refs/heads/topic")]:
+        with subtests.test(event=event, ref=ref):
+            assert condition_result(job, {**values, "github.event_name": event, "github.ref": ref}) is False
+    for dependency in set(needs) - {"geospatial-changes"}:
+        for result in ("failure", "cancelled", "skipped"):
+            with subtests.test(dependency=dependency, result=result):
+                assert condition_result(job, {**values, f"needs.{dependency}.result": result}) is False
+    for dependency in optional:
+        with subtests.test(unselected_dependency=dependency):
+            assert condition_result(job, {
+                **values, f"needs.{dependency}.result": "skipped",
+                f"needs.geospatial-changes.outputs.{dependency.replace('-', '_')}": "false",
+            }) is True
+    if optional:
+        with subtests.test(all_optional_dependencies="unselected"):
+            assert condition_result(job, {
+                **values, **{f"needs.{name}.result": "skipped" for name in optional},
+                **{f"needs.geospatial-changes.outputs.{name.replace('-', '_')}": "false" for name in optional},
+            }) is True
+
+
+@pytest.mark.parametrize("paths,expected", [
+    ([], set()),
+    (["docs/ci-preflight.md"], set()),
+    ([".github/workflows/ci.yml", "tests/test_ci_deployments.py"], set()),
+    (["ingestion/wdpa_monthly/run.py"], {"wdpa", "ingestion_iam", "artifact_registry_iam"}),
+    (["ingestion/wdpa_monthly/run.py", "ingestion/eamlis_monthly/run.py"],
+     {"wdpa", "eamlis", "ingestion_iam", "artifact_registry_iam"}),
+])
+def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
+    from test_ci_preflight import fixture_repo
+
+    jobs = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
+    root, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    for path in paths:
+        destination = root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("changed fixture\n")
+    git("add", ".")
+    git("commit", "--allow-empty", "-m", "selected changes")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base,
+                                     "--output", str(tmp_path / "plan.json"),
+                                     "--github-output", str(tmp_path / "outputs")])
+    assert ci_preflight.main() == 0
+    assert set(json.loads((tmp_path / "plan.json").read_text())["deployments"]) == expected
+    outputs = dict(line.split("=", 1) for line in (tmp_path / "outputs").read_text().splitlines())
+    values = {
+        "github.event_name": "push", "github.ref": "refs/heads/main",
+        **{f"needs.geospatial-changes.outputs.{key}": value for key, value in outputs.items()},
+        **{f"needs.{name}.result": "success" if name.replace("-", "_") in expected else "skipped"
+           for name in jobs},
+        "needs.ci-ready.result": "success", "needs.geospatial-changes.result": "success",
+    }
+    # Reproduce the observed chain: dataset-usage is unselected, IAM succeeds,
+    # and WDPA must still run. Independent deployments must stay unselected.
+    assert values["needs.dataset-usage.result"] == "skipped"
+    for target in DEPLOYMENTS:
+        assert condition_result(jobs[target.replace("_", "-")], values) is (target in expected)
