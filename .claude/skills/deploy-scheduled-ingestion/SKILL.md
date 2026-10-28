@@ -111,7 +111,7 @@ alive at the same time.
 
 For WDPA, follow the [monthly operations runbook](../../../docs/wdpa-monthly-runbook.md)
 for the current accepted image and bundle, resource and quota prerequisites,
-protected deployment trigger, execution/observer checks and owned recovery.
+protected deployment trigger, execution checks and owned recovery.
 It is the operational source for the single-build publication sequence.
 
 When a manual post-deploy execution is expected to take hours, start it

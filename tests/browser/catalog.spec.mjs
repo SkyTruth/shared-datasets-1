@@ -34,11 +34,7 @@ const test = base.extend({
     const scenarioEmail = `browser-${testInfo.testId.replace(/[^a-z0-9]/gi, '')}@skytruth.org`;
     const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
-    const state = { execution: {
-      schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
-      latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
-      latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    const state = { deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -63,7 +59,6 @@ const test = base.extend({
         return json({asset_slug:lookup[1], resolved_release:lookup[2], sidecar_uri:file.path, sidecar_generation:file.generation,
           items:ids.map(id => ({feature_id:id, found:true, properties:records.find(record => record.feature_id === id).properties}))});
       }
-      if (url.origin === baseURL && url.pathname === "/wdpa-monthly-execution.json") return json(state.execution);
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
         return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType });
@@ -164,7 +159,6 @@ const test = base.extend({
         return route.fulfill({ headers, contentType: 'application/octet-stream', body: data });
       }
       if (state.storageHosting && url.hostname === 'storage.googleapis.com' && !url.pathname.startsWith('/api/')) {
-        if (url.pathname === '/wdpa-monthly-execution.json') return json(state.execution);
         const slug = /^\/releases\/([a-z-]+)\.json$/.exec(url.pathname)?.[1];
         if (slug && indexes.has(slug)) return json(indexes.get(slug));
         return route.fulfill({path: resolve(siteDir, url.pathname === '/' ? 'index.html' : url.pathname.slice(1))});
@@ -372,23 +366,21 @@ test('late historical metadata cannot replace the current inspector', async ({ p
   await expectMetadata(page, false);
 });
 
-test('WDPA execution status preserves publication and refreshes running, cancellation and stale observations', async ({page, transport}) => {
+test('WDPA uses release check-ins without background execution polling', async ({page, transport}) => {
+  for (const slug of ['wdpa-marine', 'wdpa-terrestrial']) {
+    transport.indexes.get(slug).latest_run = {date: '2026-10-02', status: 'skipped'};
+  }
   await page.clock.install();
   await page.goto(baseURL);
   for (const slug of ['wdpa-marine', 'wdpa-terrestrial']) {
     await page.locator(`#asset-list [data-slug="${slug}"]`).click();
-    await expect(page.locator('#detail-execution-status')).toContainText('failed');
     await expect(page.locator('#detail-updated')).toHaveText(slug === 'wdpa-marine' ? '2026-10-01' : '2026-09-30');
+    await expect(page.locator('#detail-last-run')).toHaveText('2026-10-02 (skipped)');
+    await page.clock.fastForward(61_000);
+    await expect(page.locator('#detail-last-run')).toHaveText('2026-10-02 (skipped)');
   }
-  transport.execution.latest_execution = {id: 'wdpa-monthly-running', state: 'running', started_at: new Date().toISOString()};
-  await page.clock.fastForward(61_000);
-  await expect(page.locator('#detail-execution-status')).toContainText('running');
-  await expect(page.locator('#detail-execution-status')).toContainText('Last completed: failed');
-  transport.execution.latest_execution.state = 'cancelled';
-  transport.execution.observed_at = new Date(Date.now() - 30 * 60_000).toISOString();
-  await page.clock.fastForward(61_000);
-  await expect(page.locator('#detail-execution-status')).toContainText('cancelled');
-  await expect(page.locator('#detail-execution-status')).toContainText('Stale observation');
+  await expect(page.locator('#detail-execution-card')).toHaveCount(0);
+  expect(transport.requests.filter(({url}) => url.includes('wdpa-monthly-execution.json'))).toEqual([]);
 });
 
 test('comparison automatically takes over the primary map with compact tables and keyboard inspection', async ({page, transport}, testInfo) => {

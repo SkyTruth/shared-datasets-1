@@ -50,8 +50,8 @@ Before publication, require all of the following:
 - `WDPA_PROMOTION_BUNDLE` matches acceptance. Publication verifies staged bytes
   and live predecessors through the owned publisher. Preserve a verified already
   committed realm; use the captured build date and never rebuild in the canary.
-- No pending/running worker execution conflicts with the canary. Installed IAM,
-  the independent observer and unattended failure alerts are ready.
+- No pending/running worker execution conflicts with the canary. Installed IAM
+  and shared unattended failure alerts are ready.
 
 ## Deploy an accepted month
 
@@ -104,33 +104,30 @@ remains `verification_pending`. A paused schedule skips the default canary;
 An existing execution skips the canary unless explicit `cancel_running_canary`
 replaces known-bad code; cancellation does not release a publication claim.
 
-## Observer and verification
+## Execution and publication verification
 
-[`wdpa-execution-observer`](../ingestion/wdpa_monthly/execution_observer.py) runs
-every five minutes with 1 CPU / 512 MiB / 120 seconds / zero retries. It reads
-worker executions and writes only
-`gs://skytruth-shared-datasets-1/_catalog/wdpa-monthly-execution.json` with
-generation preconditions and `public, max-age=0, must-revalidate` headers.
-Schema 1 contains `job_name`, `observed_at`, `latest_execution` and
-`latest_completed_execution`; entries expose IDs, timestamps, state and an
-allowlisted reason code. Raw messages/configuration are excluded. A new running
-attempt preserves the last completed result; API/IAM errors fail the observer
-and leave stale status. Catalog observations older than 15 minutes show as stale.
+WDPA uses the shared Cloud Run execution-failure and Scheduler dispatch-failure
+alerts. Check the actual worker execution around an update using the commands
+above. Deployment canaries have a bounded watch; the hourly deployment-completion
+workflow follows only pending deployment records to terminal status.
 
-Observer execution and Scheduler failures use the [recovery-window health policy](alert-routing.md#observer-recovery-window).
-It counts successful native completions over 15 minutes and confirms a count
-below one for two minutes before notifying; missing metrics count as unhealthy.
-A brief failure followed by recovery stays quiet. Worker failures retain their
-immediate alert. Verify the policy and recent successful metric samples without
-deliberately interrupting the production observer.
+The catalog uses each asset's release index for **Latest release** and **Last
+check-in**, just like the other scheduled datasets. It does not poll a separate
+WDPA execution feed or mark an idle observer as unhealthy.
+
+The former `wdpa-execution-observer` schedule is paused and its health policy
+disabled. The existing definitions and narrow permissions remain because the
+protected workflows allow updates but block deletion. The old
+`_catalog/wdpa-monthly-execution.json` object and endpoint are no longer read by
+the catalog. Do not resume the observer during routine deployments. For rollout
+order and verification, see [alert routing](alert-routing.md#wdpa-execution-driven-monitoring).
 
 Verify each asset's `_catalog/releases/{asset}.json` (`latest_release` and
 `latest_run`), owned receipts, manifest generations and `latest/` byte metadata
-under `100-geographic-reference/130-protected-areas/{asset}/`. Worker success,
-asset publication and observer freshness are separate checks. Verify worker
+under `100-geographic-reference/130-protected-areas/{asset}/`. Worker success
+and asset publication are separate checks. Verify worker
 alert delivery against an actual failed execution's Monitoring incident,
 transport receipt and matching Slack message; do not inject production failures.
-Observer-health verification follows the recovery-window contract.
 
 ## Recovery and evidence
 

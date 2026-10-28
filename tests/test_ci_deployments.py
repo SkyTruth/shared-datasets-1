@@ -162,6 +162,7 @@ OPTIONAL_NEEDS = {
     "ingestion-iam": ("dataset-usage",),
     "scratch-cleanup-iam": ("dataset-usage",),
     "mpatlas": ("cron-alert-policy",),
+    "wdpa": ("cron-alert-policy",),
     "dataset-usage": ("catalog-viewer", "pmtiles-cdn"),
     "cron-alert-policy": ("ingestion-iam",),
     "publish-reviewed-dataset": ("pmtiles-cdn",),

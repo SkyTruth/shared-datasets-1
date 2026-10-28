@@ -115,9 +115,9 @@ Historical comparison-map denial stays visible while the table is searched and
 inspected; changing Before/After selections automatically retries using their pinned inputs.
 
 The original catalog scenarios include generated TypeScript
-execution, inline copying/layout, removal of workspace import controls and WDPA execution status. The WDPA scenario
-preserves each realm's published release alongside overall execution failures,
-newer running executions, cancellation and stale observations. The SDK build in the setup above is
+execution, inline copying/layout, removal of workspace import controls and WDPA check-ins. The WDPA scenario
+preserves each realm's published release and standard Last check-in, and verifies
+that no execution-status requests occur after advancing the browser clock. The SDK build in the setup above is
 required for the generated integration test.
 
 The fixture builder copies compiled browser SDK modules into the disposable
