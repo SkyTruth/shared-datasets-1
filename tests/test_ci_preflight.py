@@ -521,10 +521,10 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["services/catalog_viewer/README.md"], ALWAYS, []),
     (["ingestion/common/nested/operations.md"], ALWAYS, []),
     (["ingestion/dataset_usage/README.md", "ingestion/dataset_usage/run.py"],
-     ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage", "artifact_registry_iam"]),
+     ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage"]),
     (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
-     ALWAYS | {"production-images", "browser"}, ["catalog_viewer", "dataset_usage", "artifact_registry_iam"]),
-    (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice", "ingestion_iam", "artifact_registry_iam"]),
+     ALWAYS | {"production-images", "browser"}, ["catalog_viewer", "dataset_usage"]),
+    (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice"]),
     (["docs/guide.md", "scripts/unproved.py"], set(SUITES), []),
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
     (["docs/new-tool.py"], set(SUITES), []),
@@ -783,3 +783,40 @@ def test_missing_declared_tls_file_fails_before_using_another_identity(tmp_path)
         with pytest.raises(ValueError, match="Missing or invalid Docker transport TLS file"):
             with preflight.isolated_host_environment(tmp_path, {"PATH": "/bin"}):
                 pytest.fail("missing TLS file was accepted")
+
+
+@pytest.mark.parametrize("whitespace,secret_exit", [(False, 0), (True, 0), (False, 1)])
+def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, monkeypatch, whitespace, secret_exit):
+    source, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    (source / "README.md").write_text("Updated docs" + ("  " if whitespace else "") + "\n")
+    git("add", "README.md")
+    git("commit", "-m", "docs")
+    validation = json.loads(json.dumps(preflight.make_plan(source, base, "HEAD")))
+    commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
+                for suite in validation["suites"]}
+    assert commands == {
+        "lint": [["git", "diff", "--check", base, validation["tested_sha"]]],
+        "tests": [["gitleaks", "git", "--redact", "--log-opts=HEAD", "."]],
+    }
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    scanner = tools / "gitleaks"
+    scanner.write_text(f"#!/bin/sh\nexit {secret_exit}\n")
+    scanner.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setattr(preflight, "probe_tools", lambda suite, environment: expected_tools(suite))
+    results = [preflight.run_suite(source, validation, suite, tmp_path / suite) for suite in validation["suites"]]
+    assert all(not (tmp_path / suite / "pytest.xml").exists() for suite in validation["suites"])
+    if whitespace or secret_exit:
+        with pytest.raises(ValueError, match="did not execute successfully"):
+            verify_results(validation, results, jobs_for(validation))
+    else:
+        verify_results(validation, results, jobs_for(validation))
+
+
+@pytest.mark.parametrize("paths", [None, ["docs/guide.md", "ingestion/wdpa_monthly/run.py"], ["docs/new-tool.py"], ["docs/assets/wdpa-marine.md"]])
+def test_non_documentation_changes_still_execute_python_validation(paths):
+    validation = {**plan(), "changed_paths": paths}
+    commands = [args for args, _ in preflight.suite_commands("tests", ROOT, validation, ROOT)]
+    assert any("pytest" in args for args in commands)

@@ -146,6 +146,10 @@ def classify_change(path: str) -> tuple[str, set[str]]:
     return "unknown", set(SUITES)
 
 
+def documentation_only(paths: list[str] | None) -> bool:
+    return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
+
+
 def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     if paths is None:
         return list(SUITES), "comparison history unavailable"
@@ -282,10 +286,13 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
     # this also gives the worker the current catalog baked into its tested image.
     if "catalog_viewer" in selected:
         selected.add("dataset_usage")
-    if selected & ingestion:
-        selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
-        selected.add("artifact_registry_iam")
+    # Runtime deployment reuses installed IAM. Only infrastructure edits select
+    # bootstrap syncs; direct IAM workflow/input rules above stay explicit.
+    if any(path.startswith("terraform/") for path in paths or []):
+        if selected & ingestion:
+            selected.add("ingestion_iam")
+        if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
+            selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 
 

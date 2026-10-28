@@ -29,7 +29,7 @@ from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    select_deployments, select_suites, verify_results, write_json,
+    documentation_only, select_deployments, select_suites, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -284,6 +284,9 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
+        if documentation_only(plan.get("changed_paths")):
+            add("git", "diff", "--check", base, head)
+            return commands
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
@@ -294,6 +297,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
+        if documentation_only(plan.get("changed_paths")):
+            return commands
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
@@ -407,7 +412,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             if completed.returncode != 0:
                 print(log.read_text()[-12000:], file=sys.stderr)
                 raise ValueError(f"{suite}: command {index + 1} failed ({completed.returncode})")
-        if suite in {"tests", "geospatial-integration"}:
+        if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
             if suite == "geospatial-integration":
                 check_results(output / "pytest.xml")

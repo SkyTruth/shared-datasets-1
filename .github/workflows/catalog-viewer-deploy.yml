@@ -17,6 +17,9 @@ on:
         type: string
   workflow_call:
     inputs:
+      sync_iam:
+        required: true
+        type: boolean
       executor_sha:
         required: true
         type: string
@@ -226,11 +229,11 @@ jobs:
         run: terraform -chdir=terraform/envs/prod init -input=false
 
       - name: Verify existing project IAM bootstrap authority
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: python scripts/deployment_permissions.py --target iam-bootstrap
 
       - name: Terraform plan Secret Manager IAM bootstrap
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: |
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
@@ -242,11 +245,11 @@ jobs:
             -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
 
       - name: Export Secret Manager IAM bootstrap plan JSON
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
 
       - name: Enforce Secret Manager IAM bootstrap allowlist
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: |
           python - "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json" <<'PY'
           import json
@@ -275,15 +278,15 @@ jobs:
           PY
 
       - name: Verify permissions required by the saved viewer bootstrap plan
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: python scripts/deployment_permissions.py --target iam-bootstrap --plan-json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
 
       - name: Terraform apply Secret Manager IAM bootstrap
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan"
 
       - name: Wait for Secret Manager IAM propagation
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)
         run: sleep 30
 
       - name: Verify catalog-viewer live dependencies

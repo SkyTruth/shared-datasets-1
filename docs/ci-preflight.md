@@ -186,11 +186,12 @@ without reinstalling OS packages. Missing libraries or browser launch/rendering
 failures still fail the complete browser suite; there is no automatic OS-install
 fallback.
 
-The shared classifier always selects lint, workflow syntax, full-history secret
-scanning, admission and diff/static guardrails, local catalog compliance,
-offline feature-identity decision checks, and Python tests. The two local hygiene
-checks run in the shared `tests` suite before pytest, replacing the separate
-bucket-hygiene PR workflow. A finding or invalid decision fails that suite.
+The required `lint` and `tests` jobs stay present for every change.
+Documentation-only changes run whitespace validation (`git diff --check`) and
+full-history secret scanning, without dependency sync, Terraform validation or
+pytest. Mixed, metadata, executable and unknown changes retain the existing
+lint, workflow syntax, admission, guardrail, catalog, identity and Python checks.
+The catalog and identity checks run before pytest; findings fail the suite.
 It adds native, SDK, image and browser suites according to component dependencies.
 Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier
 and additional suites, with no separate policy file or persisted tier state.
@@ -207,7 +208,13 @@ Informational Markdown paths use the documentation tier; `docs/assets/` remains
 runtime metadata. Non-Markdown tools under guidance directories remain unknown.
 Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union their
 requirements. Workflow/shared-contract changes and unavailable comparisons select
-all suites. Tiers never grant mutation authority; tested-artifact, approval,
+all suites. Runtime-only deployments reuse installed IAM. Terraform changes and explicit
+IAM workflow/input changes select the existing narrow syncs. Deployment graph
+edges wait for IAM only when those syncs are selected; a selected failed sync
+still blocks its consumers. The catalog, usage and monitoring deploy workflows
+use that same selection signal for their embedded IAM bootstraps. Explicit
+manual infrastructure dispatches retain bootstrap checks.
+Tiers never grant mutation authority; tested-artifact, approval,
 permission and terminal-verification gates remain unchanged.
 The standard Python run permits only the six named native fixtures to skip
 and runs the complete collection in two worker processes. Worker crashes fail
