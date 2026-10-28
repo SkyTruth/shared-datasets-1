@@ -503,7 +503,7 @@ def migrate_verified_state(state, schema):
 
 
 def failure_posts(state):
-    """Lifecycle order is independent of canonical JSON object-key sorting."""
+    """Retain historical reply keys for signed-state validation/reconciliation."""
     return {"parent": None, **{"attempt:" + observation_key(item): item for item in state["incident"]["failures"][1:]}}
 
 
@@ -514,9 +514,8 @@ def desired_posts(state):
         # Existing failed-attempt claims still need owner reconciliation, but
         # corrected failures cannot authorize any new message or retry reply.
         return {"parent": None} if parent and parent["state"] == "delivered" else {}
-    # The initial failure is already recorded in the parent. Subsequent attempts
-    # remain threaded. Already-corrected failures are not newly announced.
-    return failure_posts(state)
+    # Failed attempts update the original parent; never claim new replies.
+    return {"parent": None}
 
 
 def pending_posts(state):
@@ -528,25 +527,39 @@ def run_link(observation):
     return emissions.invocation(REPOSITORY, observation["run_id"], observation["attempt"])
 
 
-def render(state, *, reply=None):
+def render(state):
     incident = state["incident"]
     first, latest = incident["failures"][0], incident["failures"][-1]
     resolution = incident["resolution"]
-    if reply:
-        require(reply["conclusion"] in alerts.FAILED_CONCLUSIONS, "only failures may create incident replies")
-        title = f"Another failed attempt · {incident['id']}"
-        body = f"{escape(reply['job_name'])}: {reply['conclusion']}.\n<{run_link(reply)}|Attempt {reply['attempt']}> · `{reply['sha'][:12]}` · {reply['time']}"
-        status = "error"
-    else:
-        status = "success" if resolution else "error"
-        title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
-        body = f"*Original failure:* {escape(first['job_name'])} ({first['conclusion']})\n<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n*Failed attempts:* {len(incident['failures'])}"
-        if latest != first:
-            body += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
-        if resolution:
-            body += f"\n*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
-            if resolution["proof"]:
-                body += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
+    status = "success" if resolution else "error"
+    title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
+    impact = "Unknown; consumer impact has not been established."
+    mutation = "Unknown; the failed attempt may have written data or changed resources."
+    action = "Inspect the failed attempt and authoritative mutation records before any replay; use the existing recovery path."
+    if resolution:
+        impact = "Historical consumer impact unknown; recovery verified for this incident scope."
+        action = "Record any consumer impact; no replay is required for this recovered operation."
+        if state["kind"] == "deployment":
+            mutation = "Signed terminal success verified for this deployment target; see the receipt below."
+        elif state["kind"] == "publication":
+            mutation = ("Publication completed; failed PR receipt repaired without replaying the mutation."
+                        if PUBLICATION_RECEIPT_JOB.fullmatch(resolution["job_name"])
+                        else "Reviewed publication phase completed; see the exact recovery evidence below.")
+        else:
+            mutation = "Unknown; successful job/workflow completion does not verify published data."
+            action = "Confirm any data or resource outcome separately; no workflow replay is requested."
+    body = (f"*Impact:* {impact}\n*Mutation state:* {mutation}\n"
+            "*Owner:* jonaraphael (triage); operation owner unknown.\n"
+            f"*Required action:* {action}\n"
+            f"*Original failure:* {escape(first['job_name'])} ({first['conclusion']})\n"
+            f"<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n"
+            f"*Failed attempts:* {len(incident['failures'])}")
+    if latest != first:
+        body += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
+    if resolution:
+        body += f"\n*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
+        if resolution["proof"]:
+            body += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
     payload = build_slack_payload(title=title, body=body, status=status, emoji="✅" if status == "success" else "🔴")
     # Labels may originate in job names; escape the notification fallback too.
     payload["text"] = escape(title) + "\n" + body
@@ -798,17 +811,12 @@ def deliver(ledger, records, slack):
         require(state["identity"] == identity, "Slack bot, workspace or channel changed since claim")
         incident = state["incident"]
         posts = desired_posts(state)
-        for key, observation in posts.items():
+        for key in posts:
             post = incident["posts"][key]
             if post["state"] == "delivered":
                 continue
-            if key == "parent":
-                ts = slack.post(render(state))
-                incident["parent_view_sha256"] = parent_view_sha256(state)
-            else:
-                parent = incident["posts"]["parent"]
-                require(parent["state"] == "delivered", "thread requires an acknowledged parent")
-                ts = slack.post(render(state, reply=observation), thread_ts=parent["ts"])
+            ts = slack.post(render(state))
+            incident["parent_view_sha256"] = parent_view_sha256(state)
             post.update(state="delivered", ts=ts)
             ledger.save(state, "outcomes")
         parent = incident["posts"].get("parent")

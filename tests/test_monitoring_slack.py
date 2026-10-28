@@ -142,6 +142,15 @@ class ReceiverTests(unittest.TestCase):
         self.assertNotIn("thread_ts", message)
         self.assertEqual(message["channel"], "C12345678")
         self.assertIn("requires separate verification", message["text"])
+        for method, body in self.calls:
+            if method not in {"chat.postMessage", "chat.update"}:
+                continue
+            for field in ("Impact", "Mutation state", "Owner", "Required action"):
+                self.assertIn(f"*{field}:*", body["text"])
+            self.assertIn("*Mutation state:* Unknown", body["text"])
+            self.assertIn("jonaraphael (triage)", body["text"])
+            self.assertIn("operation owner unknown", body["text"])
+        self.assertIn("Verify the affected execution", message["text"])
         record, _ = relay.Store(self.bucket).load("0.oe73n791vhsd")
         self.assertTrue(record["closed"])
         self.assertEqual(record["ts"], next(iter(self.messages)))

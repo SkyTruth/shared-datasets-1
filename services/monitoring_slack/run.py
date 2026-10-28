@@ -45,7 +45,13 @@ def message(incident, closed):
     mark = ":warning:" if incident.get("severity") == "WARNING" else ":red_circle:"
     state = ":white_check_mark: Closed by Monitoring" if closed else mark + " Open"
     url = f"https://console.cloud.google.com/monitoring/alerting/alerts/{incident['incident_id']}?project={PROJECT}"
-    return {"text": f"{state} — {title}\n{summary}\n<{url}|Monitoring incident>", "blocks": []}
+    action = ("Verify the affected execution and mutation outcome; Monitoring closure alone is not recovery proof."
+              if closed else "Inspect the linked incident and affected execution; verify writes before any replay and use the existing recovery path.")
+    return {"text": (f"{state} — {title}\n{summary}\n"
+                     "*Impact:* Unknown; consumer impact has not been established.\n"
+                     "*Mutation state:* Unknown; Monitoring does not verify data or resource changes.\n"
+                     "*Owner:* jonaraphael (triage); operation owner unknown.\n"
+                     f"*Required action:* {action}\n<{url}|Monitoring incident>"), "blocks": []}
 
 
 class Store:
