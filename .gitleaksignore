@@ -9,7 +9,3 @@ ed7fc2a630f20dc0ef57bf86e4bfe86fc2b90dd6:scripts/publishing_concierge.py:generic
 # not an API key. New fixtures use incident_id terminology. Exact history only.
 9cbd724efa029545920c64afe15567ba463faa22:tests/test_monitoring_slack_recovery.py:generic-api-key:15
 9cbd724efa029545920c64afe15567ba463faa22:tests/test_monitoring_slack.py:generic-api-key:52
-
-# Public deterministic EAMLIS published-baseline SHA-256 in the immutable
-# reviewed installation plan, not an API credential. Exact original finding only.
-98123aab2cd888edf2a5c6627b4deedd9393364b:.github/dataset-plans/eamlis-abandoned-mine-land-inventory/eamlis-key-cutover-20261028/6acf9b0cff74b07614e807d9bd16e76e8dccf320a42f942d9fcc8bbe123d8680.json:generic-api-key:8
