@@ -75,13 +75,16 @@ resource "google_cloud_run_v2_job_iam_member" "wdpa_observer_scheduler_invoker" 
   member   = module.wdpa_scheduler_service_account.member
 }
 
+# Retain the resource for an update-only rollout. The deployment allowlist
+# blocks deletion; resuming this schedule is no longer part of WDPA operation.
 module "wdpa_execution_observer_scheduler" {
   source                = "../../modules/scheduler_job"
   project_id            = var.project_id
   region                = var.region
   name                  = local.wdpa_execution_observer_job_name
-  description           = "Observe WDPA executions independently of the processing worker every five minutes."
+  description           = "Retired catalog status polling; WDPA uses execution alerts and release-index check-ins."
   schedule              = "*/5 * * * *"
+  paused                = true
   target_job_location   = var.region
   target_job_name       = module.wdpa_execution_observer_job.name
   service_account_email = module.wdpa_scheduler_service_account.email

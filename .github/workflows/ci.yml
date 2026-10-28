@@ -584,8 +584,8 @@ jobs:
     secrets: inherit
 
   wdpa:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' }}
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' && needs.ingestion-iam.result == 'success' && needs.artifact-registry-iam.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
     permissions:
       contents: read
       actions: read

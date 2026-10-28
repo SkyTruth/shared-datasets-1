@@ -129,7 +129,7 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 
 This policy covers unattended Cloud Run Job execution failures throughout the project and region, including future jobs and detached deployment canaries.
 
-The five-minute WDPA execution observer has a separate health policy: it alerts only after no successful completion for a 15-minute window and a two-minute confirmation period. A successful observer run clears that condition.
+WDPA uses this same execution-failure policy. Its former catalog status observer is paused and its separate health policy is disabled.
 
 A trusted deployment execution is quiet only when it has the execution-only SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL environment marker. That workflow must wait for the result and fail when the execution fails. Missing creator/marker fields remain alertable. Never put this marker in a persistent job template or on an asynchronous execution that outlives its workflow.
 
@@ -158,11 +158,13 @@ EOT
   ]
 }
 
+# Retain the resource for the protected sync, which blocks deletion.
+# The observer schedule is paused; lack of observer activity is expected.
 resource "google_monitoring_alert_policy" "wdpa_execution_observer_unhealthy" {
   project      = var.project_id
   display_name = "WDPA execution observer has stopped succeeding"
   combiner     = "OR"
-  enabled      = var.cron_alerts_enabled
+  enabled      = false
   severity     = "ERROR"
 
   notification_channels = local.cron_alert_notification_channels
@@ -201,20 +203,9 @@ EOT
     mime_type = "text/markdown"
     subject   = "WDPA execution observations are stale"
     content   = <<-EOT
-The WDPA execution observer normally completes successfully every five minutes. No successful completion was reported in the last 15 minutes, and that condition persisted for two minutes. Metric ingestion and alert evaluation can add further delay.
+Retired policy, retained disabled because the protected alert sync blocks deletion. The wdpa-execution-observer schedule is paused. Do not resume it or enable this policy as part of routine WDPA deployment.
 
-Individual failed executions stay in Cloud Run and Logging without an immediate Slack notification. A later successful completion clears this health condition. Missing metric data also counts as unhealthy, so a stopped scheduler or repeated container startup failures remain visible.
-
-Check the observer, scheduler and current observation:
-
-```bash
-gcloud run jobs executions list --job=wdpa-execution-observer --region=${var.region} --project=${var.project_id}
-gcloud scheduler jobs describe wdpa-execution-observer --location=${var.region} --project=${var.project_id}
-gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="wdpa-execution-observer"' --project=${var.project_id} --limit=30
-gcloud storage cat gs://${var.bucket_name}/_catalog/wdpa-monthly-execution.json
-```
-
-This observer has no dataset publication permissions. Its health does not establish the outcome of a WDPA worker execution. Keep the observation document fresh before trusting execution status in the catalog.
+WDPA worker and Scheduler failures use the shared ingestion failure policies. Successful publications and meaningful skips update the per-asset release indexes; the catalog displays their Last check-in. Deployment completion checks inspect only pending deployment records.
 EOT
   }
 
@@ -325,7 +316,7 @@ EOT
     content   = <<-EOT
 Cloud Scheduler failed while attempting to start a shared-datasets ingestion job.
 
-The five-minute WDPA execution observer uses its separate health policy, which allows a 15-minute success window and a two-minute confirmation period before notifying.
+The former WDPA catalog status observer is paused and its health policy is disabled. WDPA's actual update schedule retains this dispatch-failure coverage.
 
 Check the scheduler and Cloud Run job:
 

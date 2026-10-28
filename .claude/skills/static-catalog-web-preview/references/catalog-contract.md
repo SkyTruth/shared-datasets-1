@@ -34,9 +34,8 @@ viewer as signed GCS URLs unless a separate preview CDN is explicitly created.
 
 Catalog web files publish before the separately protected viewer image deploy.
 Startup dependencies must therefore remain in JavaScript modules already served
-by the existing viewer allowlist. WDPA execution formatting lives in
-`release-reference.js`; adding it as a new eager `execution-status.js` import
-made the catalog fail to start on older viewer revisions. The browser acceptance
+by the existing viewer allowlist. Adding a new eager module import before its
+viewer allowlist update can prevent the catalog from starting. The browser acceptance
 transport enforces the previous module allowlist while exercising current code.
 
 ## Catalog output
@@ -71,7 +70,8 @@ and manifests.
 The browser-facing freshness labels are `Latest release` for the newest
 successful dataset release and `Last check-in` for the most recent success or
 meaningful skip recorded by the cron job. Both values come from the release
-index when present.
+index when present. WDPA uses these same release/check-in fields; there is no
+separate live execution card or background observer polling in the catalog.
 
 The runtime `catalog.json` includes the CSV catalog fields, including
 `citation`, so browser and service consumers can cite the original source
@@ -292,27 +292,19 @@ Terraform in `terraform/envs/prod/shared_bucket_public.tf` now records this
 bucket configuration. Run a Terraform plan before applying, because the bucket is
 an existing production bucket imported into Terraform control.
 
-## WDPA execution status
+## WDPA check-ins
 
-Both WDPA detail pages show the independent observer's
-`_catalog/wdpa-monthly-execution.json` beside the asset check-in and published
-release. Execution status describes the whole job; a marine release may have
-published successfully before a terrestrial failure. A newer running execution
-also displays the last completed execution. Status is revalidated every minute
-while details are visible, and observations older than 15 minutes are stale.
-Missing or malformed observations display unavailable status without concealing
-the published release. Raw execution messages and configuration are excluded.
-The protected viewer serves execution formatting in the existing
-`release-reference.js` module and maps `/wdpa-monthly-execution.json` to the
-observer object under `_catalog/`, preserving revalidation headers and reading
-each observation afresh. Keep startup imports within the existing viewer
-allowlist so a web deploy remains compatible with the previous viewer image.
-Verify status on static and protected WDPA pages after protected deployment.
+Both WDPA detail pages use their own release indexes for Latest release and
+Last check-in, like other scheduled datasets. A successful marine publication
+must not advance the terrestrial release date. Worker and Scheduler failures
+use shared operational alerts; an idle job does not need a fresh observation.
 
-The observer is deployed with the worker through protected Terraform and has
-read-only WDPA execution access plus an exact-object generation-preconditioned
-status writer. See [WDPA operations](../../../../ingestion/wdpa_monthly/README.md) for
-resource profiling, rollout gates, failure probes and publication recovery.
+The former observer schedule is paused and its health alarm disabled. The
+catalog no longer displays or polls `_catalog/wdpa-monthly-execution.json`.
+The old viewer route and dormant infrastructure remain for the update-only
+rollout; deleting them requires a reviewed teardown path. Verify both WDPA
+pages retain their release/check-in information without execution-status
+requests. See [WDPA operations](../../../../ingestion/wdpa_monthly/README.md).
 
 ## Compare releases
 

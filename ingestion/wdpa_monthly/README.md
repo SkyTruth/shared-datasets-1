@@ -2,7 +2,7 @@
 
 The production worker publishes approved retained bundles for `wdpa-marine` and
 `wdpa-terrestrial`. Use the [monthly operations runbook](../../docs/wdpa-monthly-runbook.md)
-for the pinned images, deployment prerequisites, execution commands, observer,
+for the pinned images, deployment prerequisites, execution commands, monitoring,
 recovery and evidence paths.
 
 Deployment, schedule control and teardown procedures live in the
@@ -124,15 +124,17 @@ locale catalog. `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the producer fingerprin
 The publication-only entrypoint requires a reviewed retained bundle and
 publishes its existing artifacts.
 
-## Observer health
+## Execution monitoring
 
-The five-minute `wdpa-execution-observer` uses a separate health alert: no
-successful completion in a rolling 15-minute window, followed by two minutes
-of confirmation. Metric ingestion and evaluation add latency. A recovered next
-run stays quiet; missing completion metrics count as unhealthy. Only this exact
-observer and its Scheduler dispatch are excluded from immediate failure alerts.
-Worker failures retain their general alert. See [alert routing](../../docs/alert-routing.md#observer-recovery-window)
-for the native metric and deployment verification contract.
+WDPA uses the shared worker and Scheduler failure alerts. Successful publication
+and meaningful skips update per-asset release indexes, which supply the catalog's
+Last check-in. Deployment verification follows pending deployment records.
+
+The former five-minute observer schedule is paused, its health alarm is disabled,
+and the catalog no longer polls its status feed. Dormant infrastructure is
+retained for the existing update-only protected deployment paths. Do not resume
+the observer during routine deployment. See [alert routing](../../docs/alert-routing.md#wdpa-execution-driven-monitoring)
+for rollout order and verification.
 
 ## Limits
 
@@ -141,7 +143,7 @@ DISK at `/work`. `TMPDIR=/work/tmp` and
 `SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` keep native/SQLite scratch there.
 Cloud executions reject a missing or memory-backed mount before downloads.
 Tippecanoe uses at most four threads; SQLite caches are capped at 64 MiB and
-sorting uses disk. The observer has no ephemeral disk and uses 1 CPU / 512 MiB,
+sorting uses disk. The dormant observer has no ephemeral disk and uses 1 CPU / 512 MiB,
 120 seconds and zero retries.
 
 Processing reports emit `wdpa_phase_started`/`wdpa_phase_resources` with elapsed

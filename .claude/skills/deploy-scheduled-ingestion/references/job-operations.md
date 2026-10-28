@@ -100,9 +100,10 @@ terminal execution snapshot rather than querying the retired producer execution.
 
 Use the [monthly runtime/evidence contract](../../../../docs/wdpa-monthly-runbook.md)
 for acceptance pins and owned recovery facts. Do not deploy with a local
-production Terraform apply or hand-built image. The independent observer remains
-enabled; its rolling recovery-window health policy is separate from immediate
-worker failure alerts.
+production Terraform apply or hand-built image. The former catalog observer
+schedule stays paused and its health policy disabled. WDPA uses shared worker
+and Scheduler failure alerts and per-asset release-index check-ins. When both
+retirement changes deploy, disable the observer policy before pausing its schedule.
 
 ## wdpa-monthly schedule control and teardown
 
