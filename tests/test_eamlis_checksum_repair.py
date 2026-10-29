@@ -1,6 +1,7 @@
 """Legacy producer records -> approved serialization -> CAS repair -> strict index."""
 
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -144,7 +145,7 @@ def contexts(client, row):
     )
 
 
-def test_standalone_plan_cli_renders_immutable_document_without_pythonpath(
+def test_standalone_plan_cli_renders_without_site_packages_or_pythonpath(
     example, tmp_path
 ):
     _, _, path, _, _, _, _ = example
@@ -155,6 +156,7 @@ def test_standalone_plan_cli_renders_immutable_document_without_pythonpath(
     result = subprocess.run(
         [
             sys.executable,
+            "-S",
             str(script),
             "prepare",
             "--publish",
@@ -175,6 +177,91 @@ def test_standalone_plan_cli_renders_immutable_document_without_pythonpath(
     )
     assert document["publish"][repair.KEY]["release"] == "2026-05-01"
     assert "shared-datasets-publish-plan" in result.stdout
+
+
+@pytest.mark.parametrize("extra_target", [False, True])
+def test_authorization_preview_uses_stdlib_and_keeps_scope_validation(
+    example, tmp_path, extra_target
+):
+    from tests.test_dataset_mutation_authorization import FakeGitHub, REPO
+
+    _, plan, _, _, _, _, _ = example
+    document = plans.normalize_document(
+        {
+            "plan_version": 1,
+            "finalization_version": plans.FINALIZATION_VERSION,
+            "publish": plan,
+        }
+    )
+    body = plans.render_document(document)
+    if extra_target:
+        document["publish"]["release_index_asset_slugs"].append("unrelated")
+    raw = plans.canonical_bytes(document)
+    blob = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+    path = f".github/dataset-plans/{quality.SLUG}/repair/{plans.sha256(raw)}.json"
+    api = FakeGitHub()
+    api.pr.update(state="open", merged=False, merged_at=None, body=body)
+    api.pr["base"]["sha"] = "b" * 40
+    fixture = tmp_path / "preview-fixture.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "pr": api.pr,
+                "files": [{"filename": path, "status": "added", "sha": blob}],
+                "tree": {
+                    "truncated": False,
+                    "tree": [
+                        {"path": path, "type": "blob", "mode": "100644", "sha": blob}
+                    ],
+                },
+                "blob": blob,
+                "raw": raw.decode(),
+                "event": {"repository": REPO, "pull_request": api.pr},
+            }
+        )
+    )
+    child = r"""
+import importlib.util, json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+assert importlib.util.find_spec('google') is None
+from scripts import dataset_mutation_authorization as auth
+from tests.test_dataset_mutation_authorization import FakeGitHub
+value = json.loads(Path(sys.argv[2]).read_text())
+api = FakeGitHub()
+for name in ('pr', 'files', 'tree', 'blob'):
+    setattr(api, name, value[name])
+api.raw = value['raw'].encode()
+auth.GitHub = lambda: api  # Only external GitHub transport is substituted.
+Path('event.json').write_text(json.dumps(value['event']))
+raise SystemExit(auth.main(['preview', '--event-path', 'event.json',
+    '--github-output', 'outputs', '--directory', 'authorization']))
+"""
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            child,
+            str(Path(plans.__file__).resolve().parents[1]),
+            str(fixture),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert not (tmp_path / "authorization").exists()
+    if extra_target:
+        assert result.returncode == 2, result.stderr
+        assert "checksum repair permits only one historical EAMLIS run" in result.stderr
+        assert not (tmp_path / "publish-plan.json").exists()
+        assert not (tmp_path / "outputs").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert json.loads((tmp_path / "publish-plan.json").read_bytes()) == plan
+        assert "has_publish_plan=true" in (tmp_path / "outputs").read_text()
 
 
 def test_real_workflow_repair_retries_without_recopy_and_preserves_manifest_generation(
