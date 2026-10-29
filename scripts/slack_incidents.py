@@ -9,11 +9,13 @@ from __future__ import annotations
 import argparse
 import copy
 from datetime import datetime, timedelta, timezone
+from functools import cache
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from urllib.parse import urlencode
 
@@ -24,16 +26,18 @@ import yaml
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
+from scripts import install_deployment_verifier as verifier
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
 
-SCHEMA = "shared-datasets-slack-incident-v2"
+SCHEMA = "shared-datasets-slack-incident-v4"
+PREVIOUS_SCHEMA = "shared-datasets-slack-incident-v2"
 LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
 RETIRED_SCHEMA = "shared-datasets-slack-incident-v3"
 # Last retained checkpoint before the retired writer was disabled.
 RETIRED_CHECKPOINT_MAX_ID = 7260103711
-READ_SCHEMAS = {SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
+READ_SCHEMAS = {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
 RETIRED_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
 ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
@@ -255,7 +259,7 @@ def migrate_sdk_candidate(api, state):
                 and publish[0]["conclusion"] == "skipped", "historical SDK failure did not precede publication")
     migrated = copy.deepcopy(state)
     scope, kind, label = scope_for_job("candidate", {}, SDK_WORKFLOW)
-    migrated.update(scope=scope, kind=kind, label=label, healthy=None)
+    migrated.update(scope=scope, kind=kind, label=label, healthy=None, terminal_validation=None)
     for item in migrated["incident"]["failures"] + migrated["deferred"]:
         item.update(scope=scope, kind=kind, label=label)
     # The original signed bytes retain the old deployment watermark as audit
@@ -310,22 +314,53 @@ def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: N
     return prepare(ledger, identity, observations, on_saved=on_saved)
 
 
-def terminal_success(api, scope):
+@cache
+def terminal_contract_sha256():
+    version = subprocess.check_output(["gh", "--version"], text=True)
+    require(version.startswith(f"gh version {verifier.VERSION} "), "terminal validation requires the pinned receipt verifier")
+    sources = ("slack_incidents.py", "deployment_revision.py", "deployment_emission.py", "workflow_failure_alert.py",
+               "workflow_identity.py", "github_api_read.py", "install_deployment_verifier.py")
+    return hashlib.sha256(emissions.canonical({
+        name: hashlib.sha256((ROOT / "scripts" / name).read_bytes()).hexdigest() for name in sources
+    })).hexdigest()
+
+
+def terminal_evidence_sha256(record, statuses):
+    return hashlib.sha256(emissions.canonical({"record": record, "statuses": statuses})).hexdigest()
+
+
+def terminal_success(api, scope, healthy=None, terminal_validation=None):
     target = scope.removeprefix("deployment:")
     if target == RETIRED_SETUP_TARGET:
         # Its signed, already-resolved incident survives the retired deployment.
-        return None
+        return None, None
     require(target in deployments.TARGET_WORKFLOWS | deployments.TERRAFORM_WORKFLOWS, "unregistered recovery target")
     records = api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100")
     if not records:
-        return None
+        return None, None
     record = max(records, key=lambda item: item["id"])
-    payload = deployments.verify_record(api, REPOSITORY, record)
-    statuses = deployments.verified_statuses(api, REPOSITORY, record)
+    statuses = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+    payload = deployments.record_payload(record)
+    validation = {"evidence_sha256": terminal_evidence_sha256(record, statuses),
+                  "contract_sha256": terminal_contract_sha256()}
     phases = {"verified"} if target in RUNTIME_TARGETS else {"applied", "verified"}
-    if not statuses or statuses[0]["state"] != "success" or statuses[0]["description"] not in phases:
-        return None
-    return terminal_observation(scope, record, payload, statuses[0])
+    terminal = bool(statuses and statuses[0]["state"] == "success" and statuses[0]["description"] in phases)
+    if terminal and terminal_validation == validation:
+        observation = terminal_observation(scope, record, payload, statuses[0])
+        if observation == healthy:
+            return healthy, validation
+    # A changed record or any changed historical status needs the complete
+    # original validation. A newer failed/pending attempt never reuses health.
+    deployments.verify_record(api, REPOSITORY, record, statuses=statuses)
+    if statuses:
+        deployments.verify_receipt(api, REPOSITORY, record, statuses[0])
+    # Expensive verification must not hide a status appended while it ran or
+    # mint a checkpoint for history that was not fully validated.
+    current = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
+    require(current == statuses, "deployment status history changed during terminal validation")
+    if not terminal:
+        return None, None
+    return terminal_observation(scope, record, payload, statuses[0]), validation
 
 
 def terminal_observation(scope, record, payload, status):
@@ -361,7 +396,7 @@ def verify_saved_success(api, observation):
 
 def new_state(observation, identity):
     return {"scope": observation["scope"], "kind": observation["kind"], "label": observation["label"],
-            "identity": identity, "healthy": None, "incident": None, "deferred": []}
+            "identity": identity, "healthy": None, "terminal_validation": None, "incident": None, "deferred": []}
 
 
 def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
@@ -378,6 +413,7 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
             healthy = state["healthy"]
             if instant(observation["time"]) > instant(healthy["time"]) and ancestor(healthy["sha"], observation["sha"]):
                 state["healthy"] = observation
+                state["terminal_validation"] = None
             return state
         failures = incident["failures"]
         receipt = PUBLICATION_RECEIPT_JOB.fullmatch(observation["job_name"])
@@ -396,6 +432,7 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
             require(observation["job_name"] == failures[0]["job_name"], "successful job does not cover the incident")
         incident["resolution"] = observation
         state["healthy"] = observation
+        state["terminal_validation"] = None
         return state
     if state["healthy"]:
         healthy = state["healthy"]
@@ -412,8 +449,9 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
     return state
 
 
-def validate_state(state, *, legacy=False):
-    require(isinstance(state, dict) and set(state) == {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}, "invalid incident state schema")
+def validate_state(state, *, legacy=False, historical=False):
+    fields = {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}
+    require(isinstance(state, dict) and set(state) == (fields if historical else fields | {"terminal_validation"}), "invalid incident state schema")
     identity = state["identity"]
     require(isinstance(identity, dict) and set(identity) == {"channel", "team", "user"}
             and CHANNEL.fullmatch(identity["channel"]) and re.fullmatch(r"T[A-Z0-9]+", identity["team"])
@@ -421,6 +459,12 @@ def validate_state(state, *, legacy=False):
     if state["healthy"] is not None:
         validate_observation(state["healthy"])
         require(state["healthy"]["scope"] == state["scope"] and state["healthy"]["conclusion"] == "success", "invalid healthy watermark")
+    if not historical and state["terminal_validation"] is not None:
+        validation = state["terminal_validation"]
+        require(state["kind"] == "deployment" and state["healthy"] is not None and state["healthy"]["kind"] == "deployment"
+                and isinstance(validation, dict) and set(validation) == {"evidence_sha256", "contract_sha256"}
+                and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in validation.values()),
+                "invalid terminal validation checkpoint")
     require(isinstance(state["deferred"], list), "invalid deferred observation queue")
     deferred_events = set()
     for item in state["deferred"]:
@@ -499,6 +543,8 @@ def migrate_verified_state(state, schema):
         state["incident"]["parent_view_sha256"] = None
     if schema == LEGACY_SCHEMA:
         state["incident"]["parent_view_sha256"] = None
+    if schema != SCHEMA:
+        state["terminal_validation"] = None
     return validate_state(state)
 
 
@@ -610,6 +656,7 @@ def worker_context(api, environment=os.environ):
 class Ledger:
     def __init__(self, api, run, directory):
         self.api, self.run, self.directory = api, run, directory
+        self.verified_statements = []
 
     def verify(self, record):
         payload = record["payload"]
@@ -623,12 +670,14 @@ class Ledger:
         require(payload["schema"] != RETIRED_SCHEMA or positive(record.get("id")) and record["id"] <= RETIRED_CHECKPOINT_MAX_ID,
                 "a retired writer emitted a new checkpoint; refusing state downgrade")
         if payload["schema"] != RETIRED_SCHEMA:
-            validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
+            validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
+                           historical=payload["schema"] != SCHEMA)
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
+        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
+                         verified_statements=self.verified_statements)
         return migrate_verified_state(payload["state"], payload["schema"])
 
     def load(self):
@@ -721,9 +770,10 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     payload = record["payload"]
     if isinstance(payload, str):
         payload = json.loads(payload)
-    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}
+    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
-    state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
+    state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
+                           historical=payload["schema"] != SCHEMA)
     require(state["incident"]["id"] == incident_id and state["identity"] == identity
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
@@ -740,7 +790,10 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             verify_saved_success(ledger.api, healthy)
         require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in state["incident"]["failures"])
                 and deployments.git_ancestor(resolution["sha"], healthy["sha"]), "checkpoint recovery has incompatible revision ancestry")
-    ledger.save(migrate_verified_state(state, payload["schema"]), "claims")
+    state = migrate_verified_state(state, payload["schema"])
+    # Owner acceptance repairs notification bookkeeping, not validation reuse.
+    state["terminal_validation"] = None
+    ledger.save(state, "claims")
     return []
 
 
@@ -771,9 +824,11 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
         states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
     for scope, state in list(states.items()):
         if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
-            evidence = success(ledger.api, scope)
+            evidence, validation = success(ledger.api, scope, state["healthy"], state["terminal_validation"])
             if evidence:
                 states[scope] = fold(state, evidence, identity, ancestor=ancestor)
+                if states[scope]["healthy"] == evidence:
+                    states[scope]["terminal_validation"] = validation
     prepared = []
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
@@ -868,9 +923,11 @@ def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=
         else:
             state = fold(state, item, identity, ancestor=ancestor)
     if state["kind"] == "deployment":
-        evidence = success(ledger.api, state["scope"])
+        evidence, validation = success(ledger.api, state["scope"], state["healthy"], state["terminal_validation"])
         if evidence:
             state = fold(state, evidence, identity, ancestor=ancestor)
+            if state["healthy"] == evidence:
+                state["terminal_validation"] = validation
     incident = state["incident"]
     for key in desired_posts(state):
         if key not in incident["posts"]:

@@ -141,10 +141,11 @@ failures; no production mutation or Slack delivery is retried by this helper.
 Unsigned/forged snapshots cannot choose a parent timestamp or suppress alerts.
 Signed state retains the workspace, bot, channel, parent timestamp/permalink,
 failed attempts, original recovery evidence, latest healthy evidence, deferred
-events and delivery claims/acknowledgements. Version 2 also records the hash of
+events and delivery claims/acknowledgements. Version 2 introduced the hash of
 the last acknowledged parent view. A changed view remains pending until Slack
 acknowledges its update; an interrupted update safely retries the same parent.
-Version 1 snapshots are signature-verified before migration. Existing timestamps
+Version 4 adds the terminal-validation fingerprints described below. Version 1
+and version 2 snapshots are signature-verified before migration. Existing timestamps
 and historical recovery replies remain audit evidence and are never sent again.
 Retired version 3 snapshots are also signature-verified before reading their
 incident core. Only historical IDs through the reviewed retirement boundary are
@@ -155,7 +156,8 @@ intact; their old view acknowledgements are cleared so the current bot updates
 the same messages. Proven-empty registrations with released supervision have no
 incident to carry forward. Original signed snapshots remain audit history;
 unknown fields, merged scopes, active empty registrations and unrepresented
-evidence fail closed. New checkpoints retain the current version 2 format.
+evidence fail closed. New checkpoints use version 4; migrated historical
+checkpoints start without reusable terminal-validation evidence.
 Newer observations cannot replace a resolved incident until its original
 parent's green update is acknowledged. They remain in the signed deferred queue
 and replay on a later reconciliation, preserving both incident parents.
@@ -205,6 +207,60 @@ failed attempts while a retry's delivery is uncertain. Recovery must cover all
 recorded and deferred failures before that parent can turn green; the uncertain
 retry remains blocked and is never resent automatically. An unconfirmed original
 parent still requires owner inspection before any parent update or new send.
+
+## Incremental verification
+
+Every event still loads and verifies all current notification checkpoints,
+processes unrelated deferred and pending delivery work, and inspects every
+eligible deployment target. Workflow subscriptions, serialization and the hourly
+24-hour replay remain unchanged. There is no separate index, external worker,
+new permission or source-event filter.
+
+A deployment state's `terminal_validation` is either null or exactly two SHA-256
+fingerprints: the complete production record and status history, and the verifier
+source contract. The latter includes the incident, deployment, emission, workflow
+identity, alert-routing, API-read and pinned-verifier installer code. The running
+GitHub CLI must match the installer's pinned version. The fingerprints are signed
+as part of the existing notification checkpoint and apply only to that state's
+exact healthy observation.
+
+Each probe freshly enumerates the target's deployment records and the newest
+record's complete status history. Reuse requires identical evidence, identical
+verifier policy and the same independently reconstructed terminal observation.
+Any new record, changed status history, changed policy or absent fingerprint
+requires full CI, source and receipt verification. Cold validation rereads the
+status history afterward and fails if it changed during verification. Pending or
+failed newer attempts never fall back to older healthy evidence. Failed reads,
+invalid signatures and malformed checkpoint fields remain failures.
+
+This deliberately permits an already authenticated historical fact to remain
+usable when its original CI or production attestation is later unavailable,
+provided the complete current evidence and policy still match. The current
+notification checkpoint must still pass signature verification, and the live
+deployment/status enumerations must succeed. These fingerprints have no
+production authorization role. Changed health clears them; owner checkpoint
+sealing also clears them and cannot manufacture reusable validation evidence.
+
+Within one ledger invocation, an already cryptographically verified multi-subject
+statement can cover another exact notification receipt. Every use still checks
+the live emitter, repository and workflow identity, certificate policy and exact
+subject digest. This in-memory reuse never crosses invocations; production
+receipt callers retain their independent verification defaults.
+
+Before the first version 4 writer is merged, pause admission of the notification
+workflow and drain all admitted workers without cancelling active sends. Merge
+the reviewed change, confirm the main revision, then resume admission within
+24 hours so the existing hourly replay covers the gap. A longer pause requires
+the existing owner-reviewed replay window. Keep the bot activation setting
+unchanged; switching to the legacy notifier is not an admission pause. Version 2
+workers cannot read version 4 checkpoints, so a later rollback must retain the
+version 4 reader. No historical checkpoint deletion is required.
+
+The first probe of each migrated target performs full verification and signs its
+new fingerprints. Subsequent unchanged probes avoid repeated CI and production
+signature checks. Measure cold and steady-state runs separately, including job
+rounding, replay work and notification checkpoint verification; an improvement
+in the target probe alone is not the whole workflow's savings.
 
 ## Configure and activate
 

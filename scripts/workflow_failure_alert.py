@@ -171,7 +171,7 @@ def resolve_legacy(api, slack, run_id, message_ts):
                       "every failed job must have a registered deployment recovery")
     links = []
     for failure in failures:
-        recovery = incidents.terminal_success(api, failure["scope"])
+        recovery, _ = incidents.terminal_success(api, failure["scope"])
         incidents.require(recovery is not None
                           and incidents.deployments.git_ancestor(failure["sha"], recovery["sha"])
                           and incidents.instant(recovery["time"]) > incidents.instant(failure["time"]),
