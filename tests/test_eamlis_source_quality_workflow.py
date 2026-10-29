@@ -40,7 +40,13 @@ def test_hold_resolution_requires_verified_publication_and_same_approval_envelop
     resolver = names.index("Resolve reviewed source-quality publication claim")
     assert names.index("Finalize promoted release metadata") < names.index("Rebuild promoted release index") < resolver
     assert resolver < names.index("Record completed publication")
-    assert steps[resolver]["env"] == steps[names.index("Promote approved staged objects")]["env"]
+    authority = steps[names.index("Promote approved staged objects")]["env"]
+    assert authority == {
+        "GH_TOKEN": "${{ github.token }}",
+        "EXPECTED_SHA256": "${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}",
+    }
+    assert steps[resolver]["env"] == authority
+    assert steps[names.index("Rebuild promoted release index")].get("env") == authority
     assert "has_publish_plan == 'true'" in steps[resolver]["if"]
 
 

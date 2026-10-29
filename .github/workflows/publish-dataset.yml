@@ -301,6 +301,9 @@ jobs:
 
       - name: Rebuild promoted release index
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
         run: |
           set -euo pipefail
           uv run --no-sync python scripts/publish_workflow.py rebuild-release-index --plan-json publish-plan.json
