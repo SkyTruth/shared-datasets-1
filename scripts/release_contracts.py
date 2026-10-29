@@ -27,11 +27,13 @@ from scripts import cdn_plan_readiness as cdn
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
+    "wdpa-monthly-build.yml",
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
+    "wdpa-monthly-build.yml",
     "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
     "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
@@ -248,8 +250,12 @@ def retained_execution_errors(evidence, facts):
     """Bind the immutable terminal execution snapshot to the accepted image."""
     build = evidence["build"]
     execution = facts.get("execution", {})
+    try:
+        job = wdpa.build_job(build.get("cloud_execution"))
+    except ValueError:
+        return ["retained cloud facts have an invalid build execution"]
     name = ("projects/shared-datasets-1/locations/us-central1/jobs/"
-            f"wdpa-processing-validation/executions/{build['cloud_execution']}")
+            f"{job}/executions/{build['cloud_execution']}")
     containers = execution.get("template", {}).get("containers", [])
     completed = [condition.get("state") for condition in execution.get("conditions", [])
                  if condition.get("type") == "Completed"]

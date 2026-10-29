@@ -20,7 +20,7 @@ from scripts import release_feature_model as model
 
 BUCKET = "skytruth-shared-datasets-1"
 PREFIX = "_scratch/wdpa-builds/"
-EXECUTION = r"wdpa-processing-validation-[a-z0-9]+"
+EXECUTION = r"(?:wdpa-processing-validation|wdpa-monthly-build)-[a-z0-9]+"
 ROLES = ("fgb", "pmtiles", "metadata", "schema", "metadata_translations")
 
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Require one retained October build before publishing its exact artifacts."""
+"""Require one validated monthly build before publishing its exact artifacts."""
 
 from __future__ import annotations
 import argparse
+import datetime as dt
 import hashlib
 import json
 import re
@@ -16,6 +17,24 @@ from ingestion.wdpa_monthly.resources import validation_limits
 EVIDENCE = ROOT / "catalog/wdpa-processing-acceptance.json"
 PREFERRED_MEMORY_PEAK_BYTES = 6.4 * 1024**3
 MEMORY_LIMIT_BYTES = 8 * 1024**3
+
+
+def monthly_date(value):
+    """Monthly build dates are explicit, canonical first-of-month dates."""
+    if not isinstance(value, str):
+        raise ValueError("run_date must be YYYY-MM-01")
+    date = dt.date.fromisoformat(value)
+    if date.day != 1 or date.isoformat() != value:
+        raise ValueError("run_date must be YYYY-MM-01")
+    return date
+
+
+def build_job(execution):
+    # October's retained evidence remains readable and independently verifiable.
+    match = re.fullmatch(r"(wdpa-processing-validation|wdpa-monthly-build)-[a-z0-9]+", str(execution))
+    if match is None:
+        raise ValueError("invalid WDPA build execution")
+    return match[1]
 
 
 def source_paths(inventory):
@@ -69,7 +88,6 @@ def check_compatibility(evidence, builds):
         or sample.get("sample_fraction") != 0.001
         or sample.get("sample_seed") != 7919
         or sample.get("genesis") is not False
-        or sample.get("run_date") != "2026-10-01"
         or sample.get("translation_index_built") is not True
         or sample.get("compatibility_verified") is not True
         or sample.get("contracts_verified") is not True
@@ -80,7 +98,7 @@ def check_compatibility(evidence, builds):
         )
     ):
         errors.append(
-            "a deterministic October old/new compatibility sample is required"
+            "a deterministic monthly old/new compatibility sample is required"
         )
     assets = sample.get("assets", {})
     if set(assets) != {"wdpa-marine", "wdpa-terrestrial"} or any(
@@ -93,7 +111,7 @@ def check_compatibility(evidence, builds):
             "compatibility must compare both realms, including their IDs, geometry, field types and translations"
         )
     for build in builds:
-        for key in (*INPUT_KEYS, "native_versions"):
+        for key in (*INPUT_KEYS, "native_versions", "run_date"):
             if not sample.get(key) or sample.get(key) != build.get(key):
                 errors.append(
                     f"compatibility sample and complete build disagree on {key}"
@@ -125,12 +143,14 @@ def check_build(run, *, require_bundle=True):
             )
         except (RuntimeError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"retained build bundle is required: {exc}")
-    if not re.fullmatch(
-        r"wdpa-processing-validation-[a-z0-9]+", str(run.get("cloud_execution", ""))
-    ):
+    try:
+        job = build_job(run.get("cloud_execution"))
+    except ValueError:
+        job = None
         errors.append("complete builds require their Cloud Run execution IDs")
+    image_name = "wdpa-validation" if job == "wdpa-processing-validation" else "wdpa-monthly-build"
     if not re.fullmatch(
-        r"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:[0-9a-f]{64}",
+        rf"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/{image_name}@sha256:[0-9a-f]{{64}}",
         str(run.get("cloud_image", "")),
     ):
         errors.append(
@@ -140,10 +160,13 @@ def check_build(run, *, require_bundle=True):
         run.get("state") != "succeeded"
         or run.get("sample_fraction") != 1
         or run.get("genesis") is not False
-        or run.get("run_date") != "2026-10-01"
         or run.get("translation_index_built") is not True
     ):
         errors.append("a benchmark is incomplete, sampled, or uses a genesis baseline")
+    try:
+        monthly_date(run.get("run_date"))
+    except ValueError:
+        errors.append("a build requires an explicit first-of-month run_date")
     if not validation_limits(run.get("cpu_limit"), run.get("memory_limit_bytes")):
         errors.append("a benchmark did not use 4 CPU / 8 GiB limits")
     peak, scratch, elapsed = (
@@ -165,18 +188,17 @@ def check_build(run, *, require_bundle=True):
         errors.append("benchmark counts and artifact contracts must be verified")
     if set(run.get("assets", {})) != {"wdpa-marine", "wdpa-terrestrial"}:
         errors.append("both realms must be built")
-    for slug, (rows, india) in {
-        "wdpa-marine": (17938, 304),
-        "wdpa-terrestrial": (497914, 193174),
-    }.items():
+    for slug in ("wdpa-marine", "wdpa-terrestrial"):
         asset = run.get("assets", {}).get(slug, {})
+        counts = asset.get("source_counts", {})
         if (
-            asset.get("rows") != rows
-            or asset.get("india_rows") != india
-            or asset.get("india_sites") != india
+            any(type(counts.get(key)) is not int or counts[key] < 0
+                or asset.get(key) != counts[key] for key in ("rows", "india_rows", "india_sites"))
+            or counts.get("rows", 0) <= 0
+            or not 0 <= counts.get("india_sites", -1) <= counts.get("india_rows", -1) <= counts.get("rows", -1)
         ):
             errors.append(
-                f"complete October {slug} counts differ from the frozen source"
+                f"complete {slug} counts differ from the independently counted frozen source"
             )
         if (
             type(asset.get("next_generated_feature_id")) is not int

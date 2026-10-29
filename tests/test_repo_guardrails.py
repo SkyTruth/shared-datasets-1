@@ -125,6 +125,7 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('prod-terraform-target-apply.yml', 'sync'),
             ('deployment-recovery.yml', 'reconcile'),
             ('wdpa-monthly-deploy.yml', 'deploy'),
+            ('wdpa-monthly-build.yml', 'build'),
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
             ('mpatlas-monthly-deploy.yml', 'deploy'),

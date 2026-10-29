@@ -81,6 +81,24 @@ class ReplayTests(unittest.TestCase):
                 self.assertEqual(d.replay_decision(records, CURRENT, self.ancestor, lambda _: [{"state": "success", "description": "verified"}]), "superseded")
         self.assertEqual(d.replay_decision([self.record(NEW)], CURRENT, self.ancestor, Mock()), "superseded")
 
+    def test_explicit_monthly_build_can_repeat_successful_producer_revision(self):
+        record = self.record(CURRENT)
+        record["payload"]["target"] = "wdpa-monthly-build"
+        record["environment"] = "production-wdpa-monthly-build"
+        def status(_):
+            return [{"state": "success", "description": "applied"}]
+        for artifact in (None, IMAGE, IMAGE.replace("d" * 64, "e" * 64)):
+            with self.subTest(artifact=artifact):
+                self.assertEqual(d.replay_decision([record], CURRENT, self.ancestor, status,
+                    artifact=artifact, target="wdpa-monthly-build"), "proceed")
+        self.assertEqual(d.replay_decision([record, self.record(NEW, 2)], CURRENT,
+            self.ancestor, status, target="wdpa-monthly-build"), "superseded")
+        for terminal in ([], [{"state": "failure", "description": "failed"}],
+                         [{"state": "in_progress", "description": "started"}]):
+            with self.subTest(terminal=terminal), self.assertRaisesRegex(d.DeploymentError, "reconcile"):
+                d.replay_decision([record], CURRENT, self.ancestor,
+                    lambda _: terminal, target="wdpa-monthly-build")
+
     def test_divergent_history_and_same_revision_failure_cannot_be_hidden_as_superseded(self):
         with self.assertRaisesRegex(d.DeploymentError, "divergent"):
             d.replay_decision([self.record(NEW)], CURRENT, lambda *_: False, Mock())

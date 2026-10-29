@@ -215,8 +215,9 @@ production job that imports the shared helpers.
 
 3. For changes to a large-source producer, use the owning job's local native
    fixtures and production-source fractional tests before deploying. The WDPA
-   monthly path promotes its accepted retained bundle; do not rerun the retired
-   October campaign as a deployment prerequisite.
+   monthly path promotes its accepted retained bundle. Prepare each new month
+   through `wdpa-monthly-build.yml` as documented in the monthly runbook; do not
+   rerun the retired October campaign as a deployment prerequisite.
 
 4. If infrastructure is needed before an image can be pushed, add that
    prerequisite to Terraform and open a focused PR. After review and merge, let
