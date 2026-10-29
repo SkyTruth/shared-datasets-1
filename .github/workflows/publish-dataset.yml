@@ -303,7 +303,7 @@ jobs:
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |
           set -euo pipefail
-          python scripts/publish_workflow.py rebuild-release-index --plan-json publish-plan.json
+          uv run --no-sync python scripts/publish_workflow.py rebuild-release-index --plan-json publish-plan.json
 
       - name: Resolve reviewed source-quality publication claim
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
