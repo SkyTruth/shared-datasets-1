@@ -3,7 +3,8 @@
 The manifest is independently hashed and its metadata is patched with generation
 and metageneration preconditions. Its bytes/generation never change. The only
 permitted run-record edit is sha256.manifest; all ordinary checksum validation
-remains strict.
+remains strict. Plan validation is stdlib-only; cloud index dependencies are
+loaded at the publication boundary.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import datetime as dt
 import json
 import re
 
-from ingestion.common import release_index
 from ingestion.eamlis_monthly import identity as ids, source_quality as quality
 
 KEY = "historical_checksum_repair"
@@ -248,6 +248,8 @@ def patch_manifest(client, plan):
 
 
 def repair_index(client, plan, row):
+    from ingestion.common import release_index
+
     guard = owned_guard(client, plan)
     validate_live(guard, plan)
     rebuilt = release_index.rebuild_index_from_bucket(guard.bucket, row)
@@ -304,6 +306,8 @@ def repair_index(client, plan, row):
 
 
 def verify_finished(guard, plan):
+    from ingestion.common import release_index
+
     guard.before = quality.baseline(guard.bucket)
     manifest = validate_live(guard, plan)
     ids.require(
