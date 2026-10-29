@@ -11,6 +11,10 @@ import re
 import sys
 from typing import Any
 
+REPO = pathlib.Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 MAX_MUTATIONS = 50
@@ -336,6 +340,7 @@ def normalize_publish_plan(
             "identity_reset",
             "identity_transition",
             "source_loss_review",
+            "historical_checksum_repair",
         },
         label="publish plan",
     )
@@ -461,6 +466,14 @@ def normalize_publish_plan(
             validate_plan(normalized)
         except (IdentityError, KeyError, TypeError, ValueError) as exc:
             raise PlanValidationError(f"invalid EAMLIS identity transition: {exc}") from exc
+    if "historical_checksum_repair" in plan:
+        from ingestion.eamlis_monthly.checksum_repair import validate_plan
+        from ingestion.eamlis_monthly.identity import IdentityError
+        normalized["historical_checksum_repair"] = plan["historical_checksum_repair"]
+        try:
+            validate_plan(normalized)
+        except (IdentityError, KeyError, TypeError, ValueError) as exc:
+            raise PlanValidationError(f"invalid EAMLIS checksum repair: {exc}") from exc
     return normalized
 
 
@@ -542,8 +555,8 @@ def normalize_document(document: Any) -> dict[str, Any]:
     ]
     if not payloads:
         raise PlanValidationError("plan document needs publish and/or delete")
-    if {"identity_reset", "identity_transition"}.intersection(normalized.get("publish", {})) and "delete" in normalized:
-        raise PlanValidationError("identity reset cannot be combined with deletion")
+    if {"identity_reset", "identity_transition", "historical_checksum_repair"}.intersection(normalized.get("publish", {})) and "delete" in normalized:
+        raise PlanValidationError("identity reset, transition or checksum repair cannot be combined with deletion")
     if len({(p["asset_slug"], p["proposal_id"]) for p in payloads}) != 1:
         raise PlanValidationError(
             "publish and delete must identify the same asset/proposal"

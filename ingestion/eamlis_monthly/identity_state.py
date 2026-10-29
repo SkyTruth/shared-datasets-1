@@ -181,9 +181,13 @@ def validate_candidate(guard, candidate):
 
 
 def require_metadata_only(guard, plan):
-    """Allow one README or a complete translation bundle, never feature replacement."""
+    """Admit reviewed metadata operations without allowing feature replacement."""
     from ingestion.eamlis_monthly import source_quality as quality
     from scripts import release_feature_model as model
+    if "historical_checksum_repair" in plan:
+        from ingestion.eamlis_monthly import checksum_repair
+        checksum_repair.validate_live(guard, plan)
+        return
     value = guard.state.get("identity")
     if value is None:
         return
