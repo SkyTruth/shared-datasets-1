@@ -515,3 +515,134 @@ def test_plan_contract_rejects_expanded_authority(example, change):
         plan[repair.KEY]["force"] = True
     with pytest.raises(plans.PlanValidationError):
         plans.normalize_publish_plan(plan)
+
+
+def test_workflow_authority_environments_complete_real_repair(
+    example, tmp_path, monkeypatch
+):
+    from workflow_helpers import load_workflow, workflow_steps_by_name
+    from scripts import dataset_mutation_authorization as auth
+    from tests.test_dataset_mutation_authorization import FakeGitHub, REPO, context
+
+    client, plan, path, _, manifest, _, _ = example
+    root = Path(plans.__file__).resolve().parents[1]
+    checkout = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+    ).strip()
+    gitdir = subprocess.check_output(
+        ["git", "rev-parse", "--absolute-git-dir"], cwd=root, text=True
+    ).strip()
+    api = FakeGitHub()
+    api.doc = plans.normalize_document(
+        {
+            "plan_version": 1,
+            "finalization_version": plans.FINALIZATION_VERSION,
+            "publish": plan,
+        }
+    )
+    api.raw = plans.canonical_bytes(api.doc)
+    api.blob = hashlib.sha1(f"blob {len(api.raw)}\0".encode() + api.raw).hexdigest()
+    api.path = plans.document_path(api.doc)
+    api.files = [{"filename": api.path, "status": "added", "sha": api.blob}]
+    api.tree = {
+        "truncated": False,
+        "tree": [{"path": api.path, "type": "blob", "mode": "100644", "sha": api.blob}],
+    }
+    api.pr["body"] = plans.render_document(api.doc)
+    api.run.update(head_sha=checkout, path=auth.WORKFLOW, event="workflow_dispatch")
+    _, env = context(api)
+    env.update(
+        GITHUB_EVENT_NAME="workflow_dispatch",
+        GITHUB_ACTOR="jonaraphael",
+        GITHUB_WORKFLOW_REF=f"{REPO['full_name']}/{auth.WORKFLOW}@refs/heads/main",
+        GITHUB_SHA=checkout,
+        GITHUB_WORKFLOW_SHA=checkout,
+        PATH=os.environ["PATH"],
+        GIT_DIR=gitdir,
+        GIT_WORK_TREE=str(root),
+        SHARED_DATASETS_BUCKET=quality.BUCKET,
+    )
+    event = {"repository": REPO, "inputs": {"pr_number": "7"}}
+    envelope = auth.capture(api, event, env)
+    auth.save_envelope(envelope, tmp_path / "authorization", None)
+    values = {
+        "${{ github.token }}": "fixture",
+        "${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}": plans.sha256(
+            plans.canonical_bytes(envelope)
+        ),
+    }
+    steps = workflow_steps_by_name(
+        load_workflow(root / ".github/workflows/publish-dataset.yml"),
+        "apply-approved-pr-plans",
+    )
+
+    def stage_environment(name):
+        return {
+            **env,
+            **{key: values[value] for key, value in steps[name].get("env", {}).items()},
+        }
+
+    bucket = client.bucket(quality.BUCKET)
+    transport, copied = copy_transport(client)
+    real_run = subprocess.run
+
+    def external_transport(args, **kwargs):
+        if args[0] == "uv":
+            return transport(args, **kwargs)
+        return real_run(args, **kwargs)  # Executor identity uses real Git.
+
+    (tmp_path / "catalog").symlink_to(root / "catalog", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+    with (
+        mock.patch.object(gcs_asset, "get_client", return_value=client),
+        mock.patch.object(auth, "GitHub", return_value=api),
+        mock.patch.object(
+            publish_workflow.subprocess, "run", side_effect=external_transport
+        ),
+    ):
+        with mock.patch.dict(
+            os.environ, stage_environment("Promote approved staged objects"), clear=True
+        ):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        owner = quality.Guard(bucket).load()[0]["owner"]
+        assert owner == auth.identity_digests(envelope)["proposal_key"]
+        # A later protected recovery captures the same PR/document in a new run.
+        api.run["id"] = 702
+        env["GITHUB_RUN_ID"] = "702"
+        envelope = auth.capture(api, event, env)
+        auth.save_envelope(envelope, tmp_path / "authorization", None)
+        values["${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}"] = plans.sha256(
+            plans.canonical_bytes(envelope)
+        )
+        assert auth.identity_digests(envelope)["proposal_key"] == owner
+        with mock.patch.dict(
+            os.environ, stage_environment("Promote approved staged objects"), clear=True
+        ):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        assert len(copied) == 1
+        before_index = quality.read(bucket, quality.INDEX)
+        invalid = stage_environment("Rebuild promoted release index")
+        invalid["EXPECTED_SHA256"] = "0" * 64
+        with (
+            mock.patch.dict(os.environ, invalid, clear=True),
+            pytest.raises(auth.Error, match="authorization handoff hash mismatch"),
+        ):
+            publish_workflow.main(["rebuild-release-index", "--plan-json", str(path)])
+        assert quality.read(bucket, quality.INDEX) == before_index
+        with mock.patch.dict(
+            os.environ, stage_environment("Rebuild promoted release index"), clear=True
+        ):
+            assert (
+                publish_workflow.main(
+                    ["rebuild-release-index", "--plan-json", str(path)]
+                )
+                == 0
+            )
+        with mock.patch.dict(
+            os.environ,
+            stage_environment("Resolve reviewed source-quality publication claim"),
+            clear=True,
+        ):
+            quality.finish_promotion(client, plan)
+    assert quality.Guard(bucket).load()[0]["owner"] is None
+    assert len(copied) == 1 and manifest.patch.call_count == 1
