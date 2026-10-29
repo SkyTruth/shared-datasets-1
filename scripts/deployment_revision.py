@@ -151,9 +151,10 @@ def verify_record_identity(api, repository, record):
     return payload
 
 
-def verify_record(api, repository, record):
+def verify_record(api, repository, record, *, statuses=None):
     payload = verify_record_identity(api, repository, record)
-    statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
+    if statuses is None:
+        statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
     started = [status for status in statuses if status.get("description") == "started"]
     require(len(started) == 1, "record lacks an unambiguous protected initial emission")
     # If claim signing failed, the same protected execution can still sign its

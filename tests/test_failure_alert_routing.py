@@ -374,7 +374,7 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
     api = mock.Mock()
     api.get.side_effect = lambda path: ({"id": 7, "path": run["path"]} if path.endswith("/workflows/7")
                                       else repository if path == "repos/" + alerts.REPOSITORY else run)
-    api.pages.side_effect = lambda path, **kwargs: jobs if "/jobs?" in path else ([] if failure == "missing" else [record])
+    api.pages.side_effect = lambda path, **kwargs: (jobs if "/jobs?" in path else [status] if "/statuses?" in path else ([] if failure == "missing" else [record]))
 
     class Response(io.BytesIO):
         def __enter__(self):
@@ -391,7 +391,9 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
             mock.patch("scripts.slack_incident_api.Slack", return_value=slack), \
             mock.patch.object(deployments, "verify_record", return_value={"target": "dataset-usage", "artifact": "image@sha256:" + "f" * 64},
                               side_effect=deployments.DeploymentError("unsigned") if failure == "unsigned" else None), \
-            mock.patch.object(deployments, "verified_statuses", return_value=[status]), \
+            mock.patch.object(deployments, "record_payload", return_value={"target": "dataset-usage", "artifact": "image@sha256:" + "f" * 64}), \
+            mock.patch.object(incidents, "terminal_contract_sha256", return_value="c" * 64), \
+            mock.patch.object(deployments, "verify_receipt"), \
             mock.patch.object(deployments, "git_ancestor", return_value=failure != "divergent"):
         if failure:
             with pytest.raises((incidents.IncidentError, deployments.DeploymentError)):

@@ -102,7 +102,7 @@ def test_deliver_cli_accepts_status_write_timestamp_change_and_verifies_current_
     assert len(context.fetched) == 1
     context.signature.assert_called_once_with(
         context.api, incidents.REPOSITORY, context.fetched[0], context.status,
-        original_signer=incidents.WORKFLOW, batch=True,
+        original_signer=incidents.WORKFLOW, batch=True, verified_statements=[],
     )
     assert context.signature.call_args.args[2] is context.fetched[0]
     assert context.signature.call_args.args[2]["updated_at"] == "2026-10-07T22:02:23Z"

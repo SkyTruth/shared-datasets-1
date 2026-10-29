@@ -88,7 +88,7 @@ def test_real_episode_migrates_after_verification_and_resolves_only_its_original
     assert original == untouched
     assert migrated['incident']['id'] == 'SD-DA144B216BD5'
     assert migrated['incident']['posts'] == untouched['payload']['state']['incident']['posts']
-    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: None)
+    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: (None, None))
     assert len(prepared) == 1
     assert list((tmp_path / 'claims').glob('*.json'))
     slack = FakeSlack()
@@ -100,7 +100,7 @@ def test_real_episode_migrates_after_verification_and_resolves_only_its_original
     # APIs may return JSON strings for historical payloads.
     original['payload'] = json.dumps(original['payload'])
     assert list(ledger.load()) == [SCOPE]
-    assert incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: None) == []
+    assert incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: (None, None)) == []
     assert len(records) == 3
 
 
@@ -149,10 +149,10 @@ def test_canonical_scope_collision_cannot_replace_the_original_parent(history, d
 
 def test_signed_resolved_migration_does_not_resurrect_during_a_later_episode(history):
     ledger, _, _, _, _, _ = history
-    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: None)
+    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: (None, None))
     incidents.deliver(ledger, prepared, FakeSlack())
     later = healthy(run_id=999, conclusion='failure', time='2026-10-14T05:00:00Z')
-    incidents.prepare(ledger, IDENTITY, [later], ancestor=lambda *_: True, success=lambda *_: None)
+    incidents.prepare(ledger, IDENTITY, [later], ancestor=lambda *_: True, success=lambda *_: (None, None))
     states = ledger.load()
     assert list(states) == [SCOPE]
     assert states[SCOPE]['incident']['id'] != 'SD-DA144B216BD5'
@@ -163,7 +163,7 @@ def test_migration_preserves_uncertain_retry_and_blocks_automatic_resend(history
     state = original['payload']['state']
     key = list(state['incident']['posts'])[-1]
     state['incident']['posts'][key] = {'state': 'claimed', 'ts': None}
-    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: None)
+    prepared = incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: (None, None))
     slack = FakeSlack()
     incidents.deliver(ledger, prepared, slack)
     assert [call[0] for call in slack.calls] == ['update']
@@ -172,7 +172,7 @@ def test_migration_preserves_uncertain_retry_and_blocks_automatic_resend(history
 
 def test_unrelated_revision_does_not_resolve_migrated_candidate(history):
     ledger, _, _, _, _, _ = history
-    incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: False, success=lambda *_: None)
+    incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: False, success=lambda *_: (None, None))
     assert ledger.load()[SCOPE]['incident']['resolution'] is None
 
 
@@ -193,7 +193,7 @@ def test_candidate_success_cannot_resolve_a_real_sdk_publication_failure(history
     ledger, original, _, _, _, _ = history
     for failure in original['payload']['state']['incident']['failures']:
         failure['job_name'] = 'publish'
-    incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: None)
+    incidents.prepare(ledger, IDENTITY, [healthy()], ancestor=lambda *_: True, success=lambda *_: (None, None))
     assert ledger.load()[OLD_SCOPE]['incident']['resolution'] is None
 
 
