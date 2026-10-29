@@ -311,7 +311,10 @@ jobs:
 
       - name: Terraform apply
         if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
-        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
+        run: |
+          set -euo pipefail
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
+          echo "DEPLOYMENT_PHASE=applied" >> "$GITHUB_ENV"
 
       - name: Confirm deployed digest
         if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}

@@ -50,6 +50,24 @@ def test_paused_scheduler_defers_automatic_deploy_canary(tmp_path):
         assert output.read_text() == (f"run_canary={expected}\n" if expected is not None else "")
 
 
+def test_apply_records_configuration_phase_only_after_success(tmp_path):
+    step = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Terraform apply"]
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "terraform_retry.sh").write_text('exit "$TEST_APPLY_EXIT"\n')
+    for exit_code in (0, 1):
+        environment = tmp_path / "environment"
+        environment.write_text("")
+        result = subprocess.run(["bash", "-c", step["run"]], env={
+            **os.environ, "GITHUB_WORKSPACE": str(tmp_path), "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_ENV": str(environment), "TEST_APPLY_EXIT": str(exit_code),
+        }, capture_output=True, text=True)
+        assert result.returncode == exit_code
+        assert environment.read_text() == ("DEPLOYMENT_PHASE=applied\n" if exit_code == 0 else "")
+    canary = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Execute eamlis-monthly canary"]["run"]
+    assert 'echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"' in canary
+
+
 class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
     def test_eamlis_monthly_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = load_workflow(DEPLOY_WORKFLOW)
