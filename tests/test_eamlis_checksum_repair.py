@@ -4,6 +4,7 @@ from copy import deepcopy
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -262,6 +263,45 @@ raise SystemExit(auth.main(['preview', '--event-path', 'event.json',
         assert result.returncode == 0, result.stderr
         assert json.loads((tmp_path / "publish-plan.json").read_bytes()) == plan
         assert "has_publish_plan=true" in (tmp_path / "outputs").read_text()
+
+
+def test_real_workflow_index_step_uses_installed_runtime_dependencies(
+    example, tmp_path
+):
+    from workflow_helpers import load_workflow, workflow_steps_by_name
+
+    _, _, plan_path, _, _, _, _ = example
+    root = Path(plans.__file__).resolve().parents[1]
+    workflow = load_workflow(root / ".github/workflows/publish-dataset.yml")
+    step = workflow_steps_by_name(workflow, "apply-approved-pr-plans")[
+        "Rebuild promoted release index"
+    ]["run"]
+    # Emulate Actions' bare system Python while uv selects the synced project env.
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    bare = binaries / "python"
+    bare.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -S "$@"\n')
+    bare.chmod(0o755)
+    missing_credentials = tmp_path / "deliberately-absent-adc.json"
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    env.update(
+        PATH=str(binaries) + os.pathsep + env["PATH"],
+        UV_PROJECT_ENVIRONMENT=sys.prefix,
+        GOOGLE_CLOUD_PROJECT="shared-datasets-1",
+        GOOGLE_APPLICATION_CREDENTIALS=str(missing_credentials),
+    )
+    result = subprocess.run(
+        ["bash", "-c", step.replace("publish-plan.json", shlex.quote(str(plan_path)))],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    # Real CLI and dependency imports run; ADC must refuse before any GCP access.
+    assert result.returncode != 0
+    assert "ModuleNotFoundError" not in result.stderr, result.stderr
+    assert "DefaultCredentialsError" in result.stderr, result.stderr
+    assert str(missing_credentials) in result.stderr
 
 
 def test_real_workflow_repair_retries_without_recopy_and_preserves_manifest_generation(
