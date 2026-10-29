@@ -522,6 +522,9 @@ def finish_promotion(client, plan):
         guard.state["hold"] = None
     else:
         require(not guard.held, "cannot clear an unreviewed hold")
+        if "historical_checksum_repair" in plan:
+            from ingestion.eamlis_monthly import checksum_repair
+            checksum_repair.verify_finished(guard, plan)
     guard.state["owner"] = None
     guard.save()
 

@@ -405,6 +405,9 @@ def command_promote(args: argparse.Namespace) -> int:
     source_quality_claim = source_loss.touches_asset(plan) or "source_loss_review" in plan
     if source_quality_claim:
         source_loss.begin_promotion(gcs_asset.get_client(), plan)
+    if "historical_checksum_repair" in plan:
+        from ingestion.eamlis_monthly import checksum_repair
+        checksum_repair.patch_manifest(gcs_asset.get_client(), plan)
     for index, promotion in enumerate(plan["promotions"], start=1):
         if source_quality_claim and source_loss.already_promoted(gcs_asset.get_client(), promotion, plan):
             print(f"Verified already-promoted source-quality object: {promotion['destination_uri']}")
@@ -480,6 +483,11 @@ def command_rebuild_release_index(args: argparse.Namespace) -> int:
         return 0
 
     promoted_destinations = {item["destination_uri"] for item in plan["promotions"]}
+    if "historical_checksum_repair" in plan:
+        from scripts import gcs_asset
+        from ingestion.eamlis_monthly import checksum_repair
+        checksum_repair.repair_index(gcs_asset.get_client(), plan, catalog[plan["asset_slug"]])
+        return 0
     for asset_slug in asset_slugs:
         readme_uri = catalog[asset_slug]["canonical_path"].split("/latest/", 1)[0] + "/README.md"
         if (asset_slug == plan["asset_slug"] and asset_slug not in plan.get("release_index_asset_slugs", [])

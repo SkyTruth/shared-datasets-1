@@ -82,6 +82,17 @@ baseline, then resolves the hold only after finalization/index verification.
 This is part of the same exact-head PR authority, with no local or Slack bypass.
 See [source-quality review](../../docs/eamlis-source-quality.md).
 
+EAMLIS also supports a narrowly scoped `publish.historical_checksum_repair`.
+It binds one pre-cutover run record, its original bytes/hash, the published
+baseline, and one generation/metageneration-pinned manifest. The staged run may
+change only `sha256.manifest` to the independently verified manifest hash. The
+protected publisher patches only that manifest's custom checksum label, preserving
+its bytes and generation, then corrects only the same historical index checksum.
+The normal source-quality claim, strict full-index validation, generation
+preconditions and same-proposal retry rules remain mandatory. It cannot combine
+deletion, held-candidate publication, installation, unrelated index work or other
+data changes. See [historical checksum repair](../../docs/eamlis-historical-checksum-repair.md).
+
 The three pre-launch generated-ID assets also support a constrained
 `publish.identity_reset` subtype containing only the complete reset `inventory`. It accepts exactly the evidence/adoption/state promotions
 with create-only destination expectations and explicit JSON/no-cache metadata.
