@@ -334,6 +334,36 @@ class RebuildReleaseIndexTests(unittest.TestCase):
             exit_code = publish_workflow.main(["rebuild-release-index", "--plan-json", "publish-plan.json"])
         return exit_code, run
 
+    def test_readme_only_promotion_does_not_rebuild_release_history(self):
+        readme = CANONICAL_PATH.split("/latest/", 1)[0] + "/README.md"
+        plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=readme)],
+                "release_index_asset_slugs": []}
+        exit_code, run = self.run_command(plan)
+        self.assertEqual(exit_code, 0)
+        run.assert_not_called()
+
+    def test_readme_does_not_suppress_explicit_index_repairs(self):
+        readme = CANONICAL_PATH.split("/latest/", 1)[0] + "/README.md"
+        catalog = CATALOG_CSV + f"other-asset,Other,gs://{BUCKET}/a/latest/other-asset.fgb\n"
+        for requested in (["demo-asset"], ["other-asset"]):
+            with self.subTest(requested=requested):
+                plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=readme)],
+                        "release_index_asset_slugs": requested}
+                exit_code, run = self.run_command(plan, catalog)
+                self.assertEqual(exit_code, 0)
+                run.assert_called_once_with(publish_workflow.gcs_asset_args(
+                    "release-index", "rebuild", "--asset-slug", requested[0]), check=True)
+
+    def test_readme_with_data_and_unrelated_readme_preserve_automatic_rebuild(self):
+        root = CANONICAL_PATH.split("/latest/", 1)[0]
+        for destinations in ([root + "/README.md", CANONICAL_PATH], [root + "/latest/README.md"], []):
+            with self.subTest(destinations=destinations):
+                plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=x) for x in destinations]}
+                exit_code, run = self.run_command(plan)
+                self.assertEqual(exit_code, 0)
+                run.assert_called_once_with(publish_workflow.gcs_asset_args(
+                    "release-index", "rebuild", "--asset-slug", "demo-asset"), check=True)
+
     def test_preserves_explicit_index_promotion_and_rebuilds_other_assets(self):
         catalog_csv = CATALOG_CSV + f"other-asset,Other,gs://{BUCKET}/a/latest/other-asset.fgb\n"
         plan = {

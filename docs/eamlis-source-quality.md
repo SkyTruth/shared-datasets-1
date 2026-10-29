@@ -105,6 +105,31 @@ Unexpected destination bytes still fail the original generation preconditions.
 If publication has already completed and the resolver succeeded, inspect the
 completed workflow rather than preparing another release for the same date.
 
+After identity activation, a reviewed README-only update retains the same
+publication ownership safeguards. It does not implicitly rebuild the release
+index: README bytes do not change release artifacts, generations or counts.
+Data promotions and explicit `release_index_asset_slugs` requests retain their
+normal rebuilding and checksum validation.
+
+PR #338's README copy succeeded before an unnecessary historical index rebuild
+failed. The approved README generation is `1793242739943691`; its SHA-256 is
+`86765354e7db581877ea3eff02dc24e80af092dc85b9993cd92810c7a83c47d5`.
+The existing release index and permanent ID ledger were unchanged. The original
+claim remains until protected recovery completes; do not clear it locally,
+refresh destination preconditions, or create a replacement publication plan.
+
+Once the README-only workflow fix is reviewed, merged and passes main
+`ci-ready`, recovery uses the existing owner-only `Data / Approved mutation`
+dispatch with **`pr_number=338`**. That path independently verifies tested main,
+the original merged PR and its immutable document/current acceptance. EAMLIS
+resumes the same proposal owner and reuses the copied README only after exact
+byte and metadata verification. It then preserves the release index and lets
+the existing resolver release the claim. A changed destination still fails the
+original generation condition. Do not rerun the known failing executor before
+the fix is installed. This metadata recovery does not resume cron or authorize
+a new data release; owned WDPA/sea-ice receipt transactions retain their separate
+original-executor requirements.
+
 Held evidence is exempt from the standing age-based scratch cleanup. Successful
 promotion uses the existing exact-source cleanup; remaining source/candidate
 evidence requires explicit reviewed cleanup. No old canonical release is deleted.
