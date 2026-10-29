@@ -372,6 +372,53 @@ def test_metadata_tampering_and_unreviewed_replacements_are_refused(tmp_path):
             state.require_metadata_only(guard, {"promotions": [{"destination_uri": "unrelated"}]})
 
 
+@pytest.mark.parametrize("tamper", [False, True])
+def test_readme_retry_reuses_approved_copy_without_rebuilding_or_resetting_identity(tmp_path, tamper):
+    client, installation_plan, _ = prepared(tmp_path)
+    install(client, installation_plan, tmp_path)
+    run(client, rows(), "2026-05-02")
+    bucket = client.bucket(quality.BUCKET)
+    index_before = quality.read(bucket, quality.INDEX)
+    identity_before = deepcopy(quality.Guard(bucket).load()[0]["identity"])
+    local = tmp_path / "README.md"
+    local.write_text("Reviewed activated EAMLIS identity documentation.\n")
+    source = quality.immutable_file(bucket, f"_scratch/pending-publishes/{quality.SLUG}/readme-recovery/README.md", local)
+    destination = bucket.blob(quality.ROOT + "/README.md")
+    destination.upload_from_string(b"Old documentation", content_type="text/markdown", if_generation_match=0)
+    plan = {"asset_slug": quality.SLUG, "promotions": [{
+        "source_uri": source["path"], "source_generation": str(source["generation"]),
+        "destination_uri": f"gs://{quality.BUCKET}/{destination.name}",
+        "destination_generation": str(destination.generation), "content_type": "text/markdown",
+        "cache_control": quality.NO_CACHE}], "release_index_asset_slugs": []}
+    path = tmp_path / "readme-plan.json"
+    path.write_bytes(quality.encode(plan))
+    with mock.patch.object(quality, "protected_authority", return_value="same-reviewed-readme-proposal"), \
+         mock.patch.dict("os.environ", {"SHARED_DATASETS_ALLOW_CANONICAL_MUTATION": "1", "SHARED_DATASETS_BUCKET": quality.BUCKET}), \
+         mock.patch.object(gcs_asset, "get_client", return_value=client):
+        transport, copied = copy_transport(client)
+        with mock.patch.object(publish_workflow.subprocess, "run", side_effect=transport):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        assert len(copied) == 1
+        # Interruption after the confirmed copy retains the original owner.
+        assert quality.Guard(bucket).load()[0]["owner"] == "same-reviewed-readme-proposal"
+        if tamper:
+            destination.upload_from_string(b"Unexpected replacement", if_generation_match=destination.generation)
+        transport, recopied = copy_transport(client)
+        with mock.patch.object(publish_workflow.subprocess, "run", side_effect=transport):
+            if tamper:
+                with pytest.raises(PreconditionFailed):
+                    publish_workflow.main(["promote", "--plan-json", str(path)])
+            else:
+                assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+                # Rebuilding here would fail the external transport assertion.
+                assert publish_workflow.main(["rebuild-release-index", "--plan-json", str(path)]) == 0
+                quality.finish_promotion(client, plan)
+        assert recopied == []
+    after = quality.Guard(bucket).load()[0]
+    assert after["identity"] == identity_before and quality.read(bucket, quality.INDEX) == index_before
+    assert after["owner"] == ("same-reviewed-readme-proposal" if tamper else None)
+
+
 def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_path):
     client, plan, _ = prepared(tmp_path)
     install(client, plan, tmp_path)

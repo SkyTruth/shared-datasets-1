@@ -463,11 +463,11 @@ def command_rebuild_release_index(args: argparse.Namespace) -> int:
     requested_slugs = [plan["asset_slug"], *plan.get("release_index_asset_slugs", [])]
     asset_slugs = []
     seen = set()
-    catalog_slugs = set(catalog_csv.load_catalog())
+    catalog = catalog_csv.load_catalog()
     for index, asset_slug in enumerate(requested_slugs):
         if not asset_slug or asset_slug in seen:
             continue
-        if asset_slug not in catalog_slugs:
+        if asset_slug not in catalog:
             if index == 0:
                 print(f"Skipping release-index rebuild because {asset_slug!r} is not a catalog asset.")
                 seen.add(asset_slug)
@@ -481,6 +481,11 @@ def command_rebuild_release_index(args: argparse.Namespace) -> int:
 
     promoted_destinations = {item["destination_uri"] for item in plan["promotions"]}
     for asset_slug in asset_slugs:
+        readme_uri = catalog[asset_slug]["canonical_path"].split("/latest/", 1)[0] + "/README.md"
+        if (asset_slug == plan["asset_slug"] and asset_slug not in plan.get("release_index_asset_slugs", [])
+                and [item["destination_uri"] for item in plan["promotions"]] == [readme_uri]):
+            print(f"Keeping the unchanged release index for README-only update of {asset_slug}.")
+            continue
         if f"gs://{bucket_name()}/_catalog/releases/{asset_slug}.json" in promoted_destinations:
             print(f"Keeping the explicitly promoted release index for {asset_slug}; its reviewed bytes and generation precondition already define this update.")
             continue
