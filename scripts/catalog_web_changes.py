@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select a PR-backed catalog refresh after an exact successful main CI run."""
+"""Select reviewed catalog changes inside the existing post-CI main push job."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.ci_source_proof import select_plan
 from scripts.dataset_mutation_authorization import (
     GitHub, document_from_files, discover_push_prs, require, sha,
 )
@@ -31,35 +30,25 @@ def affects_catalog(path: str) -> bool:
     return path in CATALOG_INPUTS or path.startswith(("web/catalog/", "docs/assets/"))
 
 
-def should_refresh(api: GitHub, event: dict, env: dict, plans: list[dict]) -> bool:
-    """Consume the CI source already verified by deployment_source --bootstrap."""
-    source = event["workflow_run"]
+def should_refresh(api: GitHub, event: dict, env: dict) -> bool:
+    """Select only; the publisher independently proves this run's passing CI."""
     repository = event["repository"]
-    require(env["GITHUB_EVENT_NAME"] == "workflow_run" and env["GITHUB_REF"] == "refs/heads/main",
-            "catalog selection requires a main completion event")
-    require(repository["full_name"] == env["GITHUB_REPOSITORY"], "completion repository mismatch")
-    run = api.get(f"repos/{repository['full_name']}/actions/runs/{source['id']}/attempts/{source['run_attempt']}")
-    require(all(run[key] == source[key] for key in ("id", "run_attempt", "head_sha")),
-            "catalog completion source changed")
-    require(run["path"] == ".github/workflows/ci.yml" and run["event"] == "push"
-            and run["head_branch"] == "main" and run["status"] == "completed"
-            and run["conclusion"] == "success"
-            and all(run[key]["id"] == repository["id"] and run[key]["full_name"] == repository["full_name"]
-                    for key in ("repository", "head_repository")),
-            "catalog refresh requires successful same-repository main CI")
-    plan = select_plan(plans, run_id=str(run["id"]), attempt=run["run_attempt"])
-    before, after = sha(plan["base"]), sha(plan["tested_sha"])
-    require(after == run["head_sha"] and plan["head"] == after, "catalog plan revision mismatch")
+    before, after = sha(event["before"]), sha(event["after"])
+    require(env["GITHUB_EVENT_NAME"] == "push" and env["GITHUB_REF"] == event["ref"] == "refs/heads/main"
+            and env["GITHUB_SHA"] == after and before != "0" * 40
+            and event["forced"] is False and event["deleted"] is False,
+            "catalog selection requires an ordinary main push")
+    require(repository["full_name"] == env["GITHUB_REPOSITORY"]
+            and env["GITHUB_WORKFLOW_REF"] == f"{repository['full_name']}/.github/workflows/ci.yml@refs/heads/main",
+            "catalog selection requires the trusted main CI workflow")
+    require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == after,
+            "catalog checkout differs from its main push")
+    subprocess.run(["git", "merge-base", "--is-ancestor", before, after], check=True)
     changed = subprocess.check_output(["git", "diff", "--name-only", "-z", before, after], text=True)
     paths = [path for path in changed.split("\0") if path]
-    require(paths == plan["changed_paths"], "catalog plan does not describe its Git range")
     if not any(map(affects_catalog, paths)):
         return False
-    # Reconstruct the verified CI comparison for the shared merged-PR enumerator.
-    push = {"repository": repository, "before": before, "after": after,
-            "ref": "refs/heads/main", "forced": False, "deleted": False}
-    push_env = {**env, "GITHUB_SHA": after, "GITHUB_EVENT_NAME": "push"}
-    numbers = discover_push_prs(api, push, push_env, documents_only=False)
+    numbers = discover_push_prs(api, event, env, documents_only=False)
     require(bool(numbers), "catalog changes require a merged same-repository PR")
     reviewed_paths = set()
     has_mutation = False
@@ -77,11 +66,9 @@ def should_refresh(api: GitHub, event: dict, env: dict, plans: list[dict]) -> bo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plan-dir", type=Path, required=True)
-    args = parser.parse_args()
+    parser.parse_args()
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    plans = [json.loads(path.read_text()) for path in args.plan_dir.rglob("plan.json")]
-    selected = should_refresh(GitHub(), event, dict(os.environ), plans)
+    selected = should_refresh(GitHub(), event, dict(os.environ))
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
         stream.write(f"should_deploy={str(selected).lower()}\n")
 

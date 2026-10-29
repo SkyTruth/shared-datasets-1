@@ -24,8 +24,6 @@ on:
     workflows:
       - "Catalog / Release index rebuild"
       - "Release index rebuild"
-      - "CI / Validate and deliver"
-      - "CI"
     branches:
       - main
     types:
@@ -99,55 +97,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/catalog_refresh_check.py --work-dir "$RUNNER_TEMP/catalog-refresh-check"
 
-  select-repo-changes:
-    name: Select reviewed catalog changes
-    if: >-
-      ${{ github.event_name == 'workflow_run' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name) &&
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_branch == 'main' &&
-          github.event.workflow_run.head_repository.full_name == github.repository &&
-          github.event.workflow_run.event == 'push' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-    outputs:
-      should_deploy: ${{ steps.select.outputs.should_deploy }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Verify exact successful main CI source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EXECUTOR_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: python scripts/deployment_source.py --bootstrap --workflow catalog-web-deploy.yml --executor-sha "$EXECUTOR_SHA"
-      - uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
-          pattern: ci-validation-plan-attempt*
-          path: ci-plans
-      - name: Select catalog inputs without duplicating publication refresh
-        id: select
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/catalog_web_changes.py --plan-dir ci-plans
-
   deploy:
     name: Build and publish catalog web
     runs-on: ubuntu-latest
     environment: shared-datasets-production
-    needs: [select-repo-changes, check-inputs]
+    needs: [check-inputs]
     if: >-
       ${{
         always() && (
         needs.check-inputs.outputs.changed == 'true' ||
         inputs.mutation_completed == true ||
-        needs.select-repo-changes.outputs.should_deploy == 'true' ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+         github.workflow_ref == format('{0}/.github/workflows/ci.yml@refs/heads/main', github.repository)) ||
         (
           github.event_name == 'workflow_run' &&
           contains(fromJSON('["Catalog / Release index rebuild","Release index rebuild"]'), github.event.workflow_run.name) &&
@@ -180,6 +141,31 @@ jobs:
             "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/catalog-web-deploy.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/publish-dataset.yml@refs/heads/main") ;;
             *) echo "Untrusted production caller" >&2; exit 1 ;;
           esac
+
+      - name: Validate reusable catalog caller shape
+        env:
+          MUTATION_COMPLETED: ${{ inputs.mutation_completed }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          AUTHORIZATION_ARTIFACT_ID: ${{ inputs.authorization_artifact_id }}
+          AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
+          PR_NUMBER: ${{ inputs.pr_number || 0 }}
+        run: |
+          set -euo pipefail
+          if [[ "$MUTATION_COMPLETED" == true ]]; then
+            [[ -n "$EXECUTOR_SHA" && -n "$AUTHORIZATION_ARTIFACT_ID" &&
+               -n "$AUTHORIZATION_SHA256" && "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+              echo "Mutation refresh requires complete authorization provenance." >&2
+              exit 1
+            }
+          elif [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            [[ "$GITHUB_REF" == refs/heads/main &&
+               "$GITHUB_WORKFLOW_REF" == "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" &&
+               "$EXECUTOR_SHA" == "$GITHUB_SHA" && "$MUTATION_COMPLETED" == false &&
+               -z "$AUTHORIZATION_ARTIFACT_ID" && -z "$AUTHORIZATION_SHA256" && "$PR_NUMBER" == 0 ]] || {
+              echo "Repository refresh requires its exact main CI push and no mutation provenance." >&2
+              exit 1
+            }
+          fi
 
       - name: Check out trusted deployment verifier
         uses: actions/checkout@v4

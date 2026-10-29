@@ -34,7 +34,7 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
         matched = re.findall(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.name\)",
                              observer["jobs"][job]["if"])
         assert {name for group in matched for name in json.loads(group)} == expected
-    for filename, upstream in (("catalog-web-deploy.yml", ("ci.yml", "release-index-rebuild.yml")),
+    for filename, upstream in (("catalog-web-deploy.yml", ("release-index-rebuild.yml",)),
                                ("publish-typescript-sdk.yml", ("ci.yml",))):
         trigger = workflow_triggers(load_workflow(WORKFLOWS / filename))["workflow_run"]
         assert set(trigger["workflows"]) == {name for file in upstream for name in WORKFLOW_NAMES[file]}

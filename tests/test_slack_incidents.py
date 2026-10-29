@@ -132,6 +132,7 @@ def test_publication_uses_original_pr_identity_and_exact_phase():
     with pytest.raises(incidents.IncidentError, match="ambiguous PR"):
         incidents.scope_for_job("Publish PR #208 / Apply approved PR mutation plans (PR #209)", targets, "ci.yml")
     assert incidents.scope_for_job("Publish PR #208 / refresh-catalog / Build and publish catalog web", targets, "ci.yml")[0] == "deployment:catalog-web"
+    assert incidents.scope_for_job("refresh-reviewed-catalog / Build and publish catalog web", targets, "ci.yml")[0] == "deployment:catalog-web"
 
 
 @pytest.mark.parametrize("extra", [False, True])

@@ -1,14 +1,24 @@
 # Catalog deployment
 
-UI-only PRs also deploy automatically after their complete `main` CI run succeeds.
-The catalog workflow verifies the exact CI revision and retained comparison plan,
-requires merged same-repository PRs covering the changed catalog inputs, and
-selects `web/catalog/`, asset docs, catalog CSV/taxonomy, the catalog builder and
-its publication/selection helpers. Unrelated changes do not allocate publisher
-credentials. If the same push includes an immutable dataset mutation plan, its
-publication workflow owns the refresh instead, so there is no duplicate deploy.
-Automatic refreshes retain the protected publisher, serialized signed receipts,
-generation-preconditioned writes, live verification and no-cache metadata.
+UI-only PRs deploy automatically within their `main` CI run after `ci-ready`
+passes. The existing delivery-selection job checks the exact push range and
+requires merged same-repository PRs covering every changed catalog input:
+`web/catalog/`, asset docs, catalog CSV/taxonomy, the catalog builder and its
+publication/selection helpers. It calls the reusable catalog publisher only
+when selected, avoiding a separate workflow and completion event for each main
+CI run. Selected PMTiles CDN route/access updates must succeed first. Unrelated
+changes do not allocate publisher credentials. If the push contains an immutable
+dataset mutation plan, the existing approved publication path owns the refresh
+and ordinary catalog selection is skipped.
+
+The protected publisher independently verifies the exact current CI run and
+attempt, passing `ci-ready`, and tested executor. Ordinary refreshes require the
+trusted main CI push; mutation refreshes retain complete immutable authorization
+verification. Required reusable inputs, serialized signed receipts,
+generation-preconditioned writes, live verification and no-cache metadata remain
+unchanged. A catalog selection failure fails delivery selection; publisher
+failures remain visible through the parent CI completion and the same catalog
+incident target. Successful wrapper jobs cannot establish recovery.
 
 An hourly read-only probe at minute 17 compares a generation-pinned release-index
 snapshot and repo metadata with the published CSV and catalog JSON, using the

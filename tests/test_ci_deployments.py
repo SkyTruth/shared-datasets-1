@@ -169,9 +169,10 @@ OPTIONAL_NEEDS = {
     "sea-ice": ("ingestion-iam", "artifact-registry-iam"),
     "catalog-viewer": ("artifact-registry-iam",),
     "publish-reviewed-dataset": ("pmtiles-cdn",),
+    "refresh-reviewed-catalog": ("pmtiles-cdn",),
 }
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
-    "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset",
+    "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
 ]
 
 
@@ -202,12 +203,14 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
         **{f"needs.geospatial-changes.outputs.{target}": "true" for target in DEPLOYMENTS},
         "needs.dataset-mutation-selection.outputs.has_repo_alert": "true",
         "needs.dataset-mutation-selection.outputs.has_mutations": "true",
+        "needs.dataset-mutation-selection.outputs.has_catalog_changes": "true",
     }
     assert condition_result(job, values) is True
     assert condition_result(job, values, cancelled=True) is False
     selection = {
         "announce-repo-functionality": "needs.dataset-mutation-selection.outputs.has_repo_alert",
         "publish-reviewed-dataset": "needs.dataset-mutation-selection.outputs.has_mutations",
+        "refresh-reviewed-catalog": "needs.dataset-mutation-selection.outputs.has_catalog_changes",
     }.get(job_id, f"needs.geospatial-changes.outputs.{job_id.replace('-', '_')}")
     if job_id != "dataset-mutation-selection":
         with subtests.test(selection="unselected"):
@@ -309,3 +312,20 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     assert condition_result(consumer, {**manual, "needs.bootstrap.result": "skipped"}) is False
     for dependency in consumer["needs"] if isinstance(consumer["needs"], list) else [consumer["needs"]]:
         assert condition_result(consumer, {**values, f"needs.{dependency}.result": "failure"}) is False
+
+
+@pytest.mark.parametrize("has_mutations", ["true", "false"])
+def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutations):
+    jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
+    step = next(step for step in jobs['dataset-mutation-selection']['steps'] if step.get('id') == 'catalog')
+    expression = step['if'].removeprefix('${{').removesuffix('}}').strip()
+    expression = expression.replace('steps.discover.outputs.has_mutations', repr(has_mutations))
+    assert eval(expression, {"__builtins__": {}}) is (has_mutations == 'false')
+    values = {"github.event_name": "push", "github.ref": "refs/heads/main",
+              "needs.ci-ready.result": "success", "needs.dataset-mutation-selection.result": "success",
+              "needs.geospatial-changes.outputs.pmtiles_cdn": "false", "needs.pmtiles-cdn.result": "skipped",
+              "needs.dataset-mutation-selection.outputs.has_mutations": has_mutations,
+              # A skipped catalog step has no should_deploy output.
+              "needs.dataset-mutation-selection.outputs.has_catalog_changes": "" if has_mutations == 'true' else "true"}
+    assert condition_result(jobs['publish-reviewed-dataset'], values) is (has_mutations == 'true')
+    assert condition_result(jobs['refresh-reviewed-catalog'], values) is (has_mutations == 'false')

@@ -397,3 +397,71 @@ class ReconciliationTests(unittest.TestCase):
                 with self.assertRaisesRegex(d.DeploymentError, "incomplete apply"):
                     d.recover(args, api)
             api.post.assert_not_called()
+
+
+class PendingDiscoveryBoundaryTests(unittest.TestCase):
+    def test_pending_cli_outputs_only_metadata_candidates_without_verification(self):
+        import json
+        from pathlib import Path
+        import tempfile
+
+        for identifiers in ([], [1], [1, 2]):
+            with self.subTest(identifiers=identifiers), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                api = Mock()
+                records = [ReplayTests.record(CURRENT, identifier) for identifier in identifiers]
+                complete = ReplayTests.record(CURRENT, 9)
+                def pages(path, field=None):
+                    if "/deployments?" in path:
+                        return records + [complete]
+                    return [{"state": "success", "description": "verified"}] if "/9/" in path else [
+                        {"state": "in_progress", "description": "verification_pending"}]
+                api.pages.side_effect = pages
+                with patch.dict(d.os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_OUTPUT": str(output)}), \
+                     patch.object(d.sys, "argv", ["deployment_revision.py", "pending"]), \
+                     patch.object(d, "GitHub", return_value=api), \
+                     patch.object(d.emissions, "verify", side_effect=AssertionError("discovery must remain metadata-only")):
+                    d.main()
+                self.assertEqual(json.loads(output.read_text().removeprefix("records=")), identifiers)
+                api.get.assert_not_called()
+                api.post.assert_not_called()
+
+    def test_workflow_keeps_hourly_independent_poll_and_protected_verifier(self):
+        from pathlib import Path
+        import yaml
+
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows/deployment-verification.yml").read_text())
+        triggers = workflow.get("on", workflow.get(True))
+        self.assertEqual(triggers, {"schedule": [{"cron": "17 * * * *"}], "workflow_dispatch": None})
+        pending, verify = (workflow["jobs"][name] for name in ("pending", "verify"))
+        self.assertNotIn("needs", pending)
+        self.assertNotIn("concurrency", pending)
+        installer = "python scripts/install_deployment_verifier.py"
+        self.assertNotIn(installer, [step.get("run") for step in pending["steps"]])
+        self.assertIn(installer, [step.get("run") for step in verify["steps"]])
+        self.assertEqual(verify["environment"], "shared-datasets-production")
+        self.assertEqual(verify["needs"], "pending")
+
+    def test_observer_rejects_invalid_signature_before_runtime_read_or_status_write(self):
+        from types import SimpleNamespace
+
+        fixture = DeploymentProvenanceTests()
+        fixture.setUp()
+        api = fixture.api
+        record = ReplayTests.record(CURRENT)
+        def get(path):
+            return record if path == f"repos/{REPO}/deployments/1" else fixture.route(path)
+        def pages(path, field=None):
+            return [{"description": "started"}] if "/statuses?" in path else [
+                {"name": "ci-ready", "status": "completed", "conclusion": "success"}]
+        api.get.side_effect = get
+        api.pages.side_effect = pages
+        env = {"GITHUB_REPOSITORY": REPO, "GITHUB_REF": "refs/heads/main",
+               "GITHUB_WORKFLOW_REF": f"{REPO}/.github/workflows/deployment-verification.yml@refs/heads/main"}
+        with patch.dict(d.os.environ, env), \
+             patch.object(d.emissions, "verify", side_effect=d.emissions.EmissionError("invalid signature")), \
+             patch.object(d.subprocess, "check_output") as runtime:
+            with self.assertRaisesRegex(d.DeploymentError, "invalid signature"):
+                d.observe(SimpleNamespace(deployment_id=1), api)
+        runtime.assert_not_called()
+        api.post.assert_not_called()
