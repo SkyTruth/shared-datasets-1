@@ -116,6 +116,10 @@ class AssetOutput:
     def identity_metadata(self):
         return feature_metadata.release_feature_model.build_identity_metadata(strategy="source_field", source_fields=["OBJECTID"])
 
+    @property
+    def geometry_hash_algorithm(self):
+        return feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM
+
 
 @dataclass(frozen=True)
 class KeyedAssetOutput(AssetOutput):
@@ -124,6 +128,10 @@ class KeyedAssetOutput(AssetOutput):
     @property
     def identity_metadata(self):
         return self.reservation.metadata
+
+    @property
+    def geometry_hash_algorithm(self):
+        return feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM_V2
 
 
 ASSET = AssetSpec()
@@ -659,7 +667,8 @@ def fingerprint_source(source: SourceState, extract: SourceExtract, translation_
         keyed_identity.require(identity_contract == keyed_identity.CONTRACT, "unsupported EAMLIS fingerprint identity")
         features = ({**feature, "properties": {name: value for name, value in feature["properties"].items()
                     if name not in keyed_identity.EXCLUDED_PROPERTIES}} for feature in features)
-    fingerprint = fingerprints.Fingerprint("eamlis-keyed-content-v1" if identity_contract else "eamlis-content-v1", {
+    fingerprint = fingerprints.Fingerprint("eamlis-keyed-content-v2" if identity_contract else "eamlis-content-v1", {
+        **({"geometry_hash_algorithm": feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM_V2} if identity_contract else {}),
         "layer_url": source.layer_url, "where": source.where,
         "service_item_id": source.service_item_id,
         "fields": sorted(source.fields, key=lambda field: str(field["name"])),
@@ -723,6 +732,7 @@ def publish_changed_asset(
         extra_suffix_paths=[(".metadata-translations.csv", translation_source),
                             *((f".metadata.{report.locale}.ndjson.gz", Path(report.output_sidecar)) for report in reports)],
         identity=output.identity_metadata,
+        geometry_hash_algorithm=output.geometry_hash_algorithm,
     )
 
     record = {

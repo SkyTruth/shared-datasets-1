@@ -330,8 +330,23 @@ jobs:
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
           set -euo pipefail
+
+          scheduler_state="$(gcloud scheduler jobs describe "${JOB_NAME}" \
+            --location="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(state)')"
+          case "${scheduler_state}" in
+            PAUSED)
+              if [[ -z "${CANARY_RUN_DATE}" ]]; then
+                echo "run_canary=false" >> "${GITHUB_OUTPUT}"
+                echo "::notice::EAMLIS is paused; deploying the image without publishing. An explicit canary_run_date is required for a manual publication."
+                exit 0
+              fi
+              ;;
+            ENABLED) ;;
+            *) echo "Unexpected EAMLIS scheduler state: ${scheduler_state}" >&2; exit 1 ;;
+          esac
 
           # A merge that only touches workflow files still rebuilds the image and
           # would start a second canary alongside one already publishing. That

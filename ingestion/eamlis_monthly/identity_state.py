@@ -180,21 +180,24 @@ def validate_candidate(guard, candidate):
     identity.require(record.get("identity_contract") == identity.CONTRACT, "candidate run omits its identity contract")
 
 
-def require_translation_only(guard, plan):
-    """Once installed, dataset replacement requires an exact held candidate."""
+def require_metadata_only(guard, plan):
+    """Allow one README or a complete translation bundle, never feature replacement."""
     from ingestion.eamlis_monthly import source_quality as quality
     from scripts import release_feature_model as model
     value = guard.state.get("identity")
     if value is None:
         return
     identity.require(value["phase"] == "active", "first identity publication requires the reviewed RUN_DATE job or held candidate")
+    items = plan["promotions"]
+    identity.require(not plan.get("release_index_asset_slugs"), "metadata-only update cannot rebuild the release index")
+    if len(items) == 1 and items[0]["destination_uri"] == f"gs://{BUCKET}/{ROOT}/README.md":
+        return
     release = guard.before["release"]["date"]
     suffixes = (".manifest.json", ".metadata-translations.csv", ".metadata.es.ndjson.gz")
     targets = {f"gs://{BUCKET}/{ROOT}/{folder}/{SLUG}{suffix}"
                for folder in (f"releases/{release}", "latest") for suffix in suffixes}
-    items = plan["promotions"]
-    identity.require(len(items) == len(targets) and {item["destination_uri"] for item in items} == targets
-                     and not plan.get("release_index_asset_slugs"), "installed EAMLIS accepts only the complete current translation bundle without a held-candidate review")
+    identity.require(len(items) == len(targets) and {item["destination_uri"] for item in items} == targets,
+                     "installed EAMLIS accepts only its README or the complete current translation bundle without a held-candidate review")
     old_ref = next(ref for ref in guard.before["release"]["files"] if ref["path"].endswith(".manifest.json"))
     old = json.loads(quality.pinned(guard.bucket.client, old_ref))
     for item in items:
@@ -202,7 +205,8 @@ def require_translation_only(guard, plan):
             blob = guard.bucket.blob(item["source_uri"].split("/", 3)[3], generation=int(item["source_generation"]))
             proposed = json.loads(blob.download_as_bytes(if_generation_match=int(item["source_generation"])))
             model.validate_release_manifest(proposed, expected_asset_slug=SLUG, expected_release=release, require_generations=True)
-            identity.require(proposed["identity"] == old["identity"], "translation update changed identity state")
+            identity.require(proposed["identity"] == old["identity"] and proposed["hashes"] == old["hashes"],
+                             "translation update changed identity or hash semantics")
             def core(manifest):
                 return [entry for entry in manifest["artifacts"] if entry["role"] in {"fgb", "pmtiles", "metadata", "schema"}]
             identity.require(core(proposed) == core(old) and proposed["validation"]["feature_count"] == old["validation"]["feature_count"], "translation update changed canonical feature artifacts")

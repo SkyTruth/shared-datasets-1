@@ -219,7 +219,10 @@ def seed_valid_metadata_contract(bucket: FakeBucket, asset: FakeAsset, release: 
                 strategy="source_field",
                 source_fields=["OBJECTID"],
             ),
-            "hashes": {},
+            "hashes": {
+                "geometry_hash_algorithm": release_feature_model.GEOMETRY_HASH_ALGORITHM,
+                "properties_hash_algorithm": release_feature_model.PROPERTIES_HASH_ALGORITHM,
+            },
             "validation": {},
             "index_load_status": "Firestore metadata serving is inactive",
             "index_status_policy": {"mode": "inactive_firestore_serving", "path": None},

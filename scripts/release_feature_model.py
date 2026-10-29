@@ -35,6 +35,8 @@ FEATURE_IDENTITY_RESOLUTION_SCHEMA_VERSION = 1
 FEATURE_ID_ALGORITHM = "shared-datasets-feature-identity:v2"
 HASH_ALGORITHM = "sha256"
 GEOMETRY_HASH_ALGORITHM = "sha256:canonical-geometry:v1"
+GEOMETRY_HASH_ALGORITHM_V2 = "sha256:canonical-geometry:v2"
+GEOMETRY_HASH_ALGORITHMS = frozenset({GEOMETRY_HASH_ALGORITHM, GEOMETRY_HASH_ALGORITHM_V2})
 PROPERTIES_HASH_ALGORITHM = "sha256:canonical-feature-properties:v1"
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -204,8 +206,23 @@ def normalize_geometry(value: Any) -> Any:
     return value
 
 
-def geometry_hash(geometry: Mapping[str, Any] | None) -> str:
-    return "sha256:" + sha256_hex(canonical_json(normalize_geometry(geometry)))
+def normalize_geometry_exact(value: Any) -> Any:
+    """Collapse integer/decimal spelling without rounding coordinate values."""
+    if isinstance(value, Mapping):
+        return {key: normalize_geometry_exact(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [normalize_geometry_exact(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def geometry_hash(geometry: Mapping[str, Any] | None, *, algorithm: str = GEOMETRY_HASH_ALGORITHM) -> str:
+    if not isinstance(algorithm, str) or algorithm not in GEOMETRY_HASH_ALGORITHMS:
+        raise ReleaseFeatureModelError("unsupported geometry hash algorithm")
+    # V1 is persisted identity evidence for other datasets; never change its bytes.
+    normalized = normalize_geometry(geometry) if algorithm == GEOMETRY_HASH_ALGORITHM else normalize_geometry_exact(geometry)
+    return "sha256:" + sha256_hex(canonical_json(normalized))
 
 
 def properties_hash(properties: Mapping[str, Any], *, exclude_properties: Sequence[str] = ()) -> str:
@@ -1596,6 +1613,13 @@ def validate_release_manifest(
     validate_identity: bool = True,
 ) -> dict[str, Mapping[str, Any]]:
     errors: list[str] = []
+    if "hashes" in manifest:
+        hashes = manifest["hashes"]
+        if (not isinstance(hashes, Mapping)
+                or not isinstance(hashes.get("geometry_hash_algorithm"), str)
+                or hashes["geometry_hash_algorithm"] not in GEOMETRY_HASH_ALGORITHMS
+                or hashes.get("properties_hash_algorithm") != PROPERTIES_HASH_ALGORITHM):
+            errors.append("manifest has unsupported hash algorithms")
     if "translations" in manifest:
         try:
             validate_translation_coverage(manifest["translations"])
@@ -1696,7 +1720,10 @@ def build_release_manifest(
     identity: Mapping[str, Any],
     validation: Mapping[str, Any],
     translations: Mapping[str, Any] | None = None,
+    geometry_hash_algorithm: str = GEOMETRY_HASH_ALGORITHM,
 ) -> dict[str, Any]:
+    if not isinstance(geometry_hash_algorithm, str) or geometry_hash_algorithm not in GEOMETRY_HASH_ALGORITHMS:
+        raise ReleaseFeatureModelError("unsupported geometry hash algorithm")
     if translations is not None:
         validate_translation_coverage(translations)
     return {
@@ -1710,7 +1737,7 @@ def build_release_manifest(
         "schema": dict(schema),
         "identity": dict(identity),
         "hashes": {
-            "geometry_hash_algorithm": GEOMETRY_HASH_ALGORITHM,
+            "geometry_hash_algorithm": geometry_hash_algorithm,
             "properties_hash_algorithm": PROPERTIES_HASH_ALGORITHM,
         },
         "validation": dict(validation),

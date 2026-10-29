@@ -435,7 +435,7 @@ def begin_promotion(client, plan):
         else:
             require("source_loss_review" not in plan, "source-quality hold was already resolved")
             from ingestion.eamlis_monthly import identity_state
-            identity_state.require_translation_only(guard, plan)
+            identity_state.require_metadata_only(guard, plan)
     except Exception:
         if not resuming:
             guard.__exit__(None, None, None)
@@ -555,6 +555,7 @@ def stage_candidate(guard, *, output, source, release, source_inputs, translatio
         sha256_by_role={role: hashes[role] for role in core_roles}, schema=output.schema_payload,
         source_inputs=source_inputs,
         identity=output.identity_metadata,
+        geometry_hash_algorithm=output.geometry_hash_algorithm,
         feature_count=output.row_count,
         release_blob_info_by_role={r: release_info[r] for r in core_roles},
         latest_blob_info_by_role={r: latest_info[r] for r in core_roles},

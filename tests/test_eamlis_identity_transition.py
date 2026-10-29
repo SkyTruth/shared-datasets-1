@@ -368,8 +368,8 @@ def test_metadata_tampering_and_unreviewed_replacements_are_refused(tmp_path):
         records[0]["properties"]["PA_NAME"] = "silently changed"
         with pytest.raises(ids.IdentityError, match="property hash"):
             state.validate_records(ledger, records)
-        with pytest.raises(ids.IdentityError, match="only the complete current translation"):
-            state.require_translation_only(guard, {"promotions": [{"destination_uri": "unrelated"}]})
+        with pytest.raises(ids.IdentityError, match="README or the complete current translation"):
+            state.require_metadata_only(guard, {"promotions": [{"destination_uri": "unrelated"}]})
 
 
 def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_path):
@@ -382,3 +382,7 @@ def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_p
     assert first["hold"]["candidate"] != second["hold"]["candidate"]
     assert first["hold"]["id"] == second["hold"]["id"]
     assert quality.candidate(client, second["hold"]["candidate"])["geometry_count"] == 2
+    candidate = quality.candidate(client, second["hold"]["candidate"])
+    manifest_ref = next(ref for ref in candidate["files"] if ref["role"] == "manifest")
+    manifest = json.loads(quality.pinned(client, manifest_ref))
+    assert manifest["hashes"]["geometry_hash_algorithm"] == feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM_V2

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ingestion.common import release_index
+from scripts.release_feature_model import normalize_geometry_exact as normalized_geometry
 
 
 def digest(value: Any) -> str:
@@ -61,17 +62,6 @@ def unordered_digest(values: Iterable[Any], *, workdir: Path | None = None) -> s
                 ):
                     result.update(value)
     return result.hexdigest()
-
-
-def normalized_geometry(value: Any) -> Any:
-    """Normalize JSON number spelling, retaining exact coordinate values/order."""
-    if isinstance(value, dict):
-        return {key: normalized_geometry(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [normalized_geometry(item) for item in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
 
 
 def feature_digest(features: Iterable[Mapping[str, Any]]) -> str:

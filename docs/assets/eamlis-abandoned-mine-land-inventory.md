@@ -20,12 +20,12 @@ source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
   Inventory System (e-AMLIS). https://amlis.osmre.gov/.
-notes: Monthly job publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release adds source-field feature_id
-  values from OBJECTID, geometry_hash values, properties_hash values, canonical metadata/schema/manifest artifacts, and an
-  initial Spanish PA_NAME metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup
-  tiles with feature_id only. Release history, source fingerprints, row counts, and file hashes are recorded in the bucket
-  release index and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not advertised
-  as an active data-plane format.
+notes: Monthly job publishes FGB plus PMTiles. From the 2026-10-29 release, eamlis-problem-key-v1 assigns permanent decimal
+  feature_id values using eamlis_record_kind and eamlis_identity_key; legacy OBJECTID IDs belong to a different contract.
+  Canonical metadata/schema/manifest artifacts include geometry_hash and properties_hash, and Spanish PA_NAME metadata is
+  generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup tiles with feature_id only. Release
+  history, source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records.
+  Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
 row_count: 63168
 data_profile:
   field_count: 57
@@ -49,9 +49,15 @@ data_profile:
     status: unique
     notes: Unique among non-empty values; 25 null/empty
 feature_identity:
-  strategy: source_field
+  strategy: generated_sequence_source_fields
   source_fields:
-  - OBJECTID
+  - eamlis_record_kind
+  - eamlis_identity_key
+  generated_id_type: monotonic_integer_string
+  assignment_key:
+  - eamlis_record_kind
+  - eamlis_identity_key
+  contract_id: eamlis-problem-key-v1
 feature_metadata:
   storage: metadata_sidecar_v1
   feature_id_column: feature_id
@@ -189,22 +195,42 @@ Geometry is WGS84 point geometry derived from the public ArcGIS hosted feature l
 
 Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The reviewed 2026-06-05 metadata-contract release contains 63,168 features. Scheduled run records document the current public source count for each refresh attempt.
 
+The row count and candidate profile above describe that captured legacy review;
+use the release index for current counts. Keyed output adds the two derived
+assignment columns documented below to the hosted source fields.
+
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
 
 The 2026-06-05 PMTiles artifact is a lightweight metadata-lookup tile archive with only `feature_id` properties. The canonical FGB and metadata sidecar preserve full feature attributes.
 
-Legacy `OBJECTID` feature IDs can be renumbered across releases. The job supports
-a separately reviewed permanent `PROBLEM_KEY`/area-key identity installation;
-consult each concrete release manifest for its contract. Equal numeric IDs
-across the cutover do not establish continuity. The
-[identity evidence and runbook](../eamlis-feature-identity.md) explains the 25
-area-only records and the explicit migration. This document's structured identity
-metadata continues to describe the published legacy contract until activation.
+From the **2026-10-29 release**, `feature_id` uses the activated
+`eamlis-problem-key-v1` contract. A permanent ledger assigns decimal IDs to
+the pair `eamlis_record_kind`, `eamlis_identity_key`. Problem rows use
+`problem`, `PROBLEM_KEY`; the 25 area-only rows with no problem fields use
+`area`, `AMLIS_KEY`. Colocated problems stay separate. Absent keys keep their
+allocations, and their IDs are never recycled. `OBJECTID` remains a source
+attribute and is excluded from `properties_hash` because upstream renumbers it.
+
+Legacy releases use `OBJECTID` IDs. Equal numeric IDs across the cutover do
+not establish continuity: rebuild cached lookups for the keyed contract and
+pin a concrete release for historical citations. The
+[identity evidence and runbook](../eamlis-feature-identity.md) explains the migration
+and the lack of an upstream guarantee against source-key reuse.
+
+Use each release manifest's `hashes.geometry_hash_algorithm` when recomputing
+geometry fingerprints. `sha256:canonical-geometry:v1` distinguishes some whole
+integer/decimal representations and rounds to 15 significant digits. The updated
+producer uses `sha256:canonical-geometry:v2` for keyed releases: `38` and `38.0`
+hash equally, and real coordinate changes are preserved without rounding.
+Previously published releases retain their original bytes and algorithms;
+comparisons across hash algorithm versions require separate interpretation.
 
 ## Properties / columns
 
 | Name | Type | Description |
 |---|---|---|
+| `eamlis_record_kind` | string | Derived assignment kind: `problem` or `area`; separates problem records from area-only records. |
+| `eamlis_identity_key` | string | Exact source `PROBLEM_KEY` for a problem, or `AMLIS_KEY` for an area-only record; paired with the kind to select a permanent feature ID. |
 | `AMLIS_KEY` | string | OSMRE problem area identifier, generally a state or Tribal abbreviation followed by six digits. |
 | `STATE_KEY` | string | Source state or Tribal account abbreviation. |
 | `PA_NUMBER` | integer | Problem area number. |
@@ -261,7 +287,7 @@ metadata continues to describe the published legacy contract until activation.
 | `TOTAL_COST` | real | Source total direct construction cost for the problem-type feature. |
 | `RECLAMATION` | string | Reclamation status text. |
 | `STATUS0` | string | Problem status text used by the public e-AMLIS application. |
-| `OBJECTID` | integer | Source object identifier from the hosted feature layer. |
+| `OBJECTID` | integer | Volatile source object identifier; retained for provenance, excluded from `properties_hash`, and not the keyed contract's feature ID. |
 
 ## Update notes
 
@@ -290,7 +316,11 @@ The reviewed promotion also refreshes the schema snapshot from the initial
 manual-upload snapshot to the current hosted-layer FGB schema that was already
 present in `latest/` before the metadata-contract release.
 
-Monthly scheduled ingestion was added after the initial manual upload. The job checks the public ArcGIS layer metadata and source statistics first, skips unchanged source fingerprints without downloading features, and also skips publication when a changed source fingerprint generates the same FGB SHA-256 as the latest successful run.
+Monthly scheduled ingestion was added after the initial manual upload. For an
+unused run date, the job downloads the complete selected source and pins the
+translation CSV before comparing content fingerprints. An unchanged fingerprint
+skips artifact generation and publication. Completed run dates return their
+recorded outcome. Source counts and edit timestamps alone cannot prove equality.
 
 ## Known caveats
 
