@@ -39,4 +39,5 @@ WORKFLOW_NAMES = {
     'terraform-state-read-iam-sync.yml': ('Terraform state read IAM sync',),
     'unattended-workflow-alert.yml': ('Alerts / Workflow health and Slack reconciliation', 'Workflow health and Slack reconciliation'),
     'wdpa-monthly-deploy.yml': ('Ingestion / WDPA monthly deploy', 'WDPA monthly deploy'),
+    'wdpa-monthly-build.yml': ('Ingestion / WDPA monthly build',),
 }

@@ -312,6 +312,7 @@ def test_replay_verifies_inputs_with_cache_control_and_retains_hash_failures(
         "--translation-sources" if failed_input == "translation-sources.json" else "--translation-memory",
         str(tmp_path / ("translation-sources.json" if failed_input == "translation-sources.json" else "memory.sqlite")),
         "--fraction", "0.001",
+        "--run-date", "2026-10-01",
     ])
     monkeypatch.setattr(replay, "prepare_scratch", lambda: None)
     monkeypatch.setattr(replay, "PhaseProfiler", ObservedProfiler)

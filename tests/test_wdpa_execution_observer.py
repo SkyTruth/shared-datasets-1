@@ -176,6 +176,8 @@ def accepted_evidence():
             },
         },
     }
+    for asset in run["assets"].values():
+        asset["source_counts"] = {key: asset[key] for key in ("rows", "india_rows", "india_sites")}
     sample = copy.deepcopy(run)
     sample.update(sample_fraction=0.001, sample_seed=7919, compatibility_verified=True)
     for asset in sample["assets"].values():

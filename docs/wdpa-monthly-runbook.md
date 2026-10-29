@@ -68,12 +68,73 @@ promotion authority, publication state, permissions and the runtime window
 before preparing the publication layer and applying its allowlisted saved plan.
 
 A new month's build and promotion authority must be reviewed and deployed before
-that month's schedule can succeed. The one-time October build workflow and
-isolated producer are retired; a future build needs a separately reviewed path.
+that month's schedule can succeed. Use the recurring build process below.
+The one-time October campaign remains retired and its evidence remains readable.
 Monthly deployment verifies the hash-bound terminal execution snapshot in the
 retained `cloud-facts.json`, then promotes the accepted bundle without rebuilding
 artifacts. It does not query the retired producer execution. Keep staged and
 complete-build evidence for their actual producer image.
+
+## Prepare each month
+
+The maintainer starting a build owns its terminal verification, approval handoff
+and any recovery until both publications finish. Name that owner in the promotion
+PR. Builds are deliberately manual; an enabled publisher schedule does not
+download or build a new upstream month.
+
+1. Before the next window, use **Ingestion / Schedule control**, `job=wdpa-monthly`,
+   `action=pause` on reviewed `main` if the next month's bundle is not ready.
+   Pausing preserves all releases and does not cancel an execution or abandon a
+   publication claim. Keep it paused while preparing the replacement.
+2. After the builder code and IAM PR merges and main CI succeeds, verify the
+   protected **Infrastructure / Ingestion deploy IAM sync** has installed the
+   `wdpa-monthly-build` identity, create-only scratch grants and committed-input
+   readers. The builder has no canonical write authority. It uses the existing
+   approved 4 CPU / 8 GiB / 100 GiB DISK quota and zero retries.
+3. When the upstream release is available, dispatch **Ingestion / WDPA monthly
+   build** (`wdpa-monthly-build.yml`) on `main` with `mode=build`, explicit
+   `run_date=YYYY-MM-01`, and the tested `executor_sha`, `source_run_id` and
+   `source_run_attempt`. Its protected queued job checks that main CI passed,
+   builds and smoke-tests the producer, pins the registry/configuration digests,
+   and applies only `module.wdpa_monthly_build_job` through an allowlisted saved
+   plan. It refuses to replace an active build and starts the execution asynchronously.
+4. Follow the execution named in the workflow summary to terminal success.
+   The builder freezes the committed identity and translation generations,
+   downloads the requested source once, runs the deterministic compatibility
+   sample and complete build, and commits the descriptor only after both realms
+   validate. Independent source counts replace fixed October counts. Artifacts
+   are immutable under `_scratch/wdpa-builds/wdpa-monthly-build-<execution>/`.
+   These are review inputs, not published dataset contracts.
+5. Dispatch the same workflow with `mode=collect`, that execution name, and its
+   original tested revision/CI identity. It verifies terminal success, producer
+   fingerprint and descriptor generations/hashes. Download `wdpa-monthly-review`:
+   it contains the acceptance JSON, immutable plan, retained cloud facts and
+   descriptor, plus a readable PR fence. Preserve their repo-relative paths in
+   a focused promotion PR. Set `promotion_pr` to the new PR number before final
+   preflight/review; the collected draft deliberately has no approval authority.
+6. Obtain exact-head maintainer approval and merge. The changed acceptance file
+   selects the existing protected publication deploy. The publisher still
+   verifies approval, live predecessors and exact staged bytes. A paused schedule
+   skips the default canary: after the protected deployment, deliberately execute
+   the deployed job with the accepted `RUN_DATE` as described below. Verify both
+   release indexes, owned receipts and `latest/` metadata, then resume through
+   **Ingestion / Schedule control** while that month's window is still current.
+
+The workflow's `mode=readiness` and scheduled check at 08:00 UTC on days 1–10 and
+25–31 report the month needed for the **next** scheduler invocation, the accepted
+date, deployed-bundle agreement and scheduler state. An enabled schedule with a
+missing handoff fails through the existing unattended workflow alerts. A paused
+schedule is explicitly reported without a repeated readiness failure. Resume
+requires verified promotion authority and a matching deployed month; an October
+canary cannot establish November readiness. These checks never publish or resume
+the schedule automatically.
+
+For a failed build, inspect its execution and inputs before retrying. Scratch
+artifacts from an incomplete build have no committed descriptor and no promotion
+authority. Each new execution stages into its own prefix. If a baseline changes
+before promotion, rebuild and review a new plan; never edit retained bytes or
+reset publication state. Interrupted canonical publication still belongs to its
+original owner and follows the recovery section below.
 
 ## Execute and inspect
 

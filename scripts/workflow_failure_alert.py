@@ -47,6 +47,7 @@ MONITORED_WORKFLOWS = {
     "sea-ice-daily-deploy.yml",
     "terraform-state-read-iam-sync.yml",
     "wdpa-monthly-deploy.yml",
+    "wdpa-monthly-build.yml",
 }
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
 OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}

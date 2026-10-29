@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 jobs:
@@ -62,12 +63,18 @@ jobs:
 
       - name: Verify publication before resuming
         if: ${{ inputs.action == 'resume' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           uv sync --frozen
           if [[ "${JOB_NAME}" == eamlis-monthly ]]; then
             uv run --no-sync python scripts/eamlis_identity_transition.py require-published
           else
             uv run --no-sync python scripts/publication_rollout_gate.py --job "$JOB_NAME" --require-published
+          fi
+          if [[ "$JOB_NAME" == wdpa-monthly ]]; then
+            uv run --no-sync python scripts/wdpa_build_authorization.py
+            uv run --no-sync python scripts/wdpa_monthly_build.py readiness
           fi
 
       - name: Set schedule state

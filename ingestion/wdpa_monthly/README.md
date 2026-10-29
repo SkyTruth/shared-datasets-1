@@ -49,10 +49,16 @@ retry through the original owner and captured executor/inputs. Follow the
 
 ### Retained-build runtime
 
-The source-processing image uses `python -m ingestion.wdpa_monthly.run`. The
-one-time October build workflow and isolated producer are retired; a future
-build needs a separately reviewed path. The accepted retained bundle remains
-the monthly publication input.
+The recurring scratch-only builder uses `python -m ingestion.wdpa_monthly.build`
+in the source-processing image. The protected `wdpa-monthly-build.yml` workflow
+sets its immutable image/configuration identity and passes an explicit
+`RUN_DATE=YYYY-MM-01` only to the execution. It freezes committed inputs, runs a
+deterministic compatibility sample followed by the full build, and stages both
+realms before committing a hash-bound descriptor. `mode=collect` prepares an
+unapproved promotion PR artifact from verified terminal evidence. Follow
+[Prepare each month](../../docs/wdpa-monthly-runbook.md#prepare-each-month).
+The October campaign stays retired; its retained artifacts remain readable.
+The accepted retained bundle remains the monthly publication input.
 `WDPA_SOURCE_URL_TEMPLATE` defaults to
 `https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip`
 and supports `{run_date}`, `{year}`, `{month}` and `{month_token}`.
