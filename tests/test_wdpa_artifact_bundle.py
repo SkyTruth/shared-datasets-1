@@ -63,6 +63,14 @@ def built(tmp_path, request, monkeypatch):
     report = accepted_evidence()["build"]
     monkeypatch.setenv("RUN_DATE", report["run_date"])
     settings = getattr(request, "param", 5 * 1024**3)
+    if isinstance(settings, dict) and "run_date" in settings:
+        report["run_date"] = settings["run_date"]
+        monkeypatch.setenv("RUN_DATE", report["run_date"])
+        report["cloud_execution"] = "wdpa-monthly-build-aaaaa"
+        report["cloud_image"] = report["cloud_image"].replace("/wdpa-validation@", "/wdpa-monthly-build@")
+        for summary in report["assets"].values():
+            summary["rows"] += 7
+            summary["source_counts"]["rows"] += 7
     report["memory_peak_bytes"] = (
         settings.get("memory", 5 * 1024**3) if isinstance(settings, dict) else settings
     )
@@ -193,7 +201,7 @@ def completed_publisher_for(report):
         })
         receipts[context.receipt_uri] = SimpleNamespace(value={"intent": intent.value})
         records[asset.slug] = {
-            "release_date": report["run_date"], "source_version": "Oct2026",
+            "release_date": report["run_date"], "source_version": wdpa.source_version_for(wdpa.parse_run_date(report["run_date"])),
             "source": wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, wdpa.parse_run_date(report["run_date"])),
             "identity_contract": CONTRACT_ID, "row_count": facts["row_count"],
             "sha256": {**copy.deepcopy(facts["sha256"]), "manifest": "f" * 64},
@@ -204,6 +212,7 @@ def completed_publisher_for(report):
     return publisher, states, records, receipts
 
 
+@pytest.mark.parametrize("built", [5 * 1024**3, {"run_date": "2026-11-01"}], indirect=True)
 @pytest.mark.parametrize("defect", [None, "baseline", "allocation", "bytes", "manifest", "receipt", "missing_receipt", "owner", "rows"])
 def test_completed_build_retry_skips_without_artifact_downloads_or_publication(
     built, tmp_path, monkeypatch, defect
@@ -262,7 +271,7 @@ def test_retained_build_must_match_requested_month(built, tmp_path, monkeypatch,
     assert len(store.calls) == 1
 
 
-@pytest.mark.parametrize("built", [5 * 1024**3, 7732400128], indirect=True)
+@pytest.mark.parametrize("built", [5 * 1024**3, 7732400128, {"run_date": "2026-11-01"}], indirect=True)
 def test_one_build_survives_local_cleanup_and_promotes_identical_bytes(
     built, tmp_path, monkeypatch
 ):

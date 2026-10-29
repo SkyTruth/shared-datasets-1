@@ -228,6 +228,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("sea_ice")
         if (path.startswith("ingestion/wdpa_monthly/") and path != "ingestion/wdpa_monthly/Dockerfile") or path in {
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
+            "catalog/wdpa-processing-acceptance.json",
         }:
             selected.add("wdpa")
         if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
@@ -248,7 +249,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
         }:
             selected.add("pmtiles_cdn")
-        if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
+        if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf", "terraform/envs/prod/wdpa_monthly_build.tf"}:
             selected.add("ingestion_iam")
         if path in {"terraform/envs/prod/wdpa_validation_retirement_iam.tf", "terraform/envs/prod/operational_retirement_iam.tf"}:
             selected.add("scratch_cleanup_iam")

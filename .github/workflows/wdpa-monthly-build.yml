@@ -1,0 +1,274 @@
+name: Ingestion / WDPA monthly build
+
+on:
+  schedule:
+    - cron: "0 8 1-10,25-31 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [readiness, build, collect]
+        default: readiness
+        required: true
+      run_date:
+        description: "Build month, YYYY-MM-01 (build only)"
+        type: string
+      execution:
+        description: "Completed wdpa-monthly-build execution (collect only)"
+        type: string
+      executor_sha:
+        description: "Exact tested main revision of the builder (build/collect)"
+        type: string
+      source_run_id:
+        description: "Main-push CI run that tested executor_sha (build/collect)"
+        type: string
+      source_run_attempt:
+        description: "Successful ci-ready attempt (build/collect)"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  JOB_NAME: wdpa-monthly-build
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  readiness:
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'readiness' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    steps:
+      - name: Require trusted main
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/wdpa-monthly-build.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --no-dev
+      - name: Verify accepted promotion authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/wdpa_build_authorization.py
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - name: Report readiness for the next scheduler window
+        run: uv run --no-sync python scripts/wdpa_monthly_build.py readiness --allow-paused
+
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'readiness' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      deployments: write
+      attestations: write
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    env:
+      EXECUTOR_SHA: ${{ inputs.executor_sha }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+      RUN_DATE: ${{ inputs.run_date }}
+      BUILD_EXECUTION: ${{ inputs.execution }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require trusted main
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/wdpa-monthly-build.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify executor before candidate checkout
+        env:
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow wdpa-monthly-build.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.executor_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tested main revision
+        run: |
+          python scripts/deployment_revision.py verify --workflow wdpa-monthly-build.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --no-dev
+      - name: Validate explicit build month
+        if: inputs.mode == 'build'
+        run: uv run --no-sync python -c 'import os; from scripts.wdpa_processing_gate import monthly_date; monthly_date(os.environ["RUN_DATE"])'
+      - name: Check prior build deployment
+        id: replay
+        if: inputs.mode == 'build'
+        run: |
+          python scripts/deployment_revision.py check --target wdpa-monthly-build --workflow wdpa-monthly-build.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Collect completed build and prepare unapproved promotion evidence
+        if: inputs.mode == 'collect'
+        run: |
+          uv run --no-sync python scripts/wdpa_monthly_build.py collect \
+            --execution "$BUILD_EXECUTION" --out "$RUNNER_TEMP/wdpa-review"
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'collect'
+        with:
+          name: wdpa-monthly-review
+          path: ${{ runner.temp }}/wdpa-review
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+      - name: Refuse to replace an active build
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: |
+          gcloud run jobs executions list --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/executions.json"
+          python - "$RUNNER_TEMP/executions.json" <<'PY'
+          import json, sys
+          for execution in json.load(open(sys.argv[1])):
+              if execution['metadata']['labels'].get('run.googleapis.com/job') == 'wdpa-monthly-build' and not execution.get('status', {}).get('completionTime'):
+                  raise SystemExit('A monthly build is pending or running; inspect it before starting another')
+          PY
+      - name: Verify Artifact Registry image permissions
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target artifact-registry-images
+      - name: Verify run-bound signing capability without mutation
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: wdpa-monthly-build.yml
+      - uses: docker/setup-buildx-action@v3
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+      - name: Build and validate the monthly producer
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: |
+          tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/shared-datasets-jobs/wdpa-monthly-build:${EXECUTOR_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx build --load --platform linux/amd64 --provenance=false \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=$EXECUTOR_SHA" \
+            --metadata-file "$RUNNER_TEMP/image.json" -f ingestion/wdpa_monthly/Dockerfile -t "$tag" .
+          config="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' "$RUNNER_TEMP/image.json")"
+          python -c 'import os,sys; from scripts.tested_image_bundle import verify_local_config; verify_local_config(sys.argv[1], sys.argv[2], directory=os.environ["RUNNER_TEMP"])' "$tag" "$config"
+          docker run --rm --platform linux/amd64 --network none --cpus 4 --memory 8g "$tag" python scripts/local_ingestion_smoke.py --workdir /work/smoke
+          docker run --rm --platform linux/amd64 --network none "$tag" python -c 'import ingestion.wdpa_monthly.build'
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker push "$tag"
+          digest="$(gcloud artifacts docker images describe "$tag" --format='value(image_summary.digest)')"
+          image="${tag%:*}@${digest}"
+          docker buildx imagetools inspect --raw "$image" > "$RUNNER_TEMP/manifest.json"
+          python - "$RUNNER_TEMP/manifest.json" "$config" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1]))
+          if manifest.get('config', {}).get('digest') != sys.argv[2]:
+              raise SystemExit('Pushed producer differs from tested configuration bytes')
+          PY
+          echo "BUILD_IMAGE=$image" >> "$GITHUB_ENV"
+          echo "BUILD_CONFIG=$config" >> "$GITHUB_ENV"
+      - uses: hashicorp/setup-terraform@v3
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        with:
+          terraform_version: "1.8.5"
+          terraform_wrapper: false
+      - name: Plan only the monthly build job
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: |
+          terraform -chdir=terraform/envs/prod init -input=false
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false \
+            -target=module.wdpa_monthly_build_job \
+            -var="wdpa_build_image=$BUILD_IMAGE" -var="wdpa_build_image_config_digest=$BUILD_CONFIG" \
+            -var=wdpa_monthly_image=unused-by-wdpa-build -var=eamlis_monthly_image=unused-by-wdpa-build \
+            -var=sea_ice_daily_image=unused-by-wdpa-build -out="$RUNNER_TEMP/wdpa-build.tfplan"
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/wdpa-build.tfplan" > "$RUNNER_TEMP/wdpa-build.tfplan.json"
+          uv run --no-sync python scripts/wdpa_monthly_build.py check-plan \
+            --plan-json "$RUNNER_TEMP/wdpa-build.tfplan.json" --image "$BUILD_IMAGE" --config-digest "$BUILD_CONFIG"
+      - name: Verify permissions required by the saved plan
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target wdpa-monthly-build --plan-json "$RUNNER_TEMP/wdpa-build.tfplan.json"
+      - name: Claim tested build deployment
+        id: revision
+        if: ${{ inputs.mode == 'build' && steps.replay.outputs.proceed == 'true' }}
+        run: |
+          python scripts/deployment_revision.py start --target wdpa-monthly-build --workflow wdpa-monthly-build.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact "$BUILD_IMAGE" --plan-json "$RUNNER_TEMP/wdpa-build.tfplan.json"
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.revision.outputs.receipt_path }}
+      - name: Apply the reviewed build job plan
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/wdpa-build.tfplan"
+      - name: Start the isolated monthly build
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+        run: |
+          deployed="$(gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          test "$deployed" = "$BUILD_IMAGE"
+          execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --update-env-vars="RUN_DATE=$RUN_DATE" --async --format='value(metadata.name)')"
+          test -n "$execution"
+          echo "BUILD_EXECUTION=${execution##*/}" >> "$GITHUB_ENV"
+          echo "Build started: $execution" >> "$GITHUB_STEP_SUMMARY"
+          echo "Follow it to terminal success, then collect its evidence with this workflow at executor $EXECUTOR_SHA. Publication still requires an approved promotion PR." >> "$GITHUB_STEP_SUMMARY"
+      - name: Record build deployment outcome
+        id: deployment-outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase=applied
+          if [[ "$JOB_STATUS" != success ]]; then phase=failed; fi
+          python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase" --execution "$BUILD_EXECUTION"
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

@@ -28,6 +28,7 @@ TARGET_WORKFLOWS = {
     "monitoring-slack": "cron-alert-policy-sync.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
+    "wdpa-monthly-build": "wdpa-monthly-build.yml",
     "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
     "eamlis-monthly": "eamlis-monthly-deploy.yml",
     "sea-ice-daily": "sea-ice-daily-deploy.yml",
@@ -211,6 +212,10 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
         runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
+            if target == "wdpa-monthly-build":
+                # A new scratch build is an explicit invocation, even at the same
+                # producer revision. Its bytes require separate promotion approval.
+                return "superseded" if superseded else "proceed"
             prior_artifact = record_payload(latest)["artifact"]
             if artifact is None or prior_artifact == artifact:
                 return "superseded" if superseded else "noop"

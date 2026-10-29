@@ -32,6 +32,7 @@ on:
       - "Ingestion / MPAtlas monthly deploy"
       - "Ingestion / Sea ice daily deploy"
       - "Ingestion / WDPA monthly deploy"
+      - "Ingestion / WDPA monthly build"
       - "MPAtlas monthly deploy"
       - "PMTiles CDN sync"
       - "Preview Terraform IAM sync"

@@ -100,8 +100,10 @@ The template pins the accepted bundle from `catalog/wdpa-processing-acceptance.j
 accepted bundle. A missing or wrong-month bundle fails before publication.
 A completed month verifies both receipts and returns `skipped` without artifact
 downloads. Each new month requires newly reviewed build and promotion authority.
-The one-time October producer/workflow is retired: a future build needs a
-separately reviewed path. Monthly deployment verifies the retained hash-bound
+The recurring `wdpa-monthly-build.yml` workflow prepares new months using the
+scratch-only builder, then collects unapproved evidence for an exact-head
+promotion PR. The one-time October producer/workflow remains retired.
+Monthly deployment verifies the retained hash-bound
 terminal execution snapshot rather than querying the retired producer execution.
 
 Use the [monthly runtime/evidence contract](../../../../docs/wdpa-monthly-runbook.md)

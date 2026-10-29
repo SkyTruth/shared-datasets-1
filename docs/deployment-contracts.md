@@ -37,9 +37,12 @@ Missing, expired, incomplete or mismatched evidence fails closed.
 WDPA distinguishes the tested executor revision, the accepted producer image and
 fingerprint, and the retained bundle's generation/hash. Publication fixes inherit
 the accepted producer and update its consumer layer; they never regenerate the
-accepted dataset bytes. Changes to staged producer evidence may launch the
-isolated validation deployment. That path cannot automatically launch the
-production publisher or bypass complete acceptance.
+accepted dataset bytes. The manually dispatched monthly build workflow installs
+a tested producer and starts one explicit month under a scratch-only identity.
+Its signed `applied` outcome confirms job installation and asynchronous dispatch;
+it does not certify the build or authorize publication. Collection requires the
+matching terminal-success execution and immutable descriptor, followed by a
+separately reviewed acceptance PR and the existing protected publisher deployment.
 
 Production Terraform jobs retain the `prod-terraform-state` non-cancelling queue
 from plan through resource allowlist, saved-plan apply and verification. The
@@ -89,7 +92,11 @@ mutation and becomes a no-op. If a candidate reaches the final guard, different
 artifact bytes from the same
 code require reconciliation, except catalog refreshes: an actual reviewed data
 mutation or index rebuild may produce a distinct current-state catalog bundle
-under the same executor. A failed or interrupted attempt cannot be blanket
+under the same executor. Explicit WDPA monthly scratch builds may also reuse a
+successfully installed producer revision for another month or build attempt.
+They reject active Cloud Run builds and retain the same stale-revision,
+signed-claim and failed-deployment reconciliation guards. Each output still needs
+separate promotion approval. A failed or interrupted deployment cannot be blanket
 retried.
 
 The Actions bot identity and a caller-supplied run URL do not prove who emitted a

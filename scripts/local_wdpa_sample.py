@@ -298,7 +298,7 @@ def main():
         help="Prebuilt cache, for sample/genesis debugging only",
     )
     parser.add_argument("--supplement", type=Path)
-    parser.add_argument("--run-date", default="2026-10-01")
+    parser.add_argument("--run-date", required=True)
     parser.add_argument("--stage-build", action="store_true", help="Retain a complete cloud build in immutable noncanonical staging")
     parser.add_argument(
         "--asset", choices=[a.slug for a in wdpa.ASSETS] + ["all"], default="all",
