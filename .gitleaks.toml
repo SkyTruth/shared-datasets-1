@@ -23,3 +23,12 @@ regexTarget = "secret"
 # Recomputed from the pinned published release by identity_installation.
 # Exact immutable document and SHA-256 only; independent of Git merge strategy.
 regexes = ['''^4f07e9de4ff2b8c78184132370c45357f999097527e9fcc59801c6e8192d0fb6$''']
+
+[[rules.allowlists]]
+description = "Deterministic published-release digest in the immutable EAMLIS checksum repair plan"
+condition = "AND"
+paths = ['''^\.github/dataset-plans/eamlis-abandoned-mine-land-inventory/eamlis-june5-checksum-20261029/e5b6ab1169e3c238416949a7d4d7829c70c38eeb7f394cee43a7c5ebdc467bc8\.json$''']
+regexTarget = "secret"
+# SHA-256 of the pinned latest_release JSON, recomputed by source_quality.baseline.
+# This exact non-credential digest and immutable document only.
+regexes = ['''^29cd5bc5e67d17ebfe397a219e3d6ab4ca76bb2bab3b7d331ecb6a163f0e0f8d$''']
