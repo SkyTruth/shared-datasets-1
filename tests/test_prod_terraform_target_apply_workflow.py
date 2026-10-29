@@ -119,6 +119,12 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_targets={
                 "google_project_iam_custom_role.scheduled_ingestion_deployer",
                 "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+                "module.wdpa_builder_service_account.google_service_account.this",
+                "google_project_iam_custom_role.wdpa_monthly_build_stager",
+                "google_storage_bucket_iam_member.wdpa_monthly_build_stager",
+                "google_storage_bucket_iam_member.wdpa_monthly_build_inputs",
+                "google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader",
+                "google_service_account_iam_member.wdpa_builder_deployer",
                 "google_project_iam_custom_role.wdpa_observer_bootstrap",
                 "google_project_iam_member.github_actions_wdpa_observer_bootstrap",
                 "google_storage_bucket_iam_member.wdpa_reset_translation_reader",

@@ -301,6 +301,19 @@ class RepoGuardrailsTests(unittest.TestCase):
             path.write_text(source.read_text().replace("scripts/dataset_usage_deploy.py --plan-json", "scripts/dataset_usage_deploy.py --targets"))
             self.assertTrue(any("missing resource-change allowlist" in error for error in repo_guardrails.check_workflow_boundaries(root)))
 
+    def test_monthly_builder_requires_its_saved_plan_resource_guard(self):
+        source = repo_guardrails.REPO_ROOT / ".github/workflows/wdpa-monthly-build.yml"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / ".github/workflows/wdpa-monthly-build.yml"
+            path.parent.mkdir(parents=True)
+            path.write_text(source.read_text())
+            self.assertEqual(repo_guardrails.check_workflow_boundaries(root), [])
+            path.write_text(source.read_text().replace(
+                "scripts/wdpa_monthly_build.py check-plan", "scripts/wdpa_monthly_build.py readiness"))
+            self.assertTrue(any("missing resource-change allowlist" in error
+                for error in repo_guardrails.check_workflow_boundaries(root)))
+
     def test_secret_scanner_flags_tracked_private_key_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
