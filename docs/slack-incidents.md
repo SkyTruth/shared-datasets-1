@@ -28,7 +28,16 @@ and failed workflow completions. Its presence in Actions does not mean a failure
 occurred or a Slack message was sent. `Deployments / Completion check` runs hourly;
 its completion also triggers the incident replay described below. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
-under the same workflow and incident identity.
+under the same workflow and incident identity. Pending discovery only reads
+GitHub deployment metadata; the protected observer retains the pinned receipt
+verifier and verifies signatures before observing an execution or writing status.
+
+Repo-triggered catalog refreshes run as reusable jobs in the existing main CI
+run, selected after passing `ci-ready`. They no longer create a separate catalog
+completion event after every successful main CI. The parent CI completion still
+reports publisher failures against `deployment:catalog-web`; recovery still
+requires its signed terminal deployment record. Hourly catalog polling, release
+index rebuild follow-ups and hourly completion/replay remain independent.
 
 The hourly catalog input probe is read-only. An unchanged comparison skips the
 catalog deployment job. If only that probe fails (for example, an unavailable

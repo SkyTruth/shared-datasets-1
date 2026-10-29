@@ -1,5 +1,7 @@
 """Supersession may stop PR validation, never active production delivery."""
 from pathlib import Path
+import os
+import subprocess
 import re
 
 import pytest
@@ -97,12 +99,65 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert "needs.apply-approved-pr-plans.outputs.mutation_completed == 'true'" in refresh['if']
     assert refresh['with']['mutation_completed'] is True
     catalog = load_workflow(ROOT / '.github/workflows/catalog-web-deploy.yml')
-    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Catalog / Release index rebuild', 'Release index rebuild', 'CI / Validate and deliver', 'CI']
+    assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Catalog / Release index rebuild', 'Release index rebuild']
     assert "contains(fromJSON('[\"Catalog / Release index rebuild\",\"Release index rebuild\"]'), github.event.workflow_run.name)" in catalog['jobs']['deploy']['if']
-    assert "needs.select-repo-changes.outputs.should_deploy == 'true'" in catalog['jobs']['deploy']['if']
+    ci = load_workflow(ROOT / '.github/workflows/ci.yml')
+    selected = ci['jobs']['dataset-mutation-selection']
+    assert selected['outputs']['has_catalog_changes'] == '${{ steps.catalog.outputs.should_deploy }}'
+    steps = workflow_steps_by_name(ci, 'dataset-mutation-selection')
+    catalog_selection = steps['Select reviewed catalog changes without duplicating publication refresh']
+    assert catalog_selection['run'] == 'python scripts/catalog_web_changes.py'
+    assert catalog_selection['if'] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
+    caller = ci['jobs']['refresh-reviewed-catalog']
+    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'geospatial-changes', 'pmtiles-cdn'}
+    assert "(needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success')" in caller['if']
+    assert caller['uses'] == './.github/workflows/catalog-web-deploy.yml'
+    assert caller['with'] == {'executor_sha': '${{ needs.ci-ready.outputs.tested_sha }}',
+                              'authorization_artifact_id': '', 'authorization_sha256': '',
+                              'pr_number': 0, 'mutation_completed': False}
+    assert "needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true'" in caller['if']
+    assert 'select-repo-changes' not in catalog['jobs']
+    assert "github.event_name == 'push'" in catalog['jobs']['deploy']['if']
     viewer = load_workflow(ROOT / '.github/workflows/catalog-viewer-deploy.yml')
     triggers = workflow_triggers(viewer)
     assert set(triggers) == {'workflow_call', 'workflow_dispatch'}
     inputs = triggers['workflow_dispatch']['inputs']
     assert set(inputs) == {'executor_sha', 'source_run_id', 'source_run_attempt'}
     assert all(field['required'] is True and field['type'] == 'string' for field in inputs.values())
+
+
+@pytest.mark.parametrize("changes,allowed", [
+    ({}, True),
+    ({"GITHUB_EVENT_NAME": "schedule", "MUTATION_COMPLETED": "", "EXECUTOR_SHA": ""}, True),
+    ({"GITHUB_EVENT_NAME": "workflow_run", "MUTATION_COMPLETED": "", "EXECUTOR_SHA": ""}, True),
+    ({"EXECUTOR_SHA": "b" * 40}, False),
+    ({"GITHUB_REF": "refs/heads/topic"}, False),
+    ({"GITHUB_WORKFLOW_REF": "SkyTruth/shared-datasets-1/.github/workflows/other.yml@refs/heads/main"}, False),
+    ({"AUTHORIZATION_ARTIFACT_ID": "123"}, False),
+    ({"AUTHORIZATION_SHA256": "c" * 64}, False),
+    ({"PR_NUMBER": "3"}, False),
+    ({"MUTATION_COMPLETED": ""}, False),
+    ({"MUTATION_COMPLETED": "true"}, False),
+    ({"MUTATION_COMPLETED": "true", "AUTHORIZATION_ARTIFACT_ID": "123",
+      "AUTHORIZATION_SHA256": "c" * 64, "PR_NUMBER": "3"}, True),
+    ({"MUTATION_COMPLETED": "true", "AUTHORIZATION_ARTIFACT_ID": "123",
+      "AUTHORIZATION_SHA256": "c" * 64, "PR_NUMBER": "3", "EXECUTOR_SHA": ""}, False),
+    ({"MUTATION_COMPLETED": "true", "AUTHORIZATION_ARTIFACT_ID": "123", "PR_NUMBER": "3"}, False),
+    ({"MUTATION_COMPLETED": "true", "AUTHORIZATION_SHA256": "c" * 64, "PR_NUMBER": "3"}, False),
+])
+def test_catalog_receiver_executes_strict_precredential_call_shape(changes, allowed):
+    workflow = load_workflow(ROOT / '.github/workflows/catalog-web-deploy.yml')
+    steps = workflow_steps_by_name(workflow, 'deploy')
+    guard = steps['Validate reusable catalog caller shape']
+    env = {**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main",
+           "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+           "GITHUB_WORKFLOW_REF": "SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/main",
+           "GITHUB_SHA": "a" * 40, "EXECUTOR_SHA": "a" * 40,
+           "MUTATION_COMPLETED": "false", "AUTHORIZATION_ARTIFACT_ID": "",
+           "AUTHORIZATION_SHA256": "", "PR_NUMBER": "0", **changes}
+    result = subprocess.run(['bash', '-c', guard['run']], env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) is allowed, result.stderr
+    ordered = list(steps)
+    assert ordered.index('Validate reusable catalog caller shape') < ordered.index('Authenticate to Google Cloud')
+    assert ordered.index('Verify trusted catalog source authority') < ordered.index('Authenticate to Google Cloud')
+    assert ordered.index('Verify successful mutation provenance') < ordered.index('Authenticate to Google Cloud')

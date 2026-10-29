@@ -477,6 +477,7 @@ jobs:
     outputs:
       pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
       has_mutations: ${{ steps.discover.outputs.has_mutations }}
+      has_catalog_changes: ${{ steps.catalog.outputs.should_deploy }}
       has_repo_alert: ${{ steps.repo_alert_selection.outputs.has_repo_alert }}
     steps:
       - uses: actions/checkout@v4
@@ -488,6 +489,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/dataset_mutation_authorization.py discover
+      - name: Select reviewed catalog changes without duplicating publication refresh
+        if: ${{ steps.discover.outputs.has_mutations == 'false' }}
+        id: catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/catalog_web_changes.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.12'
@@ -501,6 +508,25 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.before }}
         run: uv run --no-sync python scripts/repo_alerts.py select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+
+  refresh-reviewed-catalog:
+    needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.result == 'success' && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      pull-requests: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/catalog-web-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      authorization_artifact_id: ""
+      authorization_sha256: ""
+      pr_number: 0
+      mutation_completed: false
+    secrets: inherit
 
   announce-repo-functionality:
     needs: [ci-ready, dataset-mutation-selection]

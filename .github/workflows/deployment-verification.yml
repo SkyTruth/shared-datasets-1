@@ -30,8 +30,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
-      - name: Install pinned durable receipt verifier
-        run: python scripts/install_deployment_verifier.py
       - id: pending
         env:
           GH_TOKEN: ${{ github.token }}

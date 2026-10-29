@@ -1,7 +1,6 @@
-"""Exercise CI artifacts, real Git comparisons and the catalog selection CLI."""
+"""Exercise real main push comparisons, merged PR coverage and the selector CLI."""
 
 import base64
-from copy import deepcopy
 import hashlib
 import json
 import os
@@ -76,16 +75,12 @@ def case(tmp_path, monkeypatch):
                 responses[f"{PREFIX}/git/trees/{head}?recursive=1"] = {"truncated": False,
                     "tree": [{"path": plan_path, "mode": "100644", "type": "blob", "sha": blob}]}
                 responses[f"{PREFIX}/git/blobs/{blob}"] = {"encoding": "base64", "content": base64.b64encode(raw).decode(), "sha": blob, "size": len(raw)}
-        run = {"id": 123, "run_attempt": 2, "head_sha": head, "path": ".github/workflows/ci.yml",
-               "event": "push", "head_branch": "main", "status": "completed", "conclusion": "success",
-               "repository": REPO, "head_repository": REPO}
-        responses[f"{PREFIX}/actions/runs/123/attempts/2"] = run
-        event = {"repository": REPO, "workflow_run": deepcopy(run)}
-        env = {"GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO["full_name"]}
-        plan = {"base": before, "head": head, "tested_sha": head,
-                "changed_paths": [path for path in git("diff", "--name-only", "-z", before, head).split("\0") if path],
-                "source": {"run_id": "123", "run_attempt": 1}}
-        return GitHub(responses), event, env, [plan]
+        event = {"repository": REPO, "before": before, "after": head,
+                 "ref": "refs/heads/main", "forced": False, "deleted": False}
+        env = {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main",
+               "GITHUB_REPOSITORY": REPO["full_name"], "GITHUB_SHA": head,
+               "GITHUB_WORKFLOW_REF": f"{REPO['full_name']}/.github/workflows/ci.yml@refs/heads/main"}
+        return GitHub(responses), event, env
 
     return build
 
@@ -110,38 +105,46 @@ def test_changed_bundle_and_catalog_inputs_refresh(case, path):
     assert should_refresh(*case((path,)))
 
 
-def test_missing_ci_plan_is_rejected(case):
-    api, event, env, _ = case()
-    with pytest.raises(ValueError, match="missing validation plan"):
-        should_refresh(api, event, env, [])
-
-
-def test_git_filenames_match_nul_delimited_ci_contract(case):
+def test_git_filenames_match_nul_delimited_push_contract(case):
     assert should_refresh(*case(("web/catalog/legend-é.svg",)))
 
 
-@pytest.mark.parametrize("field,value", [("conclusion", "failure"), ("status", "in_progress"),
-    ("event", "pull_request"), ("head_branch", "feature"), ("head_sha", "b" * 40),
-    ("path", ".github/workflows/other.yml"), ("head_repository", {"id": 200, "full_name": "evil/fork"})])
-def test_untrusted_or_unsuccessful_source_is_rejected(case, field, value):
+@pytest.mark.parametrize("field,value", [("GITHUB_EVENT_NAME", "pull_request"),
+    ("GITHUB_REF", "refs/heads/feature"), ("GITHUB_SHA", "b" * 40),
+    ("GITHUB_REPOSITORY", "evil/fork"),
+    ("GITHUB_WORKFLOW_REF", f"{REPO['full_name']}/.github/workflows/other.yml@refs/heads/main")])
+def test_untrusted_push_context_is_rejected(case, field, value):
     args = case()
-    args[0].responses[f"{PREFIX}/actions/runs/123/attempts/2"][field] = value
+    args[2][field] = value
     with pytest.raises(ValueError):
         should_refresh(*args)
 
 
-@pytest.mark.parametrize("changes", [{"changed_paths": []}, {"tested_sha": "b" * 40},
-    {"source": {"run_id": "124", "run_attempt": 1}}, {"source": {"run_id": "123", "run_attempt": 3}}])
-def test_another_or_corrupted_ci_plan_is_rejected(case, changes):
+@pytest.mark.parametrize("field,value", [("forced", True), ("deleted", True),
+    ("ref", "refs/heads/feature"), ("after", "b" * 40), ("before", "0" * 40)])
+def test_nonordinary_push_is_rejected(case, field, value):
     args = case()
-    args[3][0].update(changes)
+    args[1][field] = value
     with pytest.raises(ValueError):
         should_refresh(*args)
+
+
+def test_irrelevant_range_does_not_read_github(case):
+    api, event, env = case(("docs/ci-preflight.md",))
+    api.responses.clear()
+    assert not should_refresh(api, event, env)
+
+
+def test_fork_pr_cannot_cover_catalog_changes(case):
+    api, event, env = case()
+    api.responses[f"{PREFIX}/pulls/1"]["head"]["repo"] = {"id": 200, "full_name": "evil/fork"}
+    with pytest.raises(ValueError, match="merged same-repository PR"):
+        should_refresh(api, event, env)
 
 
 def test_missing_merged_pr_or_unreviewed_catalog_file_is_rejected(case):
     args = case()
-    commit_path = f"{PREFIX}/commits/{args[1]['workflow_run']['head_sha']}/pulls?per_page=100"
+    commit_path = f"{PREFIX}/commits/{args[1]['after']}/pulls?per_page=100"
     pr = args[0].responses[commit_path][0]
     args[0].responses[commit_path] = []
     with pytest.raises(ValueError, match="merged same-repository PR"):
@@ -152,11 +155,10 @@ def test_missing_merged_pr_or_unreviewed_catalog_file_is_rejected(case):
         should_refresh(*args)
 
 
-def test_real_cli_consumes_saved_ci_artifact_and_writes_workflow_output(case, tmp_path):
-    api, event, env, plan = case()
+def test_real_cli_consumes_main_push_and_writes_workflow_output(case, tmp_path):
+    api, event, env = case()
     fixture_dir = tmp_path / "fixture"
     fixture_dir.mkdir()
-    (fixture_dir / "plan.json").write_text(json.dumps(plan[0]))
     event_path = fixture_dir / "event.json"
     event_path.write_text(json.dumps(event))
     responses = fixture_dir / "responses.json"
@@ -165,7 +167,7 @@ def test_real_cli_consumes_saved_ci_artifact_and_writes_workflow_output(case, tm
     gh.write_text(f"#!{sys.executable}\nimport json,os,sys\nvalue=json.load(open(os.environ['GH_FIXTURE']))[sys.argv[-1]]\nprint(json.dumps([value] if '--slurp' in sys.argv else value))\n")
     gh.chmod(0o755)
     output = fixture_dir / "github-output"
-    result = subprocess.run([sys.executable, str(ROOT / "scripts/catalog_web_changes.py"), "--plan-dir", str(fixture_dir)],
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/catalog_web_changes.py")],
         env={**os.environ, **env, "PATH": str(fixture_dir) + os.pathsep + os.environ["PATH"],
              "GH_FIXTURE": str(responses), "GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True)
