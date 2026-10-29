@@ -39,7 +39,15 @@ def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, jo
             assert (result.returncode == 0) is valid
         guard_index = 1
     assert actual_steps[guard_index]['name'] == guard_name
-    assert actual_steps[guard_index + 1]['name'] == 'Check out trusted deployment verifier'
+    bootstrap_index = guard_index + 1
+    if filename == 'catalog-web-deploy.yml':
+        # The extra pure-shell input check is exercised with malformed caller
+        # shapes in test_ci_operational_outcomes; no candidate code runs here.
+        shape_guard = actual_steps[bootstrap_index]
+        assert shape_guard['name'] == 'Validate reusable catalog caller shape'
+        assert set(shape_guard) == {'name', 'env', 'run'}
+        bootstrap_index += 1
+    assert actual_steps[bootstrap_index]['name'] == 'Check out trusted deployment verifier'
     assert names.index(guard_name) < names.index('Check out trusted deployment verifier') < names.index(checkout)
     trusted = steps['Check out trusted deployment verifier']['with']
     assert trusted == {'ref': '${{ github.workflow_sha }}', 'fetch-depth': 0, 'persist-credentials': False}
