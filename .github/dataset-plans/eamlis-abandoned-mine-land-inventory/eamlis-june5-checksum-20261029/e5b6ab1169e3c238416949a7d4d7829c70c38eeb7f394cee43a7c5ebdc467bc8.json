@@ -1,0 +1,137 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "eamlis-abandoned-mine-land-inventory",
+    "breaking_changes": [],
+    "historical_checksum_repair": {
+      "baseline_token": "29cd5bc5e67d17ebfe397a219e3d6ab4ca76bb2bab3b7d331ecb6a163f0e0f8d",
+      "manifest": {
+        "cache_control": null,
+        "content_type": "application/json",
+        "generation": "1781551212087043",
+        "metadata": {
+          "asset_key": "eamlis",
+          "purpose": "bucket-hygiene-audit-20260615",
+          "sha256": "e9ee9e315a4e6b76e8e1e4180b31b1935882b2658f1003a55149a5768083d45a"
+        },
+        "metageneration": "1",
+        "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.manifest.json",
+        "sha256": "7fb42b213cd25d1049baa8e08ec2202de99daf7706f60cfb1f49b7f7d6fca8c9",
+        "size": 11722
+      },
+      "original_record": {
+        "asset_slug": "eamlis-abandoned-mine-land-inventory",
+        "latest_paths": [
+          {
+            "content_type": "application/octet-stream",
+            "generation": 1780643749727010,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.fgb",
+            "sha256": "0997e6f7aaaa1233f86ccfb85fac18be3a69d6001c7db6919598e2d371c3491b",
+            "size": 53463192
+          },
+          {
+            "content_type": "application/vnd.pmtiles",
+            "generation": 1780643758922370,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.pmtiles",
+            "sha256": "26bbea96e5bd941b2fd77735b6163b760ea91034929f2ace97256d6d9b2bca19",
+            "size": 5298133
+          },
+          {
+            "content_type": "application/x-ndjson",
+            "generation": 1780643765313652,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+            "sha256": "84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46",
+            "size": 7355758
+          },
+          {
+            "content_type": "application/json",
+            "generation": 1781551174151671,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.schema.json",
+            "sha256": "0299b9da69269e8a8d7166d0ab7273b6a458256348a067ebfc0673ce3d3c2899",
+            "size": 6812
+          },
+          {
+            "content_type": "application/json",
+            "generation": 1781551212719715,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.manifest.json",
+            "sha256": "7fb42b213cd25d1049baa8e08ec2202de99daf7706f60cfb1f49b7f7d6fca8c9",
+            "size": 11722
+          }
+        ],
+        "notes": "Reviewed bucket-hygiene repair replacing stale schema/manifest metadata contract JSON.",
+        "record_version": 1,
+        "release_date": "2026-06-05",
+        "release_path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/",
+        "release_paths": [
+          {
+            "content_type": "application/octet-stream",
+            "generation": 1780643740012857,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.fgb",
+            "sha256": "0997e6f7aaaa1233f86ccfb85fac18be3a69d6001c7db6919598e2d371c3491b",
+            "size": 53463192
+          },
+          {
+            "content_type": "application/vnd.pmtiles",
+            "generation": 1780643755874991,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.pmtiles",
+            "sha256": "26bbea96e5bd941b2fd77735b6163b760ea91034929f2ace97256d6d9b2bca19",
+            "size": 5298133
+          },
+          {
+            "content_type": "application/x-ndjson",
+            "generation": 1780643762101799,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz",
+            "sha256": "84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46",
+            "size": 7355758
+          },
+          {
+            "content_type": "application/json",
+            "generation": 1781551171726659,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.schema.json",
+            "sha256": "0299b9da69269e8a8d7166d0ab7273b6a458256348a067ebfc0673ce3d3c2899",
+            "size": 6812
+          },
+          {
+            "content_type": "application/json",
+            "generation": 1781551212087043,
+            "path": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-06-05/eamlis-abandoned-mine-land-inventory.manifest.json",
+            "sha256": "7fb42b213cd25d1049baa8e08ec2202de99daf7706f60cfb1f49b7f7d6fca8c9",
+            "size": 11722
+          }
+        ],
+        "row_count": 63168,
+        "run_date": "2026-06-05",
+        "schema_version": 1,
+        "sha256": {
+          "fgb": "0997e6f7aaaa1233f86ccfb85fac18be3a69d6001c7db6919598e2d371c3491b",
+          "manifest": "eb14c29b327d074de59ad5b63c7809e0df546eb0078ea65a200975db51623388",
+          "metadata": "84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46",
+          "pmtiles": "26bbea96e5bd941b2fd77735b6163b760ea91034929f2ace97256d6d9b2bca19",
+          "schema": "0299b9da69269e8a8d7166d0ab7273b6a458256348a067ebfc0673ce3d3c2899"
+        },
+        "source": "https://services.arcgis.com/Vsy5ieu7PwNdunLd/arcgis/rest/services/eAMLISExternalView/FeatureServer/0",
+        "source_version": "metadata-contract repair for existing 2026-06-05 release",
+        "status": "success"
+      },
+      "original_record_sha256": "249df608a4be9b5c2b671e222d937f088335f0eac64c2625e454c6c576d52d9f",
+      "release": "2026-06-05",
+      "schema_version": 1
+    },
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781551215310311",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/runs/2026-06-05.json",
+        "source_generation": "1793287080852397",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/eamlis-june5-checksum-20261029/2026-06-05.json"
+      }
+    ],
+    "proposal_id": "eamlis-june5-checksum-20261029",
+    "release_index_asset_slugs": [
+      "eamlis-abandoned-mine-land-inventory"
+    ]
+  }
+}
