@@ -110,16 +110,17 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("Missing repository variable: GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertNotIn("vars.GCP_SERVICE_ACCOUNT", workflow)
 
-    def test_catalog_drift_workflow_skips_live_bucket_check_on_pull_requests(self):
+    def test_catalog_drift_workflow_retains_manual_trusted_live_check(self):
         workflow = (REPO_ROOT / ".github/workflows/catalog-drift-guard.yml").read_text()
 
+        self.assertIn("name: Catalog drift guard", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("pull_request", workflow)
         self.assertNotIn("workflow_run", workflow)
         self.assertNotIn("push:", workflow)
-        self.assertIn("Check pull request catalog consistency", workflow)
-        self.assertIn("if: ${{ github.event_name == 'pull_request' }}", workflow)
-        self.assertIn("uv run python scripts/catalog_docs.py check", workflow)
-        self.assertIn("uv run python scripts/catalog_site.py --out", workflow)
-        self.assertGreaterEqual(workflow.count("if: ${{ github.event_name != 'pull_request' }}"), 3)
+        self.assertIn('if [[ "${GITHUB_REF}" != "refs/heads/main" ]]', workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertIn("id-token: write", workflow)
         self.assertIn("Collect release indexes for drift guard", workflow)
         self.assertIn('gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"', workflow)
         self.assertIn("Check live catalog drift", workflow)

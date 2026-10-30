@@ -297,9 +297,11 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
+        add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check")
+        add("uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(output / "catalog-web"))
         if documentation_only(plan.get("changed_paths")):
             return commands
-        add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
         diff = ["uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-diff", "--base", base, "--head", head]
