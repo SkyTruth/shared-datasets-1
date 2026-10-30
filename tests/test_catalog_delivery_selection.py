@@ -50,19 +50,20 @@ def case(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     def build(paths=("web/catalog/app.js",), *, mutation=False, count=1):
-        if mutation:
-            document = plans.normalize_document({"plan_version": 1,
-                "finalization_version": plans.FINALIZATION_VERSION,
-                "publish": {"asset_slug": "catalog-web", "proposal_id": "test",
-                    "promotions": [{"source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/test/app.js",
-                                    "source_generation": "10", "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/app.js",
-                                    "destination_generation": "20"}]}})
-            raw = plans.canonical_bytes(document)
-            plan_path = plans.document_path(document)
-            paths = (*paths, plan_path)
         responses = {}
-        for number in range(1, count + 1):
-            for path in paths:
+        for number in range(count, 0, -1):
+            files = paths
+            if mutation:
+                document = plans.normalize_document({"plan_version": 1,
+                    "finalization_version": plans.FINALIZATION_VERSION,
+                    "publish": {"asset_slug": "catalog-web", "proposal_id": f"test-{number}",
+                        "promotions": [{"source_uri": f"gs://skytruth-shared-datasets-1/_scratch/pending-publishes/catalog-web/test-{number}/app.js",
+                                        "source_generation": "10", "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/web/app.js",
+                                        "destination_generation": "20"}]}})
+                raw = plans.canonical_bytes(document)
+                plan_path = plans.document_path(document)
+                files = (*paths, plan_path)
+            for path in files:
                 target = tmp_path / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(raw if mutation and path == plan_path else str(number).encode())
@@ -72,12 +73,12 @@ def case(tmp_path, monkeypatch):
             pr = {"number": number, "state": "closed", "merged": True, "merged_at": "2026-10-13T00:00:00Z",
                   "draft": False, "head": {"sha": head, "repo": REPO},
                   "base": {"ref": "main", "repo": REPO}, "merge_commit_sha": head,
-                  "changed_files": len(paths), "body": ""}
+                  "changed_files": len(files), "body": ""}
             responses[f"{PREFIX}/commits/{head}/pulls?per_page=100"] = [pr]
             responses[f"{PREFIX}/pulls/{number}"] = pr
             responses[f"{PREFIX}/pulls/{number}/files?per_page=100"] = [
                 {"filename": path, "status": "added", "sha": git("rev-parse", f"HEAD:{path}")}
-                for path in paths]
+                for path in files]
             if mutation:
                 blob = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
                 responses[f"{PREFIX}/git/trees/{head}?recursive=1"] = {"truncated": False,
@@ -178,7 +179,10 @@ def run_discovery_cli(api, event, env, tmp_path):
         env={**os.environ, **env, "PATH": str(fixture_dir) + os.pathsep + os.environ["PATH"],
              "GH_FIXTURE": str(responses), "GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True)
-    return result, dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
+    lines = output.read_text().splitlines() if output.exists() else []
+    fields = dict(line.split("=", 1) for line in lines)
+    assert len(lines) == len(fields), "duplicate workflow outputs"
+    return result, fields
 
 
 @pytest.mark.parametrize("paths,mutation,expected", [
@@ -192,6 +196,52 @@ def test_real_cli_consumes_main_push_and_writes_workflow_output(case, tmp_path, 
     assert result.returncode == 0, result.stderr
     assert fields == {"pr_numbers": json.dumps(expected[0], separators=(",", ":")),
                       "has_mutations": str(bool(expected[0])).lower(), "has_catalog_changes": expected[1]}
+
+
+@pytest.mark.parametrize("kind,expected", [("same-repo", "[2,1]"), ("fork", "[]"),
+                                         ("feature", "[]"), ("historical", "[1]")])
+def test_real_cli_retains_merge_order_and_filters_duplicate_or_ineligible_associations(case, tmp_path, kind, expected):
+    api, event, env = case(("README.md",), mutation=True, count=2)
+    event["commits"] = []  # Truncated event payloads cannot replace Git history.
+    prs = [api.responses[f"{PREFIX}/pulls/{number}"] for number in (1, 2)]
+    if kind == "historical":
+        event["before"] = prs[1]["merge_commit_sha"]
+    elif kind == "fork":
+        for pr in prs:
+            pr["head"]["repo"] = {"id": 200, "full_name": "evil/fork"}
+    elif kind == "feature":
+        for pr in prs:
+            pr["base"]["ref"] = "feature/demo"
+    for path in api.responses:
+        if "/commits/" in path:
+            api.responses[path] = prs + prs
+    result, fields = run_discovery_cli(api, event, env, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert fields == {"pr_numbers": expected, "has_mutations": str(expected != "[]").lower(),
+                      "has_catalog_changes": "false"}
+
+
+@pytest.mark.parametrize("change", ["pr-ref", "forced", "missing-history", "changed-plan", "api-failure", "incomplete-files", "invalid-id"])
+def test_real_cli_rejects_invalid_push_plan_or_api_without_outputs(case, tmp_path, change):
+    api, event, env = case(mutation=True)
+    if change == "pr-ref":
+        event["ref"] = "refs/pull/7/merge"
+    elif change == "forced":
+        event["forced"] = True
+    elif change == "missing-history":
+        event["before"] = "d" * 40
+    elif change == "changed-plan":
+        blob = next(value for path, value in api.responses.items() if "/git/blobs/" in path)
+        blob["content"] = base64.b64encode(b"changed unreviewed plan").decode()
+    elif change == "api-failure":
+        del api.responses[f"{PREFIX}/pulls/1"]
+    elif change == "invalid-id":
+        api.responses[f"{PREFIX}/pulls/1"]["number"] = "7\nhas_mutations=true"
+    else:
+        api.responses[f"{PREFIX}/pulls/1"]["changed_files"] += 1
+    result, fields = run_discovery_cli(api, event, env, tmp_path)
+    assert result.returncode == 2, result.stderr
+    assert fields == {}
 
 
 @pytest.mark.parametrize("remove_plan", [False, True])

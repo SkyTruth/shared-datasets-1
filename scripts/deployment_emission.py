@@ -176,13 +176,11 @@ def verify(api, repository, record, status, *, original_signer, verified_stateme
     workflow = api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")
     require(workflow.get("id") == run.get("workflow_id") and workflow.get("path") == run["path"], "emitter workflow identity mismatch")
     expected = policy(repository, repo["id"], value, run, signer)
-    if verified_statements is not None:
-        for results in verified_statements:
-            try:
-                verify_result(results, value, expected, batch=True)
-            except EmissionError:
-                continue  # Another subject or policy needs its own verification.
-            return
+    if verified_statements:
+        try:
+            return verify_result(verified_statements, value, expected, batch=True)
+        except EmissionError:
+            pass  # Another subject or policy needs its own verification.
     receipts = Path(os.environ["RUNNER_TEMP"]) / "deployment-receipts"
     receipts.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="verify-", dir=receipts) as directory:
@@ -200,7 +198,7 @@ def verify(api, repository, record, status, *, original_signer, verified_stateme
         results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
     verify_result(results, value, expected, batch=verified_statements is not None)
     if verified_statements is not None:
-        verified_statements.append(results)
+        verified_statements.extend(results)
 
 
 def rehearsal(api, repository):
