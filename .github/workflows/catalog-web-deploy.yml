@@ -124,15 +124,6 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: Validate main ref
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Catalog / Web deploy may only publish from main after reviewed changes have landed." >&2
-            exit 1
-          fi
-
       - name: Require trusted main workflow
         run: |
           set -euo pipefail

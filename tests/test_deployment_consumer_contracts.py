@@ -24,20 +24,6 @@ def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, jo
     names = list(steps)
     actual_steps = workflow['jobs'][job]['steps']
     guard_index = 0
-    if filename == 'catalog-web-deploy.yml':
-        prelude = actual_steps[0]
-        assert prelude['name'] == 'Validate main ref'
-        assert set(prelude) == {'name', 'run'}
-        commands = [line.strip() for line in prelude['run'].splitlines() if line.strip()]
-        assert commands[0] == 'set -euo pipefail'
-        assert commands[1] == 'if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then'
-        assert commands[2].startswith('echo "') and commands[2].endswith('" >&2')
-        assert not any(token in commands[2] for token in ('$', '`'))
-        assert commands[3:] == ['exit 1', 'fi']
-        for ref, valid in [('refs/heads/main', True), ('refs/pull/10/merge', False)]:
-            result = subprocess.run(['bash', '-c', prelude['run']], env={**os.environ, 'GITHUB_REF': ref}, capture_output=True)
-            assert (result.returncode == 0) is valid
-        guard_index = 1
     assert actual_steps[guard_index]['name'] == guard_name
     bootstrap_index = guard_index + 1
     if filename == 'catalog-web-deploy.yml':

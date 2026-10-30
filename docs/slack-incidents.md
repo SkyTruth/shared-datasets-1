@@ -250,8 +250,13 @@ deployment/status enumerations must succeed. These fingerprints have no
 production authorization role. Changed health clears them; owner checkpoint
 sealing also clears them and cannot manufacture reusable validation evidence.
 
-Within one ledger invocation, an already cryptographically verified multi-subject
-statement can cover another exact notification receipt. Every use still checks
+Historical checkpoints are verified as their original signed bytes, normalized
+at the reader boundary, then validated against the current state schema. Unknown
+historical fields are rejected before normalization. Terminal health and its
+reusable validation fingerprints advance through one shared folding operation.
+
+Within one ledger invocation, its statement cache enables verified multi-subject
+reuse for another exact notification receipt. Every use still checks
 the live emitter, repository and workflow identity, certificate policy and exact
 subject digest. This in-memory reuse never crosses invocations; production
 receipt callers retain their independent verification defaults.

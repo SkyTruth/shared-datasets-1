@@ -317,15 +317,10 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
 @pytest.mark.parametrize("has_mutations", ["true", "false"])
 def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutations):
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    step = next(step for step in jobs['dataset-mutation-selection']['steps'] if step.get('id') == 'catalog')
-    expression = step['if'].removeprefix('${{').removesuffix('}}').strip()
-    expression = expression.replace('steps.discover.outputs.has_mutations', repr(has_mutations))
-    assert eval(expression, {"__builtins__": {}}) is (has_mutations == 'false')
     values = {"github.event_name": "push", "github.ref": "refs/heads/main",
               "needs.ci-ready.result": "success", "needs.dataset-mutation-selection.result": "success",
               "needs.geospatial-changes.outputs.pmtiles_cdn": "false", "needs.pmtiles-cdn.result": "skipped",
               "needs.dataset-mutation-selection.outputs.has_mutations": has_mutations,
-              # A skipped catalog step has no should_deploy output.
-              "needs.dataset-mutation-selection.outputs.has_catalog_changes": "" if has_mutations == 'true' else "true"}
+              "needs.dataset-mutation-selection.outputs.has_catalog_changes": "false" if has_mutations == 'true' else "true"}
     assert condition_result(jobs['publish-reviewed-dataset'], values) is (has_mutations == 'true')
     assert condition_result(jobs['refresh-reviewed-catalog'], values) is (has_mutations == 'false')

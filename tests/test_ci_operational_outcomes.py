@@ -103,11 +103,10 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert "contains(fromJSON('[\"Catalog / Release index rebuild\",\"Release index rebuild\"]'), github.event.workflow_run.name)" in catalog['jobs']['deploy']['if']
     ci = load_workflow(ROOT / '.github/workflows/ci.yml')
     selected = ci['jobs']['dataset-mutation-selection']
-    assert selected['outputs']['has_catalog_changes'] == '${{ steps.catalog.outputs.should_deploy }}'
-    steps = workflow_steps_by_name(ci, 'dataset-mutation-selection')
-    catalog_selection = steps['Select reviewed catalog changes without duplicating publication refresh']
-    assert catalog_selection['run'] == 'python scripts/catalog_web_changes.py'
-    assert catalog_selection['if'] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
+    assert selected['outputs']['has_catalog_changes'] == '${{ steps.discover.outputs.has_catalog_changes }}'
+    selection_steps = ci['jobs']['dataset-mutation-selection']['steps']
+    assert sum(step.get('run') == 'python scripts/dataset_mutation_authorization.py discover' for step in selection_steps) == 1
+    assert not any('catalog_web_changes.py' in step.get('run', '') for step in selection_steps)
     caller = ci['jobs']['refresh-reviewed-catalog']
     assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'geospatial-changes', 'pmtiles-cdn'}
     assert "(needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success')" in caller['if']

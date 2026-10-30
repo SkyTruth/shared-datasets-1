@@ -1,8 +1,8 @@
 # Catalog deployment
 
 UI-only PRs deploy automatically within their `main` CI run after `ci-ready`
-passes. The existing delivery-selection job checks the exact push range and
-requires merged same-repository PRs covering every changed catalog input:
+passes. One delivery selector checks the exact push history, mutation documents
+and merged same-repository PR coverage for changed catalog inputs:
 `web/catalog/`, asset docs, catalog CSV/taxonomy, the catalog builder and its
 publication/selection helpers. It calls the reusable catalog publisher only
 when selected, avoiding a separate workflow and completion event for each main
@@ -52,14 +52,9 @@ and the root `_catalog/shared-datasets-catalog.csv` contract with the approved
 publisher identity, generation preconditions, and
 `no-cache, max-age=0, must-revalidate`. This workflow is the normal PR-backed
 promotion path for repo-generated catalog web changes and the automatic refresh
-path after approved canonical data mutations. The protected `Catalog / PMTiles CDN sync`
-workflow starts after catalog web deploy completes when the merged change
-touches catalog or asset documentation inputs that can affect PMTiles routes or
-public managed-folder IAM grants.
-The protected
-`.github/workflows/catalog-viewer-deploy.yml` workflow also starts after a
-successful `Data / Approved mutation` workflow so the IAP-protected viewer is
-rebuilt and reapplied through the production environment. Do not also add a
+path after approved canonical data mutations. Selected `Catalog / PMTiles CDN sync`
+route/access updates complete before catalog publication. Viewer deployment is
+selected independently by CI; dataset publication does not redeploy it. Do not also add a
 `shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
 web deploy workflow will run from the same PR; that duplicates the promotion and
 can race the automatic deploy. The publish job runs the live catalog drift

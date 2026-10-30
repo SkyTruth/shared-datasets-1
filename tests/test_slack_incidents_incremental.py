@@ -101,14 +101,6 @@ def test_separate_signed_batches_each_require_their_own_verification(tmp_path, m
     assert verifier.call_count == 2
 
 
-def test_statement_reuse_requires_explicit_batch_mode(tmp_path, monkeypatch):
-    ledger, api, records, statuses, _ = registry(tmp_path, monkeypatch)
-    with mock.patch.object(e, "verified_output") as verifier:
-        with pytest.raises(e.EmissionError, match="requires batch"):
-            e.verify(api, incidents.REPOSITORY, records[0], statuses[10],
-                     original_signer=incidents.WORKFLOW, verified_statements=[])
-    verifier.assert_not_called()
-
 
 def test_failed_crypto_verification_is_never_cached(tmp_path, monkeypatch):
     ledger, _, records, _, result = registry(tmp_path, monkeypatch)
@@ -369,3 +361,26 @@ def test_status_appended_during_verification_cannot_produce_recovery_or_memo(dur
         with pytest.raises(incidents.IncidentError, match="status history changed"):
             incidents.terminal_success(api, "deployment:wdpa-monthly")
     assert verifier.call_count == 2
+
+
+@pytest.mark.parametrize("schema", [incidents.LEGACY_SCHEMA, incidents.PREVIOUS_SCHEMA])
+@pytest.mark.parametrize("change", ["memo", "episode-field", "missing-episode-field"])
+def test_historical_normalization_rejects_fields_before_rewriting(schema, change, tmp_path):
+    record = signed_record()
+    record["payload"]["schema"] = schema
+    state = record["payload"]["state"]
+    del state["terminal_validation"]
+    if schema == incidents.LEGACY_SCHEMA:
+        del state["incident"]["parent_view_sha256"]
+    if change == "memo":
+        state["terminal_validation"] = None
+    elif change == "episode-field":
+        state["incident"]["unexpected"] = None
+    else:
+        del state["incident"]["posts"]
+    api = mock.Mock()
+    api.pages.return_value = [{"id": 12, "state": "success", "description": "applied"}]
+    with mock.patch.object(e, "verify") as signature:
+        with pytest.raises(incidents.IncidentError, match="schema|episode"):
+            incidents.Ledger(api, {}, tmp_path).verify(json.loads(json.dumps(record)))
+    signature.assert_called_once()

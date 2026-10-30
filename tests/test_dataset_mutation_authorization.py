@@ -669,6 +669,10 @@ class MainPushDiscoveryTests(unittest.TestCase):
 
     def git_output(self, commits, command, **kwargs):
         git = ["git", "--no-replace-objects"]
+        if command == [*git, "rev-parse", "HEAD"]:
+            return EXECUTOR + "\n"
+        if command == [*git, "diff", "--name-only", "-z", self.event["before"], EXECUTOR]:
+            return "".join(item["filename"] + "\0" for item in self.api.files)
         if command == [*git, "rev-parse", "--is-shallow-repository"]:
             self.assertEqual(kwargs, {"text": True})
             return "false\n"
@@ -682,16 +686,16 @@ class MainPushDiscoveryTests(unittest.TestCase):
             return b"".join(item["filename"].encode() + b"\0" for item in self.api.files)
         self.fail(f"unexpected Git read: {command!r}")
 
-    def discover(self, commits=None, *, documents_only=True):
+    def discover(self, commits=None):
         commits = commits or [HEAD, MERGE, EXECUTOR]
         with mock.patch.object(auth.subprocess, "run") as ancestry, mock.patch.object(
             auth.subprocess, "check_output", side_effect=lambda command, **kwargs: self.git_output(commits, command, **kwargs)
         ) as history:
-            result = auth.discover_push_prs(self.api, self.event, self.env, documents_only=documents_only)
-            git = ["git", "--no-replace-objects"] if documents_only else ["git"]
+            result = json.loads(auth.discover_push_selection(self.api, self.event, self.env)["pr_numbers"])
+            git = ["git", "--no-replace-objects"]
             ancestry.assert_called_once_with([*git, "merge-base", "--is-ancestor", self.event["before"], EXECUTOR], check=True)
             history.assert_any_call([*git, "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"], text=True)
-            self.assertEqual(history.call_count, len(commits) + 2 if documents_only else 1)
+            self.assertEqual(history.call_count, len(commits) + 4)
             return result
 
     def run_discovery_cli(self, *, event=None, env=None, commits=None):
@@ -738,8 +742,8 @@ class MainPushDiscoveryTests(unittest.TestCase):
                 result, raw = self.run_discovery_cli(commits=commits)
                 self.assertEqual(result, 0)
                 fields = dict(line.split("=", 1) for line in raw.splitlines())
-                self.assertEqual(set(fields), {"pr_numbers", "has_mutations"})
-                self.assertEqual(len(raw.splitlines()), 2)
+                self.assertEqual(set(fields), {"pr_numbers", "has_mutations", "has_catalog_changes"})
+                self.assertEqual(len(raw.splitlines()), 3)
                 self.assertEqual(json.loads(fields["pr_numbers"]), expected)
                 self.assertEqual(fields["has_mutations"], "true" if expected else "false")
 
@@ -788,9 +792,9 @@ class MainPushDiscoveryTests(unittest.TestCase):
         for key, value in (("before", "0" * 40), ("forced", True), ("deleted", True), ("ref", "refs/pull/7/merge")):
             event = {**self.event, key: value}
             with self.subTest(key=key), self.assertRaises(auth.Error):
-                auth.discover_push_prs(self.api, event, self.env)
+                auth.discover_push_selection(self.api, event, self.env)
         with mock.patch.object(auth.subprocess, "run", side_effect=auth.subprocess.CalledProcessError(1, "git")), self.assertRaises(auth.subprocess.CalledProcessError):
-            auth.discover_push_prs(self.api, self.event, self.env)
+            auth.discover_push_selection(self.api, self.event, self.env)
 
     def test_two_prs_in_one_push_have_distinct_artifacts(self):
         with mock.patch.object(auth, "discover_push_prs", return_value=[7]):

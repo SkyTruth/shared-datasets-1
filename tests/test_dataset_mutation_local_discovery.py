@@ -63,13 +63,15 @@ class UnavailableAPI:
 def context(before, after):
     event = {"repository": {"id": 100, "full_name": "SkyTruth/shared-datasets-1", "default_branch": "main"},
              "ref": "refs/heads/main", "before": before, "after": after, "forced": False, "deleted": False}
-    environment = {"GITHUB_REF": "refs/heads/main", "GITHUB_SHA": after, "GITHUB_EVENT_NAME": "push"}
+    environment = {"GITHUB_REF": "refs/heads/main", "GITHUB_SHA": after, "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REPOSITORY": event["repository"]["full_name"],
+                   "GITHUB_WORKFLOW_REF": f"{event['repository']['full_name']}/{auth.CALLER_WORKFLOW}@refs/heads/main"}
     return event, environment
 
 
-def discover(api, before, after, *, documents_only=True):
+def discover(api, before, after):
     event, environment = context(before, after)
-    return auth.discover_push_prs(api, event, environment, documents_only=documents_only)
+    return json.loads(auth.discover_push_selection(api, event, environment)["pr_numbers"])
 
 
 def test_code_only_history_needs_no_associated_pr_api(history):
@@ -92,7 +94,7 @@ def test_real_discovery_cli_serializes_no_mutation_despite_associated_pr_outage(
     api = UnavailableAPI()
     monkeypatch.setattr(auth, "GitHub", lambda: api)
     assert auth.main(["discover", "--event-path", str(event_path), "--github-output", str(outputs)]) == 0
-    assert outputs.read_text() == "pr_numbers=[]\nhas_mutations=false\n"
+    assert outputs.read_text() == "pr_numbers=[]\nhas_mutations=false\nhas_catalog_changes=false\n"
     assert api.calls == [] and capsys.readouterr().err == ""
 
 
@@ -164,7 +166,7 @@ def test_merge_delta_against_only_second_parent_is_not_silently_omitted(history)
     assert api.calls
 
 
-def test_documents_false_keeps_existing_associated_pr_discovery(history, monkeypatch):
+def test_capture_membership_keeps_existing_associated_pr_discovery(history, monkeypatch):
     before = history.commit({"README.md": "before"})
     after = history.commit({"README.md": "after"}, before)
     api, commands = UnavailableAPI(), []
@@ -174,7 +176,7 @@ def test_documents_false_keeps_existing_associated_pr_discovery(history, monkeyp
         return original(command, **kwargs)
     monkeypatch.setattr(auth.subprocess, "check_output", output)
     with pytest.raises(subprocess.CalledProcessError):
-        discover(api, before, after, documents_only=False)
+        auth.discover_push_prs(api, *context(before, after))
     assert api.calls and commands == [["git", "rev-list", "--reverse", f"{before}..{after}"]]
 
 

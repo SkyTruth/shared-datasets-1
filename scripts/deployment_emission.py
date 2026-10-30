@@ -156,11 +156,10 @@ def verified_output(command, repository, digest):
             time.sleep(delay)
 
 
-def verify(api, repository, record, status, *, original_signer, batch=False, verified_statements=None):
+def verify(api, repository, record, status, *, original_signer, verified_statements=None):
     # Only the incident ledger shares verified multi-subject statements within
     # one invocation. Live provenance and the exact subject policy still apply
     # on every call; production receipt callers retain their uncached default.
-    require(verified_statements is None or batch, "statement reuse requires batch receipt verification")
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
     require(match is not None, "receipt lacks exact run/attempt identity")
@@ -199,7 +198,7 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
         # Only a confirmed transient service outage retries this same read.
         # A final nonzero exit is fatal; raw bundles never become evidence.
         results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
-    verify_result(results, value, expected, batch=batch)
+    verify_result(results, value, expected, batch=verified_statements is not None)
     if verified_statements is not None:
         verified_statements.append(results)
 

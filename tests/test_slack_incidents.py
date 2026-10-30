@@ -983,7 +983,7 @@ def test_forged_actions_bot_ledger_claim_cannot_choose_parent_or_suppress_real_a
             ledger.verify(signed_record())
     with mock.patch.object(emissions, "verify") as verify:
         assert ledger.verify(signed_record())["scope"] == SCOPE
-        assert verify.call_args.kwargs == {"original_signer": incidents.WORKFLOW, "batch": True,
+        assert verify.call_args.kwargs == {"original_signer": incidents.WORKFLOW,
                                              "verified_statements": ledger.verified_statements}
     with pytest.raises(deployments.DeploymentError, match="unrecognized deployment record"):
         deployments.record_payload(signed_record())

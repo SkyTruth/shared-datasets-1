@@ -449,9 +449,9 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
     return state
 
 
-def validate_state(state, *, legacy=False, historical=False):
+def validate_state(state):
     fields = {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}
-    require(isinstance(state, dict) and set(state) == (fields if historical else fields | {"terminal_validation"}), "invalid incident state schema")
+    require(isinstance(state, dict) and set(state) == fields | {"terminal_validation"}, "invalid incident state schema")
     identity = state["identity"]
     require(isinstance(identity, dict) and set(identity) == {"channel", "team", "user"}
             and CHANNEL.fullmatch(identity["channel"]) and re.fullmatch(r"T[A-Z0-9]+", identity["team"])
@@ -459,7 +459,7 @@ def validate_state(state, *, legacy=False, historical=False):
     if state["healthy"] is not None:
         validate_observation(state["healthy"])
         require(state["healthy"]["scope"] == state["scope"] and state["healthy"]["conclusion"] == "success", "invalid healthy watermark")
-    if not historical and state["terminal_validation"] is not None:
+    if state["terminal_validation"] is not None:
         validation = state["terminal_validation"]
         require(state["kind"] == "deployment" and state["healthy"] is not None and state["healthy"]["kind"] == "deployment"
                 and isinstance(validation, dict) and set(validation) == {"evidence_sha256", "contract_sha256"}
@@ -473,7 +473,7 @@ def validate_state(state, *, legacy=False, historical=False):
         deferred_events.add(observation_key(item))
     incident = state["incident"]
     fields = {"id", "failures", "resolution", "posts", "permalink"}
-    require(isinstance(incident, dict) and set(incident) == (fields if legacy else fields | {"parent_view_sha256"}), "invalid incident episode")
+    require(isinstance(incident, dict) and set(incident) == fields | {"parent_view_sha256"}, "invalid incident episode")
     require(re.fullmatch(r"SD-[0-9A-F]{12}", incident["id"]), "invalid incident ID")
     require(isinstance(incident["failures"], list) and incident["failures"], "incident must retain original failures")
     seen = set()
@@ -503,18 +503,24 @@ def validate_state(state, *, legacy=False, historical=False):
         parent = incident["posts"].get("parent")
         require(parent and parent["state"] == "delivered" and re.fullmatch(
             r"https://[a-z0-9-]+\.slack\.com/archives/" + identity["channel"] + "/p" + parent["ts"].replace(".", ""), link), "permalink does not identify the parent")
-    if not legacy:
-        view = incident["parent_view_sha256"]
-        require(view is None or (isinstance(view, str) and re.fullmatch(r"[0-9a-f]{64}", view)), "invalid parent view acknowledgement")
-        if view is not None:
-            parent = incident["posts"].get("parent")
-            require(parent and parent["state"] == "delivered", "parent view requires an acknowledged original message")
+    view = incident["parent_view_sha256"]
+    require(view is None or (isinstance(view, str) and re.fullmatch(r"[0-9a-f]{64}", view)), "invalid parent view acknowledgement")
+    if view is not None:
+        parent = incident["posts"].get("parent")
+        require(parent and parent["state"] == "delivered", "parent view requires an acknowledged original message")
     return state
 
 
 def migrate_verified_state(state, schema):
     """Upgrade only verified historical bytes; never assume an update succeeded."""
     state = copy.deepcopy(state)
+    if schema in {LEGACY_SCHEMA, PREVIOUS_SCHEMA}:
+        require(isinstance(state, dict) and set(state) == {
+            "scope", "kind", "label", "identity", "healthy", "incident", "deferred"}, "invalid historical incident state schema")
+    if schema == LEGACY_SCHEMA:
+        require(isinstance(state["incident"], dict) and set(state["incident"]) == {
+            "id", "failures", "resolution", "posts", "permalink"}, "invalid historical incident episode")
+        state["incident"]["parent_view_sha256"] = None
     if schema == RETIRED_SCHEMA:
         fields = {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}
         retired = {"operation_id", "first_failure_at", "stable_since", "aliases", "source_aliases",
@@ -540,8 +546,6 @@ def migrate_verified_state(state, schema):
                 "retired checkpoint has unrepresented failures")
         state = {key: state[key] for key in fields}
         # The retired renderer's acknowledgement cannot acknowledge this view.
-        state["incident"]["parent_view_sha256"] = None
-    if schema == LEGACY_SCHEMA:
         state["incident"]["parent_view_sha256"] = None
     if schema != SCHEMA:
         state["terminal_validation"] = None
@@ -669,14 +673,11 @@ class Ledger:
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
         require(payload["schema"] != RETIRED_SCHEMA or positive(record.get("id")) and record["id"] <= RETIRED_CHECKPOINT_MAX_ID,
                 "a retired writer emitted a new checkpoint; refusing state downgrade")
-        if payload["schema"] != RETIRED_SCHEMA:
-            validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
-                           historical=payload["schema"] != SCHEMA)
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
+        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW,
                          verified_statements=self.verified_statements)
         return migrate_verified_state(payload["state"], payload["schema"])
 
@@ -772,8 +773,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
         payload = json.loads(payload)
     require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
-    state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
-                           historical=payload["schema"] != SCHEMA)
+    state = migrate_verified_state(payload["state"], payload["schema"])
     require(state["incident"]["id"] == incident_id and state["identity"] == identity
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
@@ -790,11 +790,19 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             verify_saved_success(ledger.api, healthy)
         require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in state["incident"]["failures"])
                 and deployments.git_ancestor(resolution["sha"], healthy["sha"]), "checkpoint recovery has incompatible revision ancestry")
-    state = migrate_verified_state(state, payload["schema"])
     # Owner acceptance repairs notification bookkeeping, not validation reuse.
     state["terminal_validation"] = None
     ledger.save(state, "claims")
     return []
+
+
+def fold_terminal(state, api, identity, *, ancestor, success):
+    evidence, validation = success(api, state["scope"], state["healthy"], state["terminal_validation"])
+    if evidence:
+        state = fold(state, evidence, identity, ancestor=ancestor)
+        if state["healthy"] == evidence:
+            state["terminal_validation"] = validation
+    return state
 
 
 def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success, on_saved=lambda _: None):
@@ -824,11 +832,7 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
         states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
     for scope, state in list(states.items()):
         if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
-            evidence, validation = success(ledger.api, scope, state["healthy"], state["terminal_validation"])
-            if evidence:
-                states[scope] = fold(state, evidence, identity, ancestor=ancestor)
-                if states[scope]["healthy"] == evidence:
-                    states[scope]["terminal_validation"] = validation
+            states[scope] = fold_terminal(state, ledger.api, identity, ancestor=ancestor, success=success)
     prepared = []
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
@@ -923,11 +927,7 @@ def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=
         else:
             state = fold(state, item, identity, ancestor=ancestor)
     if state["kind"] == "deployment":
-        evidence, validation = success(ledger.api, state["scope"], state["healthy"], state["terminal_validation"])
-        if evidence:
-            state = fold(state, evidence, identity, ancestor=ancestor)
-            if state["healthy"] == evidence:
-                state["terminal_validation"] = validation
+        state = fold_terminal(state, ledger.api, identity, ancestor=ancestor, success=success)
     incident = state["incident"]
     for key in desired_posts(state):
         if key not in incident["posts"]:

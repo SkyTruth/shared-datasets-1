@@ -10,8 +10,13 @@ import sys
 
 import pytest
 
-from scripts.catalog_web_changes import should_refresh
+from scripts.dataset_mutation_authorization import discover_push_selection, discover_push_prs
 from scripts import reviewed_dataset_plan as plans
+
+
+def should_refresh(*args):
+    return discover_push_selection(*args)["has_catalog_changes"]
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = {"id": 100, "full_name": "SkyTruth/shared-datasets-1", "default_branch": "main"}
@@ -21,11 +26,14 @@ PREFIX = f"repos/{REPO['full_name']}"
 class GitHub:
     def __init__(self, responses):
         self.responses = responses
+        self.calls = []
 
     def get(self, path):
+        self.calls.append(path)
         return self.responses[path]
 
     def pages(self, path):
+        self.calls.append(path)
         return self.responses[path]
 
 
@@ -90,7 +98,7 @@ def test_merged_catalog_prs_refresh_once_after_successful_ci(case, count):
     assert should_refresh(*case(count=count))
 
 
-@pytest.mark.parametrize("paths", [("docs/ci-preflight.md",), ("web/unrelated/app.js",), ("tests/test_catalog_web_changes.py",)])
+@pytest.mark.parametrize("paths", [("docs/ci-preflight.md",), ("web/unrelated/app.js",), ("tests/test_catalog_delivery_selection.py",)])
 def test_unrelated_changes_do_not_allocate_publisher(case, paths):
     assert not should_refresh(*case(paths))
 
@@ -100,7 +108,7 @@ def test_publication_owns_the_refresh_for_mixed_ui_and_mutation_pr(case):
 
 
 @pytest.mark.parametrize("path", ["web/catalog/styles.css", "scripts/catalog_site.py",
-    "catalog/shared-datasets-catalog.csv", "docs/assets/example.md"])
+    "catalog/shared-datasets-catalog.csv", "docs/assets/example.md", "scripts/dataset_mutation_authorization.py"])
 def test_changed_bundle_and_catalog_inputs_refresh(case, path):
     assert should_refresh(*case((path,)))
 
@@ -155,8 +163,7 @@ def test_missing_merged_pr_or_unreviewed_catalog_file_is_rejected(case):
         should_refresh(*args)
 
 
-def test_real_cli_consumes_main_push_and_writes_workflow_output(case, tmp_path):
-    api, event, env = case()
+def run_discovery_cli(api, event, env, tmp_path):
     fixture_dir = tmp_path / "fixture"
     fixture_dir.mkdir()
     event_path = fixture_dir / "event.json"
@@ -167,9 +174,65 @@ def test_real_cli_consumes_main_push_and_writes_workflow_output(case, tmp_path):
     gh.write_text(f"#!{sys.executable}\nimport json,os,sys\nvalue=json.load(open(os.environ['GH_FIXTURE']))[sys.argv[-1]]\nprint(json.dumps([value] if '--slurp' in sys.argv else value))\n")
     gh.chmod(0o755)
     output = fixture_dir / "github-output"
-    result = subprocess.run([sys.executable, str(ROOT / "scripts/catalog_web_changes.py")],
+    result = subprocess.run([sys.executable, str(ROOT / "scripts/dataset_mutation_authorization.py"), "discover"],
         env={**os.environ, **env, "PATH": str(fixture_dir) + os.pathsep + os.environ["PATH"],
              "GH_FIXTURE": str(responses), "GITHUB_EVENT_PATH": str(event_path), "GITHUB_OUTPUT": str(output)},
         capture_output=True, text=True)
+    return result, dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
+
+
+@pytest.mark.parametrize("paths,mutation,expected", [
+    (("docs/ci-preflight.md",), False, ([], "false")),
+    (("web/catalog/app.js",), False, ([], "true")),
+    (("docs/ci-preflight.md",), True, ([1], "false")),
+    (("web/catalog/app.js",), True, ([1], "false")),
+])
+def test_real_cli_consumes_main_push_and_writes_workflow_output(case, tmp_path, paths, mutation, expected):
+    result, fields = run_discovery_cli(*case(paths, mutation=mutation), tmp_path)
     assert result.returncode == 0, result.stderr
-    assert output.read_text() == "should_deploy=true\n"
+    assert fields == {"pr_numbers": json.dumps(expected[0], separators=(",", ":")),
+                      "has_mutations": str(bool(expected[0])).lower(), "has_catalog_changes": expected[1]}
+
+
+@pytest.mark.parametrize("remove_plan", [False, True])
+def test_real_cli_mutation_owns_refresh_despite_uncovered_catalog_and_intermediate_plan(case, tmp_path, remove_plan):
+    api, event, env = case(mutation=True)
+    plan_path = next(tmp_path.glob(".github/dataset-plans/**/*.json"))
+    if remove_plan:
+        plan_path.unlink()
+    target = tmp_path / "web/catalog/uncovered.js"
+    target.write_text("unreviewed catalog change covered by mutation refresh")
+    subprocess.run(["git", "add", "--all"], check=True)
+    subprocess.run(["git", "commit", "-m", "later endpoint change"], check=True, capture_output=True)
+    after = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    event["after"] = env["GITHUB_SHA"] = after
+    api.responses[f"{PREFIX}/commits/{after}/pulls?per_page=100"] = []
+    result, fields = run_discovery_cli(api, event, env, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert fields == {"pr_numbers": "[1]", "has_mutations": "true", "has_catalog_changes": "false"}
+
+
+def test_real_cli_uncovered_catalog_fails_without_partial_outputs(case, tmp_path):
+    api, event, env = case()
+    api.responses[f"{PREFIX}/pulls/1/files?per_page=100"] = [{"filename": "README.md"}]
+    result, fields = run_discovery_cli(api, event, env, tmp_path)
+    assert result.returncode != 0
+    assert "not covered" in result.stderr
+    assert fields == {}
+
+
+def test_catalog_selection_reads_each_pr_file_list_and_identity_once(case):
+    api, event, env = case(count=2)
+    assert should_refresh(api, event, env)
+    for number in (1, 2):
+        assert api.calls.count(f"{PREFIX}/pulls/{number}") == 1
+        assert api.calls.count(f"{PREFIX}/pulls/{number}/files?per_page=100") == 1
+    # Before unification, the catalog selector read each PR identity twice.
+    assert len(api.calls) == 6
+
+
+def test_authorization_capture_membership_still_enumerates_non_catalog_pr_without_plan_reads(case):
+    api, event, env = case(("docs/ci-preflight.md",))
+    del api.responses[f"{PREFIX}/pulls/1/files?per_page=100"]
+    assert discover_push_prs(api, event, env) == [1]
+    assert api.calls == [f"{PREFIX}/commits/{event['after']}/pulls?per_page=100", f"{PREFIX}/pulls/1"]

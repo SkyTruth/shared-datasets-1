@@ -194,7 +194,8 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
         self.assertEqual(env["CATALOG_WEB_CACHE_CONTROL"], "no-cache, max-age=0, must-revalidate")
-        self.assertIn("Catalog / Web deploy may only publish from main", steps["Validate main ref"]["run"])
+        self.assertNotIn("Validate main ref", steps)
+        self.assertIn("Production requires main", steps["Require trusted main workflow"]["run"])
         self.assertIn(
             "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER",
             steps["Validate publisher auth configuration"]["run"],

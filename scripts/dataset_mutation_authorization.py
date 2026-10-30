@@ -535,7 +535,7 @@ def capture(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> dict[str
     if event_name == "push":
         require_ci_ready(api, repository, run)
         # Never let an arbitrary PR input turn a main push into historical replay.
-        require(number in discover_push_prs(api, event, env, documents_only=False),
+        require(number in discover_push_prs(api, event, env),
                 "PR is outside this main push")
     else:
         # Manual recovery still uses an independently tested main executor.
@@ -565,37 +565,8 @@ def capture(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> dict[str
     return envelope
 
 
-def discover_push_prs(api: GitHub, event: dict[str, Any], env: dict[str, str], *, documents_only: bool = True) -> list[int]:
-    """Skip PR reads only when complete immutable history proves plan absence."""
-    repository = repository_context(event)
-    before, after = sha(event.get("before")), sha(event.get("after"))
-    require(before != "0" * 40 and env.get("GITHUB_REF") == event.get("ref") == "refs/heads/main"
-            and env.get("GITHUB_SHA") == after and env.get("GITHUB_EVENT_NAME") == "push"
-            and event.get("forced") is False and event.get("deleted") is False,
-            "cannot completely enumerate an ordinary main push")
-    git = ["git", "--no-replace-objects"] if documents_only else ["git"]
-    if documents_only:
-        require(subprocess.check_output([*git, "rev-parse", "--is-shallow-repository"], text=True).strip() == "false",
-                "plan absence requires complete non-shallow history")
-    subprocess.run([*git, "merge-base", "--is-ancestor", before, after], check=True)
-    commits = subprocess.check_output([*git, "rev-list", "--reverse", f"{before}..{after}"], text=True).splitlines()
-    require(bool(commits) and len(commits) == len(set(commits)), "invalid push range")
-    for commit in commits:
-        sha(commit)
-    if documents_only:
-        changed_plan = False
-        prefix = (plans.PLAN_DIRECTORY + "/").encode()
-        for commit in commits:
-            # Every parent delta matters: endpoint/combined diffs can hide an
-            # intermediate plan or a merge-only change. Renames expose both paths.
-            raw = subprocess.check_output([*git, "diff-tree", "--root", "-m", "-r", "--no-renames",
-                                           "--no-commit-id", "--name-only", "-z", commit])
-            require(isinstance(raw, bytes) and (not raw or raw.endswith(b"\0")), "incomplete changed-path enumeration")
-            paths = raw[:-1].split(b"\0") if raw else []
-            require(all(paths), "invalid changed-path enumeration")
-            changed_plan |= any(path.startswith(prefix) and path.endswith(b".json") for path in paths)
-        if not changed_plan:
-            return []  # Local absence proves no document; it never authorizes mutation.
+def merged_push_prs(api: GitHub, repository: dict[str, Any], commits: list[str]) -> list[dict[str, Any]]:
+    """Enumerate validated same-repository PRs once, in immutable merge order."""
     commit_set = set(commits)
     candidates = {}
     for commit in commits:
@@ -612,12 +583,87 @@ def discover_push_prs(api: GitHub, event: dict[str, Any], env: dict[str, str], *
                     continue
                 validate_pr(pr, repository, number, merged=True)
                 candidates[number] = pr
-    result = []
-    for number, pr in sorted(candidates.items(), key=lambda item: (commits.index(item[1]["merge_commit_sha"]), item[0])):
-        if not documents_only or discover_document(api, pr, repository["full_name"], merged=True, check_body=False) is not None:
-            result.append(number)
-    require(len(result) <= 256, "too many mutation PRs for one complete Actions matrix")
-    return result
+    return sorted(candidates.values(), key=lambda pr: (commits.index(pr["merge_commit_sha"]), pr["number"]))
+
+
+def push_has_plan(git: list[str], commits: list[str]) -> bool:
+    changed_plan = False
+    prefix = (plans.PLAN_DIRECTORY + "/").encode()
+    for commit in commits:
+        # Every parent delta matters: endpoint/combined diffs can hide an
+        # intermediate plan or a merge-only change. Renames expose both paths.
+        raw = subprocess.check_output([*git, "diff-tree", "--root", "-m", "-r", "--no-renames",
+                                       "--no-commit-id", "--name-only", "-z", commit])
+        require(isinstance(raw, bytes) and (not raw or raw.endswith(b"\0")), "incomplete changed-path enumeration")
+        paths = raw[:-1].split(b"\0") if raw else []
+        require(all(paths), "invalid changed-path enumeration")
+        changed_plan |= any(path.startswith(prefix) and path.endswith(b".json") for path in paths)
+    return changed_plan
+
+
+def push_range(event: dict[str, Any], env: dict[str, str], git: list[str]) -> tuple[dict[str, Any], str, str, list[str]]:
+    repository = repository_context(event)
+    before, after = sha(event.get("before")), sha(event.get("after"))
+    require(before != "0" * 40 and env.get("GITHUB_REF") == event.get("ref") == "refs/heads/main"
+            and env.get("GITHUB_SHA") == after and env.get("GITHUB_EVENT_NAME") == "push"
+            and event.get("forced") is False and event.get("deleted") is False,
+            "cannot completely enumerate an ordinary main push")
+    subprocess.run([*git, "merge-base", "--is-ancestor", before, after], check=True)
+    commits = subprocess.check_output([*git, "rev-list", "--reverse", f"{before}..{after}"], text=True).splitlines()
+    require(bool(commits) and len(commits) == len(set(commits)), "invalid push range")
+    for commit in commits:
+        sha(commit)
+    return repository, before, after, commits
+
+
+def discover_push_prs(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> list[int]:
+    """Enumerate merged PR membership for an authorization capture."""
+    repository, _, _, commits = push_range(event, env, ["git"])
+    numbers = [pr["number"] for pr in merged_push_prs(api, repository, commits)]
+    require(len(numbers) <= 256, "too many mutation PRs for one complete Actions matrix")
+    return numbers
+
+
+CATALOG_INPUTS = {
+    "catalog/shared-datasets-catalog.csv", "catalog/categories.yaml",
+    "scripts/catalog_site.py", "scripts/catalog_csv.py", "scripts/catalog_web_publish.py",
+    "scripts/collect_release_indexes.py", "scripts/catalog_drift_guard.py",
+    "scripts/dataset_mutation_authorization.py", ".github/workflows/catalog-web-deploy.yml",
+    "scripts/catalog_refresh_check.py",
+}
+
+
+def affects_catalog(path: str) -> bool:
+    return path in CATALOG_INPUTS or path.startswith(("web/catalog/", "docs/assets/"))
+
+
+def discover_push_selection(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
+    """Select both post-CI deliveries from one immutable push and PR evidence pass."""
+    git = ["git", "--no-replace-objects"]
+    require(subprocess.check_output([*git, "rev-parse", "--is-shallow-repository"], text=True).strip() == "false",
+            "plan absence requires complete non-shallow history")
+    repository, before, after, commits = push_range(event, env, git)
+    require(env.get("GITHUB_REPOSITORY") == repository["full_name"]
+            and env.get("GITHUB_WORKFLOW_REF") == f"{repository['full_name']}/{CALLER_WORKFLOW}@refs/heads/main",
+            "selection requires the trusted main CI workflow")
+    require(subprocess.check_output([*git, "rev-parse", "HEAD"], text=True).strip() == after,
+            "selection checkout differs from its main push")
+    changed_plan = push_has_plan(git, commits)
+    changed = subprocess.check_output([*git, "diff", "--name-only", "-z", before, after], text=True)
+    catalog_paths = {path for path in changed.split("\0") if affects_catalog(path)}
+    mutations, reviewed_paths = [], set()
+    if changed_plan or catalog_paths:
+        for pr in merged_push_prs(api, repository, commits):
+            files = api.pages(f"repos/{repository['full_name']}/pulls/{pr['number']}/files?per_page=100")
+            if document_from_files(api, pr, repository["full_name"], files, merged=True, check_body=False) is not None:
+                mutations.append(pr["number"])
+            reviewed_paths.update(item["filename"] for item in files)
+        if catalog_paths and not mutations:
+            require(bool(reviewed_paths), "catalog changes require a merged same-repository PR")
+            require(catalog_paths <= reviewed_paths, "catalog input changes are not covered by merged PRs")
+    require(len(mutations) <= 256, "too many mutation PRs for one complete Actions matrix")
+    return {"pr_numbers": json.dumps(mutations, separators=(",", ":")), "has_mutations": bool(mutations),
+            "has_catalog_changes": bool(catalog_paths) and not mutations}
 
 
 def revalidate(api: GitHub, envelope: dict[str, Any]) -> None:
@@ -832,9 +878,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"capture", "from-run", "preview", "discover"}:
             event = plans.strict_json_loads(Path(args.event_path).read_bytes())
             if args.command == "discover":
-                numbers = discover_push_prs(api, event, dict(os.environ))
-                write_outputs({"pr_numbers": json.dumps(numbers, separators=(",", ":")),
-                               "has_mutations": bool(numbers)}, args.github_output)
+                write_outputs(discover_push_selection(api, event, dict(os.environ)), args.github_output)
                 return 0
             if args.command == "preview":
                 document = preview_document(api, event)
