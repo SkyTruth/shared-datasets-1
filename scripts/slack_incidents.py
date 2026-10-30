@@ -30,6 +30,7 @@ from scripts import install_deployment_verifier as verifier
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
+from scripts.workflow_identity import RETIRED_WORKFLOWS
 
 SCHEMA = "shared-datasets-slack-incident-v4"
 PREVIOUS_SCHEMA = "shared-datasets-slack-incident-v2"
@@ -109,7 +110,9 @@ def job_targets(root=ROOT):
     Resolving leaf names alone would conflate IAM bootstrap and sync or different
     ingestion targets. Unregistered jobs retain their own exact job scope.
     """
-    targets = {}
+    # Preserve the exact historical mutating job scope for signed receipt recovery.
+    # The retired workflow must not be loaded from today's caller graph.
+    targets = {("wdpa-monthly-build.yml", "build"): "wdpa-monthly-build"}
     reverse = {workflow: target for target, workflow in deployments.TARGET_WORKFLOWS.items()}
 
     def walk(filename, prefix="", inherited=None, inputs=None, source=None):
@@ -139,7 +142,8 @@ def job_targets(root=ROOT):
 
     walk("ci.yml")
     for filename, target in reverse.items():
-        walk(filename, inherited=target)
+        if filename not in RETIRED_WORKFLOWS:
+            walk(filename, inherited=target)
     for filename in set(deployments.TERRAFORM_WORKFLOWS.values()):
         walk(filename)
     return targets

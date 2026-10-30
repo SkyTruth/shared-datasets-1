@@ -297,12 +297,14 @@ def check(root, targets):
             errors.append("dataset-usage: " + str(exc))
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
+    if "wdpa-history" in targets:
+        errors += retained_evidence(root)
     return errors
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "mpatlas", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", "mpatlas", "wdpa", "wdpa-history", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:

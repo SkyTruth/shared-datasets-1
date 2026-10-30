@@ -92,7 +92,7 @@ offers a local canonical installation command. See the
 
 `local_wdpa_sample.py` replays the production conversion chain locally without a publisher; use the owning deploy skill and runtime limits. Interface: `uv run python scripts/local_wdpa_sample.py --help`.
 
-`wdpa_processing_gate.py` validates complete monthly builds, independent source/output counts and matching compatibility inputs. The scheduled worker calls these checks before committing its staged descriptor and again before publication. Its CLI and `wdpa_build_authorization.py` retain the historical October evidence/authority checks for audit; current monthly execution needs no approval plan. See the [WDPA runbook](../docs/wdpa-monthly-runbook.md).
+`wdpa_processing_gate.py` validates complete monthly builds, independent source/output counts and matching compatibility inputs. The scheduled worker calls these checks before committing its staged descriptor and again before publication. `release_contracts.py --target wdpa-history` audits retained terminal evidence; the gate CLI and `wdpa_build_authorization.py` retain historical October authority checks; current monthly execution needs no approval plan. See the [WDPA runbook](../docs/wdpa-monthly-runbook.md).
 
 ## Shared libraries
 

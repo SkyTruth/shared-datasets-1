@@ -10,7 +10,7 @@ import pytest
 
 from scripts import deployment_revision, deployment_source, workflow_failure_alert as alerts
 from scripts.deployment_revision import DeploymentError
-from scripts.workflow_identity import WORKFLOW_NAMES
+from scripts.workflow_identity import WORKFLOW_NAMES, RETIRED_WORKFLOWS
 from workflow_helpers import load_workflow, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +19,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 
 def test_workflow_names_have_unique_current_and_historical_identities():
     actual = {path.name: load_workflow(path)["name"] for path in WORKFLOWS.glob("*.yml")}
-    assert actual == {filename: names[0] for filename, names in WORKFLOW_NAMES.items()}
+    assert actual == {filename: names[0] for filename, names in WORKFLOW_NAMES.items() if filename not in RETIRED_WORKFLOWS}
     names = [name for aliases in WORKFLOW_NAMES.values() for name in aliases]
     assert len(names) == len(set(names))
 
