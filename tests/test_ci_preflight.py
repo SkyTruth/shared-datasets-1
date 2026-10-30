@@ -240,6 +240,27 @@ def test_complete_results_pass_with_only_expected_job_skips(suites):
     verify_results(validation, results_for(validation), jobs_for(validation))
 
 
+@pytest.mark.parametrize('verification', ['missing-proof', 'missing-verifier', 'rejected', 'accepted'])
+def test_reuse_wrapper_requires_main_producer_and_independent_original_source(verification):
+    validation = plan(ALWAYS | {'production-images'})
+    results = results_for(validation)
+    for result in results:
+        result['source'] = {'run_id': '123', 'run_attempt': 1}
+    wrapper = next(result for result in results if result['suite'] == 'production-images')
+    del wrapper['production_images']
+    wrapper['reused_from'] = {'pr_number': 42, 'run_id': 100, 'run_attempt': 1}
+    verifier = mock.Mock(side_effect=ValueError('original source rejected') if verification == 'rejected' else None)
+    proofs = {1: set(validation['suites'])}
+    options = {'source_proofs': None if verification == 'missing-proof' else proofs, 'run_id': '123', 'run_attempt': 1,
+               'reuse_verifier': None if verification == 'missing-verifier' else verifier}
+    if verification == 'accepted':
+        assert verify_results(validation, results, jobs_for(validation), **options)['production-images'] is wrapper
+        verifier.assert_called_once_with(wrapper)
+    else:
+        with pytest.raises(ValueError, match='verified source|original source rejected'):
+            verify_results(validation, results, jobs_for(validation), **options)
+
+
 @pytest.mark.parametrize("defect", ["missing", "duplicate", "failure", "cancelled", "skipped", "no-commands", "failed-command", "wrong-tools"])
 def test_selected_suite_cannot_be_missing_or_fabricate_success(defect):
     validation = plan()
