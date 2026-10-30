@@ -233,3 +233,47 @@ def test_build_cache_policy_preserves_actual_recipe_and_target_scopes(monkeypatc
     cache = f'type=gha,version=2,scope=production-{target}'
     assert actual == ['docker', 'buildx', 'build', '--load', '--cache-from', cache,
                       '--cache-to', cache + ',mode=max,ignore-error=true', *original[2:]]
+
+
+@pytest.mark.parametrize('targets', [
+    ['wdpa-monthly'], ['catalog-viewer'], ['sea-ice-daily', 'catalog-viewer'],
+])
+def test_selected_builds_emit_exact_retained_manifest(tmp_path, monkeypatch, targets):
+    calls = []
+    monkeypatch.setattr('sys.argv', ['production_image_contracts.py', '--output', str(tmp_path),
+                                   *(value for target in targets for value in ('--target', target))])
+    monkeypatch.setattr('scripts.production_image_contracts.subprocess.run',
+                        lambda args, **kwargs: calls.append(args))
+    monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output',
+                        lambda args, **kwargs: 'b' * 40 if args[0] == 'git' else IMAGE_ID + '\n')
+    packed = Mock(side_effect=lambda target, *args: {'archive': target + '.docker.tar'})
+    loaded = Mock()
+    monkeypatch.setattr('scripts.production_image_contracts.pack_image', packed)
+    monkeypatch.setattr('scripts.production_image_contracts.load_image', loaded)
+    main()
+    retained = [target for target in targets if target != 'wdpa-monthly']
+    manifest = json.loads((tmp_path / 'images/manifest.json').read_text())
+    assert manifest == {'schema_version': 1, 'tested_sha': 'b' * 40,
+                        'images': {target: {'archive': target + '.docker.tar'} for target in retained}}
+    builds = [args for args in calls if args[:2] == ['docker', 'build']]
+    assert len(builds) == len(targets)
+    assert [args[-2] for args in builds] == [f'shared-datasets-preflight/{target}:' + 'b' * 40 for target in targets]
+    assert [call.args[0] for call in packed.call_args_list] == retained
+    assert loaded.call_count == len(retained)
+    for args in calls:
+        if args[:2] == ['docker', 'run'] or '--viewer-image' in args:
+            assert IMAGE_ID in args
+
+
+def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr('sys.argv', ['production_image_contracts.py', '--target', 'wdpa-monthly',
+                                   '--output', str(tmp_path)])
+    def run(args, **kwargs):
+        if args[:2] == ['docker', 'run']:
+            raise subprocess.CalledProcessError(1, args)
+    monkeypatch.setattr('scripts.production_image_contracts.subprocess.run', run)
+    monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output',
+                        lambda args, **kwargs: 'b' * 40 if args[0] == 'git' else IMAGE_ID + '\n')
+    with pytest.raises(subprocess.CalledProcessError):
+        main()
+    assert not (tmp_path / 'images/manifest.json').exists()

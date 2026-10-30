@@ -14,6 +14,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import sdk_release_authorization as proof
+from scripts.ci_contract import select_production_images
 from scripts.deployment_revision import DeploymentError, GitHub as DeploymentGitHub, TARGET_WORKFLOWS, require, verify_context
 from scripts.tested_image_bundle import ImageError, MAX_IMAGE, MAX_JSON, TARGETS, hash_file, load_image, read_json, report_timing, validate_manifest
 
@@ -64,7 +65,8 @@ def selected_image(api, repository, run_id, artifacts, reference, path, target, 
     manifest = read_json(files["images/manifest.json"])
     require(result.get("production_images") == manifest, "image manifest differs from recorded validation result")
     images = validate_manifest(manifest, sha)
-    require(set(images) == TARGETS and target in images, "complete tested production-image set is missing")
+    require(set(images) == set(select_production_images(plan.get("changed_paths"))) & TARGETS and target in images,
+            "tested production-image set differs from validation selection or requested target")
     image = images[target]
     report_timing("result-download-and-verification", started)
     artifact = retained_artifact(artifacts, f"ci-image-{target}-attempt{suite_attempt}", run_id, MAX_ARTIFACT)

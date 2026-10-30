@@ -198,8 +198,8 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     if suite == "production-images":
         for step in steps:
             if step.get("with", {}).get("name", "").startswith("ci-image-"):
-                condition += f" && steps.{step['id']}.outcome == 'success'"
-    assert receipt["if"] == "${{ " + condition + " }}"
+                condition += f" && (!{step['if']} || steps.{step['id']}.outcome == 'success')"
+    assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"
     assert receipt["with"]["retention-days"] == retained["with"]["retention-days"] == 14
@@ -243,7 +243,7 @@ def test_hosted_compression_comparison_uses_identical_tars_and_is_pr_only(level)
     if level == 0:
         assert step["if"] == "needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'"
     else:
-        assert "if" not in step
+        assert step["if"] == "contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')"
     assert step["with"]["path"] == "${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar"
     assert step["with"]["compression-level"] == level
     assert step["with"]["if-no-files-found"] == "error"

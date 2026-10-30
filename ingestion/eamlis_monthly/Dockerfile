@@ -48,7 +48,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:${PATH}"
 
-COPY ingestion ./ingestion
+COPY ingestion/__init__.py ./ingestion/__init__.py
+COPY ingestion/common ./ingestion/common
+COPY ingestion/eamlis_monthly ./ingestion/eamlis_monthly
 COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
 COPY catalog/ingestion-quality.json ./catalog/ingestion-quality.json
 COPY scripts/catalog_csv.py ./scripts/catalog_csv.py

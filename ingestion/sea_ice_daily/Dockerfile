@@ -49,7 +49,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev
 ENV PATH="/app/.venv/bin:${PATH}"
 
-COPY ingestion ./ingestion
+COPY ingestion/__init__.py ./ingestion/__init__.py
+COPY ingestion/common ./ingestion/common
+COPY ingestion/sea_ice_daily ./ingestion/sea_ice_daily
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py

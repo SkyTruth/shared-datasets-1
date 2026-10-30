@@ -16,7 +16,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.tested_image_bundle import TARGETS, load_image, pack_image
+from scripts.tested_image_bundle import BUILD_TARGETS, TARGETS, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
@@ -105,7 +105,7 @@ def commands(target, executor, *, image_id=None):
     if target == "catalog-viewer":
         return [
             ["docker", "build", "--platform", "linux/amd64", "-f", "services/catalog_viewer/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run; assert callable(run.main)"],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run, comparison_store; assert callable(run.main) and callable(comparison_store.restore_comparison)"],
             [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image],
         ]
     if target == "dataset-usage":
@@ -145,7 +145,7 @@ def cached_build(command, target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"])
+    parser.add_argument("--target", action="append", choices=BUILD_TARGETS)
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
     args = parser.parse_args()
@@ -157,7 +157,7 @@ def main():
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
-    for target in args.target or ["wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"]:
+    for target in args.target or BUILD_TARGETS:
         subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)
@@ -169,7 +169,8 @@ def main():
             # the handoff. Docker's exporter/store representation can differ
             # from the locally tested image's identity.
             load_image(args.output / "images" / retained[target]["archive"], retained[target])
-    if args.output and retained:
+    if args.output:
+        (args.output / "images").mkdir(parents=True, exist_ok=True)
         (args.output / "images/manifest.json").write_text(json.dumps(
             {"schema_version": 1, "tested_sha": executor, "images": retained}, sort_keys=True
         ) + "\n")
