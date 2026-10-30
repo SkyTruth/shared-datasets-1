@@ -357,6 +357,12 @@ GCP authentication, image push or deployment runs in the benchmark job. Its
 `image-handoff-benchmark-attempt<N>` artifact contains the measurements. Other
 changes and main runs do not select this extra benchmark.
 
+A selective benchmark rerun retains the successful plan and image producers.
+It resolves their attempts independently from artifact creation times within
+the effective jobs' execution windows, then verifies the same successful
+executions in those original attempts. Every trial reads the original image
+attempt; a new failed producer or missing upload cannot fall back to older bytes.
+
 The pinned actionlint version predates GitHub's `concurrency.queue` field.
 `scripts/check_workflow_syntax.py` independently requires `queue: max` together
 with explicit `cancel-in-progress: false`, then omits only that validated scalar
