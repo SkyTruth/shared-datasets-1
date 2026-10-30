@@ -29,7 +29,7 @@ from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    documentation_only, select_deployments, select_suites, verify_results, write_json,
+    documentation_only, select_deployments, select_production_images, select_suites, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -342,7 +342,11 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
         # Host checks use only the standard library; image dependencies stay in Docker.
-        add(sys.executable, "-I", "scripts/production_image_contracts.py", "--output", str(output))
+        targets = select_production_images(plan.get("changed_paths"))
+        if not targets:
+            raise ValueError("production image suite selected without image targets")
+        add(sys.executable, "-I", "scripts/production_image_contracts.py",
+            *(argument for target in targets for argument in ("--target", target)), "--output", str(output))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -420,8 +424,8 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
                 check_results(output / "pytest.xml")
         if suite == "production-images":
             manifest = json.loads((output / "images/manifest.json").read_text())
-            if set(validate_manifest(manifest, plan["tested_sha"])) != IMAGE_TARGETS:
-                raise ValueError("complete tested production-image set is missing")
+            if set(validate_manifest(manifest, plan["tested_sha"])) != set(select_production_images(plan.get("changed_paths"))) & IMAGE_TARGETS:
+                raise ValueError("tested production-image set differs from validation selection")
             result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
@@ -609,6 +613,7 @@ def main() -> int:
             if args.github_output:
                 with args.github_output.open("a") as output:
                     output.write("changed-paths=" + json.dumps(plan["changed_paths"]) + "\n")
+                    output.write("production-image-targets=" + json.dumps(select_production_images(plan["changed_paths"])) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
                     for target in DEPLOYMENTS:

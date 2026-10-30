@@ -47,6 +47,18 @@ def test_runtime_release_does_not_select_iam_syncs(path, target):
     assert set(select_deployments([path])) == {target}
 
 
+@pytest.mark.parametrize("path", ["services/catalog_viewer/run.py", "services/feature_preview_service/run.py",
+    "services/http_base.py", "services/__init__.py", "api/python/src/skytruth_shared_datasets/client.py", "scripts/compare_releases.py"])
+def test_viewer_runtime_does_not_redeploy_usage_collector(path):
+    assert select_deployments([path, "terraform/README.md"]) == ["catalog_viewer"]
+
+
+@pytest.mark.parametrize("path", ["terraform/envs/prod/catalog_viewer.tf", "terraform/modules/service_account/main.tf",
+    "terraform/envs/prod/variables.tf", "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"])
+def test_viewer_and_usage_shared_resources_keep_both_deployments(path):
+    assert {"catalog_viewer", "dataset_usage"} <= set(select_deployments([path]))
+
+
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
     assert select_deployments(["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"]) == ["ingestion_iam"]
 
@@ -128,7 +140,9 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
     command = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
-    assert command[-1][-3:] == ["scripts/production_image_contracts.py", "--output", str(ROOT)]
+    assert "scripts/production_image_contracts.py" in command[-1]
+    assert command[-1][-2:] == ["--output", str(ROOT)]
+    assert command[-1].count("--target") == 7
     suite = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["production-images"]
     assert "scripts/ci_preflight.py run-suite" in next(step["run"] for step in suite["steps"] if "run" in step)
     upload = next(step for step in suite["steps"] if step.get("id") == "retained-results")
@@ -281,6 +295,28 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
     assert values["needs.dataset-usage.result"] == "skipped"
     for target in DEPLOYMENTS:
         assert condition_result(jobs[target.replace("_", "-")], values) is (target in expected)
+
+
+def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, monkeypatch):
+    from test_ci_preflight import fixture_repo
+
+    root, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    source = root / "ingestion/eamlis_monthly/run.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("changed fixture\n")
+    git("add", ".")
+    git("commit", "-m", "EAMLIS change")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base,
+                                     "--output", str(tmp_path / "plan.json"),
+                                     "--github-output", str(tmp_path / "outputs")])
+    assert ci_preflight.main() == 0
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    outputs = dict(line.split("=", 1) for line in (tmp_path / "outputs").read_text().splitlines())
+    assert json.loads(outputs["production-image-targets"]) == ["eamlis-monthly"]
+    command = suite_commands("production-images", root, plan, tmp_path)[0][0]
+    assert command[command.index("--target"):] == ["--target", "eamlis-monthly", "--output", str(tmp_path)]
 
 
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])

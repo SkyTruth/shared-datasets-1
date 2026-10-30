@@ -16,7 +16,7 @@ from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.catalog_csv import read_catalog_rows_text
-from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
+from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
 SUITES = (
@@ -67,8 +67,8 @@ CONTRACT_FILES = (
 
 # Additional suites beyond ALWAYS, only after tracing imports (including other
 # scripts), subprocess/workflow callers, Docker COPY sources and generated data.
-# services/catalog_viewer/Dockerfile and the preview-service Dockerfile COPY the
-# whole scripts directory: every exception therefore retains production-images.
+# Unproved scripts retain production-images; the image selector below narrows
+# only traced component ownership, independently of these suite exceptions.
 # SDK fixtures read checked-in JSON/web contracts; browser fixtures import
 # release_feature_model and execute catalog_site. Those shared producers and all
 # unproved scripts remain broad. Keep this proof with each exception; a new
@@ -76,13 +76,13 @@ CONTRACT_FILES = (
 NARROW_SCRIPTS = {
     # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
     # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
-    # generator imports/calls it. Catalog tests retain SDKs/browser, COPY images;
+    # generator imports/calls it. Catalog tests retain SDKs/browser and images;
     # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
     "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
     # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
     # produces translation workbooks/CSV/manifest, never API/browser fixtures.
     # No other import/subprocess/workflow caller; translation test classification
-    # adds native/images and whole-directory COPY adds images.
+    # adds native/images.
     "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
     # Importers: wdpa_input_memory_probe, test_wdpa_disk_processing (native corpus)
     # and test_wdpa_translation_inputs. WDPA Dockerfile COPY; the input-memory
@@ -92,7 +92,7 @@ NARROW_SCRIPTS = {
     # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
     # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
     # or other subprocess caller. WDPA test classification adds native/images;
-    # whole-directory COPY adds images. Shared authority modules remain broad.
+    # image selection stays conservative. Shared authority modules remain broad.
     "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
 }
 
@@ -159,6 +159,64 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
 
 
+def select_production_images(paths: list[str] | None) -> list[str]:
+    """Derive build coverage from the same verified comparison as suite selection.
+
+    These exceptions follow the narrowed Docker COPY inputs and installed
+    probes. Unknown inputs keep every recipe; deployment needs are a floor,
+    never a replacement for build/test dependencies.
+    """
+    if paths is None:
+        return list(BUILD_TARGETS)
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise ValueError("image selection requires a changed-path list")
+    components = {
+        "mpatlas_monthly": "mpatlas-monthly", "eamlis_monthly": "eamlis-monthly",
+        "sea_ice_daily": "sea-ice-daily", "wdpa_monthly": "wdpa-monthly",
+        "dataset_usage": "dataset-usage",
+    }
+    prefixes = {f"ingestion/{package}/": {target} for package, target in components.items()}
+    prefixes.update({
+        "services/catalog_viewer/": {"catalog-viewer"},
+        "services/feature_preview_service/": {"catalog-viewer"},
+        "services/monitoring_slack/": {"monitoring-slack"},
+        "api/python/src/": {"catalog-viewer"},
+        "tests/test_mpatlas_": {"mpatlas-monthly"},
+        "tests/test_eamlis_": {"eamlis-monthly"},
+        "tests/test_sea_ice_": {"sea-ice-daily"},
+        "tests/test_wdpa_": {"wdpa-monthly"},
+        "tests/test_dataset_usage": {"dataset-usage"},
+        "tests/test_catalog_viewer": {"catalog-viewer"},
+        "tests/test_production_viewer_image_contract": set(BUILD_TARGETS),
+        "tests/test_monitoring_slack": {"monitoring-slack"},
+    })
+    selected = set()
+    for path in paths:
+        if classify_change(path)[0] == "documentation":
+            continue
+        if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
+            selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
+        elif path in {"services/__init__.py", "services/http_base.py"}:
+            selected.add("catalog-viewer")
+        elif path == "docs/assets/ims-sea-ice-extent.md":
+            selected.add("sea-ice-daily")
+        else:
+            owners = next((targets for prefix, targets in prefixes.items() if path.startswith(prefix)), None)
+            if owners is None:
+                return list(BUILD_TARGETS)
+            selected.update(owners)
+    # WDPA's installed smoke imports sea ice; both images contain those inputs.
+    if "sea-ice-daily" in selected:
+        selected.add("wdpa-monthly")
+    deployment_images = {
+        "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "sea_ice": "sea-ice-daily",
+        "wdpa": "wdpa-monthly", "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
+        "cron_alert_policy": "monitoring-slack",
+    }
+    selected.update(deployment_images[target] for target in select_deployments(paths) if target in deployment_images)
+    return [target for target in BUILD_TARGETS if target in selected]
+
+
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
     """Compare the catalog fields actually compiled into release consumers."""
     def contracts(raw):
@@ -200,6 +258,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         if path in {"pyproject.toml", "uv.lock"}:
             selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
         if path.startswith("ingestion/common/") or path in {
+            "ingestion/__init__.py",
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
             "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
             "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
@@ -231,7 +290,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "catalog/wdpa-processing-acceptance.json",
         }:
             selected.add("wdpa")
-        if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
+        if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {
+            "services/__init__.py", "services/http_base.py",
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
             "scripts/compare_releases.py", "scripts/release_feature_model.py",
@@ -279,13 +339,12 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "scripts/dataset_usage_deploy.py",
         }:
             selected.add("dataset_usage")
-    # Viewer infrastructure reads the usage state bucket. Deploy usage first;
-    # this also gives the worker the current catalog baked into its tested image.
-    if "catalog_viewer" in selected:
-        selected.add("dataset_usage")
     # Runtime deployment reuses installed IAM. Only infrastructure edits select
     # bootstrap syncs; direct IAM workflow/input rules above stay explicit.
     if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
+        # Viewer and usage share bucket/IAM resources, not runtime image inputs.
+        if "catalog_viewer" in selected:
+            selected.add("dataset_usage")
         if "mpatlas" in selected:
             selected.add("cron_alert_policy")
         if selected & ingestion:
@@ -372,8 +431,9 @@ def verify_results(
                 images = validate_manifest(result.get("production_images"), plan["tested_sha"])
             except ImageError as exc:
                 raise ValueError(f"invalid production-image evidence: {exc}") from exc
-            if set(images) != IMAGE_TARGETS:
-                raise ValueError("complete tested production-image set is missing")
+            targets = select_production_images(plan.get("changed_paths"))
+            if not targets or set(images) != set(targets) & IMAGE_TARGETS:
+                raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
         expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}
         for suite, job in expected.items():

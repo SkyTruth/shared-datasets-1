@@ -155,6 +155,29 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
         verify_results(plan, results)
 
 
+
+@pytest.mark.parametrize("paths,targets", [
+    (["ingestion/eamlis_monthly/run.py"], {"eamlis-monthly"}),
+    (["ingestion/wdpa_monthly/run.py"], set()),
+])
+def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets):
+    plan, results, image_result = image_results()
+    plan["changed_paths"] = paths
+    all_images = image_result["production_images"]["images"]
+    image_result["production_images"]["images"] = {target: all_images[target] for target in targets}
+    verify_results(plan, results)
+    image_result["production_images"]["images"]["monitoring-slack"] = all_images["monitoring-slack"]
+    with pytest.raises(ValueError, match="differs from validation selection"):
+        verify_results(plan, results)
+    image_result["production_images"]["images"] = {}
+    if targets:
+        with pytest.raises(ValueError, match="differs from validation selection"):
+            verify_results(plan, results)
+    plan["changed_paths"] = []
+    with pytest.raises(ValueError, match="differs from validation selection"):
+        verify_results(plan, results)
+
+
 def test_production_cache_keeps_deployment_artifacts():
     job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
     steps = job['steps']
@@ -188,7 +211,7 @@ def test_each_image_upload_is_required_and_contains_only_its_tar():
     for target, step in images.items():
         assert step['uses'] == 'actions/upload-artifact@v4'
         assert step.get('id') and not step.get('continue-on-error')
-        assert step.get('if', '${{ success() }}') in {'${{ success() }}', 'success()', '${{ always() }}', 'always()'}
+        assert step["if"] == f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
         assert step['with']['path'] == '${{ runner.temp }}/ci-results/production-images/images/' + target + '.docker.tar'
         assert step['with']['if-no-files-found'] == 'error'
         assert step['with']['retention-days'] == 14
@@ -197,19 +220,24 @@ def test_each_image_upload_is_required_and_contains_only_its_tar():
 
 
 @pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
-def test_compact_image_gate_result_requires_every_upload_outcome(outcome):
+@pytest.mark.parametrize('selected', [IMAGE_TARGETS, {'eamlis-monthly'}, set()])
+def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcome, selected):
     steps, images = image_retention_steps()
     small = next(step for step in steps if step.get('id') == 'retained-results')
     compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
     expression = compact['if'].removeprefix('${{').removesuffix('}}').strip()
     uploads = [small, *images.values()]
     for failed in uploads:
-        evaluated = expression.replace('always()', 'True')
+        evaluated = ' '.join(expression.replace('always()', 'True').split())
+        for target in images:
+            condition = f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
+            evaluated = evaluated.replace(condition, repr(target in selected))
         for step in uploads:
             reference = f"steps.{step['id']}.outcome"
             assert reference in expression, 'compact evidence must wait for every required upload'
             evaluated = evaluated.replace(reference, repr(outcome if step is failed else 'success'))
-        assert eval(evaluated.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (outcome == 'success')
+        required = failed is small or failed['id'].removeprefix('retained-') in selected
+        assert eval(evaluated.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}}) is (not required or outcome == 'success')
 
 
 @pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])

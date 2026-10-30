@@ -14,6 +14,7 @@ import tempfile
 from time import perf_counter
 
 TARGETS = frozenset({"monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
+BUILD_TARGETS = ("wdpa-monthly", *sorted(TARGETS))
 MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -70,7 +71,7 @@ def validate_manifest(manifest, sha):
             and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1
             and manifest["tested_sha"] == sha and SHA.fullmatch(sha), "invalid tested image manifest identity")
     images = manifest["images"]
-    require(isinstance(images, dict) and images and set(images) <= TARGETS, "invalid retained image selection")
+    require(isinstance(images, dict) and set(images) <= TARGETS, "invalid retained image selection")
     for target, image in images.items():
         require(isinstance(image, dict) and set(image) == {"config_digest", "source_tag", "archive", "archive_sha256", "archive_size", "platform"},
                 "invalid retained image fields")

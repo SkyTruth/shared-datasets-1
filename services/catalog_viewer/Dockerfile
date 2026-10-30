@@ -9,7 +9,9 @@ RUN python -m pip install --no-cache-dir \
     "google-cloud-storage>=2.19.0,<3" "flatgeobuf==0.3.1"
 
 COPY api/python/src /app/api/python/src
-COPY scripts /app/scripts
-COPY services /app/services
+COPY scripts/compare_releases.py scripts/release_feature_model.py /app/scripts/
+COPY services/__init__.py services/http_base.py /app/services/
+COPY services/catalog_viewer /app/services/catalog_viewer
+COPY services/feature_preview_service /app/services/feature_preview_service
 
 CMD ["python", "-m", "services.catalog_viewer.run"]

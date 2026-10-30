@@ -33,6 +33,7 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
       production_images: ${{ steps.plan.outputs.production-images }}
+      production_image_targets: ${{ steps.plan.outputs.production-image-targets }}
       image_handoff_benchmark: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/tested_image_authorization.py') || contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/tested_image_bundle.py') || contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/benchmark_image_handoff.py')) }}
       mpatlas: ${{ steps.plan.outputs.mpatlas }}
       eamlis: ${{ steps.plan.outputs.eamlis }}
@@ -223,6 +224,7 @@ jobs:
       - name: Retain tested mpatlas-monthly image
         uses: actions/upload-artifact@v4
         id: retained-mpatlas-monthly
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')
         with:
           name: ci-image-mpatlas-monthly-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -232,6 +234,7 @@ jobs:
       - name: Retain tested eamlis-monthly image
         uses: actions/upload-artifact@v4
         id: retained-eamlis-monthly
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly')
         with:
           name: ci-image-eamlis-monthly-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -241,6 +244,7 @@ jobs:
       - name: Retain tested sea-ice-daily image
         uses: actions/upload-artifact@v4
         id: retained-sea-ice-daily
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily')
         with:
           name: ci-image-sea-ice-daily-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -250,6 +254,7 @@ jobs:
       - name: Retain tested catalog-viewer image
         uses: actions/upload-artifact@v4
         id: retained-catalog-viewer
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer')
         with:
           name: ci-image-catalog-viewer-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -259,6 +264,7 @@ jobs:
       - name: Retain tested dataset-usage image
         uses: actions/upload-artifact@v4
         id: retained-dataset-usage
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage')
         with:
           name: ci-image-dataset-usage-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -268,6 +274,7 @@ jobs:
       - name: Retain tested monitoring-slack image
         uses: actions/upload-artifact@v4
         id: retained-monitoring-slack
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack')
         with:
           name: ci-image-monitoring-slack-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -305,7 +312,14 @@ jobs:
           retention-days: 14
       - name: Upload compact gate result
         uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' && steps.retained-mpatlas-monthly.outcome == 'success' && steps.retained-eamlis-monthly.outcome == 'success' && steps.retained-sea-ice-daily.outcome == 'success' && steps.retained-catalog-viewer.outcome == 'success' && steps.retained-dataset-usage.outcome == 'success' && steps.retained-monitoring-slack.outcome == 'success' }}
+        if: >-
+          ${{ always() && steps.retained-results.outcome == 'success' &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly') || steps.retained-mpatlas-monthly.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly') || steps.retained-eamlis-monthly.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily') || steps.retained-sea-ice-daily.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer') || steps.retained-catalog-viewer.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage') || steps.retained-dataset-usage.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack') || steps.retained-monitoring-slack.outcome == 'success') }}
         with:
           name: ci-gate-result-production-images-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/production-images/result.json

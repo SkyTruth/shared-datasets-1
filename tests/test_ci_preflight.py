@@ -19,7 +19,7 @@ from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.check_workflow_syntax import parser_source
 from scripts.ci_contract import (
     ALWAYS, CONTRACT_FILES, NARROW_SCRIPTS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
-    verify_results,
+    verify_results, select_production_images,
 )
 from workflow_helpers import load_workflow, workflow_triggers
 from ci_result_fixtures import production_images
@@ -109,6 +109,42 @@ def test_mixed_narrow_scripts_union_their_consumers_in_suite_order():
     paths = ["scripts/local_wdpa_sample.py", "scripts/catalog_web_publish.py"]
     assert select_suites(paths)[0] == list(SUITES)
     assert select_suites(list(reversed(paths)))[0] == list(SUITES)
+
+
+@pytest.mark.parametrize("paths,expected", [
+    (["ingestion/eamlis_monthly/checksum_repair.py", "tests/test_eamlis_checksum_repair.py"], {"eamlis-monthly"}),
+    (["ingestion/mpatlas_monthly/run.py", "tests/test_mpatlas_monthly.py"], {"mpatlas-monthly"}),
+    (["ingestion/sea_ice_daily/run.py"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["ingestion/wdpa_monthly/build.py"], {"wdpa-monthly"}),
+    (["ingestion/common/runtime.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"}),
+    (["ingestion/__init__.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"}),
+    (["services/catalog_viewer/run.py"], {"catalog-viewer"}),
+    (["services/feature_preview_service/run.py"], {"catalog-viewer"}),
+    (["services/http_base.py"], {"catalog-viewer"}),
+    (["api/python/src/skytruth_shared_datasets/client.py"], {"catalog-viewer"}),
+    (["services/monitoring_slack/run.py"], {"monitoring-slack"}),
+    (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
+    (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["README.md"], set()),
+])
+def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):
+    assert set(select_production_images(paths)) == expected
+    assert select_production_images(paths) == select_production_images(list(reversed(paths)))
+
+
+@pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
+    ["uv.lock"], ["tests/new_contract.py"], ["scripts/ci_contract.py"],
+    ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"],
+    ["catalog/ingestion-quality.json"], ["catalog/feature-identity-resolutions/example.json"]])
+def test_unproved_image_inputs_keep_every_recipe(paths):
+    from scripts.tested_image_bundle import BUILD_TARGETS
+    assert select_production_images(paths) == list(BUILD_TARGETS)
+
+
+@pytest.mark.parametrize("paths", ["ingestion/eamlis_monthly/run.py", [None], [1], {}])
+def test_malformed_image_comparison_fails(paths):
+    with pytest.raises(ValueError, match="changed-path list"):
+        select_production_images(paths)
 
 
 def python_imports(path):
@@ -528,7 +564,7 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["ingestion/dataset_usage/README.md", "ingestion/dataset_usage/run.py"],
      ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage"]),
     (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
-     ALWAYS | {"production-images", "browser"}, ["catalog_viewer", "dataset_usage"]),
+     ALWAYS | {"production-images", "browser"}, ["catalog_viewer"]),
     (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice"]),
     (["docs/guide.md", "scripts/unproved.py"], set(SUITES), []),
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),

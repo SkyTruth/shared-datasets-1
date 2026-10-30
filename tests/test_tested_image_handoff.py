@@ -127,7 +127,7 @@ def handoff(tmp_path, monkeypatch):
         files["images/" + images[target]["archive"]] = raw
     manifest = {"schema_version": 1, "tested_sha": SHA, "images": images}
     identity = {"schema_version": 1, "base": "b" * 40, "head": SHA, "tested_sha": SHA, "tree": "tree", "contract_digest": "contract"}
-    plan = {**identity, "suites": ["production-images"], "changed_paths": ["ingestion/eamlis_monthly/run.py"], "selection_reason": "classified",
+    plan = {**identity, "suites": ["production-images"], "changed_paths": ["scripts/ci_contract.py"], "selection_reason": "classified",
             "source": {"run_id": "123", "run_attempt": 1}}
     evidence = {**plan, "source": {"run_id": "123", "run_attempt": 2}, "status": "success", "plan_artifact": "ci-validation-plan-attempt1",
                 "suite_artifacts": {"production-images": "ci-result-production-images-attempt1"}}
@@ -416,17 +416,27 @@ def test_real_packing_function_produces_consumer_accepted_manifest_and_bytes(tmp
     bundle.verify_archive(tmp_path / actual["archive"], actual)
 
 
-def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(handoff, monkeypatch):
+@pytest.mark.parametrize("paths,target", [(None, "sea-ice-daily"), (["ingestion/eamlis_monthly/run.py"], "eamlis-monthly"), (["ingestion/wdpa_monthly/run.py"], None)])
+def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(handoff, monkeypatch, paths, target):
     from scripts import ci_preflight
 
     output = handoff["root"] / "producer"
     with zipfile.ZipFile(io.BytesIO(handoff["payloads"][1])) as archive:
         plan = json.loads(archive.read("plan.json"))
+    plan["changed_paths"] = paths
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][0])) as archive:
+        evidence = json.loads(archive.read("evidence.json"))
+    evidence["changed_paths"] = paths
+    handoff["payloads"][0] = zipped({"evidence.json": evidence})
+    handoff["payloads"][1] = zipped({"plan.json": plan})
+    for index in (0, 1):
+        payload = handoff["payloads"][index]
+        handoff["artifacts"][index].update(size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
+    expected = set(ci_preflight.select_production_images(paths))
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     monkeypatch.setattr(ci_preflight, "validate_checkout", lambda *_: None)
     monkeypatch.setattr(ci_preflight, "probe_tools", lambda *_: proof.expected_tools("production-images"))
-    monkeypatch.setattr(ci_preflight, "suite_commands", lambda *_: [(["python", "scripts/production_image_contracts.py", "--output", str(output)], handoff["root"])])
     original_output = bundle.subprocess.check_output
 
     def inspect(args, **kwargs):
@@ -442,9 +452,9 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
     built_targets = []
 
     def run(args, **kwargs):
-        if args[:2] == ["python", "scripts/production_image_contracts.py"]:
+        if "scripts/production_image_contracts.py" in args:
             with monkeypatch.context() as context:
-                context.setattr(producer.sys, "argv", args[1:])
+                context.setattr(producer.sys, "argv", args[args.index("scripts/production_image_contracts.py"):])
                 producer.main()
         elif args[:3] == ["docker", "image", "save"]:
             target = next(target for target, image in handoff["manifest"]["images"].items() if image["config_digest"] == args[-1])
@@ -456,13 +466,17 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
     monkeypatch.setattr(bundle.subprocess, "check_output", inspect)
     monkeypatch.setattr(bundle.subprocess, "run", run)
     actual = ci_preflight.run_suite(handoff["root"], plan, "production-images", output)
-    assert actual["status"] == "success" and set(actual["production_images"]["images"]) == bundle.TARGETS
-    assert set(built_targets) == bundle.TARGETS | {"wdpa-monthly"}
+    assert actual["status"] == "success" and set(actual["production_images"]["images"]) == expected & bundle.TARGETS
+    assert set(built_targets) == expected
     handoff["files"] = {path.relative_to(output).as_posix(): path.read_bytes() for path in output.rglob("*") if path.is_file()}
     handoff["manifest"] = actual["production_images"]
     refresh(handoff)
-    loaded = download(handoff)
-    assert loaded["image_id"] == actual["production_images"]["images"]["sea-ice-daily"]["config_digest"]
+    if target is not None:
+        loaded = download(handoff, target)
+        assert loaded["image_id"] == actual["production_images"]["images"][target]["config_digest"]
+    if expected != set(bundle.BUILD_TARGETS):
+        with pytest.raises(DeploymentError, match="requested target"):
+            download(handoff, "monitoring-slack")
 
 
 def test_failed_installed_checks_prevent_retaining_untested_image(tmp_path, monkeypatch):

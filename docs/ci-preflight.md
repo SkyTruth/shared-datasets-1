@@ -104,12 +104,25 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests all seven actual Linux AMD64 deployment recipes on every host without mounting the Docker
-socket into a validation container. GitHub CI evidence retains the six deployable
-images with their config and rootfs hashes; missing image evidence fails
-`ci-ready`. The suite also exercises the deployment loader on the actual CI
-Docker daemon before admitting each retained image. Deployment consumes these
-tested bytes without rebuilding.
+tests the selected actual Linux AMD64 recipes on every host without mounting the
+Docker socket into a validation container. `select_production_images` derives
+that selection from the existing verified comparison, without a second persisted
+selection manifest. Known component edits build their consuming images;
+unknown inputs and shared policy/toolchain changes retain all seven recipes.
+Docker inputs include common ingestion code, WDPA's sea-ice smoke dependency,
+and the viewer's shared HTTP and preview runtime. Required deployment images
+are always included. Viewer runtime edits do not redeploy the usage collector;
+shared Terraform resources and explicit usage/catalog inputs still select it.
+No validation result is reused across revisions.
+
+GitHub CI retains exactly the selected deployable images with their config and
+rootfs hashes. The runner, `ci-ready` and authenticated deployment consumer
+independently require that exact set; missing or extra images fail. WDPA-only
+validation still runs its installed probes and emits an empty retained-image
+set, because WDPA publication uses its separate accepted-build authorization.
+The suite exercises the deployment loader on the actual CI Docker daemon before
+admitting each retained image. Deployment consumes these tested bytes without
+rebuilding.
 
 Hosted native ingestion and dataset-usage image builds restore per-recipe GitHub
 Actions build caches. Catalog-viewer and monitoring-slack use the same Buildx
@@ -134,7 +147,7 @@ exact-image handoff and existing deployment approvals; there is no automatic
 merge. WDPA retains its separate accepted-build deployment path.
 
 After all selected suites, final evidence verification and source checks pass,
-full local preflight removes only its own six verified image archives. Manifests,
+full local preflight removes only its own verified image archives. Manifests,
 hashes, command logs and results remain; `runtime.json` records
 `production_image_archives_retained: false`. Failures before that point retain
 any archives already created. GitHub's `run-suite` entrypoint does not perform
@@ -270,12 +283,13 @@ A newly executed gate with missing evidence fails; it cannot reuse an older gate
 
 Each suite first uploads its `ci-result-<suite>-attempt<N>` artifact,
 then uploads `ci-gate-result-<suite>-attempt<N>` containing only `result.json`.
-Production images are retained separately as six
+Selected deployment images are retained separately as
 `ci-image-<target>-attempt<N>` artifacts, each containing exactly one
 `<target>.docker.tar` with compression level 1. Its result artifact retains
-the complete six-image manifest, result and diagnostic logs, excluding the TARs.
-The compact production-image upload requires all six image uploads and the
-diagnostic upload to succeed; every missing source file fails retention.
+the exact selected-image manifest, result and diagnostic logs, excluding TARs.
+The compact production-image upload requires every selected image upload and
+the diagnostic upload to succeed; a missing selected file fails retention.
+Unselected image uploads are skipped.
 Other suites retain their existing complete result bundles. The compact upload
 fails if its result file is missing. `ci-ready` downloads only compact results,
 preserving its revision, tree, contract, toolchain and producing-job checks.
