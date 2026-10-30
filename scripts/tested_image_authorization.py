@@ -100,14 +100,33 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     reference = evidence.get("suite_artifacts", {}).get("production-images")
     suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
     proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
+    authorized_sha = sha
+    reused = evidence.get("reused_suites", {}).get("production-images")
+    if reused is not None:
+        from scripts.ci_reuse import verify_source
+
+        wrapper = read_json(proof.artifact_files(api, repository, run_id, artifacts, reference)["result.json"])
+        require(wrapper.get("source") == {"run_id": str(run_id), "run_attempt": suite_attempt}
+                and wrapper.get("suite") == "production-images" and wrapper.get("status") == "success"
+                and all(wrapper.get(key) == plan.get(key) for key in proof.IDENTITY)
+                and wrapper.get("tools") == proof.expected_tools("production-images")
+                and wrapper.get("commands") and all(command.get("exit_code") == 0 for command in wrapper["commands"])
+                and wrapper.get("reused_from") == reused, "image reuse wrapper differs from authorized main evidence")
+        source = verify_source(api, repository, plan, root, "production-images", reused,
+                               main_source=wrapper["source"], require_latest=False)
+        run_id, artifacts, plan = source.run["id"], source.artifacts, source.plan
+        reference, suite_attempt, sha = source.suite_artifact, source.suite_attempt, plan["tested_sha"]
     report_timing("source-authorization", started)
     directory.mkdir(parents=True, exist_ok=True)
     archive = directory / f"{target}.docker.tar"
     image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
     image_id = load_image(archive, image)
     report_timing("total", total_started)
-    return {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
-            "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
+    outputs = {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
+               "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
+    if reused is not None:
+        outputs["authorized_sha"] = authorized_sha
+    return outputs
 
 
 def main():

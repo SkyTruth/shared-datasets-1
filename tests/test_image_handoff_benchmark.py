@@ -41,18 +41,26 @@ def source_api():
             "source": {"run_id": "123", "run_attempt": 1}, "suites": ["production-images"]}
     raw = zipped({"plan.json": plan})
     artifacts = [{"id": 41, "name": "ci-validation-plan-attempt1", "expired": False, "workflow_run": {"id": 123},
-                  "size_in_bytes": len(raw), "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}]
-    jobs = [{"id": index, "name": name, "status": "completed", "conclusion": "success"}
+                  "size_in_bytes": len(raw), "created_at": "2026-10-14T01:31:53Z", "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}]
+    artifacts.append({**artifacts[0], "id": 42, "name": "ci-result-production-images-attempt1"})
+    jobs = [{"id": index, "name": name, "status": "completed", "conclusion": "success",
+             "started_at": "2026-10-14T01:31:38Z", "completed_at": "2026-10-14T01:31:54Z"}
             for index, name in enumerate(("geospatial-changes", "production-images"), 1)]
     api = Mock()
-    api.get.side_effect = lambda path: repository if path == f"repos/{REPOSITORY}" else workflow if "/workflows/" in path else run
-    api.pages.side_effect = lambda path, field=None: artifacts if field == "artifacts" else jobs
+    state = SimpleNamespace(api=api, run=run, plan=plan, artifacts=artifacts, jobs=jobs,
+                            attempts={1: copy.deepcopy(run)}, attempt_jobs={1: copy.deepcopy(jobs)})
+    api.get.side_effect = lambda path: (repository if path == f"repos/{REPOSITORY}" else workflow if "/workflows/" in path
+                                       else state.attempts[int(path.rsplit('/', 1)[-1])] if '/attempts/' in path else run)
+    api.pages.side_effect = lambda path, field=None: (artifacts if field == "artifacts" else jobs
+                                                    if f'/attempts/{run["run_attempt"]}/jobs?' in path
+                                                    else state.attempt_jobs[int(path.split('/attempts/')[1].split('/')[0])])
     api.archive.return_value = raw
-    return SimpleNamespace(api=api, run=run, plan=plan, artifacts=artifacts, jobs=jobs)
+    return state
 
 
 def test_pr_measurement_binds_api_source_head_to_actual_tested_merge_plan(source_api):
-    plan, artifacts, jobs = benchmark.source(source_api.api, REPOSITORY, 123, 1, SHA)
+    plan, artifacts, jobs, producing_attempt = benchmark.source(source_api.api, REPOSITORY, 123, 1, SHA)
+    assert producing_attempt == 1
     assert plan["tested_sha"] == SHA and plan["head"] == HEAD and HEAD != SHA
     assert artifacts == source_api.artifacts
     assert [job["name"] for job in jobs] == ["geospatial-changes", "production-images"]
@@ -81,6 +89,51 @@ def test_source_metadata_or_failed_producing_attempt_cannot_enter_measurement(so
         source_api.artifacts[0].update(size_in_bytes=len(raw), digest="sha256:" + hashlib.sha256(raw).hexdigest())
     with pytest.raises(DeploymentError):
         benchmark.source(source_api.api, REPOSITORY, 123, 1, SHA)
+
+
+def selective_rerun(state):
+    state.run['run_attempt'] = 2
+    state.attempts[2] = copy.deepcopy(state.run)
+
+
+def test_selective_rerun_uses_retained_producers_instead_of_trigger_attempt(source_api):
+    selective_rerun(source_api)
+    plan, _, producers, production_attempt = benchmark.source(source_api.api, REPOSITORY, 123, 2, SHA)
+    assert production_attempt == plan['source']['run_attempt'] == 1
+    assert [job['run_attempt'] for job in producers] == [1, 1]
+    assert not any(artifact['name'].endswith('attempt2') for artifact in source_api.artifacts)
+
+
+@pytest.mark.parametrize('defect', ['wrong-run', 'wrong-head', 'wrong-workflow', 'future-attempt',
+                                   'missing-new-artifact', 'failed-new-job', 'ambiguous-window', 'original-window'])
+def test_selective_rerun_rejects_invalid_original_or_new_executions(source_api, defect):
+    selective_rerun(source_api)
+    if defect == 'wrong-run':
+        source_api.attempts[1]['id'] = 999
+    elif defect == 'wrong-head':
+        source_api.attempts[1]['head_sha'] = 'd' * 40
+    elif defect == 'wrong-workflow':
+        source_api.attempts[1]['workflow_id'] = 999
+    elif defect == 'future-attempt':
+        source_api.artifacts[1]['name'] = 'ci-result-production-images-attempt3'
+    elif defect == 'missing-new-artifact':
+        source_api.jobs[-1]['started_at'] = '2026-10-14T02:00:00Z'
+        source_api.jobs[-1]['completed_at'] = '2026-10-14T02:01:00Z'
+    elif defect == 'failed-new-job':
+        source_api.jobs[-1]['conclusion'] = 'failure'
+    elif defect == 'ambiguous-window':
+        source_api.artifacts.append({**source_api.artifacts[1], 'id': 43, 'name': 'ci-result-production-images-attempt2'})
+    else:
+        source_api.attempt_jobs[1][-1]['started_at'] = '2026-10-14T01:30:00Z'
+    with pytest.raises(DeploymentError):
+        benchmark.source(source_api.api, REPOSITORY, 123, 2, SHA)
+
+
+def test_plan_and_image_producers_can_have_different_attempts(source_api):
+    selective_rerun(source_api)
+    source_api.artifacts[1]['name'] = 'ci-result-production-images-attempt2'
+    _, _, producers, production_attempt = benchmark.source(source_api.api, REPOSITORY, 123, 2, SHA)
+    assert production_attempt == 2 and [job['run_attempt'] for job in producers] == [1, 2]
 
 
 def test_alias_preserves_actual_id_digest_and_original_inventory(tmp_path):
@@ -112,8 +165,8 @@ def test_different_variant_identity_fails_before_docker_load_and_records_failure
     expected = production_images(SHA)["images"][benchmark.TARGET]
     altered = {**expected, field: ("sha256:" if field == "config_digest" else "") + "f" * 64}
     artifact = {"id": 7, "name": "benchmark-full-images-attempt1", "workflow_run": {"id": 123},
-                "size_in_bytes": 100, "expired": False, "digest": "sha256:" + "1" * 64}
-    monkeypatch.setattr(benchmark, "source", lambda *args: ({}, [artifact], []))
+                "size_in_bytes": 100, "expired": False, "created_at": "2026-10-14T01:31:53Z", "digest": "sha256:" + "1" * 64}
+    monkeypatch.setattr(benchmark, "source", lambda *args: ({}, [artifact], [{}, {"started_at": "2026-10-14T01:31:38Z", "completed_at": "2026-10-14T01:31:54Z"}], 1))
     monkeypatch.setattr(benchmark, "tag_state", lambda *args: {"present": False})
     loaded = Mock()
     monkeypatch.setattr(benchmark.bundle, "load_image", loaded)
@@ -154,7 +207,7 @@ def test_failed_variant_makes_whole_cli_nonzero_and_preserves_report(tmp_path, m
     monkeypatch.setattr(benchmark.subprocess, "check_output", lambda *args, **kwargs: SHA)
     monkeypatch.setattr(benchmark, "baseline_loader", lambda *args: (None, {}))
     monkeypatch.setattr(benchmark, "machine", lambda: {})
-    monkeypatch.setattr(benchmark, "source", lambda *args: ({}, [], []))
+    monkeypatch.setattr(benchmark, "source", lambda *args: ({}, [], [], 1))
     monkeypatch.setattr(benchmark, "result_image", lambda *args: expected)
     monkeypatch.setattr(benchmark, "tag_state", lambda *args: {"present": False})
 
@@ -200,13 +253,20 @@ def test_real_baseline_and_current_loaders_consume_identical_bytes_through_bench
         handoff["payloads"].append(payload)
         name = "benchmark-full-images-attempt1" if variant == "baseline" else f"benchmark-image-mpatlas-{variant}-attempt1"
         handoff["artifacts"].append({"id": artifact_id, "name": name, "expired": False, "workflow_run": {"id": 123},
-                                      "size_in_bytes": len(payload), "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
+                                      "size_in_bytes": len(payload), "created_at": "2026-10-14T01:31:53Z", "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
         chosen_ids[variant] = artifact_id
     monkeypatch.setattr(benchmark.current, "GitHub", lambda: handoff["api"])
     monkeypatch.setattr(baseline, "GitHub", lambda: handoff["api"])
-    monkeypatch.setattr(benchmark, "source", lambda *args: (plan, handoff["artifacts"], []))
+    run = {**handoff['run'], 'event': 'pull_request', 'head_sha': plan['head']}
+    handoff['api'].get.side_effect = lambda path: (
+        run['repository'] if path == f'repos/{REPOSITORY}' else {'id': run['workflow_id'], 'path': run['path']}
+        if '/workflows/' in path else {**run, 'run_attempt': int(path.rsplit('/', 1)[-1])}
+        if '/attempts/' in path else {**run, 'run_attempt': 2})
     monkeypatch.setattr(benchmark, "tag_state", lambda *args: {"present": True, "daemon_id": expected["config_digest"]})
-    args = SimpleNamespace(repository=REPOSITORY, run_id=123, attempt=1, sha=SHA)
+    args = SimpleNamespace(repository=REPOSITORY, run_id=123, attempt=2, sha=SHA)
+    verified_plan, verified_artifacts, _, production_attempt = benchmark.source(handoff['api'], REPOSITORY, 123, 2, SHA)
+    assert production_attempt == 1
+    assert benchmark.result_image(handoff['api'], REPOSITORY, 123, production_attempt, SHA, verified_plan, verified_artifacts) == expected
     results = [benchmark.trial(args, variant, index, baseline, expected, handoff["root"], expected["config_digest"])
                for index, variant in enumerate(benchmark.VARIANTS, 1)]
     assert all(item["status"] == "success" and item["loaded_daemon_id"] == expected["config_digest"] for item in results)

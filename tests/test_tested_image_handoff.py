@@ -191,6 +191,60 @@ def download(fixture, target="sea-ice-daily"):
     return consumer.download(fixture["api"], REPO, 123, 2, SHA, target, fixture["root"] / "loaded", fixture["root"])
 
 
+@pytest.mark.parametrize("alteration", [None, "wrapper-reference", "wrapper-source", "wrapper-identity", "wrapper-tools", "wrapper-command", "source-rejected"])
+def test_main_gate_authorizes_original_pr_image_without_rebinding(handoff, monkeypatch, alteration):
+    from types import SimpleNamespace
+    from scripts import ci_reuse
+
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][1])) as archive:
+        source_plan = json.loads(archive.read("plan.json"))
+    source_plan["changed_paths"] = ["ingestion/mpatlas_monthly/run.py"]
+    handoff["manifest"]["images"] = {"mpatlas-monthly": handoff["manifest"]["images"]["mpatlas-monthly"]}
+    refresh(handoff)
+    main_sha = "c" * 40
+    main_plan = {**source_plan, "head": main_sha, "tested_sha": main_sha, "source": {"run_id": "456", "run_attempt": 2}}
+    reference = {"pr_number": 42, "run_id": 123, "run_attempt": 1}
+    wrapper = {**main_plan, "suite": "production-images", "status": "success", "tools": proof.expected_tools("production-images"),
+               "commands": [{"argv": ["reuse"], "exit_code": 0}], "reused_from": reference}
+    if alteration == "wrapper-reference":
+        wrapper["reused_from"] = {**reference, "pr_number": 43}
+    elif alteration == "wrapper-source":
+        wrapper["source"] = {"run_id": "123", "run_attempt": 2}
+    elif alteration == "wrapper-identity":
+        wrapper["tested_sha"] = SHA
+    elif alteration == "wrapper-tools":
+        wrapper["tools"] = {}
+    elif alteration == "wrapper-command":
+        wrapper["commands"][0]["exit_code"] = 1
+    payload = zipped({"result.json": wrapper})
+    artifact = {"id": 99, "name": "ci-result-production-images-attempt2", "expired": False, "workflow_run": {"id": 456},
+                "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}
+    original_archive = handoff["api"].archive.side_effect
+    handoff["api"].archive.side_effect = lambda repo, identity: payload if identity == 99 else original_archive(repo, identity)
+    evidence = {"source": main_plan["source"], "suite_artifacts": {"production-images": artifact["name"]},
+                "reused_suites": {"production-images": reference}}
+    verified = Mock(return_value=({**handoff["run"], "id": 456}, [artifact], evidence, main_plan))
+    monkeypatch.setattr(proof, "verified_plan", verified)
+    producing = Mock()
+    monkeypatch.setattr(proof, "producing_job", producing)
+    source = SimpleNamespace(run=handoff["run"], artifacts=handoff["artifacts"], plan=source_plan,
+                             suite_artifact="ci-result-production-images-attempt1", suite_attempt=1)
+    verifier = Mock(side_effect=ValueError("source rejected")) if alteration == "source-rejected" else Mock(return_value=source)
+    monkeypatch.setattr(ci_reuse, "verify_source", verifier)
+    if alteration is not None:
+        with pytest.raises((DeploymentError, ValueError), match="wrapper|source rejected"):
+            consumer.download(handoff["api"], REPO, 456, 2, main_sha, "mpatlas-monthly", handoff["root"] / "loaded", handoff["root"])
+        assert not handoff["calls"]
+        return
+    result = consumer.download(handoff["api"], REPO, 456, 2, main_sha, "mpatlas-monthly", handoff["root"] / "loaded", handoff["root"])
+    assert result["tested_sha"] == SHA and result["authorized_sha"] == main_sha
+    assert result["source_tag"] == bundle.source_tag("mpatlas-monthly", SHA)
+    assert Path(result["archive"]).read_bytes() == handoff["files"]["images/mpatlas-monthly.docker.tar"]
+    producing.assert_called_once_with(handoff["api"], REPO, 456, 2, main_sha, "production-images", 7, 9)
+    verifier.assert_called_once_with(handoff["api"], REPO, main_plan, handoff["root"], "production-images", reference,
+                                     main_source=wrapper["source"], require_latest=False)
+
+
 @pytest.mark.parametrize("target", sorted(bundle.TARGETS))
 @pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
 def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff, target, compression):
@@ -444,6 +498,8 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
             return SHA
         if args[:2] == ["docker", "version"]:
             return "{}"
+        if "{{json .Config.Env}}" in args:
+            return "[]"
         if args[:4] == ["docker", "image", "inspect", "--format"]:
             target = args[-1].partition("/")[2].partition(":")[0]
             return handoff["manifest"]["images"].get(target, {"config_digest": "sha256:" + "c" * 64})["config_digest"]

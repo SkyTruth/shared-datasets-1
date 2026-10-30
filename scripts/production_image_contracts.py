@@ -18,6 +18,18 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.tested_image_bundle import BUILD_TARGETS, TARGETS, load_image, pack_image
 
+REUSABLE_IMAGE_TARGETS = frozenset({"mpatlas-monthly", "eamlis-monthly", "catalog-viewer", "dataset-usage"})
+
+
+def verify_tree_bound_image(image_id, executor):
+    environment = json.loads(subprocess.check_output(
+        ["docker", "image", "inspect", "--format", "{{json .Config.Env}}", image_id], text=True))
+    if not isinstance(environment, list) or any(
+        not isinstance(value, str) or value.partition("=")[0] in {"SHARED_DATASETS_EXECUTOR_SHA", "GITHUB_SHA"}
+        or executor in value for value in environment
+    ):
+        raise ValueError("tree-bound image contains revision-dependent runtime environment")
+
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
 script = pathlib.Path(shutil.which("gdal_calc.py"))
@@ -160,6 +172,8 @@ def main():
     for target in args.target or BUILD_TARGETS:
         subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
+        if target in REUSABLE_IMAGE_TARGETS:
+            verify_tree_bound_image(image_id, executor)
         print(f"[{target}] testing immutable image {image_id}", flush=True)
         for command in commands(target, executor, image_id=image_id)[1:]:
             subprocess.run(command, check=True)

@@ -187,8 +187,35 @@ def test_production_cache_keeps_deployment_artifacts():
     assert buildx < runtime < producer
     assert steps[producer]['env']['SHARED_DATASETS_GITHUB_IMAGE_CACHE'] == 'true'
     retained = next(step['with'] for step in steps if step.get('id') == 'retained-results')
-    assert retained['retention-days'] == 14
+    assert retained['retention-days'] == "${{ github.event_name == 'pull_request' && 30 || 14 }}"
     assert '!${{ runner.temp }}/ci-results/production-images/images/*.docker.tar' in retained['path'].splitlines()
+
+
+@pytest.mark.parametrize('suite', ['geospatial-integration', 'production-images', 'browser'])
+def test_reuse_precedes_and_skips_expensive_work_without_skipping_results(suite):
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs'][suite]
+    assert job['permissions'] == {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'}
+    steps = job['steps']
+    reuse = next(step for step in steps if step.get('id') == 'reuse')
+    assert reuse['if'] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert reuse['env'] == {'GH_TOKEN': '${{ github.token }}'}
+    assert f'--suite {suite}' in reuse['run'] and '--github-output "$GITHUB_OUTPUT"' in reuse['run']
+    for step in steps:
+        expensive = ('run-suite' in step.get('run', '') or step.get('uses', '').startswith(('docker/', './.github/actions/ci-tools'))
+                     or step.get('name') == 'Expose the ephemeral Actions cache runtime')
+        if expensive:
+            assert steps.index(reuse) < steps.index(step)
+            assert step['if'] == "steps.reuse.outputs.reused != 'true'"
+    retained = next(step for step in steps if step.get('id') == 'retained-results')
+    assert retained['if'] == 'always()'
+    assert retained['with']['if-no-files-found'] == 'error'
+
+
+def test_original_pr_proof_retention_preserves_main_recovery_window():
+    workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
+    for job_name, prefix in [('geospatial-changes', 'ci-validation-plan-'), ('ci-ready', 'ci-ready-evidence-')]:
+        retained = next(step for step in workflow['jobs'][job_name]['steps'] if step.get('with', {}).get('name', '').startswith(prefix))
+        assert retained['with']['retention-days'] == "${{ github.event_name == 'pull_request' && 30 || 14 }}"
 
 
 def image_retention_steps():
@@ -211,24 +238,26 @@ def test_each_image_upload_is_required_and_contains_only_its_tar():
     for target, step in images.items():
         assert step['uses'] == 'actions/upload-artifact@v4'
         assert step.get('id') and not step.get('continue-on-error')
-        assert step["if"] == f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
+        assert step["if"] == f"steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
         assert step['with']['path'] == '${{ runner.temp }}/ci-results/production-images/images/' + target + '.docker.tar'
         assert step['with']['if-no-files-found'] == 'error'
-        assert step['with']['retention-days'] == 14
+        expected_retention = "${{ github.event_name == 'pull_request' && 30 || 14 }}" if target in {'mpatlas-monthly', 'eamlis-monthly', 'catalog-viewer', 'dataset-usage'} else 14
+        assert step['with']['retention-days'] == expected_retention
         assert steps.index(producer) < steps.index(step) < steps.index(compact)
     assert len({step['id'] for step in images.values()}) == len(IMAGE_TARGETS)
 
 
 @pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
 @pytest.mark.parametrize('selected', [IMAGE_TARGETS, {'eamlis-monthly'}, set()])
-def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcome, selected):
+@pytest.mark.parametrize('reused', [False, True])
+def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcome, selected, reused):
     steps, images = image_retention_steps()
     small = next(step for step in steps if step.get('id') == 'retained-results')
     compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
     expression = compact['if'].removeprefix('${{').removesuffix('}}').strip()
     uploads = [small, *images.values()]
     for failed in uploads:
-        evaluated = ' '.join(expression.replace('always()', 'True').split())
+        evaluated = ' '.join(expression.replace('always()', 'True').replace('steps.reuse.outputs.reused', repr('true' if reused else 'false')).split())
         for target in images:
             condition = f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
             evaluated = evaluated.replace(condition, repr(target in selected))
@@ -236,7 +265,7 @@ def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcom
             reference = f"steps.{step['id']}.outcome"
             assert reference in expression, 'compact evidence must wait for every required upload'
             evaluated = evaluated.replace(reference, repr(outcome if step is failed else 'success'))
-        required = failed is small or failed['id'].removeprefix('retained-') in selected
+        required = failed is small or (not reused and failed['id'].removeprefix('retained-') in selected)
         assert eval(evaluated.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}}) is (not required or outcome == 'success')
 
 

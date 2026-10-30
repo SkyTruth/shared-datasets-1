@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
 from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.deployment_revision import DeploymentError
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
@@ -376,6 +377,31 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     return versions
 
 
+def reuse_suite(root: Path, plan: dict, suite: str, output: Path) -> bool:
+    """Record a verified original producer; never relabel its bytes as main's."""
+    if os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF") != "refs/heads/main":
+        return False
+    from scripts.ci_reuse import discover
+    from scripts.sdk_release_authorization import GitHub
+
+    validate_checkout(root, plan)
+    main_source = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
+    source = discover(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root, suite, main_source=main_source)
+    if source is None:
+        return False
+    result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
+    result.update({
+        "schema_version": 1, "suite": suite, "status": "success", "tools": source.result["tools"],
+        "source": main_source,
+        "commands": [{"argv": ["ci_preflight.py", "reuse-suite", "--suite", suite], "exit_code": 0}],
+        "reused_from": source.reference,
+    })
+    validate_checkout(root, plan)
+    write_json(output / "result.json", result)
+    print(f"{suite}: verified original PR producer {source.reference}; no rebuild or artifact copy.")
+    return True
+
+
 def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
     if suite not in plan["suites"]:
         raise ValueError(f"suite {suite} was not selected")
@@ -597,6 +623,11 @@ def main() -> int:
     runner.add_argument("--plan", type=Path, required=True)
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
+    reuse = commands.add_parser("reuse-suite")
+    reuse.add_argument("--plan", type=Path, required=True)
+    reuse.add_argument("--suite", choices=SUITES, required=True)
+    reuse.add_argument("--output", type=Path, required=True)
+    reuse.add_argument("--github-output", type=Path, required=True)
     verifier = commands.add_parser("verify")
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
@@ -624,6 +655,11 @@ def main() -> int:
         if args.command == "run-suite":
             plan = load_plan(args.plan)
             return 0 if run_suite(root, plan, args.suite, args.output)["status"] == "success" else 1
+        if args.command == "reuse-suite":
+            reused = reuse_suite(root, load_plan(args.plan), args.suite, args.output)
+            with args.github_output.open("a") as output:
+                output.write(f"reused={'true' if reused else 'false'}\n")
+            return 0
         if args.command == "verify":
             run_id = os.environ.get("GITHUB_RUN_ID")
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
@@ -641,7 +677,15 @@ def main() -> int:
                 proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
                 if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
                     raise ValueError("selected plan has no successful source selection job")
-            chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id, run_attempt=current_attempt)
+            def verify_reuse(result):
+                from scripts.ci_reuse import verify_source
+                from scripts.sdk_release_authorization import GitHub
+
+                return verify_source(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root,
+                                     result["suite"], result["reused_from"], main_source=result["source"])
+
+            chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id,
+                                    run_attempt=current_attempt, reuse_verifier=verify_reuse)
             if args.output:
                 evidence = {**plan, "status": "success"}
                 if run_id:
@@ -650,6 +694,9 @@ def main() -> int:
                         "plan_artifact": f"ci-validation-plan-attempt{plan['source']['run_attempt']}",
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
                     })
+                reused = {suite: result["reused_from"] for suite, result in chosen.items() if "reused_from" in result}
+                if reused:
+                    evidence["reused_suites"] = reused
                 write_json(args.output, evidence)
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
@@ -657,7 +704,7 @@ def main() -> int:
             parser.error("--base and --head are required for isolated preflight")
         with local_preflight_slot(Path(args.repo), args.base, args.head):
             return preflight(args)
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+    except (DeploymentError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"Preflight failed: {exc}", file=sys.stderr)
         return 1
 

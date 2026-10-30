@@ -116,17 +116,40 @@ def source(api, repository, run_id, attempt, sha):
                 and item.get("event") == "pull_request"
                 and all(item.get(key, {}).get("id") == repo["id"] and item.get(key, {}).get("full_name") == repository
                         for key in ("repository", "head_repository")), "benchmark is not the exact current same-repository PR CI attempt")
+    require(run.get("head_sha") == latest.get("head_sha"), "benchmark current PR head changed")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
     producers = [successful_job(jobs, name) for name in ("geospatial-changes", "production-images")]
     artifacts = api.pages(f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100", field="artifacts")
-    reference = f"ci-validation-plan-attempt{attempt}"
-    current.retained_artifact(artifacts, reference, run_id, proof.MAX_ARCHIVE)
+    def execution_artifact(prefix, producer):
+        window = proof.gate_execution(producer)
+        found = [artifact for artifact in artifacts if not artifact.get("expired")
+                 and re.fullmatch(re.escape(prefix) + r"-attempt[1-9][0-9]*", str(artifact.get("name")))
+                 and window[0] <= proof.execution_time(artifact.get("created_at")) <= window[1]]
+        require(len(found) == 1, "benchmark execution artifact missing or ambiguous: " + prefix)
+        reference = found[0]["name"]
+        producing_attempt = proof.reference_attempt(reference, prefix, attempt)
+        original = run if producing_attempt == attempt else api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{producing_attempt}")
+        require(original.get("id") == run_id and original.get("run_attempt") == producing_attempt
+                and original.get("workflow_id") == workflow["id"] and original.get("path") == workflow["path"]
+                and original.get("event") == "pull_request" and original.get("head_sha") == latest.get("head_sha")
+                and all(original.get(key, {}).get("id") == repo["id"] and original.get(key, {}).get("full_name") == repository
+                        for key in ("repository", "head_repository")), "benchmark original producer identity mismatch")
+        original_jobs = jobs if producing_attempt == attempt else api.pages(
+            f"repos/{repository}/actions/runs/{run_id}/attempts/{producing_attempt}/jobs?per_page=100", field="jobs")
+        require(proof.gate_execution(successful_job(original_jobs, producer["name"])) == window,
+                "benchmark artifact belongs to another producer execution")
+        current.retained_artifact(artifacts, reference, run_id, proof.MAX_ARCHIVE)
+        producer["run_attempt"] = producing_attempt
+        return reference, producing_attempt
+
+    reference, plan_attempt = execution_artifact("ci-validation-plan", producers[0])
+    _, production_attempt = execution_artifact("ci-result-production-images", producers[1])
     plan = bundle.read_json(proof.artifact_files(api, repository, run_id, artifacts, reference)["plan.json"])
     require(plan.get("schema_version") == 1 and plan.get("tested_sha") == sha
-            and plan.get("source") == {"run_id": str(run_id), "run_attempt": attempt}
+            and plan.get("source") == {"run_id": str(run_id), "run_attempt": plan_attempt}
             and "production-images" in plan.get("suites", []), "benchmark plan source or tested revision mismatch")
     require(run.get("head_sha") == latest.get("head_sha") == plan.get("head"), "benchmark PR source head mismatch")
-    return plan, artifacts, producers
+    return plan, artifacts, producers, production_attempt
 
 
 def result_image(api, repository, run_id, attempt, sha, plan, artifacts):
@@ -169,11 +192,7 @@ def artifact_record(artifact):
 
 
 def trial(args, variant, index, baseline, expected, output, warm_daemon_id=None):
-    canonical = f"ci-image-{TARGET}-attempt{args.attempt}"
-    actual = (f"benchmark-full-images-attempt{args.attempt}" if variant == "baseline"
-              else f"benchmark-image-mpatlas-level0-attempt{args.attempt}" if variant == "level0" else canonical)
-    api = MeasuredAPI(current.GitHub(), baseline.GitHub() if variant == "baseline" else current.GitHub(),
-                      (actual, canonical) if variant == "level0" else None)
+    api = MeasuredAPI(current.GitHub(), baseline.GitHub() if variant == "baseline" else current.GitHub())
     item = {"variant": variant, "sequence": index, "round": 1 if index <= 3 else 2, "status": "running"}
     directory = output / f"trial-{index}-{variant}"
     directory.mkdir()
@@ -185,17 +204,24 @@ def trial(args, variant, index, baseline, expected, output, warm_daemon_id=None)
             if warm_daemon_id is not None:
                 require(item["tag_before"].get("daemon_id") == warm_daemon_id and item["tag_before"]["present"],
                         "timed benchmark must start with the exact warmed image present")
-            plan, artifacts, producers = source(api, args.repository, args.run_id, args.attempt, args.sha)
+            plan, artifacts, producers, production_attempt = source(api, args.repository, args.run_id, args.attempt, args.sha)
+            canonical = f"ci-image-{TARGET}-attempt{production_attempt}"
+            actual = (f"benchmark-full-images-attempt{production_attempt}" if variant == "baseline"
+                      else f"benchmark-image-mpatlas-level0-attempt{production_attempt}" if variant == "level0" else canonical)
+            api.alias = (actual, canonical) if variant == "level0" else None
             chosen = current.retained_artifact(artifacts, actual, args.run_id,
                                                baseline.MAX_ARTIFACT if variant == "baseline" else current.MAX_ARTIFACT)
+            window = proof.gate_execution(producers[1])
+            require(window[0] <= proof.execution_time(chosen.get("created_at")) <= window[1],
+                    "benchmark image artifact belongs to another producer execution")
             item["actual_artifact"] = artifact_record(chosen)
             item["producer_jobs"] = producers
             path = directory / expected["archive"]
             select_started = perf_counter()
             loader = baseline.selected_image if variant == "baseline" else current.selected_image
             image = loader(api, args.repository, args.run_id, api.artifacts(artifacts),
-                           actual if variant == "baseline" else f"ci-result-production-images-attempt{args.attempt}",
-                           path, TARGET, args.sha, plan, args.attempt)
+                           actual if variant == "baseline" else f"ci-result-production-images-attempt{production_attempt}",
+                           path, TARGET, args.sha, plan, production_attempt)
             item["selection_seconds"] = perf_counter() - select_started
             require(image == expected, "benchmark variants do not identify exactly the same tested TAR and config")
             load_started = perf_counter()
@@ -264,8 +290,8 @@ def main():
             baseline, report["baseline"] = baseline_loader(args.baseline_ref, Path(work))
             report["machine"] = machine()
             api = MeasuredAPI(current.GitHub(), current.GitHub())
-            plan, artifacts, _ = source(api, args.repository, args.run_id, args.attempt, args.sha)
-            expected = result_image(api, args.repository, args.run_id, args.attempt, args.sha, plan, artifacts)
+            plan, artifacts, _, production_attempt = source(api, args.repository, args.run_id, args.attempt, args.sha)
+            expected = result_image(api, args.repository, args.run_id, production_attempt, args.sha, plan, artifacts)
             report["image"] = expected
             report["setup_reads"] = api.reads
             report["setup_downloads"] = api.downloads

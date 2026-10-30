@@ -245,7 +245,7 @@ def test_selected_builds_emit_exact_retained_manifest(tmp_path, monkeypatch, tar
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.run',
                         lambda args, **kwargs: calls.append(args))
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output',
-                        lambda args, **kwargs: 'b' * 40 if args[0] == 'git' else IMAGE_ID + '\n')
+                        lambda args, **kwargs: 'b' * 40 if args[0] == 'git' else '[]' if '{{json .Config.Env}}' in args else IMAGE_ID + '\n')
     packed = Mock(side_effect=lambda target, *args: {'archive': target + '.docker.tar'})
     loaded = Mock()
     monkeypatch.setattr('scripts.production_image_contracts.pack_image', packed)
@@ -277,3 +277,30 @@ def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypa
     with pytest.raises(subprocess.CalledProcessError):
         main()
     assert not (tmp_path / 'images/manifest.json').exists()
+
+
+@pytest.mark.parametrize('environment', [['PATH=/bin'], ['GITHUB_SHA=abc'], ['SHARED_DATASETS_EXECUTOR_SHA=abc'], ['OTHER=' + 'b' * 40], {}, [1]])
+def test_tree_bound_image_checks_actual_immutable_environment(monkeypatch, environment):
+    from scripts.production_image_contracts import verify_tree_bound_image
+    output = Mock(return_value=json.dumps(environment))
+    monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output', output)
+    if environment == ['PATH=/bin']:
+        verify_tree_bound_image(IMAGE_ID, 'b' * 40)
+    else:
+        with pytest.raises(ValueError, match='revision-dependent'):
+            verify_tree_bound_image(IMAGE_ID, 'b' * 40)
+    output.assert_called_once_with(['docker', 'image', 'inspect', '--format', '{{json .Config.Env}}', IMAGE_ID], text=True)
+
+
+def test_tree_bound_recipes_have_no_revision_or_git_context_inputs():
+    from pathlib import Path
+    from scripts.production_image_contracts import REUSABLE_IMAGE_TARGETS
+    assert REUSABLE_IMAGE_TARGETS == {'mpatlas-monthly', 'eamlis-monthly', 'catalog-viewer', 'dataset-usage'}
+    root = Path(__file__).resolve().parents[1]
+    for target in REUSABLE_IMAGE_TARGETS:
+        folder = 'services' if target in {'catalog-viewer', 'monitoring-slack'} else 'ingestion'
+        recipe = (root / folder / target.replace('-', '_') / 'Dockerfile').read_text()
+        assert 'SHARED_DATASETS_EXECUTOR_SHA' not in recipe and 'GITHUB_SHA' not in recipe and '.git' not in recipe
+        for line in recipe.splitlines():
+            if line.startswith(('COPY ', 'ADD ')) and '--from=' not in line:
+                assert not any(source in {'.', './', '/', '*'} for source in line.split()[1:-1])

@@ -68,7 +68,7 @@ jobs:
           name: ci-validation-plan-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-plan/plan.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
 
   lint:
     needs: geospatial-changes
@@ -143,6 +143,10 @@ jobs:
     if: needs.geospatial-changes.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,8 +156,18 @@ jobs:
         with:
           pattern: ci-validation-plan-attempt*
           path: ${{ runner.temp }}/ci-plans
+      - name: Reuse verified PR native validation
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
+          --suite geospatial-integration --output "$RUNNER_TEMP/ci-results/geospatial-integration" --github-output "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: steps.reuse.outputs.reused != 'true'
       - name: Build geospatial CI image
+        if: steps.reuse.outputs.reused != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -163,6 +177,7 @@ jobs:
           cache-from: type=gha,scope=geospatial-ci
           cache-to: type=gha,mode=max,scope=geospatial-ci,ignore-error=true
       - name: Run shared native validation
+        if: steps.reuse.outputs.reused != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/ci-results/geospatial-integration"
           docker run --rm --platform linux/amd64 \
@@ -181,7 +196,7 @@ jobs:
           name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/geospatial-integration
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Upload compact gate result
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.retained-results.outcome == 'success' }}
@@ -196,18 +211,33 @@ jobs:
     if: needs.geospatial-changes.outputs.production_images == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/ci-tools
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-validation-plan-attempt*
           path: ${{ runner.temp }}/ci-plans
+      - name: Reuse verified PR production images
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
+          --suite production-images --output "$RUNNER_TEMP/ci-results/production-images" --github-output "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/ci-tools
+        if: steps.reuse.outputs.reused != 'true'
       - uses: docker/setup-buildx-action@v3
+        if: steps.reuse.outputs.reused != 'true'
       - name: Expose the ephemeral Actions cache runtime
+        if: steps.reuse.outputs.reused != 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -218,33 +248,34 @@ jobs:
               core.exportVariable(name, value);
             }
       - name: Test the actual production image recipes
+        if: steps.reuse.outputs.reused != 'true'
         env:
           SHARED_DATASETS_GITHUB_IMAGE_CACHE: "true"
         run: python scripts/ci_preflight.py run-suite --plan "$(find "$RUNNER_TEMP/ci-plans" -name plan.json | sort -V | tail -1)" --suite production-images --output "$RUNNER_TEMP/ci-results/production-images"
       - name: Retain tested mpatlas-monthly image
         uses: actions/upload-artifact@v4
         id: retained-mpatlas-monthly
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')
         with:
           name: ci-image-mpatlas-monthly-attempt${{ github.run_attempt }}
           compression-level: 1
           path: ${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Retain tested eamlis-monthly image
         uses: actions/upload-artifact@v4
         id: retained-eamlis-monthly
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly')
         with:
           name: ci-image-eamlis-monthly-attempt${{ github.run_attempt }}
           compression-level: 1
           path: ${{ runner.temp }}/ci-results/production-images/images/eamlis-monthly.docker.tar
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Retain tested wdpa-monthly image
         uses: actions/upload-artifact@v4
         id: retained-wdpa-monthly
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly')
         with:
           name: ci-image-wdpa-monthly-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -254,7 +285,7 @@ jobs:
       - name: Retain tested sea-ice-daily image
         uses: actions/upload-artifact@v4
         id: retained-sea-ice-daily
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily')
         with:
           name: ci-image-sea-ice-daily-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -264,27 +295,27 @@ jobs:
       - name: Retain tested catalog-viewer image
         uses: actions/upload-artifact@v4
         id: retained-catalog-viewer
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer')
         with:
           name: ci-image-catalog-viewer-attempt${{ github.run_attempt }}
           compression-level: 1
           path: ${{ runner.temp }}/ci-results/production-images/images/catalog-viewer.docker.tar
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Retain tested dataset-usage image
         uses: actions/upload-artifact@v4
         id: retained-dataset-usage
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage')
         with:
           name: ci-image-dataset-usage-attempt${{ github.run_attempt }}
           compression-level: 1
           path: ${{ runner.temp }}/ci-results/production-images/images/dataset-usage.docker.tar
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Retain tested monitoring-slack image
         uses: actions/upload-artifact@v4
         id: retained-monitoring-slack
-        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack')
+        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack')
         with:
           name: ci-image-monitoring-slack-attempt${{ github.run_attempt }}
           compression-level: 1
@@ -301,7 +332,7 @@ jobs:
             ${{ runner.temp }}/ci-results/production-images
             !${{ runner.temp }}/ci-results/production-images/images/*.docker.tar
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Retain full-bundle benchmark baseline
         if: needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'
         uses: actions/upload-artifact@v4
@@ -324,13 +355,14 @@ jobs:
         uses: actions/upload-artifact@v4
         if: >-
           ${{ always() && steps.retained-results.outcome == 'success' &&
+            (steps.reuse.outputs.reused == 'true' || (
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly') || steps.retained-mpatlas-monthly.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly') || steps.retained-eamlis-monthly.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly') || steps.retained-wdpa-monthly.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily') || steps.retained-sea-ice-daily.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer') || steps.retained-catalog-viewer.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage') || steps.retained-dataset-usage.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack') || steps.retained-monitoring-slack.outcome == 'success') }}
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack') || steps.retained-monitoring-slack.outcome == 'success'))) }}
         with:
           name: ci-gate-result-production-images-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/production-images/result.json
@@ -416,19 +448,33 @@ jobs:
     if: needs.geospatial-changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/ci-tools
-        with:
-          binaries: gitleaks
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-validation-plan-attempt*
           path: ${{ runner.temp }}/ci-plans
+      - name: Reuse verified PR browser validation
+        id: reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
+          --suite browser --output "$RUNNER_TEMP/ci-results/browser" --github-output "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/ci-tools
+        if: steps.reuse.outputs.reused != 'true'
+        with:
+          binaries: gitleaks
       - name: Run shared real-browser validation
+        if: steps.reuse.outputs.reused != 'true'
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
       - uses: actions/upload-artifact@v4
         id: retained-results
@@ -437,7 +483,7 @@ jobs:
           name: ci-result-browser-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/browser
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
       - name: Upload compact gate result
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.retained-results.outcome == 'success' }}
@@ -452,6 +498,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     if: always()
     needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser]
     runs-on: ubuntu-24.04
@@ -478,6 +525,7 @@ jobs:
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ci-jobs.json").write_text(os.environ["JOB_RESULTS"])'
           python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
@@ -488,7 +536,7 @@ jobs:
           name: ci-ready-evidence-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-ready/evidence.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
 
   # Post-gate callers check selection and prerequisite results explicitly.
   # Explicit status avoids implicit success() over skipped optional ancestors.
@@ -608,6 +656,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write
@@ -624,6 +673,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write
@@ -690,6 +740,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write
@@ -707,6 +758,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write

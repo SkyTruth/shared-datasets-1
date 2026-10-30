@@ -113,7 +113,8 @@ Docker inputs include common ingestion code, WDPA's sea-ice smoke dependency,
 and the viewer's shared HTTP and preview runtime. Required deployment images
 are always included. Viewer runtime edits do not redeploy the usage collector;
 shared Terraform resources and explicit usage/catalog inputs still select it.
-No validation result is reused across revisions.
+Local preflight always executes the selected suites. Hosted main CI can reuse
+the limited, independently verified PR evidence described below.
 
 GitHub CI retains exactly the selected deployable images with their config and
 rootfs hashes. The runner, `ci-ready` and authenticated deployment consumer
@@ -130,8 +131,8 @@ Actions build caches. Catalog-viewer and monitoring-slack use the same Buildx
 installs avoid the demonstrated long cache-read stalls. Local BuildKit reuse is
 still available within the job.
 GitHub's branch restrictions isolate PR cache writes from main; PRs can restore
-main's cache. BuildKit invalidates layers when recipe inputs change. Every image
-is still built, checked by immutable identity, exported, hashed and loaded again.
+main's cache. BuildKit invalidates layers when recipe inputs change. Every freshly
+selected image is built, checked by immutable identity, exported, hashed and loaded again.
 Caches never substitute for validation evidence or deployment artifacts. Cache
 export errors are optional acceleration failures; image or validation failures
 still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
@@ -254,6 +255,40 @@ failed and unexpectedly skipped jobs cannot satisfy it. Local evidence is not
 an approval artifact. Reviews, protected environments and trusted event
 provenance remain GitHub-only authorization boundaries.
 
+Main may reuse browser and native validation, and the entire production-image
+suite when every selected recipe is one of MPAtlas, EAMLIS, catalog viewer or
+dataset usage. WDPA and sea ice embed the executor revision; monitoring Slack
+retains its existing infrastructure delivery path. Any selection containing an
+ineligible recipe rebuilds the whole selected image set. Lint, history/security
+and policy tests, SDK validation and the main `ci-ready` gate always run fresh.
+
+`scripts/ci_reuse.py` requires a merged same-repository PR, its final head and
+latest successful CI attempt, and the exact same base, tested tree, changed
+paths, selected suites and toolchain contract. The PR merge parents must match
+that base/head. Contract files must be unchanged from the trusted base, so a PR
+cannot authorize its own weakened verifier merely by matching main's tree.
+Provider workflow/repository identities, successful producing jobs, gate execution
+windows and artifact ZIP digests are checked independently. Recursive reuse is
+not allowed. Missing, expired or insufficiently retained sources run fresh work;
+malformed selected proof fails instead of falling back to a new pass.
+
+The main suite writes a small result with an explicit `reused_from` reference.
+It skips dependency setup, validation/builds and image uploads. Main's gate
+revalidates the original PR evidence and records `reused_suites`; it does not
+rename original manifests, tags or tested SHAs. A deployment first verifies its
+ordinary main authorization and wrapper, then independently verifies the recorded
+PR producer and loads its original exact bytes. A later PR rerun cannot revoke
+an already accepted main artifact; the recorded successful producer and all byte
+checks remain mandatory. Main remains the executor and publishing authority.
+
+Reusable PR proof/results and four image archives are retained for 30 days.
+Adoption requires every source dependency to remain available until at least
+15 days after the exact main producer job started. That exceeds the existing
+14-day result retention plus the maximum 60-minute producer timeout, including
+selective reruns. Old PRs or shorter actual provider retention fall back to fresh
+validation. Main artifacts keep their 14-day retention. This uses extra artifact
+storage to avoid computation; it does not move validation to another runner.
+
 CI cancellation belongs to the whole PR workflow, so a newer PR run cancels the
 obsolete selection, suites and gate together. Push-to-main and manual runs use
 separate groups per run and are never cancelled by this PR policy; deployment
@@ -287,9 +322,10 @@ Selected deployment images are retained separately as
 `ci-image-<target>-attempt<N>` artifacts, each containing exactly one
 `<target>.docker.tar` with compression level 1. Its result artifact retains
 the exact selected-image manifest, result and diagnostic logs, excluding TARs.
-The compact production-image upload requires every selected image upload and
-the diagnostic upload to succeed; a missing selected file fails retention.
-Unselected image uploads are skipped.
+For fresh production-image results, the compact upload requires every selected
+image upload and the diagnostic upload to succeed; a missing selected file fails
+retention. A reused result requires its verified wrapper upload instead.
+Unselected and reused image uploads are skipped.
 Other suites retain their existing complete result bundles. The compact upload
 fails if its result file is missing. `ci-ready` downloads only compact results,
 preserving its revision, tree, contract, toolchain and producing-job checks.
@@ -320,6 +356,12 @@ authorization is excluded from this PR diagnostic; no production environment,
 GCP authentication, image push or deployment runs in the benchmark job. Its
 `image-handoff-benchmark-attempt<N>` artifact contains the measurements. Other
 changes and main runs do not select this extra benchmark.
+
+A selective benchmark rerun retains the successful plan and image producers.
+It resolves their attempts independently from artifact creation times within
+the effective jobs' execution windows, then verifies the same successful
+executions in those original attempts. Every trial reads the original image
+attempt; a new failed producer or missing upload cannot fall back to older bytes.
 
 The pinned actionlint version predates GitHub's `concurrency.queue` field.
 `scripts/check_workflow_syntax.py` independently requires `queue: max` together

@@ -196,13 +196,17 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     assert steps.index(retained) < steps.index(receipt)
     condition = "always() && steps.retained-results.outcome == 'success'"
     if suite == "production-images":
+        uploads = []
         for step in steps:
             if step.get("with", {}).get("name", "").startswith("ci-image-"):
-                condition += f" && (!{step['if']} || steps.{step['id']}.outcome == 'success')"
+                selected = step['if'].removeprefix("steps.reuse.outputs.reused != 'true' && ")
+                uploads.append(f"(!{selected} || steps.{step['id']}.outcome == 'success')")
+        condition += " && (steps.reuse.outputs.reused == 'true' || ( " + ' && '.join(uploads) + '))'
     assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"
-    assert receipt["with"]["retention-days"] == retained["with"]["retention-days"] == 14
+    assert receipt["with"]["retention-days"] == 14
+    assert retained['with']['retention-days'] == ("${{ github.event_name == 'pull_request' && 30 || 14 }}" if suite in {'production-images', 'browser', 'geospatial-integration'} else 14)
 
 
 def test_missing_result_cannot_form_a_compact_gate_archive(tmp_path):
@@ -213,6 +217,21 @@ def test_missing_result_cannot_form_a_compact_gate_archive(tmp_path):
     (output / "runner.log").write_text("runner stopped before producing a result\n")
     with pytest.raises(AssertionError, match="missing configured upload source"):
         package_upload(receipt, tmp_path, "production-images", 1, tmp_path)
+
+
+@pytest.mark.parametrize('suite', ['production-images', 'browser', 'geospatial-integration'])
+def test_reused_suite_uploads_original_reference_without_copying_payloads(tmp_path, suite):
+    steps = producer_steps(load_workflow(WORKFLOW), suite)
+    output = tmp_path / 'ci-results' / suite
+    output.mkdir(parents=True)
+    wrapper = {'suite': suite, 'reused_from': {'pr_number': 42, 'run_id': 100, 'run_attempt': 1}}
+    (output / 'result.json').write_text(json.dumps(wrapper))
+    for prefix in ('ci-result-', 'ci-gate-result-'):
+        step = next(step for step in steps if step.get('with', {}).get('name', '').startswith(prefix))
+        _, archive = package_upload(step, tmp_path, suite, 2, tmp_path)
+        with zipfile.ZipFile(archive) as bundle:
+            assert bundle.namelist() == ['result.json']
+            assert json.loads(bundle.read('result.json')) == wrapper
 
 
 def test_hosted_handoff_benchmark_is_read_only_and_separate_from_deployments():
@@ -243,7 +262,7 @@ def test_hosted_compression_comparison_uses_identical_tars_and_is_pr_only(level)
     if level == 0:
         assert step["if"] == "needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'"
     else:
-        assert step["if"] == "contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')"
+        assert step["if"] == "steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')"
     assert step["with"]["path"] == "${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar"
     assert step["with"]["compression-level"] == level
     assert step["with"]["if-no-files-found"] == "error"
