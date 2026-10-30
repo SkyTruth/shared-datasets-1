@@ -490,6 +490,11 @@ def main():
             if source_digest() != report["source_tree_sha256"]:
                 report["state"] = "failed"
                 raise RuntimeError("Processing source changed during the benchmark")
+    except feature_metadata.IdentityDecisionRequired as blocked:
+        # Preserve the designed pause across the subprocess boundary. All other
+        # failures still leave a failed report and a nonzero process exit.
+        report["state"] = "blocked"
+        report["blocked_record"] = blocked.blocked_record()
     finally:
         report["elapsed_seconds"] = time.monotonic() - started
         report["phases"] = profiler.records

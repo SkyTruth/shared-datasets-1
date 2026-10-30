@@ -144,8 +144,8 @@ Outcomes distinguish applied configuration, pending runtime verification,
 verified terminal success, failure and unknown state. Short canaries wait for
 terminal status. Before building or applying, an active execution defers the
 whole ingestion target; production work is never cancelled automatically. A
-paused WDPA schedule suppresses the default canary while allowing a code
-deployment; an explicit canary date requests verification during the pause.
+paused WDPA schedule also defers the target until an explicit canary date is
+supplied, so installation and verification share one deployment attempt.
 Ingestion no-ops require verified runtime evidence; applied
 configuration alone is insufficient. A canary skipped because of a later race
 leaves unknown state and fails visibly. Detached WDPA executions retain the exact execution ID and

@@ -10,6 +10,7 @@ import sys
 import time
 
 from ingestion.common import publication as p
+from ingestion.common.feature_metadata import IdentityDecisionRequired
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.artifact_bundle import BuildStager
@@ -66,7 +67,20 @@ def replay(source, inputs, directory, run_date, *, sample):
         "--workdir", str(directory), "--run-date", run_date]
     command += ["--fraction", "0.001", "--seed", "7919", "--compare-legacy"] if sample else ["--stage-build"]
     subprocess.run(command, check=True)
-    return json.loads((directory / "benchmark.json").read_text())
+    report = json.loads((directory / "benchmark.json").read_text())
+    if report["state"] == "blocked":
+        blocked = report["blocked_record"]
+        p.require(blocked["status"] == "blocked"
+            and blocked["reason"] == "identity_decision_required"
+            and blocked["asset_slug"] in {asset.slug for asset in wdpa.ASSETS}
+            and blocked["release"] == run_date
+            and type(blocked["awaiting_decisions"]) is int
+            and blocked["awaiting_decisions"] > 0,
+            "invalid identity-decision blocked report")
+        raise IdentityDecisionRequired(blocked["next_step"],
+            asset_slug=blocked["asset_slug"], release=blocked["release"],
+            ambiguity_count=blocked["awaiting_decisions"])
+    return report
 
 
 def build_month(client, month, root):

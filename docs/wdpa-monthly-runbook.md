@@ -45,11 +45,13 @@ The ingestion IAM prerequisite gives the existing worker create-only access to
 its staging prefix; canonical publication permissions remain unchanged.
 
 For the one-time migration from the paused October publisher, complete protected
-IAM sync and deployment, execute a canary with an explicit current-month
-`canary_run_date=YYYY-MM-01`, verify its terminal result and both release indexes,
-then resume with **Ingestion / Schedule control**, `job=wdpa-monthly`,
-`action=resume`. A paused schedule skips the default deployment canary. Deployment
-of new code remains possible while paused. The dormant observer stays paused.
+IAM sync, then dispatch the protected WDPA deployment with an explicit current-month
+`canary_run_date=YYYY-MM-01` so deployment and canary share one verified attempt.
+Verify its terminal result and both release indexes, then resume with
+**Ingestion / Schedule control**, `job=wdpa-monthly`, `action=resume`.
+While paused, deployment without an explicit canary date defers before mutation;
+it must not install code and leave an unverifiable deployment record.
+The dormant observer stays paused.
 
 Manual deployment dispatch uses `main`, `executor_sha`, `source_run_id` (the
 successful main-push CI run) and `source_run_attempt`. `RUN_DATE` is an optional

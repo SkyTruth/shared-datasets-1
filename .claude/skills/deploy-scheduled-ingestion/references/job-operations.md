@@ -93,9 +93,10 @@ Already completed months and unchanged content produce skipped check-ins.
 Unavailable upstream data is retried at the next scheduled invocation.
 
 Follow the [monthly runbook](../../../../docs/wdpa-monthly-runbook.md) for the
-one-time migration from the paused publisher: protected IAM sync and deployment,
-an explicitly dated canary, terminal verification, then protected schedule resume.
-A paused schedule suppresses the default canary but permits code deployment.
+one-time migration from the paused publisher: protected IAM sync, one protected
+deployment with an explicit canary date, terminal verification, then protected
+schedule resume. A paused schedule without an explicit canary date defers the
+whole deployment before mutation.
 Preserve owned claims, counters, generation preconditions and committed receipts.
 The old manual build workflow is retired; October evidence remains historical.
 

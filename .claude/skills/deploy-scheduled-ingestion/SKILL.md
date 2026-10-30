@@ -110,9 +110,9 @@ needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
 alive at the same time.
 
 For WDPA, follow the [monthly operations runbook](../../../docs/wdpa-monthly-runbook.md)
-for the current accepted image and bundle, resource and quota prerequisites,
+for the tested image, automatic monthly validation, resource and quota prerequisites,
 protected deployment trigger, execution checks and owned recovery.
-It is the operational source for the single-build publication sequence.
+It is the operational source for the recurring monthly publication sequence.
 
 When a manual post-deploy execution is expected to take hours, start it
 asynchronously instead of waiting in the agent session:

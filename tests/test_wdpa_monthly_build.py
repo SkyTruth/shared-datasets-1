@@ -2,6 +2,7 @@
 import copy
 import datetime as dt
 import json
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -11,6 +12,77 @@ from ingestion.common import publication as p
 from ingestion.wdpa_monthly import automatic, build as producer, run as wdpa
 from scripts import wdpa_processing_gate as gate
 from test_wdpa_execution_observer import accepted_evidence
+
+
+@pytest.mark.parametrize('blocked', [True, False])
+@pytest.mark.parametrize('ambiguity_count', [1, 2])
+def test_replay_preserves_typed_blocked_outcome_across_cli_report(monkeypatch, tmp_path, blocked, ambiguity_count):
+    from ingestion.common.feature_metadata import IdentityDecisionRequired
+
+    source = tmp_path / 'source.zip'
+    source.write_bytes(b'frozen source')
+    inputs = tmp_path / 'inputs'
+    inputs.mkdir()
+    (inputs / 'translation-sources.json').write_text('{}')
+    (inputs / 'pins.json').write_text('{}')
+    directory = tmp_path / 'replay'
+    # Exercise the real CLI in a child process and its real benchmark writer.
+    # Replace only the native source boundary, before any cloud calls or builds.
+    harness = '''
+import sys
+from scripts import local_wdpa_sample as cli
+from ingestion.common.feature_metadata import IdentityDecisionRequired
+cli.prepare_scratch = lambda: None
+cli.wdpa.native_versions = lambda: {}
+blocked = sys.argv[1] == 'blocked'
+ambiguity_count = int(sys.argv[2])
+def source_boundary(*args):
+    if blocked:
+        raise IdentityDecisionRequired('review needed', asset_slug='wdpa-marine',
+            release='2026-11-01', ambiguity_count=ambiguity_count)
+    raise RuntimeError('broken native source')
+cli.wdpa.prepare_source_datasets = source_boundary
+sys.argv = ['local_wdpa_sample.py', *sys.argv[3:]]
+cli.main()
+'''
+    run_process = subprocess.run
+    def command(argv, *, check):
+        return run_process([argv[0], '-c', harness, 'blocked' if blocked else 'failed', str(ambiguity_count), *argv[2:]], check=check)
+    monkeypatch.setattr(producer.subprocess, 'run', command)
+    expected_error = IdentityDecisionRequired if blocked else subprocess.CalledProcessError
+    with pytest.raises(expected_error) as caught:
+        producer.replay(source, inputs, directory, '2026-11-01', sample=True)
+    report = json.loads((directory / 'benchmark.json').read_text())
+    if blocked:
+        assert report['state'] == 'blocked'
+        assert report['blocked_record'] == caught.value.blocked_record()
+        assert caught.value.blocked_record()['awaiting_decisions'] == ambiguity_count
+    else:
+        assert report['state'] == 'failed'
+        assert 'blocked_record' not in report
+
+
+@pytest.mark.parametrize('change', [
+    {'reason': 'download_failed'}, {'asset_slug': 'unmanaged'},
+    {'release': '2026-10-01'}, {'awaiting_decisions': 0},
+    {'awaiting_decisions': True},
+])
+def test_replay_rejects_invalid_serialized_blocked_outcome(monkeypatch, tmp_path, change):
+    from ingestion.common.feature_metadata import IdentityDecisionRequired
+
+    record = IdentityDecisionRequired('review needed', asset_slug='wdpa-marine',
+        release='2026-11-01', ambiguity_count=2).blocked_record()
+    record.update(change)
+    directory = tmp_path / 'replay'
+    def command(argv, *, check):
+        directory.mkdir()
+        (directory / 'benchmark.json').write_text(json.dumps({
+            'state': 'blocked', 'blocked_record': record,
+        }))
+    monkeypatch.setattr(producer.subprocess, 'run', command)
+    with pytest.raises(p.PublicationError, match='invalid identity-decision blocked report'):
+        producer.replay(tmp_path / 'source.zip', tmp_path / 'inputs', directory,
+                        '2026-11-01', sample=True)
 
 
 def test_monthly_acceptance_uses_independent_counts_and_matching_input_month():
