@@ -46,6 +46,11 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_TARGETS = {"dataset-usage", "wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily"}
 SDK_WORKFLOW = "publish-typescript-sdk.yml"
 SDK_CANDIDATE_STEP = "Verify tested SDK candidate and reviewed version"
+# Exact read-only jobs remain distinct from the mutating sibling and its receipt.
+READ_ONLY_JOBS = {
+    (SDK_WORKFLOW, "candidate"): ("typescript-sdk", "publish", SDK_CANDIDATE_STEP),
+    ("wdpa-monthly-build.yml", "readiness"): ("wdpa-monthly-build", "build", "Report readiness for the next scheduler window"),
+}
 PUBLICATION_RECEIPT_JOB = re.compile(r"Complete publication receipt \(PR #([1-9][0-9]*); run ([1-9][0-9]*); attempt ([1-9][0-9]*)\)")
 
 
@@ -129,7 +134,7 @@ def job_targets(root=ROOT):
                     require(sync in deployments.TERRAFORM_SYNCS, "unregistered Terraform synchronization name")
                     target = "terraform-" + hashlib.sha256(sync.encode()).hexdigest()[:16]
                 walk(leaf, path + " / ", target or inherited, supplied, source)
-            elif inherited and (filename, key) != (SDK_WORKFLOW, "candidate"):
+            elif inherited and (filename, key) not in READ_ONLY_JOBS:
                 targets[(source, path)] = inherited
 
     walk("ci.yml")
@@ -207,8 +212,8 @@ def source_observations(api, event, targets):
     # no verification matrix cannot cover a previously failed matrix record.
     successful = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
                   and (alerts.WORKFLOW_PATHS[run["name"]], registered_name(job["name"])) not in targets
-                  and (alerts.WORKFLOW_PATHS[run["name"]] != SDK_WORKFLOW or job["name"] != "candidate"
-                       or candidate_verified(job))
+                  and ((alerts.WORKFLOW_PATHS[run["name"]], job["name"]) not in READ_ONLY_JOBS
+                       or step_verified(job, READ_ONLY_JOBS[(alerts.WORKFLOW_PATHS[run["name"]], job["name"])][2]))
                   and (not job["name"].startswith("Complete publication receipt (")
                        or step_verified(job, REPAIR_STEP))]
     result = [from_job(run, job, targets) for job in failures + successful]
@@ -224,41 +229,37 @@ def source_observations(api, event, targets):
     return result
 
 
-def candidate_verified(job):
-    return step_verified(job, SDK_CANDIDATE_STEP)
-
-
 def step_verified(job, name):
     steps = [step for step in job.get("steps", []) if step["name"] == name]
     return len(steps) == 1 and steps[0]["status"] == "completed" and steps[0]["conclusion"] == "success"
 
 
-def migrate_sdk_candidate(api, state):
-    """Reclassify only a signed open episode proven to precede publication."""
+def migrate_read_only_job(api, state, workflow, job_name, mutation_job):
+    """Reclassify only a signed open episode proven to precede mutation."""
     incident = state["incident"]
-    if state["scope"] != "deployment:typescript-sdk" or incident["resolution"] is not None:
+    if incident["resolution"] is not None:
         return state
     observations = incident["failures"] + state["deferred"]
-    if not any(item["job_name"] == "candidate" for item in observations):
+    if not any(item["job_name"] == job_name for item in observations):
         return state
-    require(all(item["job_name"] == "candidate" and item["proof"] is None
+    require(all(item["job_name"] == job_name and item["proof"] is None
                 and item["conclusion"] in alerts.FAILED_CONCLUSIONS for item in observations),
-            "mixed SDK candidate/publication incident cannot be reclassified")
+            "mixed read-only/mutation incident cannot be reclassified")
     for item in observations:
         prefix = f"repos/{REPOSITORY}/actions/runs/{item['run_id']}/attempts/{item['attempt']}"
         run = api.get(prefix)
-        require(run.get("id") == item["run_id"] and alerts.WORKFLOW_PATHS.get(run.get("name")) == SDK_WORKFLOW and run.get("path") == ".github/workflows/" + SDK_WORKFLOW
+        require(run.get("id") == item["run_id"] and alerts.WORKFLOW_PATHS.get(run.get("name")) == workflow and run.get("path") == ".github/workflows/" + workflow
                 and run.get("run_attempt") == item["attempt"] and run.get("head_sha") == item["sha"]
-                and alerts.verify_source_event(api, run), "untrusted historical SDK candidate failure")
+                and alerts.verify_source_event(api, run), "untrusted historical read-only failure")
         jobs = api.pages(prefix + "/jobs?per_page=100", field="jobs")
-        candidate = [job for job in jobs if job["name"] == "candidate"]
-        publish = [job for job in jobs if job["name"] == "publish"]
-        require(len(candidate) == len(publish) == 1 and candidate[0]["id"] == item["job_id"]
-                and candidate[0]["status"] == "completed" and candidate[0]["conclusion"] == item["conclusion"]
-                and candidate[0]["completed_at"] == item["time"] and publish[0]["status"] == "completed"
-                and publish[0]["conclusion"] == "skipped", "historical SDK failure did not precede publication")
+        read_only = [job for job in jobs if job["name"] == job_name]
+        mutation = [job for job in jobs if job["name"] == mutation_job]
+        require(len(read_only) == len(mutation) == 1 and read_only[0]["id"] == item["job_id"]
+                and read_only[0]["status"] == "completed" and read_only[0]["conclusion"] == item["conclusion"]
+                and read_only[0]["completed_at"] == item["time"] and mutation[0]["status"] == "completed"
+                and mutation[0]["conclusion"] == "skipped", "historical read-only failure did not precede mutation")
     migrated = copy.deepcopy(state)
-    scope, kind, label = scope_for_job("candidate", {}, SDK_WORKFLOW)
+    scope, kind, label = scope_for_job(job_name, {}, workflow)
     migrated.update(scope=scope, kind=kind, label=label, healthy=None, terminal_validation=None)
     for item in migrated["incident"]["failures"] + migrated["deferred"]:
         item.update(scope=scope, kind=kind, label=label)
@@ -696,39 +697,39 @@ class Ledger:
             state = self.verify(record)
             if state is not None:
                 states[scope] = state
-        old_scope = "deployment:typescript-sdk"
-        if old_scope not in states:
-            return states
-        original = states[old_scope]
-        migrated = migrate_sdk_candidate(self.api, original)
-        if migrated["scope"] == old_scope:
-            return states
-        scope = migrated["scope"]
-        if scope in states:
-            current = states[scope]
-            require(latest[scope]["id"] > latest[old_scope]["id"], "candidate migration checkpoint predates its source")
-            if current["incident"]["id"] == migrated["incident"]["id"]:
-                require(same_migrated_episode(migrated, current), "candidate migration conflicts with its Slack parent or history")
+        for (workflow, job_name), (target, mutation_job, _) in READ_ONLY_JOBS.items():
+            old_scope = "deployment:" + target
+            if old_scope not in states:
+                continue
+            migrated = migrate_read_only_job(self.api, states[old_scope], workflow, job_name, mutation_job)
+            if migrated["scope"] == old_scope:
+                continue
+            scope = migrated["scope"]
+            if scope in states:
+                current = states[scope]
+                require(latest[scope]["id"] > latest[old_scope]["id"], "read-only migration checkpoint predates its source")
+                if current["incident"]["id"] == migrated["incident"]["id"]:
+                    require(same_migrated_episode(migrated, current), "read-only migration conflicts with its Slack parent or history")
+                else:
+                    # A later episode needs a signed resolved checkpoint for
+                    # the migrated predecessor, preserving its parent/history.
+                    bridges = []
+                    for record in records:
+                        payload = record["payload"]
+                        if isinstance(payload, str):
+                            payload = json.loads(payload)
+                        historical = payload["state"]
+                        if (record["id"] < latest[scope]["id"] and historical["scope"] == scope
+                                and historical["incident"]["id"] == migrated["incident"]["id"]):
+                            bridges.append(record)
+                    require(bool(bridges), "read-only migration collides with another incident")
+                    bridge = self.verify(max(bridges, key=lambda record: record["id"]))
+                    require(bridge["incident"]["resolution"] is not None and not pending_posts(bridge)
+                            and same_migrated_episode(migrated, bridge),
+                            "read-only migration has no signed resolved predecessor")
             else:
-                # Later episodes may replace the current candidate state only
-                # after a signed canonical checkpoint resolved the migrated one.
-                bridges = []
-                for record in records:
-                    payload = record["payload"]
-                    if isinstance(payload, str):
-                        payload = json.loads(payload)
-                    historical = payload["state"]
-                    if (record["id"] < latest[scope]["id"] and historical["scope"] == scope
-                            and historical["incident"]["id"] == migrated["incident"]["id"]):
-                        bridges.append(record)
-                require(bool(bridges), "candidate migration collides with another incident")
-                bridge = self.verify(max(bridges, key=lambda record: record["id"]))
-                require(bridge["incident"]["resolution"] is not None and not pending_posts(bridge)
-                        and same_migrated_episode(migrated, bridge),
-                        "candidate migration has no signed resolved predecessor")
-        else:
-            states[scope] = migrated
-        del states[old_scope]
+                states[scope] = migrated
+            del states[old_scope]
         return states
 
     def save(self, state, phase):

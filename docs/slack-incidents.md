@@ -68,13 +68,20 @@ skip verification for obsolete or ineligible CI do not recover a candidate
 incident. A verified candidate with no release needed can recover it without
 publishing a package.
 
-Existing open SDK deployment episodes containing only candidate failures are
+WDPA's read-only `readiness` job also has an exact-job scope. Recovery requires
+the `Report readiness for the next scheduler window` step to succeed. The
+existing `--allow-paused` policy accepts a deliberately paused publisher while
+continuing to report an unapproved month as `ready: false`; this does not mean
+the month's data was built or published. The `build` job retains its deployment
+scope and signed terminal-receipt requirement.
+
+Existing open SDK candidate-only and WDPA readiness-only deployment episodes are
 reclassified after their checkpoint signature and every historical job are
-verified, including that each publication job was skipped. The original incident
+verified, including that each mutating sibling job was skipped. The original incident
 ID, parent, delivery claims and failure identities are retained; signed source
 checkpoints remain audit history. Canonical checkpoints must preserve the same
-parent and history. A later candidate episode requires a signed resolved
-checkpoint for the migrated predecessor. Mixed publication episodes or conflicting
+parent and history. A later read-only episode requires a signed resolved
+checkpoint for the migrated predecessor. Mixed mutation episodes or conflicting
 parents fail visibly. During this rollout, pause notification-workflow admission,
 drain existing workers before merging, then re-enable it on the new main revision.
 

@@ -107,7 +107,7 @@ def test_real_episode_migrates_after_verification_and_resolves_only_its_original
 def test_unsigned_original_cannot_be_reclassified(history):
     ledger, _, _, _, _, verifier = history
     verifier.side_effect = emissions.EmissionError('forged')
-    with mock.patch.object(incidents, 'migrate_sdk_candidate') as migration:
+    with mock.patch.object(incidents, 'migrate_read_only_job') as migration:
         with pytest.raises(emissions.EmissionError, match='forged'):
             ledger.load()
     migration.assert_not_called()
