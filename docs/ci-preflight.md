@@ -119,8 +119,8 @@ the limited, independently verified PR evidence described below.
 GitHub CI retains exactly the selected deployable images with their config and
 rootfs hashes. The runner, `ci-ready` and authenticated deployment consumer
 independently require that exact set; missing or extra images fail. WDPA-only
-validation still runs its installed probes and emits an empty retained-image
-set, because WDPA publication uses its separate accepted-build authorization.
+validation runs its installed probes and retains the WDPA image for the same
+exact-image deployment handoff as the other ingestions.
 The suite exercises the deployment loader on the actual CI Docker daemon before
 admitting each retained image. Deployment consumes these tested bytes without
 rebuilding.
@@ -145,7 +145,7 @@ recipes weekly for Python digest and patch updates within Python 3.12, grouping
 compatible updates into reviewable PRs. Go and uv updates are outside this entry.
 Base updates still rebuild affected layers and pass the selected CI suites,
 exact-image handoff and existing deployment approvals; there is no automatic
-merge. WDPA retains its separate accepted-build deployment path.
+merge. WDPA uses the same tested-image deployment path.
 
 After all selected suites, final evidence verification and source checks pass,
 full local preflight removes only its own verified image archives. Manifests,

@@ -72,10 +72,6 @@ jobs:
           else
             uv run --no-sync python scripts/publication_rollout_gate.py --job "$JOB_NAME" --require-published
           fi
-          if [[ "$JOB_NAME" == wdpa-monthly ]]; then
-            uv run --no-sync python scripts/wdpa_build_authorization.py
-            uv run --no-sync python scripts/wdpa_monthly_build.py readiness
-          fi
 
       - name: Set schedule state
         run: |

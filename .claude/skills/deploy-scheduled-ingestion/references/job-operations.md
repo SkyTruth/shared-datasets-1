@@ -79,39 +79,30 @@ deletion requires its own immutable reviewed dataset plan.
 
 ## wdpa-monthly deployment
 
-Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
-after reviewed changes merge to `main`. The workflow verifies the accepted
-producer image, retained bundle and exact-head owned promotion authority, then
-uses `Dockerfile.promotion` to add reviewed publication code and pins the
-resulting registry digest. It never regenerates dataset artifacts. The canary
-uses `WDPA_PROMOTION_BUNDLE` and the accepted build's `RUN_DATE`; a different
-canary date is rejected. Publication preserves claims, counters, generation
-preconditions and already committed realm receipts.
+The protected `wdpa-monthly-deploy.yml` loads the exact tested Linux AMD64 image
+retained by successful main CI, verifies its registry/configuration digest and
+applies the allowlisted saved plan. Require ingestion/registry IAM prerequisites,
+installed publication state and no active conflicting worker execution.
+Manual dispatch on `main` requires `executor_sha`, `source_run_id` and
+`source_run_attempt` from the successful main-push CI attempt.
 
-Require successful `ci-ready` and the ingestion/registry IAM prerequisites.
-Manual dispatch from `main` requires `executor_sha`, `source_run_id` (the
-main-push CI run) and `source_run_attempt` (its successful `ci-ready` attempt).
-Use workflow help and the exact reviewed workflow for current inputs. Check
-pending/running worker executions and ownership before the canary; follow any
-asynchronous execution to terminal status through the skill's verification steps.
+The scheduled worker downloads, samples, fully builds, validates and publishes
+the current UTC month. No monthly acceptance PR, pinned bundle or redeployment is
+required. The job template must not set `RUN_DATE` or `WDPA_PROMOTION_BUNDLE`.
+Already completed months and unchanged content produce skipped check-ins.
+Unavailable upstream data is retried at the next scheduled invocation.
 
-The template pins the accepted bundle from `catalog/wdpa-processing-acceptance.json`;
-`RUN_DATE` remains execution-only. The default current UTC month must match the
-accepted bundle. A missing or wrong-month bundle fails before publication.
-A completed month verifies both receipts and returns `skipped` without artifact
-downloads. Each new month requires newly reviewed build and promotion authority.
-The recurring `wdpa-monthly-build.yml` workflow prepares new months using the
-scratch-only builder, then collects unapproved evidence for an exact-head
-promotion PR. The one-time October producer/workflow remains retired.
-Monthly deployment verifies the retained hash-bound
-terminal execution snapshot rather than querying the retired producer execution.
+Follow the [monthly runbook](../../../../docs/wdpa-monthly-runbook.md) for the
+one-time migration from the paused publisher: protected IAM sync, one protected
+deployment with an explicit canary date, terminal verification, then protected
+schedule resume. A paused schedule without an explicit canary date defers the
+whole deployment before mutation.
+Preserve owned claims, counters, generation preconditions and committed receipts.
+The old manual build workflow is retired; October evidence remains historical.
 
-Use the [monthly runtime/evidence contract](../../../../docs/wdpa-monthly-runbook.md)
-for acceptance pins and owned recovery facts. Do not deploy with a local
-production Terraform apply or hand-built image. The former catalog observer
-schedule stays paused and its health policy disabled. WDPA uses shared worker
-and Scheduler failure alerts and per-asset release-index check-ins. When both
-retirement changes deploy, disable the observer policy before pausing its schedule.
+Do not deploy with local production Terraform or a locally pushed image.
+The former catalog observer stays paused and its health policy disabled.
+WDPA uses shared worker/Scheduler alerts and per-asset release-index check-ins.
 
 ## wdpa-monthly schedule control and teardown
 

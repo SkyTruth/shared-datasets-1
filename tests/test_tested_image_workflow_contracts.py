@@ -16,7 +16,7 @@ from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = ("mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage")
+TARGETS = ("wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage")
 
 
 def deployment_steps(target):
@@ -158,7 +158,7 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
 
 @pytest.mark.parametrize("paths,targets", [
     (["ingestion/eamlis_monthly/run.py"], {"eamlis-monthly"}),
-    (["ingestion/wdpa_monthly/run.py"], set()),
+    (["ingestion/wdpa_monthly/run.py"], {"wdpa-monthly"}),
 ])
 def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets):
     plan, results, image_result = image_results()
@@ -227,7 +227,7 @@ def image_retention_steps():
         if match:
             assert match[1] not in images, 'image target must have one immutable upload'
             images[match[1]] = step
-    assert set(images) == IMAGE_TARGETS, 'all six tested images must be retained'
+    assert set(images) == IMAGE_TARGETS, 'all seven tested images must be retained'
     return steps, images
 
 

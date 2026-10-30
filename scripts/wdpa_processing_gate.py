@@ -31,7 +31,7 @@ def monthly_date(value):
 
 def build_job(execution):
     # October's retained evidence remains readable and independently verifiable.
-    match = re.fullmatch(r"(wdpa-processing-validation|wdpa-monthly-build)-[a-z0-9]+", str(execution))
+    match = re.fullmatch(r"(wdpa-processing-validation|wdpa-monthly-build|wdpa-monthly)-[a-z0-9]+", str(execution))
     if match is None:
         raise ValueError("invalid WDPA build execution")
     return match[1]
@@ -148,7 +148,7 @@ def check_build(run, *, require_bundle=True):
     except ValueError:
         job = None
         errors.append("complete builds require their Cloud Run execution IDs")
-    image_name = "wdpa-validation" if job == "wdpa-processing-validation" else "wdpa-monthly-build"
+    image_name = "wdpa-validation" if job == "wdpa-processing-validation" else job
     if not re.fullmatch(
         rf"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/{image_name}@sha256:[0-9a-f]{{64}}",
         str(run.get("cloud_image", "")),

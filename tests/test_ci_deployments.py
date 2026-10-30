@@ -37,12 +37,12 @@ def test_readme_exclusion_keeps_mixed_runtime_changes_deployable(job, target, ru
 
 
 def test_producer_changes_require_staged_evidence_before_launching_production_validation():
-    assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == []
+    assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == ["wdpa"]
     assert select_deployments(["catalog/wdpa-staged-validation.json"]) == []
     assert "production-images" in select_suites(["ingestion/wdpa_monthly/Dockerfile"])[0]
 
 
-@pytest.mark.parametrize("path,target", [("ingestion/eamlis_monthly/run.py", "eamlis"), ("ingestion/sea_ice_daily/run.py", "sea_ice"), ("ingestion/wdpa_monthly/Dockerfile.promotion", "wdpa")])
+@pytest.mark.parametrize("path,target", [("ingestion/eamlis_monthly/run.py", "eamlis"), ("ingestion/sea_ice_daily/run.py", "sea_ice"), ("ingestion/wdpa_monthly/Dockerfile", "wdpa")])
 def test_runtime_release_does_not_select_iam_syncs(path, target):
     assert set(select_deployments([path])) == {target}
 

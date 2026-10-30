@@ -41,3 +41,7 @@ WORKFLOW_NAMES = {
     'wdpa-monthly-deploy.yml': ('Ingestion / WDPA monthly deploy', 'WDPA monthly deploy'),
     'wdpa-monthly-build.yml': ('Ingestion / WDPA monthly build',),
 }
+
+# These names remain verifiable for stored incidents and historical run attempts.
+# Their workflow files are intentionally absent from the active caller graph.
+RETIRED_WORKFLOWS = frozenset({"wdpa-monthly-build.yml"})

@@ -1,8 +1,8 @@
 """Immutable WDPA build outputs, staged once and published without rebuilding.
 
-The staging identity can only create objects under PREFIX. The production
-identity downloads exact generations and passes verified files to the existing
-owned publisher; it never invokes source processing or translation generation.
+The scheduled worker stages validated outputs under PREFIX, then downloads exact
+generations and passes verified files to the existing owned publisher. Publication
+never regenerates data or translations.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from scripts import release_feature_model as model
 
 BUCKET = "skytruth-shared-datasets-1"
 PREFIX = "_scratch/wdpa-builds/"
-EXECUTION = r"(?:wdpa-processing-validation|wdpa-monthly-build)-[a-z0-9]+"
+EXECUTION = r"(?:wdpa-processing-validation|wdpa-monthly-build|wdpa-monthly)-[a-z0-9]+"
 ROLES = ("fgb", "pmtiles", "metadata", "schema", "metadata_translations")
 
 
@@ -162,7 +162,7 @@ def download(client, ref, target, *, execution=None):
     )
     p.require(
         target.stat().st_size == ref["size"] and sha256_file(target) == ref["sha256"],
-        "staged artifact bytes do not match the approved reference",
+        "staged artifact bytes do not match the pinned reference",
     )
 
 
@@ -181,7 +181,7 @@ def load_bundle(client, ref, workdir, *, producer_source):
 
 
 def check_bundle(bundle, *, producer_source):
-    from scripts.wdpa_processing_gate import check_build
+    from scripts.wdpa_processing_gate import build_job, check_build, check_compatibility
 
     p.require(
         set(bundle) == {"schema_version", "report", "assets"}
@@ -199,6 +199,9 @@ def check_bundle(bundle, *, producer_source):
         "bundle is not a complete passing build",
     )
     execution = report["cloud_execution"]
+    if build_job(execution) == "wdpa-monthly":
+        p.require(not check_compatibility(report, [report]),
+                  "scheduled bundle is missing passing compatibility evidence")
     p.require(
         bundle["assets"] == report["staged_assets"]
         and set(bundle["assets"]) == {"wdpa-marine", "wdpa-terrestrial"},
@@ -317,23 +320,22 @@ def verify_committed_build(publisher, state, record, facts, *, run_date, source)
     )
 
 
-def promote(client, publisher, ref, workdir):
-    """Consume the approved build; owned publication retains recovery semantics."""
+def promote(client, publisher, ref, workdir, *, producer_source, requested_date):
+    """Publish verified bytes with the existing owned publication semantics."""
     from ingestion.wdpa_monthly import run as wdpa
 
     bundle = load_bundle(
         client,
         ref,
         workdir,
-        producer_source=os.environ["WDPA_ACCEPTED_BUILD_SOURCE_SHA256"],
+        producer_source=producer_source,
     )
     report = bundle["report"]
     run_date = wdpa.parse_run_date(report["run_date"])
-    requested_date = wdpa.parse_run_date(os.environ.get("RUN_DATE"))
     p.require(
         run_date.replace(day=1) == requested_date.replace(day=1),
-        f"reviewed WDPA build is for {run_date:%Y-%m}, but this execution requests "
-        f"{requested_date:%Y-%m}; approve and deploy that month's retained build",
+        f"WDPA build is for {run_date:%Y-%m}, but this execution requests "
+        f"{requested_date:%Y-%m}; build the requested month before publication",
     )
     # Check every predecessor before the first new canonical write. Existing
     # successful realms remain committed; an interrupted owner resumes its receipt.
@@ -349,7 +351,7 @@ def promote(client, publisher, ref, workdir):
                 record, _info = committed[asset.slug]
                 verify_committed_build(
                     publisher, state, record, facts, run_date=run_date,
-                    source=wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, run_date),
+                    source=wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), run_date),
                 )
             else:
                 p.require(
@@ -410,7 +412,7 @@ def promote(client, publisher, ref, workdir):
                 "target_release_date": run_date.isoformat(), "release_date": previous["release_date"],
                 "status": "skipped", "source": previous["source"],
                 "source_version": previous["source_version"],
-                "reason": "reviewed bundle already published" if committed[asset.slug] else "source fingerprint unchanged",
+                "reason": "monthly source already published" if committed[asset.slug] else "source fingerprint unchanged",
             }
             if asset.slug in fingerprints:
                 record.update(fingerprints[asset.slug].record_fields())
@@ -442,7 +444,7 @@ def promote(client, publisher, ref, workdir):
                     outputs=outputs,
                     run_date=run_date,
                     source_url=wdpa.build_source_url(
-                        wdpa.DEFAULT_SOURCE_URL_TEMPLATE, run_date
+                        os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), run_date
                     ),
                     source_version=wdpa.source_version_for(run_date),
                     source_fields=tuple(

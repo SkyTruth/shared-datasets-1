@@ -13,8 +13,8 @@ import tarfile
 import tempfile
 from time import perf_counter
 
-TARGETS = frozenset({"monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
-BUILD_TARGETS = ("wdpa-monthly", *sorted(TARGETS))
+TARGETS = frozenset({"wdpa-monthly", "monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
+BUILD_TARGETS = tuple(sorted(TARGETS))
 MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2
 SHA = re.compile(r"[0-9a-f]{40}")

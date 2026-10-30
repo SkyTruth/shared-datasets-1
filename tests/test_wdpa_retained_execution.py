@@ -1,4 +1,4 @@
-"""Monthly promotion verifies persisted terminal facts after campaign retirement."""
+"""Historical terminal facts remain auditable independently of deployment."""
 import hashlib
 import json
 from pathlib import Path
@@ -7,9 +7,7 @@ import subprocess
 import sys
 
 import pytest
-import yaml
 
-from scripts import release_contracts as contracts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,14 +19,14 @@ def repository(tmp_path):
     return tmp_path
 
 
-def run_release_cli(root):
+def run_release_cli(root, target="wdpa-history"):
     return subprocess.run(
-        [sys.executable, str(root / "scripts/release_contracts.py"), "--target", "wdpa"],
+        [sys.executable, str(root / "scripts/release_contracts.py"), "--target", target],
         cwd=root, capture_output=True, text=True, timeout=30,
     )
 
 
-def test_monthly_release_cli_accepts_retained_terminal_facts_without_cloud_access(repository):
+def test_history_cli_accepts_retained_terminal_facts_without_cloud_access(repository):
     result = run_release_cli(repository)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -77,20 +75,7 @@ def test_serialized_terminal_evidence_cannot_authorize_a_different_or_failed_bui
     assert "retained" in result.stderr
 
 
-@pytest.mark.parametrize("mutation", ["removed", "disabled", "late", "live-query"])
-def test_monthly_workflow_cannot_bypass_persisted_terminal_verification(repository, mutation):
-    path = repository / ".github/workflows/wdpa-monthly-deploy.yml"
-    value = yaml.safe_load(path.read_text())
-    steps = value["jobs"]["deploy"]["steps"]
-    terminal = next(step for step in steps if step.get("name") == "Verify accepted build terminal success")
-    if mutation == "removed":
-        steps.remove(terminal)
-    elif mutation == "disabled":
-        terminal["if"] = False
-    elif mutation == "late":
-        steps.remove(terminal)
-        steps.append(terminal)
-    else:
-        terminal["run"] = "gcloud run jobs executions describe retired-execution"
-    path.write_text(yaml.safe_dump(value))
-    assert any("retained terminal" in error for error in contracts.deployment_contract(repository, "wdpa"))
+def test_monthly_deployment_does_not_require_historical_acceptance(repository):
+    (repository / "catalog/wdpa-processing-acceptance.json").unlink()
+    result = run_release_cli(repository, target="wdpa")
+    assert result.returncode == 0, result.stdout + result.stderr

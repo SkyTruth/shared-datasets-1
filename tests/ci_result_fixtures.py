@@ -5,7 +5,7 @@ import hashlib
 
 def production_images(tested_sha):
     images = {}
-    for target in ("mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"):
+    for target in ("mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage", "monitoring-slack"):
         images[target] = {
             "config_digest": "sha256:" + hashlib.sha256((target + "config").encode()).hexdigest(),
             "source_tag": f"shared-datasets-preflight/{target}:{tested_sha}",

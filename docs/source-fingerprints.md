@@ -111,15 +111,14 @@ endian). There is no tolerance for numeric/georeferencing changes.
 
 ## WDPA: `wdpa-retained-content-v1`
 
-The scheduled production entrypoint remains `publication_only`. It must receive
-a reviewed retained bundle matching the requested month and accepted producer.
-It never polls upstream, rebuilds artifacts, or generates translations. Fingerprints
-do not authorize a bundle, alter the accepted producer digest, relax predecessor
-checks, or make the retired source-building workflow available again.
+The scheduled `automatic` entrypoint builds and validates the current month,
+then passes its immutable staged descriptor to publication. Fingerprints do not
+replace compatibility/full-build validation or relax predecessor checks. Both
+realms must validate before any new canonical write.
 
-For an unpublished approved candidate, the worker verifies descriptor, generation,
+For an unpublished validated candidate, the worker verifies descriptor, generation,
 size, SHA-256, both realm predecessors and allocations before publication. It then
-reads the approved canonical/locale sidecars, schema and translation CSV. Each
+reads the validated canonical/locale sidecars, schema and translation CSV. Each
 realm fingerprint includes canonical and localized geometry hashes, source
 properties and source identity keys; sorted source/schema field definitions;
 translation CSV rows joined from generated `feature_id` to source identity key
@@ -127,7 +126,7 @@ and stored geometry/properties hashes;
 maintained translation fields/locales; and identity contract.
 Orphan translation rows retain their original key. Generated IDs, release dates,
 provenance/retrieval fields and sidecar compression/order do not affect equality.
-Canonical geometry hashes are the accepted producer's validated geometry evidence.
+Canonical geometry hashes are the producer's validated geometry evidence.
 
 If these inputs match the realm's latest committed success, the worker records an
 owned skip/check-in and avoids FGB/PMTiles downloads and all publication artifacts.
@@ -144,7 +143,7 @@ the separately approved build. A future build path must capture/compare its own
 complete source and translation inputs before generating artifacts; this change
 does not authorize or introduce one.
 
-Limitations: the accepted producer's geometry hash precision and normalization
+Limitations: the producer's geometry hash precision and normalization
 remain authoritative. Changes to ZIP ordering, upstream month labels or build
 telemetry or per-run identity-decision summary counts do not affect the
 comparison. Published field value types, localized values and editorial CSV
