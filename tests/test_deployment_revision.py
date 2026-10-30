@@ -137,11 +137,11 @@ class TerminalTests(unittest.TestCase):
         self.assertTrue(d.verification_window([self.raw({"completionTime": "now", "succeededCount": 1})]))
         self.assertTrue(d.verification_window([self.raw({"runningCount": 1})], allow_cancel=True))
 
-    def test_paused_wdpa_requires_explicit_canary_date(self):
-        self.assertFalse(d.verification_window([], paused=True))
-        self.assertTrue(d.verification_window([], paused=True, canary_date="2026-10-01"))
+    def test_idle_wdpa_can_deploy_without_a_monthly_canary_date(self):
+        self.assertTrue(d.verification_window([]))
+        self.assertTrue(d.verification_window([], canary_date="2026-10-01"))
         with self.assertRaises(d.DeploymentError):
-            d.verification_window([], paused=True, canary_date="bad;exit 0")
+            d.verification_window([], canary_date="bad;exit 0")
 
 
 class PermissionReadinessTests(unittest.TestCase):
@@ -465,3 +465,15 @@ class PendingDiscoveryBoundaryTests(unittest.TestCase):
                 d.observe(SimpleNamespace(deployment_id=1), api)
         runtime.assert_not_called()
         api.post.assert_not_called()
+
+
+def test_paused_scheduler_allows_deployment_but_active_execution_still_defers(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    for executions, expected in [([], "true"), ([{"status": {"runningCount": 1}}], "false")]:
+        output.write_text("")
+        with patch.object(d.subprocess, "check_output", side_effect=[json.dumps(executions), "PAUSED"]):
+            d.runtime_window(SimpleNamespace(target="wdpa-monthly", canary_run_date="", allow_cancel="false"))
+        assert output.read_text() == "ready=" + expected + "\n"

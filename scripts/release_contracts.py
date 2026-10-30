@@ -27,13 +27,11 @@ from scripts import cdn_plan_readiness as cdn
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
-    "wdpa-monthly-build.yml",
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
-    "wdpa-monthly-build.yml",
     "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
     "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
@@ -227,13 +225,12 @@ def deployment_contract(root, target):
         if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):
             errors.append(f"{name}: {prerequisite} must precede {consumer}")
     if target == "wdpa":
-        terminal = steps.get("Verify accepted build terminal success", {})
-        if (terminal.get("run") != "uv run --no-sync python scripts/release_contracts.py --target wdpa"
-                or terminal.get("if") != "${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}"
-                or "Verify accepted build terminal success" not in order
-                or "Prepare reviewed WDPA publication image" not in order
-                or order.index("Verify accepted build terminal success") >= order.index("Prepare reviewed WDPA publication image")):
-            errors.append(f"{name}: retained terminal execution verification must precede image promotion")
+        loader = steps.get("Load exact tested wdpa-monthly image", {})
+        if "tested_image_authorization.py --workflow wdpa-monthly-deploy.yml --target wdpa-monthly" not in loader.get("run", ""):
+            errors.append(f"{name}: WDPA must deploy the exact CI-tested producer")
+        tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
+        if "WDPA_PROMOTION_BUNDLE" in tf or re.search(r"(?m)^\s*RUN_DATE\s*=", tf):
+            errors.append("WDPA scheduler must not pin a monthly bundle or calendar date")
     for slug in RESET_ASSETS.get(target, ()):
         valid = False
         for path in (root / ".github/dataset-plans" / slug).glob("**/*.json"):
@@ -285,13 +282,6 @@ def retained_evidence(root):
                 errors.append(f"retained evidence bytes changed or missing: {name}")
             elif name == "cloud-facts.json":
                 errors += retained_execution_errors(evidence, json.loads(path.read_text()))
-        # Producer identity is deliberately independent of current consumer code.
-        # The live gate checks the accepted registry image's producer fingerprint.
-        tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
-        if "WDPA_PROMOTION_BUNDLE" not in tf or ".build.artifact_bundle" not in tf:
-            errors.append("scheduler has no retained bundle when manual overrides are absent")
-        if re.search(r"(?m)^\s*RUN_DATE\s*=", tf):
-            errors.append("scheduler must not freeze the calendar date")
         return errors
     finally:
         wdpa.ROOT = original_root
@@ -307,8 +297,6 @@ def check(root, targets):
             errors.append("dataset-usage: " + str(exc))
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
-    if "wdpa" in targets:
-        errors += retained_evidence(root)
     return errors
 
 

@@ -386,10 +386,8 @@ def terminal_execution(raw, image):
     return "verification_pending"
 
 
-def verification_window(executions, *, paused=False, canary_date="", allow_cancel=False):
+def verification_window(executions, *, canary_date="", allow_cancel=False):
     require(not canary_date or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", canary_date), "invalid canary date")
-    if paused and not canary_date:
-        return False
     return allow_cancel or all(execution.get("status", {}).get("completionTime") for execution in executions)
 
 
@@ -406,15 +404,14 @@ def runtime_window(args):
         installed = True
     executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
                                                     "--region=us-central1", "--project=shared-datasets-1", "--format=json"])) if installed else []
-    paused = False
     if args.target == "wdpa-monthly":
         state = subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", args.target, "--location=us-central1",
                                          "--project=shared-datasets-1", "--format=value(state)"], text=True).strip()
         require(state in {"ENABLED", "PAUSED"}, "unknown scheduler state prevents runtime verification")
-        paused = state == "PAUSED"
-    ready = verification_window(executions, paused=paused, canary_date=args.canary_run_date, allow_cancel=args.allow_cancel == "true")
+    # A pause suppresses the canary, not a tested code deployment.
+    ready = verification_window(executions, canary_date=args.canary_run_date, allow_cancel=args.allow_cancel == "true")
     if not ready:
-        print("::notice::Deployment deferred: runtime verification is unavailable while the schedule is paused or an execution is active.")
+        print("::notice::Deployment deferred: an execution is active.")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
         stream.write("ready=" + str(ready).lower() + "\n")
 

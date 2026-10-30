@@ -241,6 +241,16 @@ jobs:
           path: ${{ runner.temp }}/ci-results/production-images/images/eamlis-monthly.docker.tar
           if-no-files-found: error
           retention-days: 14
+      - name: Retain tested wdpa-monthly image
+        uses: actions/upload-artifact@v4
+        id: retained-wdpa-monthly
+        if: contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly')
+        with:
+          name: ci-image-wdpa-monthly-attempt${{ github.run_attempt }}
+          compression-level: 1
+          path: ${{ runner.temp }}/ci-results/production-images/images/wdpa-monthly.docker.tar
+          if-no-files-found: error
+          retention-days: 14
       - name: Retain tested sea-ice-daily image
         uses: actions/upload-artifact@v4
         id: retained-sea-ice-daily
@@ -316,6 +326,7 @@ jobs:
           ${{ always() && steps.retained-results.outcome == 'success' &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly') || steps.retained-mpatlas-monthly.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly') || steps.retained-eamlis-monthly.outcome == 'success') &&
+            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly') || steps.retained-wdpa-monthly.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily') || steps.retained-sea-ice-daily.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer') || steps.retained-catalog-viewer.outcome == 'success') &&
             (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage') || steps.retained-dataset-usage.outcome == 'success') &&

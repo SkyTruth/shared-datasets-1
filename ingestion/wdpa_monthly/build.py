@@ -9,8 +9,6 @@ import subprocess
 import sys
 import time
 
-from google.cloud import storage
-
 from ingestion.common import publication as p
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.wdpa_monthly import run as wdpa, translations
@@ -71,40 +69,36 @@ def replay(source, inputs, directory, run_date, *, sample):
     return json.loads((directory / "benchmark.json").read_text())
 
 
-def run():
-    run_date = gate.monthly_date(os.environ.get("RUN_DATE")).isoformat()
-    p.require(gate.build_job(os.environ.get("CLOUD_RUN_EXECUTION")) == "wdpa-monthly-build", "wrong builder execution")
+def build_month(client, month, root):
+    """Produce one complete, measured bundle for this scheduled execution."""
+    run_date = gate.monthly_date(month.isoformat()).isoformat()
+    p.require(gate.build_job(os.environ.get("CLOUD_RUN_EXECUTION")) == "wdpa-monthly", "wrong scheduled execution")
     prepare_scratch()
     p.require(validation_limits(*cgroup_limits()) and cgroup_memory()[1] is not None,
         "builder requires 4 CPU / 8 GiB and kernel peak-memory telemetry")
-    root = Path(os.environ["SHARED_DATASETS_WORKDIR"]) / "monthly-build"
     root.mkdir(parents=True, exist_ok=False)
-    client = storage.Client(project=wdpa.DEFAULT_PROJECT_ID)
     profiler = PhaseProfiler(root, versions=wdpa.native_versions(), scratch_root=Path("/work"))
     started = time.monotonic()
     inputs, source = root / "inputs", root / "source.zip"
     with profiler.phase("freeze-inputs"):
         freeze_inputs(client, inputs)
-        wdpa.download_file(wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE,
+        wdpa.download_file(wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE),
             gate.monthly_date(run_date)), source)
     identity = {"cloud_execution": os.environ["CLOUD_RUN_EXECUTION"],
         "cloud_image": os.environ["WDPA_BUILD_IMAGE"], "image_digest": os.environ["WDPA_BUILD_IMAGE_CONFIG_DIGEST"]}
     sample = {**replay(source, inputs, root / "sample", run_date, sample=True), **identity}
     report = {**replay(source, inputs, root / "complete", run_date, sample=False), **identity}
     report["memory_peak_bytes"] = cgroup_memory()[1]
+    report["resource_warnings"] = gate.memory_warnings(report)
     report["phases"] = profiler.records + sample["phases"] + report["phases"]
     report["scratch_peak_bytes"] = max(phase["scratch_peak_bytes"] for phase in report["phases"])
     report["elapsed_seconds"] = time.monotonic() - started
     errors = gate.check_compatibility({"compatibility_sample": sample,
         "source_tree_sha256": report["source_tree_sha256"]}, [report])
     p.require(not errors, "; ".join(errors))
-    # Retain the sample in the hash-bound descriptor so the acceptance PR needs
-    # no mutable log scraping. Only a complete validated build commits this file.
+    # Bind the sample to the exact full-build descriptor for independent validation
+    # at the publication boundary.
     report["compatibility_sample"] = sample
     reference = BuildStager(client, identity["cloud_execution"]).commit(report, root)
     print(json.dumps({"event": "wdpa_monthly_build", "run_date": run_date, "artifact_bundle": reference}), flush=True)
-
-
-if __name__ == "__main__":
-    wdpa.configure_logging()
-    run()
+    return reference

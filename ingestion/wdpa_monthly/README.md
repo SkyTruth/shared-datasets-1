@@ -1,67 +1,38 @@
 # Monthly WDPA Job
 
-The production worker publishes approved retained bundles for `wdpa-marine` and
-`wdpa-terrestrial`. Use the [monthly operations runbook](../../docs/wdpa-monthly-runbook.md)
-for the pinned images, deployment prerequisites, execution commands, monitoring,
-recovery and evidence paths.
-
-Deployment, schedule control and teardown procedures live in the
-[deploy skill](../../.claude/skills/deploy-scheduled-ingestion/SKILL.md) and its
-[job operations](../../.claude/skills/deploy-scheduled-ingestion/references/job-operations.md#wdpa-monthly-deployment).
+The scheduled worker automatically builds, validates and publishes `wdpa-marine`
+and `wdpa-terrestrial`. See the [operations runbook](../../docs/wdpa-monthly-runbook.md)
+for deployment, activation, monitoring and owned recovery.
 
 ## Runtime
 
-Production entrypoint (`Dockerfile.promotion`):
+The production Dockerfile runs `python -m ingestion.wdpa_monthly.automatic`.
+Cloud Run supplies `CLOUD_RUN_EXECUTION`; the image embeds
+`SHARED_DATASETS_EXECUTOR_SHA`. The project and bucket are `shared-datasets-1`
+and `skytruth-shared-datasets-1`.
 
-```bash
-python -m ingestion.wdpa_monthly.publication_only
-```
+Without an override, the worker targets the first day of the current UTC month.
+Optional execution-only `RUN_DATE=YYYY-MM-DD` selects that date's month.
+Scheduler invokes the worker at 09:00 UTC on days 1–10. Completed monthly releases
+produce skipped check-ins without another source download. An unavailable source
+also records a skip and is retried at the next scheduled invocation.
 
-Required environment:
+The worker freezes committed identity and translation generations, downloads the
+source once, runs the deterministic compatibility sample and complete build, and
+stages both validated realm bundles before committing an immutable descriptor.
+Publication revalidates the descriptor, staged hashes and live predecessor states
+before writing through `OwnedGeneratedPublisher`. Unchanged normalized content
+skips release/latest writes. See [source fingerprints](../../docs/source-fingerprints.md#wdpa-wdpa-retained-content-v1).
 
-```bash
-GOOGLE_CLOUD_PROJECT=shared-datasets-1
-SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
-WDPA_PROMOTION_BUNDLE=<accepted bundle reference JSON>
-```
+No monthly approval, acceptance-file update, bundle pin or redeployment is needed.
+`WDPA_PROMOTION_BUNDLE` and sampled publication are rejected by the scheduled
+entrypoint. Code changes retain the normal protected deployment process.
+Both assets require installed `generated-2026-v1` publication state. Interrupted
+transactions retain ownership, reservations, intent and checkpoints; recover the
+original transaction rather than resetting state or replacing partial releases.
 
-`WDPA_PROMOTION_BUNDLE` is the accepted descriptor's URI, generation, size and
-SHA-256. The worker verifies required staged bytes and live predecessors before
-new publication. It copies exact artifacts through `OwnedGeneratedPublisher`;
-it does not download or process the upstream source or rebuild translations.
-An already committed realm retains its verified receipts and artifacts.
-
-Optional `RUN_DATE=YYYY-MM-DD` controls the release date. Without an override,
-the worker uses the first day of the current UTC month. The accepted bundle must
-match that month; a missing or wrong-month bundle fails before publication.
-Scheduler `wdpa-monthly` invokes it at 09:00 UTC on days 1–10. Repeated completed
-publications verify both receipts and update the owned skipped check-in without
-artifact downloads. Unpublished approved candidates compare normalized retained
-sidecar/schema/translation content with the last committed publication before
-downloading FGB/PMTiles. See the [WDPA fingerprint and limits](../../docs/source-fingerprints.md#wdpa-wdpa-retained-content-v1).
-
-Both assets require installed `generated-2026-v1` publication state. The publisher
-reserves IDs and claims ownership before exposing artifacts. Runtime identity
-binds `CLOUD_RUN_EXECUTION` and embedded `SHARED_DATASETS_EXECUTOR_SHA`.
-Interrupted transactions retain claims, reservations, intent and checkpoints;
-retry through the original owner and captured executor/inputs. Follow the
-[feature-ID installation/recovery runbook](../../docs/feature-id-reset-installation.md).
-
-### Retained-build runtime
-
-The recurring scratch-only builder uses `python -m ingestion.wdpa_monthly.build`
-in the source-processing image. The protected `wdpa-monthly-build.yml` workflow
-sets its immutable image/configuration identity and passes an explicit
-`RUN_DATE=YYYY-MM-01` only to the execution. It freezes committed inputs, runs a
-deterministic compatibility sample followed by the full build, and stages both
-realms before committing a hash-bound descriptor. `mode=collect` prepares an
-unapproved promotion PR artifact from verified terminal evidence. Follow
-[Prepare each month](../../docs/wdpa-monthly-runbook.md#prepare-each-month).
-The October campaign stays retired; its retained artifacts remain readable.
-The accepted retained bundle remains the monthly publication input.
 `WDPA_SOURCE_URL_TEMPLATE` defaults to
-`https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip`
-and supports `{run_date}`, `{year}`, `{month}` and `{month_token}`.
+`https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip`.
 
 The builder selects point/polygon layers from the Protected Planet shapefile ZIP.
 It uses `MARINE` when present; current `REALM` values `Marine` and `Coastal` go to
@@ -124,11 +95,10 @@ Build a local source-processing/diagnostic image from the repo root:
 docker build --platform linux/amd64 -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 ```
 
-Production uses `Dockerfile.promotion`, inheriting the accepted producer's native
-tools/dependencies and adding reviewed consumer/publication code and the current
-locale catalog. `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the producer fingerprint.
-The publication-only entrypoint requires a reviewed retained bundle and
-publishes its existing artifacts.
+Production deploys the exact image tested and retained by main CI. Terraform
+supplies its immutable registry reference and config digest as `WDPA_BUILD_IMAGE`
+and `WDPA_BUILD_IMAGE_CONFIG_DIGEST`. These identify the executing code and stay
+constant across monthly data refreshes.
 
 ## Execution monitoring
 

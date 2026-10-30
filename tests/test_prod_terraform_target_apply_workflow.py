@@ -122,6 +122,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "module.wdpa_builder_service_account.google_service_account.this",
                 "google_project_iam_custom_role.wdpa_monthly_build_stager",
                 "google_storage_bucket_iam_member.wdpa_monthly_build_stager",
+                "google_storage_bucket_iam_member.wdpa_automatic_build_stager",
                 "google_storage_bucket_iam_member.wdpa_monthly_build_inputs",
                 "google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader",
                 "google_service_account_iam_member.wdpa_builder_deployer",

@@ -87,4 +87,4 @@ COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
 ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
-CMD ["python", "-m", "ingestion.wdpa_monthly.run"]
+CMD ["python", "-m", "ingestion.wdpa_monthly.automatic"]

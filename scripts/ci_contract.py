@@ -285,7 +285,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
         }:
             selected.add("sea_ice")
-        if (path.startswith("ingestion/wdpa_monthly/") and path != "ingestion/wdpa_monthly/Dockerfile") or path in {
+        if path.startswith("ingestion/wdpa_monthly/") or path in {
             ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
             "catalog/wdpa-processing-acceptance.json",
         }:

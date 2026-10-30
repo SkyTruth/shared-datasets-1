@@ -237,8 +237,8 @@ class ReleaseContractTests(unittest.TestCase):
     def test_scheduler_retains_bundle_without_manual_overrides(self):
         path = self.root / "terraform/envs/prod/wdpa_monthly.tf"
         path.write_text(path.read_text().replace("WDPA_PROMOTION_BUNDLE", "OLD_BUNDLE") + '\n  RUN_DATE = "2026-10-01"\n')
-        errors = contracts.retained_evidence(self.root)
-        self.assertTrue(any("retained bundle" in item for item in errors))
+        errors = contracts.deployment_contract(self.root, "wdpa")
+        self.assertTrue(any("pin a monthly bundle" in item for item in errors))
         self.assertTrue(any("calendar date" in item for item in errors))
 
 

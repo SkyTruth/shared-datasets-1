@@ -92,11 +92,7 @@ offers a local canonical installation command. See the
 
 `local_wdpa_sample.py` replays the production conversion chain locally without a publisher; use the owning deploy skill and runtime limits. Interface: `uv run python scripts/local_wdpa_sample.py --help`.
 
-`wdpa_processing_gate.py` checks retained-build acceptance for an explicit month, independent source/output counts and matching compatibility inputs before protected monthly deployment. The terminal execution snapshot remains hash-bound. Interface: `uv run python scripts/wdpa_processing_gate.py --help`.
-
-`wdpa_monthly_build.py` reports next-window readiness, checks the builder's narrow saved-plan contract, and collects completed build evidence into an unapproved promotion PR bundle. The protected workflow runs the scratch-only `ingestion.wdpa_monthly.build` producer. Interface: `uv run python scripts/wdpa_monthly_build.py --help`; operational sequence: [WDPA monthly runbook](../docs/wdpa-monthly-runbook.md#prepare-each-month).
-
-`wdpa_build_authorization.py` verifies the immutable owned WDPA build plan and exact-head promotion authority inside the protected workflow; it grants no approval itself. This GitHub-dependent workflow entry point has no help parser; use `uv run python scripts/wdpa_processing_gate.py --help` for the local acceptance interface.
+`wdpa_processing_gate.py` validates complete monthly builds, independent source/output counts and matching compatibility inputs. The scheduled worker calls these checks before committing its staged descriptor and again before publication. Its CLI and `wdpa_build_authorization.py` retain the historical October evidence/authority checks for audit; current monthly execution needs no approval plan. See the [WDPA runbook](../docs/wdpa-monthly-runbook.md).
 
 ## Shared libraries
 
