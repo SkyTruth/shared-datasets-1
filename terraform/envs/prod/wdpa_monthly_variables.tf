@@ -8,3 +8,9 @@ variable "wdpa_source_url_template" {
   type        = string
   default     = "https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip"
 }
+
+variable "wdpa_monthly_image_config_digest" {
+  description = "Verified configuration digest of the exact CI-tested WDPA producer."
+  type        = string
+  default     = ""
+}

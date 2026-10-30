@@ -152,7 +152,11 @@ output races remain separate work; this document does not claim to fix them.
 
 ## Owned WDPA build promotion
 
-The single-build WDPA rollout uses an immutable document at
+This section records the historical single-build WDPA rollout. Current scheduled
+monthly refreshes validate and publish automatically; they do not create or
+authorize this plan subtype. Preserve merged documents as audit evidence.
+
+The single-build WDPA rollout used an immutable document at
 `wdpa-build-{build-bundle-sha256}.json` in this directory. It contains
 `schema_version: 1`, `kind: wdpa_owned_build_promotion`, the exact bundle reference
 (URI, generation, size, SHA-256), cloud execution/image, image configuration
@@ -163,7 +167,7 @@ validated output fact and captured identity baseline. Include its full JSON in a
 3 `catalog/wdpa-processing-acceptance.json`. Add one document per PR; never edit a
 merged document or change authority through body edits.
 
-This subtype routes through `wdpa-monthly-deploy.yml` and
+This subtype historically routed through `wdpa-monthly-deploy.yml` and
 `scripts/wdpa_build_authorization.py`, not the generic unmanaged object writer.
 The gate verifies same-repo merged-to-main status, exact-head effective approval
 (or the existing self-authored merged exception), the added regular-file plan,

@@ -11,8 +11,8 @@ callers must use their current run attempt; inputs alone are not authority.
 
 `uv run python scripts/release_contracts.py --target all` is the offline contract
 check shared by local preflight and CI. It validates immutable reset plans,
-retained WDPA acceptance evidence and its checked-in file hashes, quota approval,
-permission declarations, bootstrap ordering, scheduler bundle defaults and
+WDPA runtime limits and the absence of monthly configuration pins,
+permission declarations, bootstrap ordering and
 protected deployment workflow boundaries. It does not claim that a checked-in
 reset has been installed or that an IAM grant has propagated. Trusted protected
 jobs check live publication state and deployment identity permissions before
@@ -34,15 +34,11 @@ or rootfs bytes. Before Terraform mutation, the pushed registry manifest must
 reference the tested config ID; Terraform uses that immutable registry digest.
 Missing, expired, incomplete or mismatched evidence fails closed.
 
-WDPA distinguishes the tested executor revision, the accepted producer image and
-fingerprint, and the retained bundle's generation/hash. Publication fixes inherit
-the accepted producer and update its consumer layer; they never regenerate the
-accepted dataset bytes. The manually dispatched monthly build workflow installs
-a tested producer and starts one explicit month under a scratch-only identity.
-Its signed `applied` outcome confirms job installation and asynchronous dispatch;
-it does not certify the build or authorize publication. Collection requires the
-matching terminal-success execution and immutable descriptor, followed by a
-separately reviewed acceptance PR and the existing protected publisher deployment.
+WDPA uses the same tested-image handoff. Its scheduled worker builds each current
+month once, validates both realms and a deterministic compatibility sample, stages
+immutable artifacts, and publishes their exact bytes after checking predecessor
+state and generation/hash pins. Code deployment is independent of the month;
+October acceptance and promotion plans remain historical audit evidence.
 
 Production Terraform jobs retain the `prod-terraform-state` non-cancelling queue
 from plan through resource allowlist, saved-plan apply and verification. The
@@ -92,7 +88,7 @@ mutation and becomes a no-op. If a candidate reaches the final guard, different
 artifact bytes from the same
 code require reconciliation, except catalog refreshes: an actual reviewed data
 mutation or index rebuild may produce a distinct current-state catalog bundle
-under the same executor. Explicit WDPA monthly scratch builds may also reuse a
+under the same executor. Historical WDPA monthly scratch builds could reuse a
 successfully installed producer revision for another month or build attempt.
 They reject active Cloud Run builds and retain the same stale-revision,
 signed-claim and failed-deployment reconciliation guards. Each output still needs
@@ -149,7 +145,8 @@ verified terminal success, failure and unknown state. Short canaries wait for
 terminal status. Before building or applying, an active execution defers the
 whole ingestion target; production work is never cancelled automatically. A
 paused WDPA schedule also defers the target until an explicit canary date is
-supplied. Ingestion no-ops require verified runtime evidence; applied
+supplied, so installation and verification share one deployment attempt.
+Ingestion no-ops require verified runtime evidence; applied
 configuration alone is insufficient. A canary skipped because of a later race
 leaves unknown state and fails visibly. Detached WDPA executions retain the exact execution ID and
 image in their pending record. The independent execution observer and Cloud Run

@@ -110,9 +110,9 @@ needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
 alive at the same time.
 
 For WDPA, follow the [monthly operations runbook](../../../docs/wdpa-monthly-runbook.md)
-for the current accepted image and bundle, resource and quota prerequisites,
+for the tested image, automatic monthly validation, resource and quota prerequisites,
 protected deployment trigger, execution checks and owned recovery.
-It is the operational source for the single-build publication sequence.
+It is the operational source for the recurring monthly publication sequence.
 
 When a manual post-deploy execution is expected to take hours, start it
 asynchronously instead of waiting in the agent session:
@@ -214,10 +214,10 @@ of full discovery. For `ingestion/common/` changes, run tests for every
 production job that imports the shared helpers.
 
 3. For changes to a large-source producer, use the owning job's local native
-   fixtures and production-source fractional tests before deploying. The WDPA
-   monthly path promotes its accepted retained bundle. Prepare each new month
-   through `wdpa-monthly-build.yml` as documented in the monthly runbook; do not
-   rerun the retired October campaign as a deployment prerequisite.
+   fixtures and production-source fractional tests before deploying. WDPA runs
+   its monthly compatibility sample and complete build in the scheduled worker;
+   every new month validates before publication without a separate data approval.
+   See the monthly runbook for activation and recovery.
 
 4. If infrastructure is needed before an image can be pushed, add that
    prerequisite to Terraform and open a focused PR. After review and merge, let
@@ -227,13 +227,10 @@ production job that imports the shared helpers.
 5. Let the protected deployment workflow prepare and push the image after
    successful main CI and the required repository and IAM prerequisites:
 
-   - `sea-ice-daily-deploy.yml` and `eamlis-monthly-deploy.yml` use
-     `scripts/tested_image_authorization.py` to verify and load the exact Linux
-     AMD64 image retained by main CI's successful `production-images` suite.
-     They tag and push those tested bytes without rebuilding.
-   - `wdpa-monthly-deploy.yml` verifies the accepted producer image and retained
-     bundle, then builds `Dockerfile.promotion` with reviewed publication code
-     inside the protected workflow. It does not regenerate dataset artifacts.
+   - `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` and
+     `wdpa-monthly-deploy.yml` use `scripts/tested_image_authorization.py` to verify
+     and load the exact Linux AMD64 image retained by main CI's successful
+     `production-images` suite. They tag and push tested bytes without rebuilding.
    - The workflow resolves and deploys the immutable registry digest. Do not
      substitute a locally built or pushed image, including during bootstrap.
 

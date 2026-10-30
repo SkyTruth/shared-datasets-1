@@ -465,3 +465,43 @@ class PendingDiscoveryBoundaryTests(unittest.TestCase):
                 d.observe(SimpleNamespace(deployment_id=1), api)
         runtime.assert_not_called()
         api.post.assert_not_called()
+
+
+def test_runtime_window_cli_defers_paused_deployment_until_explicit_canary(tmp_path):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    gcloud = binary / "gcloud"
+    gcloud.write_text(f"#!{sys.executable}\n" + """import os, sys
+if sys.argv[1:5] == ['run', 'jobs', 'executions', 'list']:
+    print(os.environ['TEST_EXECUTIONS'])
+elif sys.argv[1:4] == ['scheduler', 'jobs', 'describe']:
+    print(os.environ['TEST_SCHEDULER_STATE'])
+else:
+    raise SystemExit('unexpected gcloud invocation')
+""")
+    gcloud.chmod(0o755)
+    script = Path(d.__file__)
+    output = tmp_path / "output"
+    cases = [
+        ("PAUSED", "", [], "false"),
+        ("PAUSED", "2026-11-01", [], "true"),
+        ("ENABLED", "", [], "true"),
+        ("PAUSED", "2026-11-01", [{"status": {"runningCount": 1}}], "false"),
+        ("ENABLED", "", [{"status": {"runningCount": 1}}], "false"),
+        ("PAUSED", "2026-11-01", [{"status": {"completionTime": "now"}}], "true"),
+    ]
+    for state, date, executions, expected in cases:
+        output.write_text("")
+        result = subprocess.run([sys.executable, str(script), "window", "--target", "wdpa-monthly",
+                                 "--canary-run-date", date], capture_output=True, text=True,
+                                env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                                     "GITHUB_OUTPUT": str(output), "TEST_EXECUTIONS": json.dumps(executions),
+                                     "TEST_SCHEDULER_STATE": state})
+        assert result.returncode == 0, result.stderr
+        assert output.read_text() == "ready=" + expected + "\n"

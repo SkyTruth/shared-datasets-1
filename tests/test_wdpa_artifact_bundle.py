@@ -3,6 +3,7 @@ from dataclasses import asdict
 import hashlib
 import gzip
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,7 +14,6 @@ from ingestion.common.publication import PublicationError
 from ingestion.common import publication as p
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.wdpa_monthly import artifact_bundle as bundle, run as wdpa
-from ingestion.wdpa_monthly import publication_only
 from scripts import release_feature_model as model, wdpa_processing_gate as gate
 from tests.test_wdpa_execution_observer import accepted_evidence
 from test_publication import operation
@@ -71,6 +71,10 @@ def built(tmp_path, request, monkeypatch):
         for summary in report["assets"].values():
             summary["rows"] += 7
             summary["source_counts"]["rows"] += 7
+    if isinstance(settings, dict) and settings.get("automatic"):
+        report["cloud_execution"] = "wdpa-monthly-aaaaa"
+        report["cloud_image"] = report["cloud_image"].replace("/wdpa-validation@", "/wdpa-monthly@")
+        report["compatibility_sample"] = accepted_evidence()["compatibility_sample"]
     report["memory_peak_bytes"] = (
         settings.get("memory", 5 * 1024**3) if isinstance(settings, dict) else settings
     )
@@ -247,10 +251,10 @@ def test_completed_build_retry_skips_without_artifact_downloads_or_publication(
         monkeypatch.setattr(wdpa, name, lambda *_a, **_k: pytest.fail("retry rebuilt data"))
     if defect:
         with pytest.raises(PublicationError):
-            bundle.promote(store, publisher, ref, tmp_path / "retry")
+            promote(store, publisher, ref, tmp_path / "retry")
         publisher.record_existing_successful_release.assert_not_called()
     else:
-        result = bundle.promote(store, publisher, ref, tmp_path / "retry")
+        result = promote(store, publisher, ref, tmp_path / "retry")
         assert [record["status"] for record in result] == ["skipped", "skipped"]
         assert publisher.update_latest_run_index.call_count == 2
     published.assert_not_called()
@@ -263,10 +267,10 @@ def test_retained_build_must_match_requested_month(built, tmp_path, monkeypatch,
     monkeypatch.setenv("RUN_DATE", requested_date)
     publisher, *_ = completed_publisher_for(report)
     if allowed:
-        assert len(bundle.promote(store, publisher, ref, tmp_path / "retry")) == 2
+        assert len(promote(store, publisher, ref, tmp_path / "retry")) == 2
     else:
-        with pytest.raises(PublicationError, match="approve and deploy"):
-            bundle.promote(store, publisher, ref, tmp_path / "retry")
+        with pytest.raises(PublicationError, match="build the requested month"):
+            promote(store, publisher, ref, tmp_path / "retry")
         publisher.resume.assert_not_called()
     assert len(store.calls) == 1
 
@@ -293,7 +297,7 @@ def test_one_build_survives_local_cleanup_and_promotes_identical_bytes(
         monkeypatch.setattr(
             wdpa, name, lambda *_a, **_k: pytest.fail("promotion rebuilt the dataset")
         )
-    result = bundle.promote(store, publisher, ref, tmp_path / "promotion")
+    result = promote(store, publisher, ref, tmp_path / "promotion")
     assert published == [asset.slug for asset in wdpa.ASSETS]
     assert len(result) == 2
     if report["memory_peak_bytes"] > gate.PREFERRED_MEMORY_PEAK_BYTES:
@@ -310,7 +314,7 @@ def test_changed_staged_file_fails_before_any_publication(built, tmp_path, monke
     publish = Mock()
     monkeypatch.setattr(wdpa, "publish_asset", publish)
     with pytest.raises(PublicationError, match="bytes"):
-        bundle.promote(store, publisher, ref, tmp_path / "promotion")
+        promote(store, publisher, ref, tmp_path / "promotion")
     publish.assert_not_called()
 
 
@@ -331,7 +335,7 @@ def test_stale_baseline_in_either_realm_fails_before_publication(
     publish = Mock()
     monkeypatch.setattr(wdpa, "publish_asset", publish)
     with pytest.raises(PublicationError, match="counter"):
-        bundle.promote(store, publisher, ref, tmp_path / "promotion")
+        promote(store, publisher, ref, tmp_path / "promotion")
     publish.assert_not_called()
     assert len(store.calls) == 1
 
@@ -404,7 +408,7 @@ def test_reviewed_consumer_change_preserves_the_approved_producer(
     monkeypatch.setattr(gate, "source_digest", lambda: "0" * 64)
     published = Mock(return_value={"status": "success"})
     monkeypatch.setattr(wdpa, "publish_asset", published)
-    bundle.promote(store, publisher_for(report), ref, tmp_path / "promotion")
+    promote(store, publisher_for(report), ref, tmp_path / "promotion")
     assert published.call_count == 2
     assert report["source_tree_sha256"] != gate.source_digest()
 
@@ -417,21 +421,9 @@ def test_wrong_producer_is_refused_before_artifact_downloads(
     published = Mock()
     monkeypatch.setattr(wdpa, "publish_asset", published)
     with pytest.raises(PublicationError, match="processing source"):
-        bundle.promote(store, publisher_for(report), ref, tmp_path / "promotion")
+        promote(store, publisher_for(report), ref, tmp_path / "promotion")
     published.assert_not_called()
     assert len(store.calls) == 1
-
-
-def test_publication_image_cannot_fall_back_to_source_processing(monkeypatch):
-    monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
-    job = Mock()
-    monkeypatch.setattr(wdpa, "run", job)
-    with pytest.raises(PublicationError, match="source rebuilding is disabled"):
-        publication_only.run()
-    job.assert_not_called()
-    monkeypatch.setenv("WDPA_PROMOTION_BUNDLE", "reviewed-reference")
-    publication_only.run()
-    job.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -513,11 +505,11 @@ def test_committed_marine_is_preserved_and_only_retained_terrestrial_is_publishe
     monkeypatch.setattr(wdpa, "publish_asset", publish)
     if defect:
         with pytest.raises(PublicationError):
-            bundle.promote(store, publisher, ref, tmp_path / "promotion")
+            promote(store, publisher, ref, tmp_path / "promotion")
         assert not published and len(store.calls) == 1
         publisher.record_existing_successful_release.assert_not_called()
     else:
-        result = bundle.promote(store, publisher, ref, tmp_path / "promotion")
+        result = promote(store, publisher, ref, tmp_path / "promotion")
         assert published == ["wdpa-terrestrial"]
         assert result[0]["status"] == "skipped"
         publisher.update_latest_run_index.assert_called_once()
@@ -545,7 +537,7 @@ def test_equal_reviewed_content_skips_large_artifacts_and_updates_checkins(built
     publisher.latest_success_record.side_effect = lambda asset: previous[asset.slug]
     published = Mock(side_effect=AssertionError("unchanged content must not publish"))
     monkeypatch.setattr(wdpa, "publish_asset", published)
-    records = bundle.promote(store, publisher, ref, tmp_path / "unchanged")
+    records = promote(store, publisher, ref, tmp_path / "unchanged")
     assert [record["reason"] for record in records] == ["source fingerprint unchanged"] * 2
     assert {record["release_date"] for record in records} == {"2026-09-30"}
     assert publisher.update_latest_run_index.call_count == 2
@@ -553,3 +545,36 @@ def test_equal_reviewed_content_skips_large_artifacts_and_updates_checkins(built
                    for role, item in asset["artifacts"].items() if role in {"fgb", "pmtiles"}}
     assert not (large_names & set(store.calls))
     published.assert_not_called()
+
+
+def promote(store, publisher, reference, directory):
+    return bundle.promote(store, publisher, reference, directory,
+        producer_source=os.environ["WDPA_ACCEPTED_BUILD_SOURCE_SHA256"],
+        requested_date=wdpa.parse_run_date(os.environ.get("RUN_DATE")))
+
+
+@pytest.mark.parametrize("built", [{"automatic": True}], indirect=True)
+@pytest.mark.parametrize("defect", [None, "missing", "compatibility", "source", "month"])
+def test_automatic_descriptor_checks_serialized_compatibility_before_publication(built, tmp_path, defect):
+    store, ref, report = built
+    name = ref["uri"].split(bundle.BUCKET + "/", 1)[1]
+    generation, data = store.data[name]
+    document = json.loads(data)
+    sample = document["report"]["compatibility_sample"]
+    if defect == "missing":
+        del document["report"]["compatibility_sample"]
+    elif defect == "compatibility":
+        sample["compatibility_verified"] = False
+    elif defect == "source":
+        sample["source_sha256"] = "0" * 64
+    elif defect == "month":
+        sample["run_date"] = "2026-11-01"
+    data = p.canonical(document)
+    store.data[name] = generation, data
+    reference = {**ref, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    if defect:
+        with pytest.raises(PublicationError, match="compatibility evidence"):
+            bundle.load_bundle(store, reference, tmp_path / "consumer", producer_source=report["source_tree_sha256"])
+    else:
+        assert bundle.load_bundle(store, reference, tmp_path / "consumer", producer_source=report["source_tree_sha256"]) == document
+    assert store.calls == [name]

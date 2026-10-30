@@ -490,7 +490,7 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
         image_dirs = list((tmp_path / "_scratch").glob("ci-preflight-*/production-images/images"))
         assert len(image_dirs) == 1
         archives = list(image_dirs[0].glob("*.docker.tar"))
-        assert len(archives) == (0 if outcome == "success" else 6)
+        assert len(archives) == (0 if outcome == "success" else 7)
         assert json.loads((image_dirs[0] / "manifest.json").read_text()) == reports["production-images"]["production_images"]
     evidence = list(tmp_path.rglob("preflight.json"))
     assert len(evidence) == (1 if outcome == "success" else 0)

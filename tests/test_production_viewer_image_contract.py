@@ -251,7 +251,7 @@ def test_selected_builds_emit_exact_retained_manifest(tmp_path, monkeypatch, tar
     monkeypatch.setattr('scripts.production_image_contracts.pack_image', packed)
     monkeypatch.setattr('scripts.production_image_contracts.load_image', loaded)
     main()
-    retained = [target for target in targets if target != 'wdpa-monthly']
+    retained = targets
     manifest = json.loads((tmp_path / 'images/manifest.json').read_text())
     assert manifest == {'schema_version': 1, 'tested_sha': 'b' * 40,
                         'images': {target: {'archive': target + '.docker.tar'} for target in retained}}

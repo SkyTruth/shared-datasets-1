@@ -1,3 +1,5 @@
+# Retired manual builder resources retained for Terraform state and audit history.
+# Automatic ingestion uses wdpa-monthly; no workflow deploys or invokes this job.
 variable "wdpa_build_image" {
   description = "Immutable image installed by the protected monthly build workflow."
   type        = string
@@ -92,4 +94,17 @@ module "wdpa_monthly_build_job" {
     WDPA_BUILD_IMAGE_CONFIG_DIGEST = var.wdpa_build_image_config_digest
   }
   # IAM is installed separately by the constrained ingestion IAM workflow.
+}
+
+resource "google_storage_bucket_iam_member" "wdpa_automatic_build_stager" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.wdpa_monthly_build_stager.name
+  member = module.wdpa_job_service_account.member
+  condition {
+    title = "wdpa_automatic_builds_only"
+    expression = join(" || ", [
+      "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/objects/_scratch/wdpa-builds/wdpa-monthly-')",
+      "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/folders/_scratch/wdpa-builds/wdpa-monthly-')",
+    ])
+  }
 }
