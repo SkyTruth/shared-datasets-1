@@ -6,6 +6,7 @@ from contextlib import nullcontext
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from threading import Barrier, Lock
@@ -789,11 +790,21 @@ def test_missing_declared_tls_file_fails_before_using_another_identity(tmp_path)
                 pytest.fail("missing TLS file was accepted")
 
 
-@pytest.mark.parametrize("whitespace,secret_exit", [(False, 0), (True, 0), (False, 1)])
-def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, monkeypatch, whitespace, secret_exit):
+@pytest.mark.parametrize("defect", [None, "whitespace", "secret"])
+def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, monkeypatch, defect):
     source, git = fixture_repo(tmp_path)
+    if defect is None:
+        # Copy real producer code and inputs once; all three catalog runs share
+        # this fixture and one process-owned dependency environment.
+        for directory in ("scripts", "catalog", "docs/assets", "web/catalog"):
+            shutil.copytree(ROOT / directory, source / directory, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        for filename in ("pyproject.toml", "uv.lock", ".gitignore"):
+            shutil.copyfile(ROOT / filename, source / filename)
+        git("add", ".")
+        git("commit", "-m", "catalog fixture")
     base = git("rev-parse", "HEAD")
-    (source / "README.md").write_text("Updated docs" + ("  " if whitespace else "") + "\n")
+    (source / "README.md").write_text("Updated docs" + ("  " if defect == "whitespace" else "") + "\n")
     git("add", "README.md")
     git("commit", "-m", "docs")
     validation = json.loads(json.dumps(preflight.make_plan(source, base, "HEAD")))
@@ -801,22 +812,63 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
                 for suite in validation["suites"]}
     assert commands == {
         "lint": [["git", "diff", "--check", base, validation["tested_sha"]]],
-        "tests": [["gitleaks", "git", "--redact", "--log-opts=HEAD", "."]],
+        "tests": [
+            ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."],
+            ["uv", "sync", "--locked", "--all-groups"],
+            preflight.interpreter_command(),
+            ["uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check"],
+            ["uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(tmp_path / "tests/catalog-web")],
+        ],
     }
     tools = tmp_path / "tools"
     tools.mkdir()
     scanner = tools / "gitleaks"
-    scanner.write_text(f"#!/bin/sh\nexit {secret_exit}\n")
+    scanner.write_text(f"#!/bin/sh\nexit {1 if defect == 'secret' else 0}\n")
     scanner.chmod(0o755)
     monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("UV_PYTHON", preflight.sys.executable)
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(tmp_path / "catalog-venv"))
     monkeypatch.setattr(preflight, "probe_tools", lambda suite, environment: expected_tools(suite))
+    if defect:
+        suite = "lint" if defect == "whitespace" else "tests"
+        result = preflight.run_suite(source, validation, suite, tmp_path / suite)
+        retained = json.loads((tmp_path / suite / "result.json").read_text())
+        assert retained == result
+        assert retained["status"] == "failure"
+        assert retained["commands"][-1]["exit_code"] != 0
+        return
     results = [preflight.run_suite(source, validation, suite, tmp_path / suite) for suite in validation["suites"]]
-    assert all(not (tmp_path / suite / "pytest.xml").exists() for suite in validation["suites"])
-    if whitespace or secret_exit:
+    verify_results(validation, results, jobs_for(validation))
+    assert (tmp_path / "tests/catalog-web/index.html").is_file()
+    assert (tmp_path / "tests/catalog-web/catalog.json").is_file()
+    catalog = source / "catalog/shared-datasets-catalog.csv"
+    original_catalog = catalog.read_bytes()
+    for producer in ("catalog_docs", "catalog_site"):
+        catalog.write_bytes(original_catalog)
+        if producer == "catalog_docs":
+            with catalog.open("a") as stream:
+                stream.write("invalid catalog row\n")
+        else:
+            (source / "web/catalog/index.html").unlink()
+        git("add", ".")
+        git("commit", "-m", producer + " defect")
+        base = git("rev-parse", "HEAD")
+        (source / "README.md").write_text(producer + " docs update\n")
+        git("add", "README.md")
+        git("commit", "-m", "docs")
+        validation = preflight.make_plan(source, base, "HEAD")
+        assert validation["changed_paths"] == ["README.md"]
+        output = tmp_path / producer
+        failed = preflight.run_suite(source, validation, "tests", output)
+        retained = json.loads((output / "result.json").read_text())
+        assert retained == failed
+        assert retained["status"] == "failure"
+        assert f"scripts/{producer}.py" in retained["commands"][-1]["argv"]
+        assert retained["commands"][-1]["exit_code"] != 0
+        lint = preflight.run_suite(source, validation, "lint", output / "lint")
         with pytest.raises(ValueError, match="did not execute successfully"):
-            verify_results(validation, results, jobs_for(validation))
-    else:
-        verify_results(validation, results, jobs_for(validation))
+            verify_results(validation, [lint, retained], jobs_for(validation))
+    assert all(not (tmp_path / suite / "pytest.xml").exists() for suite in validation["suites"])
 
 
 @pytest.mark.parametrize("paths", [None, ["docs/guide.md", "ingestion/wdpa_monthly/run.py"], ["docs/new-tool.py"], ["docs/assets/wdpa-marine.md"]])

@@ -187,10 +187,13 @@ failures still fail the complete browser suite; there is no automatic OS-install
 fallback.
 
 The required `lint` and `tests` jobs stay present for every change.
-Documentation-only changes run whitespace validation (`git diff --check`) and
-full-history secret scanning, without dependency sync, Terraform validation or
-pytest. Mixed, metadata, executable and unknown changes retain the existing
-lint, workflow syntax, admission, guardrail, catalog, identity and Python checks.
+Documentation-only changes run whitespace validation (`git diff --check`),
+full-history secret scanning, locked dependency sync, catalog documentation
+consistency and the local catalog site build, without Terraform validation or
+pytest. The credential-free catalog checks share the `tests` job and its single
+dependency sync; the generated site is retained with that suite's evidence.
+Mixed, metadata, executable and unknown changes retain the existing lint,
+workflow syntax, admission, guardrail, catalog, identity and Python checks.
 The catalog and identity checks run before pytest; findings fail the suite.
 It adds native, SDK, image and browser suites according to component dependencies.
 Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier

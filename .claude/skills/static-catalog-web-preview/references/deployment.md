@@ -64,8 +64,10 @@ rebuilt and reapplied through the production environment. Do not also add a
 web deploy workflow will run from the same PR; that duplicates the promotion and
 can race the automatic deploy. The publish job runs the live catalog drift
 guard using its exact release-index snapshot before recording success. The
-standalone guard retains PR consistency checks and manual live checks; skipped
-deployments do not launch a second live comparison against newer indexes.
+standalone guard retains manual live checks on trusted `main`. Local catalog
+consistency and site builds run without cloud credentials in the existing CI
+`tests` suite, including documentation-only changes. Skipped deployments do not
+launch a second live comparison against newer indexes.
 
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
 explicit. Manual catalog web deployments should stage files under
