@@ -91,6 +91,7 @@ production-image checks keep their isolated host environment.
 Tool versions are owned by the dependency-free
 `scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
 CI setup and image pins are checked against that contract.
+
 The production-image suite uses the host Docker client and an isolated host
 environment with the same pinned Python. Host checks need only the standard
 library; application dependencies are installed inside the tested images. Local
@@ -224,7 +225,15 @@ and additional suites, with no separate policy file or persisted tier state.
 Markdown files use the documentation tier, including workflow and Terraform
 READMEs. Catalog inputs, templates, asset metadata and test fixtures retain their
 consumer validation. Non-Markdown tools under guidance directories remain unknown.
-Each `NARROW_SCRIPTS` entry retains its consumer proof. Mixed changes union their
+Each `NARROW_PATHS` entry retains its consumer proof. The Slack incident worker,
+workflow-failure routing, repository announcements and their eight exact Python
+test modules select only `lint` and `tests`, including the full Python and
+security checks above. Tests named for SDK and WDPA incident recovery exercise
+mocked histories, not SDK/native fixtures. Import-consumer checks and a Docker
+input check over the seven executed production recipes guard the exceptions.
+The separate feature-preview service recipe is built by its own preview workflow;
+it is not validated by the production-images suite. Automation-only plans select
+no images or deployments. Mixed changes union their
 requirements. Workflow/shared-contract changes and unavailable comparisons select
 all suites. Runtime-only deployments reuse installed IAM. Terraform changes and explicit
 IAM workflow/input changes select the existing narrow syncs. Deployment graph
