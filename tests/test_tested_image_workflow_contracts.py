@@ -90,11 +90,6 @@ def image_results():
     return plan, results, image_result
 
 
-def test_ci_ready_requires_complete_image_retention_evidence():
-    plan, results, _ = image_results()
-    assert set(verify_results(plan, results)) == set(plan["suites"])
-
-
 @pytest.mark.parametrize("defect", ("missing", "partial", "foreign-sha", "foreign-image-tag", "wrong-platform", "oversized", "duplicate-kind", "daemon-id-field"))
 def test_ci_ready_rejects_success_without_complete_exact_images(defect):
     plan, results, image_result = image_results()

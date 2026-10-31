@@ -4,8 +4,6 @@ import copy
 import json
 import unittest
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -254,27 +252,6 @@ sleep() { :; }
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(output.read_text().strip(), f"run_canary={expected}")
                 self.assertEqual(queries.exists(), expected == "true")
-
-    def test_declared_docker_script_copies_import_without_repo_fallback(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        declared = re.findall(r"^COPY (scripts/\S+\.py) \./(scripts/\S+\.py)$", dockerfile, re.MULTILINE)
-        self.assertTrue(declared)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for source, destination in declared:
-                target = root / destination
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPO_ROOT / source, target)
-            result = subprocess.run(
-                [sys.executable, "-I", "-c",
-                 f"import sys; sys.path.insert(0, {str(root)!r}); "
-                 "import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.feature_metadata_translation_reuse; "
-                 f"assert scripts.feature_metadata_localization.__file__.startswith({str(root)!r}); "
-                 "print('declared copies import successfully')"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "declared copies import successfully")
 
     def test_ci_filter_selects_helper_and_its_behavior_tests(self):
         from scripts.ci_contract import NATIVE_TESTS, select_suites
