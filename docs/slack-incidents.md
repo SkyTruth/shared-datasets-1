@@ -46,6 +46,15 @@ skipped, it remains a failed Actions check without opening or resolving a Slack
 incident. An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
 
+A successful scheduled catalog probe with no incident observations also skips
+global incident reconciliation. The worker first verifies the source workflow,
+repository and attempt, then reads its authoritative jobs to prove the publisher
+was skipped. An obsolete source attempt is already a no-op. The short worker
+still appears in Actions; it does not load notification checkpoints or probe
+unrelated deployments. Publisher completions and failed probes retain normal
+reconciliation. The independent hourly completion checker still performs the
+full 24-hour catch-up and processes pending deliveries and recovery evidence.
+
 When inputs changed, the scheduled probe also checks passing main CI for its
 exact revision before selecting the publisher. Pending CI defers the refresh
 until a later hourly probe, with a job summary and no deployment incident.
@@ -226,11 +235,11 @@ parent still requires owner inspection before any parent update or new send.
 
 ## Incremental verification
 
-Every event still loads and verifies all current notification checkpoints,
-processes unrelated deferred and pending delivery work, and inspects every
-eligible deployment target. Workflow subscriptions, serialization and the hourly
-24-hour replay remain unchanged. There is no separate index, external worker,
-new permission or source-event filter.
+Except for the verified empty successful catalog probes described above, every
+event loads and verifies all current notification checkpoints, processes unrelated
+deferred and pending delivery work, and inspects every eligible deployment target.
+Workflow subscriptions, serialization and the hourly 24-hour replay remain
+unchanged. There is no separate index, external worker or new permission.
 
 A deployment state's `terminal_validation` is either null or exactly two SHA-256
 fingerprints: the complete production record and status history, and the verifier

@@ -982,6 +982,13 @@ def main():
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")
             activated = instant(since)
             observations = source_observations(api, event, targets)
+            source = event["workflow_run"]
+            if (source["event"] == "schedule" and source["conclusion"] == "success"
+                    and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
+                # An idle input probe has no incident evidence. The completion
+                # checker still owns hourly replay and unrelated pending work.
+                print("Prepared 0 incident transitions; scheduled catalog probe has no incident evidence.")
+                return
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, targets, since))
