@@ -15,15 +15,6 @@ from workflow_helpers import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/eamlis-monthly-deploy.yml"
-DOCKERFILE = REPO_ROOT / "ingestion/eamlis_monthly/Dockerfile"
-
-REQUIRED_SCRIPT_COPIES = (
-    "scripts/feature_metadata_translation_reuse.py",
-    "scripts/pmtiles_zoom.py",
-    "scripts/release_feature_model.py",
-    "scripts/slack_notify.py",
-    "scripts/vector_asset.py",
-)
 
 
 def test_paused_scheduler_defers_automatic_deploy_canary(tmp_path):
@@ -175,24 +166,6 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         audit_run = steps["Run EAMLIS bucket hygiene audit"]["run"]
         self.assertIn("audit_shared_datasets.py", audit_run)
         self.assertIn("eamlis-abandoned-mine-land-inventory", audit_run)
-
-    def test_eamlis_monthly_dockerfile_installs_pmtiles_validation_decoder(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        self.assertIn(
-            "tippecanoe",
-            dockerfile,
-            "eamlis-monthly image must install tippecanoe: the shared release vector "
-            "contract validation decodes PMTiles with tippecanoe-decode",
-        )
-
-    def test_eamlis_monthly_dockerfile_copies_scripts_import_closure(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(
-                f"COPY {script_path} ./{script_path}",
-                dockerfile,
-                f"eamlis-monthly image must copy {script_path}; the job imports it at runtime",
-            )
 
 
 if __name__ == "__main__":

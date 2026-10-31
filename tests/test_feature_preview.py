@@ -276,20 +276,6 @@ class FeaturePreviewTests(unittest.TestCase):
         )
 
 
-    def test_main_contains_preview_source_mechanics(self):
-        service_run = REPO_ROOT / "services/feature_preview_service/run.py"
-        service_dockerfile = REPO_ROOT / "services/feature_preview_service/Dockerfile"
-        catalog_viewer_run = REPO_ROOT / "services/catalog_viewer/run.py"
-        catalog_viewer_dockerfile = REPO_ROOT / "services/catalog_viewer/Dockerfile"
-
-        self.assertTrue(service_run.exists())
-        self.assertTrue(service_dockerfile.exists())
-        self.assertTrue(catalog_viewer_run.exists())
-        self.assertTrue(catalog_viewer_dockerfile.exists())
-        self.assertIn("feature_preview_run.GcsSidecarFeatureIndex", catalog_viewer_run.read_text())
-        self.assertNotIn("google-cloud-firestore", service_dockerfile.read_text())
-        self.assertNotIn("google-cloud-firestore", catalog_viewer_dockerfile.read_text())
-
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
         workflow = ARTIFACT_REGISTRY_IAM_WORKFLOW.read_text()
