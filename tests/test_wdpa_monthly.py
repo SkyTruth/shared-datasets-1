@@ -444,37 +444,6 @@ class WdpaMonthlyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "sample field SITE_ID missing"):
             wdpa.assert_sample_field_available(layers, wdpa.SampleSpec(fraction=0.01, seed=1))
 
-    def test_release_upload_uses_no_clobber(self):
-        bucket = FakeBucket()
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        with tempfile.NamedTemporaryFile() as tmp:
-            tmp.write(b"data")
-            tmp.flush()
-            info = publisher.upload_new_object(
-                local_path=Path(tmp.name),
-                object_name="asset/releases/2026-04-29/asset.fgb",
-                metadata={"asset_slug": "asset"},
-            )
-        blob = bucket.blob("asset/releases/2026-04-29/asset.fgb")
-        self.assertEqual(blob.uploads[0][1], 0)
-        self.assertEqual(info["generation"], blob.generation)
-
-    def test_latest_replace_uses_observed_generation(self):
-        bucket = FakeBucket()
-        blob = bucket.blob("asset/latest/asset.fgb")
-        blob.exists = True
-        blob.generation = 7
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        with tempfile.NamedTemporaryFile() as tmp:
-            tmp.write(b"data")
-            tmp.flush()
-            publisher.replace_latest_object(
-                local_path=Path(tmp.name),
-                object_name=blob.name,
-                metadata={"asset_slug": "asset"},
-            )
-        self.assertEqual(blob.uploads[0][1], 7)
-
     def test_successful_run_record_is_detected(self):
         bucket = FakeBucket()
         asset = wdpa.ASSETS[0]

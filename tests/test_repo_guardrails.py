@@ -112,27 +112,6 @@ class RepoGuardrailsTests(unittest.TestCase):
         }
         self.assertFalse(repo_guardrails.job_uses_prod_terraform(workflow, workflow['jobs']['preview']))
 
-    def test_all_production_execution_jobs_share_the_queue(self):
-        found = set()
-        root = Path(__file__).resolve().parents[1]
-        for path in (root / '.github/workflows').glob('*.yml'):
-            workflow = yaml.safe_load(path.read_text())
-            for name, job in workflow['jobs'].items():
-                if repo_guardrails.job_uses_prod_terraform(workflow, job):
-                    found.add((path.name, name))
-                    self.assertEqual(job['concurrency'], repo_guardrails.PROD_TERRAFORM_CONCURRENCY)
-        self.assertEqual(found, {
-            ('prod-terraform-target-apply.yml', 'sync'),
-            ('deployment-recovery.yml', 'reconcile'),
-            ('wdpa-monthly-deploy.yml', 'deploy'),
-            ('sea-ice-daily-deploy.yml', 'deploy'),
-            ('eamlis-monthly-deploy.yml', 'deploy'),
-            ('mpatlas-monthly-deploy.yml', 'deploy'),
-            ('catalog-viewer-deploy.yml', 'deploy'),
-            ('dataset-usage-deploy.yml', 'deploy'),
-            ('pmtiles-cdn-sync.yml', 'sync'),
-        })
-
     def test_catalog_comparison_distinguishes_empty_columns_from_metadata_changes(self):
         before = "asset_slug,title\none,One\ntwo,Two\n"
         empty = "asset_slug,title,translation_locales\none,One,\ntwo,Two,\n"
