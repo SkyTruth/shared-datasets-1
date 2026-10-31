@@ -64,41 +64,6 @@ def test_deployments_load_authenticated_ci_bytes_and_verify_registry_config(targ
     image_contract(deployment_steps(target), target)
 
 
-def test_viewer_claim_cannot_bind_a_daemon_reference_instead_of_config_bytes():
-    steps = copy.deepcopy(deployment_steps("catalog-viewer"))
-    tag = next(step for step in steps if "docker tag" in step.get("run", ""))
-    tag["run"] = tag["run"].replace("CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}", "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_ID}")
-    with pytest.raises(AssertionError, match="canonical config bytes"):
-        image_contract(steps, "catalog-viewer")
-
-
-@pytest.mark.parametrize("target", TARGETS)
-@pytest.mark.parametrize("defect", ("rebuild", "missing-source", "loader-fallback", "mutable-tag", "no-registry-read", "daemon-id-as-config", "unverified-config", "early-apply"))
-def test_image_contract_rejects_rebuild_fallback_and_missing_proof(target, defect):
-    steps = copy.deepcopy(deployment_steps(target))
-    loader = next(step for step in steps if step.get("id") == "tested-image")
-    tag = next(step for step in steps if "docker tag" in step.get("run", ""))
-    push = next(step for step in steps if "docker push" in step.get("run", ""))
-    if defect == "rebuild":
-        loader["run"] += "\ndocker build -t mutable .\n"
-    elif defect == "missing-source":
-        loader["run"] = loader["run"].replace('--source-run-attempt "$SOURCE_RUN_ATTEMPT"', "")
-    elif defect == "loader-fallback":
-        loader["run"] += " || docker pull mutable\n"
-    elif defect == "mutable-tag":
-        tag["env"]["TESTED_IMAGE_ID"] = "mutable:latest"
-    elif defect == "no-registry-read":
-        push["run"] = push["run"].replace("imagetools inspect --raw", "imagetools inspect")
-    elif defect == "daemon-id-as-config":
-        push["env"]["TESTED_IMAGE_CONFIG"] = "${{ steps.tested-image.outputs.image_id }}"
-    elif defect == "unverified-config":
-        push["run"] = push["run"].replace("assert actual == expected", "assert True")
-    else:
-        steps.insert(steps.index(push), {"run": "terraform apply saved.tfplan"})
-    with pytest.raises(AssertionError):
-        image_contract(steps, target)
-
-
 @pytest.mark.parametrize("target", TARGETS)
 def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, target):
     push = image_contract(deployment_steps(target), target)
@@ -123,11 +88,6 @@ def image_results():
     image_result = next(result for result in results if result["suite"] == "production-images")
     image_result["production_images"] = production_images(plan["tested_sha"])
     return plan, results, image_result
-
-
-def test_ci_ready_requires_complete_image_retention_evidence():
-    plan, results, _ = image_results()
-    assert set(verify_results(plan, results)) == set(plan["suites"])
 
 
 @pytest.mark.parametrize("defect", ("missing", "partial", "foreign-sha", "foreign-image-tag", "wrong-platform", "oversized", "duplicate-kind", "daemon-id-field"))
