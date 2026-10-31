@@ -643,6 +643,21 @@ def admits_blocked_observations(state):
     return incident["resolution"] is None and parent and parent["state"] == "delivered"
 
 
+class GitHub(deployments.GitHub):
+    """Share repository/workflow identity snapshots within one worker only."""
+
+    def __init__(self):
+        self._identities = {}
+
+    def get(self, path):
+        if not (path == f"repos/{REPOSITORY}" or re.fullmatch(
+                rf"repos/{re.escape(REPOSITORY)}/actions/workflows/(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\.yml)", path)):
+            return super().get(path)
+        if path not in self._identities:
+            self._identities[path] = super().get(path)
+        return copy.deepcopy(self._identities[path])
+
+
 def worker_context(api, environment=os.environ):
     require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
             and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + WORKFLOW + "@refs/heads/main", "incidents require the trusted main workflow")
@@ -949,7 +964,7 @@ def main():
     parser.add_argument("--event-path", type=Path, default=Path(os.environ.get("GITHUB_EVENT_PATH", "event.json")))
     parser.add_argument("--work-dir", type=Path, required=True)
     args = parser.parse_args()
-    api = deployments.GitHub()
+    api = GitHub()
     run = worker_context(api)
     ledger = Ledger(api, run, args.work_dir)
     args.work_dir.mkdir(parents=True, exist_ok=True)

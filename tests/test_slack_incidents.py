@@ -846,7 +846,7 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE",
                        "2026-10-07T00:00:00Z" if scenario == "preactivation-publisher" else "2026-10-06T00:00:00Z")
     monkeypatch.setattr("sys.argv", ["slack_incidents.py", "prepare", "--event-path", str(event_path), "--work-dir", str(tmp_path)])
-    with mock.patch.object(incidents.deployments, "GitHub", return_value=api), \
+    with mock.patch.object(incidents, "GitHub", return_value=api), \
             mock.patch.object(incidents, "worker_context", return_value={"event": "workflow_run"}), \
             mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
             mock.patch.object(incidents.Ledger, "load", return_value={}) as load, \
@@ -873,6 +873,118 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     if scenario == "completion":
         assert len(api.pages.call_args_list) == 2  # The hourly replay still runs.
     assert json.loads((tmp_path / "prepared.json").read_text()) == []
+
+
+@pytest.mark.parametrize("path", [
+    f"repos/{incidents.REPOSITORY}",
+    f"repos/{incidents.REPOSITORY}/actions/workflows/42",
+    f"repos/{incidents.REPOSITORY}/actions/workflows/ci.yml",
+])
+def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path):
+    with mock.patch.object(deployments, "read", side_effect=[
+            RuntimeError("identity unavailable"), b'{"nested":{"id":1}}', b'{"nested":{"id":2}}']) as read:
+        api = incidents.GitHub()
+        with pytest.raises(RuntimeError, match="identity unavailable"):
+            api.get(path)
+        first = api.get(path)
+        first["nested"]["id"] = 99
+        assert api.get(path) == {"nested": {"id": 1}}
+        assert incidents.GitHub().get(path) == {"nested": {"id": 2}}
+    assert read.call_count == 3
+
+
+@pytest.mark.parametrize("path", [
+    f"repos/{incidents.REPOSITORY}/actions/runs/100",
+    f"repos/{incidents.REPOSITORY}/actions/runs/100/attempts/1",
+    f"repos/{incidents.REPOSITORY}/deployments/10",
+    f"repos/{incidents.REPOSITORY}/deployments/10/statuses?per_page=100",
+    f"repos/{incidents.REPOSITORY}/actions/workflows/ci.yml?ref=main",
+    f"repos/{incidents.REPOSITORY}/actions/workflows/ci.yml/extra",
+    f"repos/{incidents.REPOSITORY}?extra=true",
+    "repos/Other/repository",
+    "repos/Other/repository/actions/workflows/ci.yml",
+])
+def test_operational_and_nonidentity_gets_always_refresh(path):
+    with mock.patch.object(deployments, "read", side_effect=[b'{"id":1}', b'{"id":2}']) as read:
+        api = incidents.GitHub()
+        assert api.get(path) == {"id": 1}
+        assert api.get(path) == {"id": 2}
+    assert read.call_count == 2
+
+
+def test_identity_snapshot_does_not_cache_paginated_status_history():
+    path = f"repos/{incidents.REPOSITORY}/deployments/10/statuses?per_page=100"
+    with mock.patch.object(deployments, "read", side_effect=[b'[[{"id":1}]]', b'[[{"id":2},{"id":1}]]']) as read:
+        api = incidents.GitHub()
+        assert api.pages(path) == [{"id": 1}]
+        assert api.pages(path) == [{"id": 2}, {"id": 1}]
+    assert read.call_args_list == [mock.call(path, paginate=True)] * 2
+
+
+def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_path, monkeypatch):
+    repository = {"id": 1, "full_name": incidents.REPOSITORY}
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    source = {"id": 100, "run_attempt": 1, "name": incidents.alerts.WORKFLOW_NAMES["deployment-verification.yml"][0],
+              "event": "schedule", "workflow_id": 2, "path": ".github/workflows/deployment-verification.yml",
+              "head_sha": SHA, "conclusion": "success", "updated_at": timestamp, "created_at": timestamp,
+              "status": "completed", "head_branch": "main", "head_repository": repository, "repository": repository}
+    ci = {**source, "id": 101, "workflow_id": 3, "path": ".github/workflows/ci.yml", "name": "CI", "event": "push"}
+    worker = {**source, "id": 200, "workflow_id": 4, "path": incidents.WORKFLOW, "event": "workflow_run"}
+    prefix = f"repos/{incidents.REPOSITORY}"
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"workflow_run": source, "repository": repository}))
+    for key, value in {
+        "GITHUB_REPOSITORY": incidents.REPOSITORY, "GITHUB_REF": "refs/heads/main",
+        "GITHUB_WORKFLOW_REF": incidents.REPOSITORY + "/" + incidents.WORKFLOW + "@refs/heads/main",
+        "GITHUB_RUN_ID": "200", "GITHUB_RUN_ATTEMPT": "1",
+        "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": "2026-10-01T00:00:00Z",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr("sys.argv", ["slack_incidents.py", "prepare", "--event-path", str(event_path), "--work-dir", str(tmp_path)])
+
+    def read(path, *, paginate=False):
+        if path == prefix:
+            value = repository
+        elif "/actions/workflows/" in path:
+            key = path.rsplit("/", 1)[1]
+            value = next({"id": run["workflow_id"], "path": run["path"]} for run in (source, ci, worker)
+                         if key in {str(run["workflow_id"]), run["path"].rsplit("/", 1)[1]})
+        elif path.endswith("/actions/runs/200/attempts/1"):
+            value = worker
+        elif path.endswith("/actions/runs/100"):
+            value = source
+        elif path.endswith("/actions/runs/101"):
+            value = ci
+        elif "/actions/runs?" in path:
+            value = [{"total_count": 2, "workflow_runs": [source, ci]}]
+        elif "/jobs?" in path:
+            value = [{"total_count": 0, "jobs": []}]
+        else:
+            assert path == prefix + "/deployments?environment=slack-incidents&task=slack-incident&per_page=100"
+            value = [[]]
+        return json.dumps(value).encode()
+
+    histories = []
+    for client in (deployments.GitHub, incidents.GitHub):
+        with mock.patch.object(incidents, "GitHub", client), \
+                mock.patch.object(deployments, "read", side_effect=read) as transport, \
+                mock.patch.object(incidents, "datetime", wraps=datetime) as clock, \
+                mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
+                mock.patch.object(incidents, "prepare", wraps=incidents.prepare) as prepare:
+            clock.now.return_value = now
+            incidents.main()
+            histories.append(([call.args[0] for call in transport.call_args_list], copy.deepcopy(prepare.call_args.args[2])))
+        assert json.loads((tmp_path / "prepared.json").read_text()) == []
+    original, optimized = histories
+    assert optimized[1] == original[1] and len(optimized[1]) == 2
+    assert len(original[0]) == 17 and len(optimized[0]) == 13
+    assert original[0].count(prefix) == 4 and optimized[0].count(prefix) == 1
+    assert original[0].count(prefix + "/actions/workflows/2") == 2
+    assert optimized[0].count(prefix + "/actions/workflows/2") == 1
+    identity_paths = {prefix, *(path for path in original[0] if "/actions/workflows/" in path)}
+    assert [path for path in optimized[0] if path not in identity_paths] == [
+        path for path in original[0] if path not in identity_paths]
 
 
 def test_batch_signatures_bind_exact_checkpoint_and_keep_production_single_subject_default():
