@@ -241,6 +241,14 @@ deferred and pending delivery work, and inspects every eligible deployment targe
 Workflow subscriptions, serialization and the hourly 24-hour replay remain
 unchanged. There is no separate index, external worker or new permission.
 
+Each worker invocation reads a repository or workflow identity once and reuses
+that response for its remaining checks. Only those exact identity endpoints are
+eligible; source runs, exact run attempts, jobs, deployment records and status
+histories are always read afresh. Each consumer still validates its expected
+repository and workflow against the identity response. Failed reads are not
+retained, and each invocation starts empty. This removes duplicate API requests
+without keeping state between workers or shortening the replay window.
+
 A deployment state's `terminal_validation` is either null or exactly two SHA-256
 fingerprints: the complete production record and status history, and the verifier
 source contract. The latter includes the incident, deployment, emission, workflow
@@ -268,9 +276,9 @@ sealing also clears them and cannot manufacture reusable validation evidence.
 
 Within one ledger invocation, an already cryptographically verified multi-subject
 statement can cover another exact notification receipt. Every use still checks
-the live emitter, repository and workflow identity, certificate policy and exact
-subject digest. This in-memory reuse never crosses invocations; production
-receipt callers retain their independent verification defaults.
+the live emitter, invocation-local repository and workflow identities, certificate
+policy and exact subject digest. This in-memory reuse never crosses invocations;
+production workflows retain their independent verification defaults.
 
 Before the first version 4 writer is merged, pause admission of the notification
 workflow and drain all admitted workers without cancelling active sends. Merge

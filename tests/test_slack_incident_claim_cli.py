@@ -10,7 +10,6 @@ from unittest import mock
 import pytest
 
 from scripts import deployment_emission as emissions
-from scripts import deployment_revision as deployments
 from scripts import slack_incidents as incidents
 
 
@@ -69,7 +68,7 @@ def deliver_cli(tmp_path, monkeypatch):
     calls = mock.Mock()
     calls.attach_mock(signature, "signature")
     calls.attach_mock(slack, "slack")
-    monkeypatch.setattr(deployments, "GitHub", lambda: api)
+    monkeypatch.setattr(incidents, "GitHub", lambda: api)
     monkeypatch.setattr(incidents, "Slack", lambda *_: slack)
     monkeypatch.setattr(emissions, "verify", signature)
     monkeypatch.setattr(incidents.Ledger, "save", save)
