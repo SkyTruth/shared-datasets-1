@@ -71,13 +71,30 @@ CONTRACT_FILES = (
 
 # Additional suites beyond ALWAYS, only after tracing imports (including other
 # scripts), subprocess/workflow callers, Docker COPY sources and generated data.
-# Unproved scripts retain production-images; the image selector below narrows
+# Unproved paths retain production-images; the image selector below narrows
 # only traced component ownership, independently of these suite exceptions.
 # SDK fixtures read checked-in JSON/web contracts; browser fixtures import
 # release_feature_model and execute catalog_site. Those shared producers and all
 # unproved scripts remain broad. Keep this proof with each exception; a new
 # consumer must expand its suites or remove the exception.
-NARROW_SCRIPTS = {
+NARROW_PATHS = {
+    # Alert workflows and ordinary Python tests only (including the exact
+    # incident tests below); no native, SDK or browser fixture producer or
+    # installed production-image consumer. The separate preview-service recipe
+    # copies all scripts but is not built by the production-images suite.
+    "scripts/slack_incidents.py": (),
+    "scripts/workflow_failure_alert.py": (),
+    "scripts/repo_alerts.py": (),
+    # Exact reverse-import test closure of those three scripts. SDK/WDPA names
+    # describe mocked incident histories, not SDK/native fixture execution.
+    "tests/test_failure_alert_routing.py": (),
+    "tests/test_repo_alerts.py": (),
+    "tests/test_sdk_incident_recovery.py": (),
+    "tests/test_slack_incident_claim_cli.py": (),
+    "tests/test_slack_incidents.py": (),
+    "tests/test_slack_incidents_incremental.py": (),
+    "tests/test_wdpa_incident_recovery.py": (),
+    "tests/test_workflow_identity.py": (),
     # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
     # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
     # generator imports/calls it. Catalog tests retain SDKs/browser and images;
@@ -125,8 +142,8 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         return "component", {"production-images", "browser"}
     if path.startswith(("web/", "tests/browser/")):
         return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path in NARROW_SCRIPTS:
-        return "component", set(NARROW_SCRIPTS[path])
+    if path in NARROW_PATHS:
+        return "component", set(NARROW_PATHS[path])
     if path.startswith("scripts/"):
         return "shared", set(SUITES)
     if path.startswith("tests/"):
@@ -197,6 +214,8 @@ def select_production_images(paths: list[str] | None) -> list[str]:
     selected = set()
     for path in paths:
         if classify_change(path)[0] == "documentation":
+            continue
+        if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
             continue
         if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
             selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
