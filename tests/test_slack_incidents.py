@@ -810,6 +810,71 @@ def test_idle_catalog_probe_neither_opens_nor_resolves_an_incident(conclusion, n
     verify.assert_called_once_with(api, run)
 
 
+@pytest.mark.parametrize("scenario", ["probe", "obsolete", "publisher", "preactivation-publisher", "failure", "timed_out",
+                                      "startup_failure", "untrusted", "jobs-error", "empty-ci", "completion"])
+def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(tmp_path, monkeypatch, scenario):
+    filename = {"empty-ci": "ci.yml", "completion": "deployment-verification.yml"}.get(scenario, "catalog-web-deploy.yml")
+    name = incidents.alerts.WORKFLOW_NAMES[filename][0]
+    conclusion = scenario if scenario in {"failure", "timed_out", "startup_failure"} else "success"
+    repository = {"id": 1, "full_name": incidents.REPOSITORY}
+    source = {"id": 100, "run_attempt": 1, "name": name, "event": "push" if scenario == "empty-ci" else "schedule",
+              "workflow_id": 2, "path": ".github/workflows/" + filename, "head_sha": SHA,
+              "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
+              "head_branch": "main", "head_repository": repository, "repository": repository}
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"workflow_run": source, "repository": repository}))
+    jobs = [] if scenario in {"startup_failure", "empty-ci", "completion"} else [
+        {"id": 1, "name": "Check for catalog input changes", "status": "completed", "conclusion": conclusion,
+         "completed_at": source["updated_at"]},
+        {"id": 2, "name": "Build and publish catalog web", "status": "completed",
+         "conclusion": "success" if "publisher" in scenario else "skipped", "completed_at": source["updated_at"]},
+    ]
+    api = mock.Mock()
+    authoritative = {**source, "head_sha": "b" * 40} if scenario == "untrusted" else source
+    if scenario == "obsolete":
+        authoritative = {**source, "run_attempt": 2}
+    api.get.side_effect = [authoritative, {"id": 2, "path": source["path"]}, repository]
+    jobs_path = f"repos/{incidents.REPOSITORY}/actions/runs/100/attempts/1/jobs?per_page=100"
+    def pages(path, **kwargs):
+        if path == jobs_path:
+            if scenario == "jobs-error":
+                raise deployments.DeploymentError("incomplete jobs enumeration")
+            return jobs
+        assert scenario == "completion" and "/actions/runs?" in path
+        return []
+    api.pages.side_effect = pages
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE",
+                       "2026-10-07T00:00:00Z" if scenario == "preactivation-publisher" else "2026-10-06T00:00:00Z")
+    monkeypatch.setattr("sys.argv", ["slack_incidents.py", "prepare", "--event-path", str(event_path), "--work-dir", str(tmp_path)])
+    with mock.patch.object(incidents.deployments, "GitHub", return_value=api), \
+            mock.patch.object(incidents, "worker_context", return_value={"event": "workflow_run"}), \
+            mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
+            mock.patch.object(incidents.Ledger, "load", return_value={}) as load, \
+            mock.patch.object(incidents.Ledger, "save") as save, \
+            mock.patch.object(incidents, "prepare", wraps=incidents.prepare) as prepare:
+        if scenario in {"untrusted", "jobs-error"}:
+            with pytest.raises((ValueError, deployments.DeploymentError)):
+                incidents.main()
+            prepare.assert_not_called()
+        elif scenario in {"failure", "timed_out", "startup_failure"}:
+            # The existing state-machine tests cover failure delivery. Here the
+            # CLI boundary must hand the real source observations to it.
+            prepare.side_effect = lambda *args, **kwargs: []
+            incidents.main()
+            prepare.assert_called_once()
+        else:
+            incidents.main()
+            assert load.call_count == (0 if scenario in {"probe", "obsolete"} else 1)
+            assert prepare.call_count == (0 if scenario in {"probe", "obsolete"} else 1)
+        save.assert_not_called()
+    api.post.assert_not_called()
+    if scenario not in {"untrusted", "obsolete"}:
+        assert api.pages.call_args_list[0] == mock.call(jobs_path, field="jobs")
+    if scenario == "completion":
+        assert len(api.pages.call_args_list) == 2  # The hourly replay still runs.
+    assert json.loads((tmp_path / "prepared.json").read_text()) == []
+
+
 def test_batch_signatures_bind_exact_checkpoint_and_keep_production_single_subject_default():
     record = signed_record()
     status = {"id": 12, "state": "success", "description": "applied", "log_url": emissions.invocation(incidents.REPOSITORY, 11, 1)}
