@@ -15,14 +15,16 @@ from unittest import mock
 import pytest
 
 from scripts import ci_preflight as preflight
+from scripts.production_image_contracts import commands as image_commands
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.check_workflow_syntax import parser_source
 from scripts.ci_contract import (
-    ALWAYS, CONTRACT_FILES, NARROW_SCRIPTS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
+    ALWAYS, CONTRACT_FILES, NARROW_PATHS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
     verify_results, select_production_images,
 )
 from workflow_helpers import load_workflow, workflow_triggers
 from ci_result_fixtures import production_images
+from scripts.tested_image_bundle import BUILD_TARGETS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,10 +91,12 @@ def test_documentation_does_not_reduce_other_changed_path_requirements():
     assert select_suites(["scripts/README.md", "scripts/unproved.py"])[0] == list(SUITES)
 
 
-@pytest.mark.parametrize("path,suites", list(NARROW_SCRIPTS.items()))
-def test_proven_script_selects_only_its_consumer_suites(path, suites):
+@pytest.mark.parametrize("path,suites", list(NARROW_PATHS.items()))
+def test_proven_path_selects_only_its_consumer_suites(path, suites):
     assert set(select_suites([path])[0]) == ALWAYS | set(suites)
     assert select_suites(["scripts/README.md", path])[0] == select_suites([path])[0]
+    if not suites:
+        assert select_production_images([path]) == []
 
 
 @pytest.mark.parametrize("path", [
@@ -101,7 +105,7 @@ def test_proven_script_selects_only_its_consumer_suites(path, suites):
     "scripts/ci_contract.py", "scripts/new-runtime.py",
 ])
 def test_unlisted_shared_and_fixture_scripts_remain_broad(path):
-    assert path not in NARROW_SCRIPTS
+    assert path not in NARROW_PATHS
     assert select_suites([path])[0] == list(SUITES)
 
 
@@ -109,6 +113,21 @@ def test_mixed_narrow_scripts_union_their_consumers_in_suite_order():
     paths = ["scripts/local_wdpa_sample.py", "scripts/catalog_web_publish.py"]
     assert select_suites(paths)[0] == list(SUITES)
     assert select_suites(list(reversed(paths)))[0] == list(SUITES)
+
+
+def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
+    automation = "scripts/slack_incidents.py"
+    component = "ingestion/mpatlas_monthly/run.py"
+    assert select_suites([automation, component]) == select_suites([component])
+    assert select_production_images([automation, component]) == ["mpatlas-monthly"]
+    for broad in ("scripts/new-runtime.py", *CONTRACT_FILES):
+        assert select_suites([automation, broad])[0] == list(SUITES)
+        assert select_production_images([automation, broad]) == list(BUILD_TARGETS)
+    # Contract precedence also governs the image exception, even if a future
+    # allowlist edit accidentally duplicates a protected contract path.
+    monkeypatch.setitem(NARROW_PATHS, "scripts/ci_contract.py", ())
+    assert select_suites(["scripts/ci_contract.py"])[0] == list(SUITES)
+    assert select_production_images(["scripts/ci_contract.py"]) == list(BUILD_TARGETS)
 
 
 @pytest.mark.parametrize("paths,expected", [
@@ -171,7 +190,7 @@ def test_narrow_scripts_cover_transitive_python_import_consumers():
     for path in files:
         for module in python_imports(path):
             importers.setdefault(module, set()).add(path)
-    for script in NARROW_SCRIPTS:
+    for script in NARROW_PATHS:
         seen, pending = set(), [ROOT / script]
         while pending:
             module = pending.pop()
@@ -186,20 +205,28 @@ def test_narrow_scripts_cover_transitive_python_import_consumers():
 
 
 def test_dockerfile_copied_scripts_keep_production_image_coverage():
+    # Derive the production recipes from the executed builder, not every
+    # Dockerfile in the repository. The separate preview deployment builds its
+    # own service image; production-images does not validate that recipe.
+    recipes = set()
+    for target in BUILD_TARGETS:
+        build = image_commands(target, "a" * 40)[0]
+        recipes.add(ROOT / build[build.index("-f") + 1])
+    assert len(recipes) == len(BUILD_TARGETS)
+    recipes.update((ROOT / ".github/docker").rglob("*Dockerfile*"))
     copied = set()
-    for directory in ("ingestion", "services", ".github/docker"):
-        for recipe in (ROOT / directory).rglob("*Dockerfile*"):
-            for line in recipe.read_text().replace("\\\n", " ").splitlines():
-                if not line.lstrip().startswith("COPY "):
-                    continue
-                words = shlex.split(line)
-                if any(word.startswith("--from=") for word in words):
-                    continue
-                for source in words[1:-1]:
-                    if source == "scripts":
-                        copied.update(path.relative_to(ROOT).as_posix() for path in (ROOT / source).glob("*.py"))
-                    elif source.startswith("scripts/"):
-                        copied.add(source)
+    for recipe in recipes:
+        for line in recipe.read_text().replace("\\\n", " ").splitlines():
+            if not line.lstrip().startswith("COPY "):
+                continue
+            words = shlex.split(line)
+            if any(word.startswith("--from=") for word in words):
+                continue
+            for source in words[1:-1]:
+                if source == "scripts":
+                    copied.update(path.relative_to(ROOT).as_posix() for path in (ROOT / source).glob("*.py"))
+                elif source.startswith("scripts/"):
+                    copied.add(source)
     assert "scripts/catalog_csv.py" in copied
     assert "scripts/local_wdpa_sample.py" in copied
     for script in copied:
@@ -427,6 +454,54 @@ def fixture_repo(tmp_path):
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
+
+
+def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path):
+    source, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    for filename in ("scripts/slack_incidents.py", "tests/test_wdpa_incident_recovery.py"):
+        target = source / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("automation fixture\n")
+    git("add", ".")
+    git("commit", "-m", "automation")
+    output, github_output = tmp_path / "plan.json", tmp_path / "github-output"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
+    completed = subprocess.run([
+        preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan",
+        "--base", base, "--output", str(output), "--github-output", str(github_output),
+    ], cwd=source, env=environment, capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    validation = json.loads(output.read_text())
+    emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    assert validation["suites"] == ["lint", "tests"]
+    assert validation["deployments"] == []
+    assert json.loads(emitted["changed-paths"]) == validation["changed_paths"]
+    assert json.loads(emitted["production-image-targets"]) == []
+    assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS
+    commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
+                for suite in validation["suites"]}
+    assert ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."] in commands["tests"]
+    assert ["uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o",
+            "xfail_strict=true", f"--junitxml={tmp_path / 'tests' / 'pytest.xml'}"] in commands["tests"]
+    for script in ("admission_check", "repo_guardrails", "catalog_docs", "catalog_site", "check_identity_resolutions"):
+        assert any(f"scripts/{script}.py" in args for args in commands["tests"])
+    assert ["uv", "run", "--no-sync", "ruff", "check", "."] in commands["lint"]
+    assert any("scripts/check_workflow_syntax.py" in args for args in commands["lint"])
+    assert any(args[0] == "terraform" and "validate" in args for args in commands["lint"])
+    results, jobs = results_for(validation), jobs_for(validation)
+    verify_results(validation, results, jobs)
+    for suite in ALWAYS:
+        with pytest.raises(ValueError, match="missing suite results"):
+            verify_results(validation, [result for result in results if result["suite"] != suite], jobs)
+        failed = copy.deepcopy(results)
+        next(result for result in failed if result["suite"] == suite)["commands"][0]["exit_code"] = 1
+        with pytest.raises(ValueError, match="failed command"):
+            verify_results(validation, failed, jobs)
+        skipped = copy.deepcopy(jobs)
+        skipped[suite]["result"] = "skipped"
+        with pytest.raises(ValueError, match=f"job {suite}: expected success"):
+            verify_results(validation, results, skipped)
 
 
 @pytest.mark.parametrize("suites", [SUITES, ("lint", "tests")])
