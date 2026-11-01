@@ -236,10 +236,32 @@ parent still requires owner inspection before any parent update or new send.
 ## Incremental verification
 
 Except for the verified empty successful catalog probes described above, every
-event loads and verifies all current notification checkpoints, processes unrelated
-deferred and pending delivery work, and inspects every eligible deployment target.
+event loads and authenticates all current notification checkpoints, processes
+unrelated deferred and pending delivery work, and inspects every eligible
+deployment target. Routine preparation can reuse a notification checkpoint's
+previous successful signature verification only when its complete current record,
+complete status history, Slack identity and freshly read emitter, repository and
+workflow metadata are identical. Every other checkpoint receives full verification.
 Workflow subscriptions, serialization and the hourly 24-hour replay remain
 unchanged. There is no separate index, external worker or new permission.
+
+Successful notification workers retain a small verification artifact for one day.
+Reuse independently checks the exact trusted-main producer revision, run and
+attempt, successful incident job and upload step, artifact creation interval,
+archive digest and sole bounded JSON member. Both the entire code revision and
+pinned verifier version must match. Missing or expired artifacts run ordinary
+verification; malformed selected proof or failed live reads fail visibly.
+Only exact checkpoints verified during that invocation are exported. A result
+covering several signed subjects never grants reuse to an unchecked checkpoint.
+
+This explicitly permits an unchanged, previously authenticated notification fact
+to remain usable when its original signature service is unavailable. It does not
+permit missing or changed checkpoint/status/emitter evidence. Source replay,
+pending deployment observation, deferred recovery and uncertain-send barriers
+remain unchanged. Owner reconciliation, delivery of newly signed claims and the
+final checkpoint verification retain their fresh verification path. Production
+authorization never uses the notification cache. This reduces repeated work;
+it does not remove the hourly workflow starts.
 
 Each worker invocation reads a repository or workflow identity once and reuses
 that response for its remaining checks. Only those exact identity endpoints are
@@ -269,8 +291,9 @@ invalid signatures and malformed checkpoint fields remain failures.
 This deliberately permits an already authenticated historical fact to remain
 usable when its original CI or production attestation is later unavailable,
 provided the complete current evidence and policy still match. The current
-notification checkpoint must still pass signature verification, and the live
-deployment/status enumerations must succeed. These fingerprints have no
+notification checkpoint must still pass its own authentication, including the
+exact unchanged-evidence reuse above, and the live deployment/status
+enumerations must succeed. These fingerprints have no
 production authorization role. Changed health clears them; owner checkpoint
 sealing also clears them and cannot manufacture reusable validation evidence.
 
