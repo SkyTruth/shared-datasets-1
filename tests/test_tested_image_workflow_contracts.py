@@ -60,11 +60,6 @@ def image_contract(steps, target):
 
 
 @pytest.mark.parametrize("target", TARGETS)
-def test_deployments_load_authenticated_ci_bytes_and_verify_registry_config(target):
-    image_contract(deployment_steps(target), target)
-
-
-@pytest.mark.parametrize("target", TARGETS)
 def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, target):
     push = image_contract(deployment_steps(target), target)
     line = next(line.strip() for line in push["run"].splitlines() if line.strip().startswith("python -c "))

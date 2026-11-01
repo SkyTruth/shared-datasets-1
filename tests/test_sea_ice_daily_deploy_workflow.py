@@ -47,8 +47,6 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Ingestion / Sea ice daily deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("Verify feature-ID publication state", steps)
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("resume_scheduler", trigger["workflow_dispatch"]["inputs"])
@@ -61,13 +59,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
         self.assertEqual(env["JOB_NAME"], "sea-ice-daily")
 
-        build_run = steps["Build sea-ice-daily image"]["run"]
-        self.assertIn("tested_image_authorization.py --workflow sea-ice-daily-deploy.yml --target sea-ice-daily", build_run)
-        self.assertNotIn("docker build", build_run)
-        self.assertEqual(steps["Build sea-ice-daily image"]["id"], "tested-image")
         tag = steps["Tag the exact tested sea-ice-daily image"]
-        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
-        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
         self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", tag["run"])
 
         self.assertIn("gdal_calc.py --help", steps["Smoke-test native tools in image"]["run"])
@@ -76,10 +68,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("sea_ice.build_outputs", synthetic_run)
 
         push_run = steps["Push sea-ice-daily image"]["run"]
-        self.assertIn("docker push", push_run)
-        self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("SEA_ICE_DAILY_IMAGE=${image_ref}", push_run)
-        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(

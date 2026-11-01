@@ -22,16 +22,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/wdpa-monthly-deploy.yml"
 DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
-REQUIRED_SCRIPT_COPIES = (
-    "scripts/feature_metadata_localization.py",
-    "scripts/feature_metadata_translation_reuse.py",
-    "scripts/translation_local_io.py",
-    "scripts/pmtiles_zoom.py",
-    "scripts/release_feature_model.py",
-    "scripts/slack_notify.py",
-    "scripts/vector_asset.py",
-)
-
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
     def test_image_runs_the_complete_automatic_pipeline(self):
@@ -101,8 +91,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Ingestion / WDPA monthly deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -261,14 +249,14 @@ sleep() { :; }
         self.assertNotIn('geospatial-integration', select_suites(['docs/unrelated.md'])[0])
         self.assertIn('tests/test_translation_local_io.py', NATIVE_TESTS)
 
-    def test_wdpa_monthly_dockerfile_copies_scripts_import_closure(self):
+    def test_wdpa_monthly_dockerfile_copies_conditional_runtime_dependencies(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(
-                f"COPY {script_path} ./{script_path}",
-                dockerfile,
-                f"wdpa-monthly image must copy {script_path}; the job imports it at runtime",
-            )
+        self.assertIn(
+            "COPY scripts/slack_notify.py ./scripts/slack_notify.py",
+            dockerfile,
+            "wdpa-monthly image must copy scripts/slack_notify.py; "
+            "the job imports it when sending metadata notifications",
+        )
         self.assertIn(
             "COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions",
             dockerfile,

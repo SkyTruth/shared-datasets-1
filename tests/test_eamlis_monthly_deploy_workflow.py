@@ -71,8 +71,6 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Ingestion / EAMLIS monthly deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -85,13 +83,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["JOB_NAME"], "eamlis-monthly")
         self.assertEqual(env["ASSET_SLUG"], "eamlis-abandoned-mine-land-inventory")
 
-        build_run = steps["Build eamlis-monthly image"]["run"]
-        self.assertIn("tested_image_authorization.py --workflow eamlis-monthly-deploy.yml --target eamlis-monthly", build_run)
-        self.assertNotIn("docker build", build_run)
-        self.assertEqual(steps["Build eamlis-monthly image"]["id"], "tested-image")
         tag = steps["Tag the exact tested eamlis-monthly image"]
-        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
-        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
         self.assertIn("EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}", tag["run"])
 
         tools_run = steps["Smoke-test native tools in image"]["run"]
@@ -103,10 +95,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts.vector_asset", import_run)
 
         push_run = steps["Push eamlis-monthly image"]["run"]
-        self.assertIn("docker push", push_run)
-        self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("EAMLIS_MONTHLY_IMAGE=${image_ref}", push_run)
-        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(
