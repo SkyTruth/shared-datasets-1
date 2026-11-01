@@ -845,10 +845,12 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     api.pages.side_effect = pages
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE",
                        "2026-10-07T00:00:00Z" if scenario == "preactivation-publisher" else "2026-10-06T00:00:00Z")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     monkeypatch.setattr("sys.argv", ["slack_incidents.py", "prepare", "--event-path", str(event_path), "--work-dir", str(tmp_path)])
     with mock.patch.object(incidents, "GitHub", return_value=api), \
             mock.patch.object(incidents, "worker_context", return_value={"event": "workflow_run"}), \
             mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
+            mock.patch.object(incidents.VerificationCache, "restore") as restore, \
             mock.patch.object(incidents.Ledger, "load", return_value={}) as load, \
             mock.patch.object(incidents.Ledger, "save") as save, \
             mock.patch.object(incidents, "prepare", wraps=incidents.prepare) as prepare:
@@ -867,6 +869,7 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
             assert load.call_count == (0 if scenario in {"probe", "obsolete"} else 1)
             assert prepare.call_count == (0 if scenario in {"probe", "obsolete"} else 1)
         save.assert_not_called()
+        assert restore.call_count == (0 if scenario in {"probe", "obsolete", "untrusted", "jobs-error"} else 1)
     api.post.assert_not_called()
     if scenario not in {"untrusted", "obsolete"}:
         assert api.pages.call_args_list[0] == mock.call(jobs_path, field="jobs")
@@ -966,11 +969,13 @@ def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_pa
         return json.dumps(value).encode()
 
     histories = []
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     for client in (deployments.GitHub, incidents.GitHub):
         with mock.patch.object(incidents, "GitHub", client), \
                 mock.patch.object(deployments, "read", side_effect=read) as transport, \
                 mock.patch.object(incidents, "datetime", wraps=datetime) as clock, \
                 mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
+                mock.patch.object(incidents.VerificationCache, "restore"), \
                 mock.patch.object(incidents, "prepare", wraps=incidents.prepare) as prepare:
             clock.now.return_value = now
             incidents.main()

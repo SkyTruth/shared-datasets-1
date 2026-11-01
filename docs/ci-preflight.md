@@ -226,7 +226,8 @@ Markdown files use the documentation tier, including workflow and Terraform
 READMEs. Catalog inputs, templates, asset metadata and test fixtures retain their
 consumer validation. Non-Markdown tools under guidance directories remain unknown.
 Each `NARROW_PATHS` entry retains its consumer proof. The Slack incident worker,
-workflow-failure routing, repository announcements and their eight exact Python
+notification-verification reuse, workflow-failure routing, repository announcements
+and their nine exact Python
 test modules select only `lint` and `tests`, including the full Python and
 security checks above. Tests named for SDK and WDPA incident recovery exercise
 mocked histories, not SDK/native fixtures. Import-consumer checks and a Docker
