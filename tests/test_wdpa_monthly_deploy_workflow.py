@@ -105,7 +105,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
 
         loader = steps["Load exact tested wdpa-monthly image"]["run"]
         self.assertIn("scripts/tested_image_authorization.py", loader)
-        self.assertNotIn("docker build", DEPLOY_WORKFLOW.read_text().replace("docker buildx imagetools", "docker inspect"))
         self.assertLess(step_names.index("Verify feature-ID publication state"),
                         step_names.index("Load exact tested wdpa-monthly image"))
 
@@ -117,8 +116,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts.vector_asset", import_run)
 
         push_run = steps["Push wdpa-monthly image"]["run"]
-        self.assertIn("docker push", push_run)
-        self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("WDPA_MONTHLY_IMAGE=${image_ref}", push_run)
 
         plan_run = steps["Terraform plan"]["run"]

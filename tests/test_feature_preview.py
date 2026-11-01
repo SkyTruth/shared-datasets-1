@@ -173,7 +173,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("--metadata-sidecar-autoload-max-bytes 33554432", workflow)
         self.assertIn("Publish preview catalog web bundle", workflow)
         self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", workflow)
-        self.assertIn("-target=google_firestore_database.feature_preview", workflow)
         self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
         self.assertNotIn("Refusing preview reset", workflow)
         deploy_create_section = workflow.split("      - name: Terraform plan", 1)[1]

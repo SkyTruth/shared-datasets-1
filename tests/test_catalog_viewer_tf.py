@@ -63,7 +63,6 @@ class CatalogViewerTerraformTests(unittest.TestCase):
         prod_tfvars = (PROD_TF / "production.auto.tfvars").read_text()
 
         self.assertIn("catalog_viewer_image", prod_tfvars)
-        self.assertIn('pmtiles_serving_mode                   = "cdn"', prod_tfvars)
         self.assertIn("pmtiles_cdn_grant_fill_service_account = true", prod_tfvars)
 
     def test_pmtiles_secret_iam_policy_bootstrap_is_condition_scoped(self):

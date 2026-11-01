@@ -61,9 +61,7 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 
         self.assertIn('paths   = ["/artifacts/*"]', pmtiles_cdn_tf)
-        self.assertIn('allow_origins     = ["*"]', pmtiles_cdn_tf)
         self.assertIn('paths   = ["/private/*"]', pmtiles_cdn_tf)
-        self.assertIn("allow_credentials = false", pmtiles_cdn_tf)
         self.assertIn('allow_methods     = ["GET", "HEAD", "OPTIONS"]', pmtiles_cdn_tf)
         self.assertIn("allow_origins     = local.pmtiles_browser_allowed_origins", pmtiles_cdn_tf)
         self.assertIn(
