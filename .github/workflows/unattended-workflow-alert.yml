@@ -194,3 +194,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"
+      - name: Retain verified notification evidence
+        if: ${{ success() && steps.prepare.outputs.verification_cache == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/slack-incidents/cache.json
+          if-no-files-found: error
+          retention-days: 1

@@ -108,7 +108,7 @@ fi'''
     }
     if [step.get("uses") for step in steps[1:4]] != list(actions):
         return False
-    seen_runs, seen_actions, signers = [], [], {}
+    seen_runs, seen_actions, signers, cache_uploads = [], [], {}, []
     for step in steps[1:]:
         if not enabled(step) or set(step) - {"name", "id", "if", "uses", "with", "run", "env"}:
             return False
@@ -132,18 +132,32 @@ fi'''
             if step.get("with") != {"subject-path": "${{ runner.temp }}/slack-incidents/" + phase + "/*.json", "create-storage-record": False}:
                 return False
             signers[identifier] = step
+        elif step.get("uses") == "actions/upload-artifact@v4":
+            if step != {
+                "name": "Retain verified notification evidence",
+                "if": "${{ success() && steps.prepare.outputs.verification_cache == 'true' }}",
+                "uses": "actions/upload-artifact@v4",
+                "with": {
+                    "name": "notification-verification-${{ github.run_id }}-${{ github.run_attempt }}",
+                    "path": "${{ runner.temp }}/slack-incidents/cache.json",
+                    "if-no-files-found": "error", "retention-days": 1,
+                },
+            }:
+                return False
+            cache_uploads.append(step)
         else:
             action = step.get("uses")
             if action not in actions or step.get("with") != actions[action] or step.get("env") or "if" in step or "id" in step:
                 return False
             seen_actions.append(action)
-    if seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}:
+    if (seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}
+            or len(cache_uploads) != 1 or steps[-1] != cache_uploads[0]):
         return False
     by_id = {step.get("id"): step for step in steps if step.get("id")}
     delivery = by_id["deliver"]
     claims = signers["attest-claims"]
     outcomes = signers["attest-outcomes"]
-    verify = steps[-1]
+    verify = steps[-2]
     expected_conditions = (
         (claims, "${{ always() && steps.prepare.outputs.claims == 'true' }}"),
         (delivery, "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}"),
@@ -152,7 +166,7 @@ fi'''
     )
     if any(step.get("if") != condition for step, condition in expected_conditions):
         return False
-    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 1
+    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 2
 
 
 def enabled(step):

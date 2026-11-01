@@ -193,7 +193,11 @@ class ReceiptContractTests(unittest.TestCase):
             "unsigned send": lambda steps: steps[8].update({"if": "always()"}),
             "late claim signature": lambda steps: steps.insert(9, steps.pop(7)),
             "lost failed outcome": lambda steps: steps[9].update({"if": "success()"}),
-            "missing verification": lambda steps: steps.pop(),
+            "missing verification": lambda steps: steps.pop(-2),
+            "missing cache retention": lambda steps: steps.pop(),
+            "cache after failure": lambda steps: steps[-1].update({"if": "always()"}),
+            "cache other bytes": lambda steps: steps[-1]["with"].update(path="${{ runner.temp }}/*"),
+            "cache missing attempt": lambda steps: steps[-1]["with"].update(name="notification-verification"),
             "unpinned Python": lambda steps: steps[2]["with"].update({"python-version": "3.12"}),
             "unpinned uv": lambda steps: steps[3]["with"].update(version="latest"),
         }

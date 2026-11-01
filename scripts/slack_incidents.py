@@ -27,6 +27,7 @@ from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import install_deployment_verifier as verifier
+from scripts.incident_verification_cache import VerificationCache
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
@@ -657,6 +658,10 @@ class GitHub(deployments.GitHub):
             self._identities[path] = super().get(path)
         return copy.deepcopy(self._identities[path])
 
+    def archive(self, repository, identifier):
+        require(repository == REPOSITORY and positive(identifier), "invalid notification artifact identity")
+        return deployments.read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
+
 
 def worker_context(api, environment=os.environ):
     require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
@@ -674,9 +679,10 @@ def worker_context(api, environment=os.environ):
 
 
 class Ledger:
-    def __init__(self, api, run, directory):
+    def __init__(self, api, run, directory, *, verification_cache=None):
         self.api, self.run, self.directory = api, run, directory
         self.verified_statements = []
+        self.verification_cache = verification_cache
 
     def verify(self, record):
         payload = record["payload"]
@@ -696,8 +702,13 @@ class Ledger:
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
-                         verified_statements=self.verified_statements)
+        def verify(api):
+            emissions.verify(api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
+                             verified_statements=self.verified_statements)
+        if self.verification_cache is None:
+            verify(self.api)
+        else:
+            self.verification_cache.verify(self.api, record, statuses, payload["state"]["identity"], verify)
         return migrate_verified_state(payload["state"], payload["schema"])
 
     def load(self):
@@ -1007,7 +1018,11 @@ def main():
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, targets, since))
+            ledger.verification_cache = VerificationCache.restore(api, run, identity)
             records = prepare(ledger, identity, observations, on_saved=retain)
+            ledger.verification_cache.save(args.work_dir)
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+                stream.write("verification_cache=true\n")
         plan_path.write_text(json.dumps(records, sort_keys=True) + "\n")
         print(f"Prepared {len(records)} incident transition(s); routine healthy runs remain quiet.")
     else:
