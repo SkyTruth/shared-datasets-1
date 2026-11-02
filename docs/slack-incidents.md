@@ -25,8 +25,10 @@ Confirming an old reply was not delivered never authorizes a replacement reply.
 
 The `Alerts / Workflow health and Slack reconciliation` workflow runs on both successful
 and failed workflow completions. Its presence in Actions does not mean a failure
-occurred or a Slack message was sent. `Deployments / Completion check` runs hourly;
-its completion also triggers the incident replay described below. Historical
+occurred or a Slack message was sent. `Operations / Safety check` is the single
+hourly timer for catalog freshness and incident/completion catch-up. It requests
+`Deployments / Completion check` only when reconciliation is needed;
+that completion triggers the incident replay described below. Historical
 runs under its former name, `Deployment terminal verification`, remain recognized
 under the same workflow and incident identity. Pending discovery only reads
 GitHub deployment metadata; the protected observer retains the pinned receipt
@@ -36,26 +38,29 @@ Repo-triggered catalog refreshes run as reusable jobs in the existing main CI
 run, selected after passing `ci-ready`. They no longer create a separate catalog
 completion event after every successful main CI. The parent CI completion still
 reports publisher failures against `deployment:catalog-web`; recovery still
-requires its signed terminal deployment record. Hourly catalog polling, release
-index rebuild follow-ups and hourly completion/replay remain independent.
+requires its signed terminal deployment record. Release-index rebuild follow-ups
+remain immediate. The safety timer requests the existing catalog workflow only
+when its live comparison finds work; neither catalog nor completion has its own
+cron trigger.
 
-The hourly catalog input probe is read-only. An unchanged comparison skips the
+The catalog input probe is read-only. An unchanged comparison skips the
 catalog deployment job. If only that probe fails (for example, an unavailable
 credential service) and authoritative same-attempt jobs prove the publisher was
 skipped, it remains a failed Actions check without opening or resolving a Slack
 incident. An allocated publisher failure still alerts. Historical catalog runs
 without this probe retain their original failure and recovery evidence.
 
-A successful scheduled catalog probe with no incident observations also skips
+A successful automatic catalog probe with no incident observations also skips
 global incident reconciliation. The worker first verifies the source workflow,
 repository and attempt, then reads its authoritative jobs to prove the publisher
 was skipped. An obsolete source attempt is already a no-op. The short worker
 still appears in Actions; it does not load notification checkpoints or probe
 unrelated deployments. Publisher completions and failed probes retain normal
-reconciliation. The independent hourly completion checker still performs the
-full 24-hour catch-up and processes pending deliveries and recovery evidence.
+reconciliation. The safety timer retains hourly detection of missed events,
+pending deliveries and recovery evidence, with the full 24-hour catch-up in the
+existing incident worker when needed.
 
-When inputs changed, the scheduled probe also checks passing main CI for its
+When inputs changed, the dispatched probe also checks passing main CI for its
 exact revision before selecting the publisher. Pending CI defers the refresh
 until a later hourly probe, with a job summary and no deployment incident.
 Missing or invalid CI evidence and failed API reads still fail the probe; the
@@ -189,7 +194,7 @@ and replay on a later reconciliation, preserving both incident parents.
 
 The serialized worker uses `queue: max` and never cancels an active send.
 GitHub's queue is bounded and completion order can vary. Completions of the
-existing hourly terminal verifier also reconcile the last 24 hours of main runs,
+on-demand terminal verifier also reconcile the last 24 hours of main runs,
 starting no earlier than the explicit activation timestamp. Complete API
 enumeration and authoritative source-attempt checks are required. Longer
 GitHub outages require reviewed replay of the missing interval; blanket
@@ -235,15 +240,44 @@ parent still requires owner inspection before any parent update or new send.
 
 ## Incremental verification
 
+The safety timer can remain idle only after the real incident preparation logic
+has completed without requesting a ledger write, with no pending WDPA records,
+deferred observations, uncertain posts or parent repairs. It records the exact
+API read transcript from that settled dry run in a bounded native Actions
+artifact. It never posts Slack messages, writes checkpoints or publishes data.
+
+Each later check freshly enumerates monitored main runs and all WDPA deployment
+records/statuses, reads release-index and published catalog generations, and
+rereads every recorded API input, including source jobs. Reuse requires the same
+code revision, pinned verifier, activation timestamp and Slack identity, plus an
+authenticated successful same-main snapshot producer. Changed inputs or missing
+retention run the full comparison; failed reads and malformed selected proof
+fail visibly. A rolling 24-hour source window also invalidates proof as old runs
+age out, so adoption and active periods cost more than stable idle periods.
+
+A failed check requests the existing completion/reconciliation path as its last
+step. The follow-up waits for the exact parent attempt to finish, so replay sees
+its outcome. The next hourly census catches a runner lost before that handoff.
+Normal production failure/recovery subscriptions remain immediate. Healthy
+safety checks have no unconditional completion subscription, avoiding a new
+empty alert run every hour. The timer uses job-scoped `actions: write` for the
+two fixed main workflow dispatches in its checked-in code; existing
+publisher/observer authorization and signed terminal evidence remain mandatory.
+Legacy webhook mode keeps completion polling and forwards verified safety
+failures without requiring a Slack bot; it does not use the idle certificate.
+Its 24-hour census also catches failed safety attempts with no admitted native
+completion handoff. An already admitted handoff is never resent merely because
+its webhook outcome is uncertain.
+
 Except for the verified empty successful catalog probes described above, every
-event loads and authenticates all current notification checkpoints, processes
+admitted incident event loads and authenticates all current notification checkpoints, processes
 unrelated deferred and pending delivery work, and inspects every eligible
 deployment target. Routine preparation can reuse a notification checkpoint's
 previous successful signature verification only when its complete current record,
 complete status history, Slack identity and freshly read emitter, repository and
 workflow metadata are identical. Every other checkpoint receives full verification.
-Workflow subscriptions, serialization and the hourly 24-hour replay remain
-unchanged. There is no separate index, external worker or new permission.
+Incident serialization and the 24-hour replay remain unchanged. There is no
+external worker or new production permission.
 
 Successful notification workers retain a small verification artifact for one day.
 Reuse independently checks the exact trusted-main producer revision, run and
@@ -260,8 +294,8 @@ permit missing or changed checkpoint/status/emitter evidence. Source replay,
 pending deployment observation, deferred recovery and uncertain-send barriers
 remain unchanged. Owner reconciliation, delivery of newly signed claims and the
 final checkpoint verification retain their fresh verification path. Production
-authorization never uses the notification cache. This reduces repeated work;
-it does not remove the hourly workflow starts.
+authorization never uses the notification cache. This cache reduces verification
+inside admitted workers; the safety timer separately avoids idle worker starts.
 
 Each worker invocation reads a repository or workflow identity once and reuses
 that response for its remaining checks. Only those exact identity endpoints are
@@ -357,7 +391,7 @@ enumerate its existing nonterminal runs and let them finish without cancelling
 an active send. Merge only after they have drained, verify the new main revision,
 then re-enable the workflow. Already-created workers check out their original
 workflow revision; a newer merge cannot upgrade them. Keep the pause within
-24 hours so the next hourly terminal-verification completion reconciles missed
+24 hours so the next hourly safety check requests reconciliation of missed
 main events. A longer pause requires the reviewed missing-interval replay
 described above. Changing the incident-mode variable alone does not prevent
 old workflow admissions and is insufficient for this schema transition.

@@ -143,14 +143,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
 
         self.assertNotIn("push", trigger)
-        self.assertEqual(trigger["schedule"], [{"cron": "17 * * * *"}])
+        self.assertNotIn("schedule", trigger)
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
             ["Catalog / Release index rebuild", "Release index rebuild"],
         )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        self.assertNotIn("workflow_dispatch", trigger)
+        self.assertEqual(set(trigger["workflow_dispatch"]["inputs"]), {"safety_run_id", "safety_run_attempt"})
         self.assertEqual(set(trigger["workflow_call"]["inputs"]), {
             "executor_sha", "authorization_artifact_id", "authorization_sha256", "pr_number", "mutation_completed",
         })
@@ -163,7 +163,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("github.event_name == 'schedule'", job["if"])
         self.assertIn("needs.check-inputs.outputs.changed == 'true'", job["if"])
         check = workflow["jobs"]["check-inputs"]
-        self.assertEqual(check["if"], "${{ github.event_name == 'schedule' }}")
+        self.assertEqual(check["if"], "${{ github.event_name == 'workflow_dispatch' }}")
         self.assertEqual(check["permissions"], {"contents": "read", "actions": "read", "id-token": "write"})
         self.assertEqual(check["outputs"]["changed"], "${{ steps.compare.outputs.changed }}")
         self.assertEqual(check["environment"], "shared-datasets-production")

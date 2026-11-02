@@ -1,9 +1,15 @@
 name: Deployments / Completion check
+run-name: "${{ inputs.safety_run_id && format('Operational follow-up: safety {0}/{1}', inputs.safety_run_id, inputs.safety_run_attempt) || 'Deployment completion check' }}"
 
 on:
-  schedule:
-    - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      safety_run_id:
+        description: Optional exact safety workflow to observe after it finishes
+        type: string
+      safety_run_attempt:
+        description: Exact attempt of the safety workflow
+        type: string
 
 permissions:
   contents: read
@@ -30,6 +36,11 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
+      - name: Wait for the safety handoff to finish
+        if: ${{ inputs.safety_run_id != '' || inputs.safety_run_attempt != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/operational_safety_check.py --wait-for-safety
       - id: pending
         env:
           GH_TOKEN: ${{ github.token }}

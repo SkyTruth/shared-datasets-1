@@ -190,25 +190,26 @@ class VerificationCache:
         return current
 
 
-def authenticate_producer(api, repository, workflow, producer, head_sha):
+def authenticate_producer(api, repository, workflow, producer, head_sha, *, workflow_path=WORKFLOW,
+                          job_name=JOB, required_steps=(PREPARE_STEP, UPLOAD_STEP), events=("workflow_run",)):
     expected = execution(producer)
     latest = api.get(f"repos/{REPOSITORY}/actions/runs/{expected['id']}")
     exact = api.get(f"repos/{REPOSITORY}/actions/runs/{expected['id']}/attempts/{expected['run_attempt']}")
     for value in (latest, exact):
         require(execution(value) == expected and value.get("head_sha") == head_sha
-                and value.get("workflow_id") == workflow["id"] and value.get("path") == WORKFLOW
-                and value.get("head_branch") == "main" and value.get("event") == "workflow_run"
+                and value.get("workflow_id") == workflow["id"] and value.get("path") == workflow_path
+                and value.get("head_branch") == "main" and value.get("event") in events
                 and value.get("status") == "completed" and value.get("conclusion") == "success"
                 and all(value.get(key, {}).get("id") == repository["id"] and value.get(key, {}).get("full_name") == REPOSITORY
                         for key in ("repository", "head_repository")), "untrusted verification artifact producer")
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{expected['id']}/attempts/{expected['run_attempt']}/jobs?per_page=100", field="jobs")
-    selected = [job for job in jobs if job.get("name") == JOB]
+    selected = [job for job in jobs if job.get("name") == job_name]
     require(len(selected) == 1, "missing or ambiguous cache producer job")
     job = selected[0]
     require(positive(job.get("id")) and job.get("run_id") == expected["id"]
             and job.get("run_attempt") == expected["run_attempt"] and job.get("head_sha") == head_sha
             and job.get("status") == "completed" and job.get("conclusion") == "success", "cache producer job did not succeed")
-    for name in (PREPARE_STEP, UPLOAD_STEP):
+    for name in required_steps:
         steps = [step for step in job.get("steps", []) if step.get("name") == name]
         require(len(steps) == 1 and steps[0].get("status") == "completed" and steps[0].get("conclusion") == "success",
                 "cache producer did not complete evidence export")

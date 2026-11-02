@@ -1009,7 +1009,7 @@ def main():
             activated = instant(since)
             observations = source_observations(api, event, targets)
             source = event["workflow_run"]
-            if (source["event"] == "schedule" and source["conclusion"] == "success"
+            if (source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
                 # An idle input probe has no incident evidence. The completion
                 # checker still owns hourly replay and unrelated pending work.

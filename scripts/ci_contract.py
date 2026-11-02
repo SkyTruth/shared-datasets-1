@@ -84,9 +84,11 @@ NARROW_PATHS = {
     # copies all scripts but is not built by the production-images suite.
     "scripts/slack_incidents.py": (),
     "scripts/incident_verification_cache.py": (),
+    "scripts/operational_snapshot.py": (),
+    "scripts/operational_safety_check.py": (),
     "scripts/workflow_failure_alert.py": (),
     "scripts/repo_alerts.py": (),
-    # Exact reverse-import test closure of those four scripts. SDK/WDPA names
+    # Exact reverse-import test closure of these automation scripts. SDK/WDPA names
     # describe mocked incident histories, not SDK/native fixture execution.
     "tests/test_failure_alert_routing.py": (),
     "tests/test_repo_alerts.py": (),
@@ -95,6 +97,9 @@ NARROW_PATHS = {
     "tests/test_slack_incidents.py": (),
     "tests/test_slack_incidents_incremental.py": (),
     "tests/test_incident_verification_cache.py": (),
+    "tests/test_operational_snapshot.py": (),
+    "tests/test_operational_safety_check.py": (),
+    "tests/test_operational_safety_routing.py": (),
     "tests/test_wdpa_incident_recovery.py": (),
     "tests/test_workflow_identity.py": (),
     # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and

@@ -1,8 +1,16 @@
 name: Catalog / Web deploy
 
 on:
-  schedule:
-    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      safety_run_id:
+        description: Exact trusted operational safety run requesting a refresh
+        required: true
+        type: string
+      safety_run_attempt:
+        description: Exact operational safety run attempt
+        required: true
+        type: string
   workflow_call:
     inputs:
       executor_sha:
@@ -51,7 +59,7 @@ env:
 jobs:
   check-inputs:
     name: Check for catalog input changes
-    if: ${{ github.event_name == 'schedule' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: shared-datasets-production
@@ -67,15 +75,19 @@ jobs:
       - name: Require trusted main workflow
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main ||
-                "$GITHUB_WORKFLOW_REF" != "${GITHUB_REPOSITORY}/.github/workflows/catalog-web-deploy.yml@refs/heads/main" ]]; then
-            echo "Catalog activity checks require the trusted main workflow." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/catalog-web-deploy.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - name: Verify operational safety request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/operational_safety_check.py --validate-catalog-dispatch
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}

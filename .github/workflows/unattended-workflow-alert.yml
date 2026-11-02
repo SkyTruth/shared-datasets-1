@@ -76,14 +76,19 @@ jobs:
     if: >-
       vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
       github.event.workflow_run.status == 'completed' &&
-      contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
+      (
+        contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification"]'), github.event.workflow_run.name) &&
+         startsWith(github.event.workflow_run.display_title, 'Operational follow-up: safety '))
+      ) &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (
         github.event.workflow_run.event == 'schedule' ||
         github.event.workflow_run.event == 'workflow_run' ||
         (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation"]'), github.event.workflow_run.name))
+        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation","Catalog / Web deploy","Catalog web deploy"]'), github.event.workflow_run.name))
       )
     runs-on: ubuntu-latest
     steps:

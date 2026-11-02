@@ -23,6 +23,7 @@ WORKFLOW_NAMES = {
     'feature-preview-destroy.yml': ('Preview / Destroy environment', 'Destroy Preview Environment'),
     'ingestion-schedule-control.yml': ('Ingestion / Schedule control', 'Ingestion schedule control'),
     'mpatlas-monthly-deploy.yml': ('Ingestion / MPAtlas monthly deploy', 'MPAtlas monthly deploy'),
+    'operational-safety-check.yml': ('Operations / Safety check',),
     'pmtiles-cdn-sync.yml': ('Catalog / PMTiles CDN sync', 'PMTiles CDN sync'),
     'preview-terraform-iam-sync.yml': ('Infrastructure / Preview Terraform IAM sync', 'Preview Terraform IAM sync'),
     'prod-terraform-state-reconcile.yml': ('Prod Terraform state reconciliation',),
