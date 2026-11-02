@@ -71,8 +71,8 @@ local incident evidence directory.
 
 This WDPA readiness chat owns recovery. PR #361 merged the readiness, observer
 retirement and future skip fixes. PR #362 adds the constrained recovery executor
-and trusted-base plan schema. The immutable proposal below completed that original claim through the
-protected installer.
+and trusted-base plan schema. The immutable proposal below completed that original
+claim through the protected installer.
 
 The [immutable recovery proposal](../../.github/dataset-plans/wdpa-marine/wdpa-skip-recovery-20261102/255f7368e59828be1b71a11768bdd4f0baa5f8224730b92146d94bf4b5ad4006.json)
 pins the state and receipt above and stages the exact corrected check-in at
@@ -105,8 +105,8 @@ failed deployment blindly. The existing generic object publisher cannot mutate
 publication control objects.
 
 Activation follows the recovered transaction with a CI-tested fixed worker, a
-verified canary, both release-index checks and protected schedule resume. The protected
-ten-resource retirement has removed the observer job, scheduler and service
+verified canary, both release-index checks and protected schedule resume. The
+protected ten-resource retirement has removed the observer job, scheduler and service
 account, and revoked its temporary grant. Live inventories verified their
 absence; do not recreate the observer or renew its retirement grant. Do not
 resolve the original alert until recovery is verified.
@@ -135,8 +135,10 @@ feature ID `15378`, now matches the geometry of existing feature IDs `11347` and
 The maintainer explicitly approved `keep_previous_key_mapping` for source key
 `555729583`, preserving its own feature ID `15378`. Reusing `11347` or `15093`
 would merge distinct existing designations and is not legal for this key. The
-release-scoped resolution must reach reviewed main before another canary; a
+[release-scoped resolution](../../catalog/feature-identity-resolutions/wdpa-marine.json)
+is reviewed in [PR #365](https://github.com/SkyTruth/shared-datasets-1/pull/365)
+and must reach main before another canary; a
 zero exit or signed terminal-execution outcome alone does not authorize schedule
-activation. The schedule remains paused pending that reviewed resolution, a newly tested
-worker and a successful publication canary. The expected decision alert was
+activation. The schedule remains paused pending that reviewed resolution, a newly
+tested worker and a successful publication canary. The expected decision alert was
 observed in Slack; Monitoring incident `0.oejurkps0izq` tracks this review gate.
