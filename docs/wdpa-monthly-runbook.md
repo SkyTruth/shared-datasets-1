@@ -49,6 +49,11 @@ IAM sync, then dispatch the protected WDPA deployment with an explicit current-m
 `canary_run_date=YYYY-MM-01` so deployment and canary share one verified attempt.
 Verify its terminal result and both release indexes, then resume with
 **Ingestion / Schedule control**, `job=wdpa-monthly`, `action=resume`.
+Schedule resume verifies the latest signed deployment and its exact-image
+successful canary against the live worker. An October publication alone cannot
+activate a worker still pinned to an October bundle or a persistent `RUN_DATE`.
+An unavailable November source may produce a verified skipped canary; the
+enabled schedule then retries during days 1–10 without a new monthly approval.
 While paused, deployment without an explicit canary date defers before mutation;
 it must not install code and leave an unverifiable deployment record.
 The dormant observer stays paused.

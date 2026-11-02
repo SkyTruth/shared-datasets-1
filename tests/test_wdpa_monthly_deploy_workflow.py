@@ -24,6 +24,21 @@ DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
+    def test_resume_refuses_worker_without_verified_automatic_deployment(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/ingestion-schedule-control.yml")
+        script = workflow_steps_by_name(workflow, "control")["Verify publication before resuming"]["run"]
+        fake_uv = '''uv() {
+          if [[ "$*" == *wdpa_schedule_readiness.py* ]]; then
+            echo "WDPA automatic deployment is not ready" >&2
+            return 1
+          fi
+        }
+        '''
+        result = subprocess.run(["bash", "-e", "-c", fake_uv + script],
+                                env={**os.environ, "JOB_NAME": "wdpa-monthly"},
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_image_runs_the_complete_automatic_pipeline(self):
         self.assertIn('CMD ["python", "-m", "ingestion.wdpa_monthly.automatic"]', DOCKERFILE.read_text())
 
