@@ -1429,6 +1429,7 @@ async function findFeatureById(id) {
 }
 
 async function handleFeatureSelect(features) {
+  elements.featureLookupStatus.textContent = "";
   const selectedFeatures = Array.isArray(features) ? features : [features].filter(Boolean);
   state.inspectedFeatures = selectedFeatures;
   const requestSerial = ++state.featureLookupSerial;

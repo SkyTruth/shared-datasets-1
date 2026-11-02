@@ -273,6 +273,12 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   await page.locator('#feature-lookup').scrollIntoViewIfNeeded();
   expect(await page.locator('#feature-lookup').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   await testInfo.attach('feature-lookup-narrow.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.setViewportSize({width:1440, height:1000});
+  await page.locator('#feature-id-input').fill('a1');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expect(page.locator('#feature-inspector')).toContainText('Old footprint 1');
+  await clickPoint(page, true, testInfo);
+  await expect(page.locator('#feature-lookup-status')).toBeEmpty();
 });
 
 test('feature links reject changed generations, missing releases and malformed handles', async ({page, transport}) => {
