@@ -138,14 +138,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             terraform_targets(plan_run),
             {
                 "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "module.wdpa_observer_service_account.google_service_account.this",
-                "google_project_iam_custom_role.wdpa_execution_reader",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
-                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
-                "google_service_account_iam_member.wdpa_observer_deployer",
-                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
-                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
                 "google_iam_deny_policy.canonical_destructive_actions[0]",
             },
         )
@@ -161,18 +153,10 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             python_literal_string_set(enforce_run, "allowed_exact"),
             {
                 "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "module.wdpa_observer_service_account.google_service_account.this",
-                "google_project_iam_custom_role.wdpa_execution_reader",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
-                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
-                "google_service_account_iam_member.wdpa_observer_deployer",
-                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
-                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
                 "google_iam_deny_policy.canonical_destructive_actions[0]",
             },
         )
-        self.assertIn("if actions not in permitted", enforce_run)
+        self.assertIn('if actions != ["update"]', enforce_run)
         self.assertIn("image != expected_image", enforce_run)
         self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
         self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])

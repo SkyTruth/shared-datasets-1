@@ -1,0 +1,202 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "resource_changes": [
+    {
+      "address": "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_job_iam_member",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "condition": [],
+          "id": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-monthly/projects/shared-datasets-1/roles/wdpaExecutionReader/serviceAccount:wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "location": "us-central1",
+          "member": "serviceAccount:wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-monthly",
+          "project": "shared-datasets-1",
+          "role": "projects/shared-datasets-1/roles/wdpaExecutionReader"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_job_iam_member",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "condition": [],
+          "id": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-execution-observer/roles/run.invoker/serviceAccount:wdpa-monthly-scheduler@shared-datasets-1.iam.gserviceaccount.com",
+          "location": "us-central1",
+          "member": "serviceAccount:wdpa-monthly-scheduler@shared-datasets-1.iam.gserviceaccount.com",
+          "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-execution-observer",
+          "project": "shared-datasets-1",
+          "role": "roles/run.invoker"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_monitoring_alert_policy.wdpa_execution_observer_unhealthy",
+      "mode": "managed",
+      "type": "google_monitoring_alert_policy",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/alertPolicies/9235445885851014444",
+          "name": "projects/shared-datasets-1/alertPolicies/9235445885851014444",
+          "project": "shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.wdpa_execution_reader",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/wdpaExecutionReader",
+          "name": "projects/shared-datasets-1/roles/wdpaExecutionReader",
+          "project": "shared-datasets-1",
+          "role_id": "wdpaExecutionReader"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_project_iam_custom_role.wdpa_observer_bootstrap",
+      "mode": "managed",
+      "type": "google_project_iam_custom_role",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/roles/sharedDatasetsWdpaObserverBootstrap",
+          "name": "projects/shared-datasets-1/roles/sharedDatasetsWdpaObserverBootstrap",
+          "project": "shared-datasets-1",
+          "role_id": "sharedDatasetsWdpaObserverBootstrap"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.wdpa_observer_deployer",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "condition": [],
+          "id": "projects/shared-datasets-1/serviceAccounts/wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com/roles/iam.serviceAccountUser/serviceAccount:shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+          "role": "roles/iam.serviceAccountUser",
+          "service_account_id": "projects/shared-datasets-1/serviceAccounts/wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+      "mode": "managed",
+      "type": "google_storage_bucket_iam_member",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "bucket": "b/skytruth-shared-datasets-1",
+          "condition": [
+            {
+              "description": "Observe execution status without dataset, claim, receipt or allocation writes.",
+              "expression": "resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/_catalog/wdpa-monthly-execution.json'",
+              "title": "wdpa_execution_status_only"
+            }
+          ],
+          "id": "b/skytruth-shared-datasets-1/roles/storage.objectUser/serviceAccount:wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com/wdpa_execution_status_only/Observe execution status without dataset, claim, receipt or allocation writes./resource.name == 'projects/_/buckets/skytruth-shared-datasets-1/objects/_catalog/wdpa-monthly-execution.json'",
+          "member": "serviceAccount:wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "role": "roles/storage.objectUser"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+      "mode": "managed",
+      "type": "google_cloud_run_v2_job",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "deletion_protection": false,
+          "id": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-execution-observer",
+          "location": "us-central1",
+          "name": "wdpa-execution-observer",
+          "project": "shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+      "mode": "managed",
+      "type": "google_cloud_scheduler_job",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "id": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-execution-observer",
+          "name": "wdpa-execution-observer",
+          "project": "shared-datasets-1",
+          "region": "us-central1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    },
+    {
+      "address": "module.wdpa_observer_service_account.google_service_account.this",
+      "mode": "managed",
+      "type": "google_service_account",
+      "change": {
+        "actions": [
+          "delete"
+        ],
+        "before": {
+          "account_id": "wdpa-execution-observer",
+          "email": "wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "id": "projects/shared-datasets-1/serviceAccounts/wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "name": "projects/shared-datasets-1/serviceAccounts/wdpa-execution-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1"
+        },
+        "after": null,
+        "after_unknown": {}
+      }
+    }
+  ]
+}

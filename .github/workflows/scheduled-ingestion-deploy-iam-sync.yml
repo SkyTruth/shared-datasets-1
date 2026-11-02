@@ -89,8 +89,6 @@ jobs:
         google_storage_bucket_iam_member.wdpa_monthly_build_inputs
         google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader
         google_service_account_iam_member.wdpa_builder_deployer
-        google_project_iam_custom_role.wdpa_observer_bootstrap
-        google_project_iam_member.github_actions_wdpa_observer_bootstrap
         google_storage_bucket_iam_member.wdpa_reset_translation_reader
         google_secret_manager_secret_iam_member.translation_notice["wdpa"]
         google_secret_manager_secret_iam_member.translation_notice["eamlis"]
@@ -114,8 +112,6 @@ jobs:
         google_storage_bucket_iam_member.wdpa_monthly_build_inputs
         google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader
         google_service_account_iam_member.wdpa_builder_deployer
-        google_project_iam_custom_role.wdpa_observer_bootstrap
-        google_project_iam_member.github_actions_wdpa_observer_bootstrap
         google_storage_bucket_iam_member.wdpa_reset_translation_reader
         google_secret_manager_secret_iam_member.translation_notice["wdpa"]
         google_secret_manager_secret_iam_member.translation_notice["eamlis"]

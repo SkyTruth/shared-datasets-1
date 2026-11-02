@@ -14,7 +14,7 @@ from tests.test_dataset_mutation_authorization import (
     REPO,
     review,
 )
-from tests.test_wdpa_execution_observer import accepted_evidence
+from tests.test_wdpa_processing_gate import accepted_evidence
 
 
 @pytest.fixture

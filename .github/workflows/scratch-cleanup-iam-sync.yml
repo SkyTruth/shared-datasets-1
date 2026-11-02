@@ -168,7 +168,7 @@ jobs:
         eamlis_monthly_image=unused-by-operational-retirement
 
   retire-operational-infrastructure:
-    name: Retire the 20 reviewed legacy operational resources
+    name: Retire the 30 reviewed legacy operational resources
     needs: [operational-retirement-grant]
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
@@ -202,6 +202,16 @@ jobs:
         google_project_iam_custom_role.operational_provider_reader
         google_project_iam_custom_role.readonly_provider_updater
         module.operational_observer_service_account.google_service_account.this
+        google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader
+        google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker
+        google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
+        google_project_iam_custom_role.wdpa_execution_reader
+        google_project_iam_custom_role.wdpa_observer_bootstrap
+        google_service_account_iam_member.wdpa_observer_deployer
+        google_storage_bucket_iam_member.wdpa_observer_status_writer
+        module.wdpa_execution_observer_job.google_cloud_run_v2_job.this
+        module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this
+        module.wdpa_observer_service_account.google_service_account.this
       allowed_exact: |
         google_iam_workload_identity_pool_provider.operational_observer
         google_logging_log_view.operational_observations["_Default-run-activity"]
@@ -223,6 +233,16 @@ jobs:
         google_project_iam_custom_role.operational_provider_reader
         google_project_iam_custom_role.readonly_provider_updater
         module.operational_observer_service_account.google_service_account.this
+        google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader
+        google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker
+        google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
+        google_project_iam_custom_role.wdpa_execution_reader
+        google_project_iam_custom_role.wdpa_observer_bootstrap
+        google_service_account_iam_member.wdpa_observer_deployer
+        google_storage_bucket_iam_member.wdpa_observer_status_writer
+        module.wdpa_execution_observer_job.google_cloud_run_v2_job.this
+        module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this
+        module.wdpa_observer_service_account.google_service_account.this
       tf_vars: |
         operational_retirement_authority_enabled=true
         wdpa_monthly_image=unused-by-operational-retirement

@@ -11,7 +11,7 @@ import pytest
 from ingestion.common import publication as p
 from ingestion.wdpa_monthly import automatic, build as producer, run as wdpa
 from scripts import wdpa_processing_gate as gate
-from test_wdpa_execution_observer import accepted_evidence
+from test_wdpa_processing_gate import accepted_evidence
 
 
 @pytest.mark.parametrize('blocked', [True, False])

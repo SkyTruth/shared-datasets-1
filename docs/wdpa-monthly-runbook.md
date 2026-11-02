@@ -56,7 +56,8 @@ An unavailable November source may produce a verified skipped canary; the
 enabled schedule then retries during days 1–10 without a new monthly approval.
 While paused, deployment without an explicit canary date defers before mutation;
 it must not install code and leave an unverifiable deployment record.
-The dormant observer stays paused.
+The obsolete observer is removed by the protected scratch-cleanup retirement;
+WDPA deployment does not recreate it.
 
 Manual deployment dispatch uses `main`, `executor_sha`, `source_run_id` (the
 successful main-push CI run) and `source_run_attempt`. `RUN_DATE` is an optional

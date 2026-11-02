@@ -17,6 +17,7 @@ resource "google_project_iam_custom_role" "operational_retirement" {
   title       = "Temporary Operational Infrastructure Retirement"
   description = "Read and delete retired observer resources during the reviewed protected retirement; never grants dataset or execution writes."
   permissions = [
+    "cloudscheduler.jobs.delete",
     "iam.roles.delete",
     "iam.serviceAccounts.delete",
     "iam.serviceAccounts.get",
@@ -26,6 +27,7 @@ resource "google_project_iam_custom_role" "operational_retirement" {
     "logging.views.get",
     "monitoring.metricDescriptors.delete",
     "monitoring.metricDescriptors.get",
+    "run.jobs.delete",
   ]
 }
 
