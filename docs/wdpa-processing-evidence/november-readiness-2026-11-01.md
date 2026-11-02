@@ -63,17 +63,23 @@ run-record or release-index artifacts were published by this attempt.
 Generation-pinned state, receipt and index snapshots are retained in the task's
 local `incident/` evidence directory.
 
-## Remaining recovery boundary
+## Reviewed check-in recovery
 
-This chat owns recovery. PR #361 merged the readiness, observer retirement and
-future skip fixes. The existing claim still needs its separate reviewed recovery.
+This WDPA readiness chat owns recovery. PR #361 merged the readiness, observer
+retirement and future skip fixes. PR #362 adds the constrained recovery executor
+and trusted-base plan schema. The existing claim requires the separate immutable
+proposal below.
 
-The protected recovery code must reach reviewed `main` before a separate PR adds
-its first immutable recovery document. The planned-alert gate intentionally uses
-trusted base code, so a code-and-first-plan PR cannot introduce its own accepted
-mutation schema. That later plan must pin the original state/receipt above and
-the exact corrected index bytes. Verify its terminal control-installer execution
-and live receipt/state before deploying the fixed worker with a canary.
+The [immutable recovery proposal](../../.github/dataset-plans/wdpa-marine/wdpa-skip-recovery-20261102/255f7368e59828be1b71a11768bdd4f0baa5f8224730b92146d94bf4b5ad4006.json)
+pins the state and receipt above and stages the exact corrected check-in at
+`gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/wdpa-skip-recovery-20261102/recovered-index.json`,
+generation `1793637440852623`, SHA-256
+`844a118ad673db261c5ffd8e76c06e3833d79fbf5addd2639134a5617453f721`.
+The protected control installer resumes the captured transaction: index write,
+receipt result, then normal claim release. It preserves the original intent,
+October current release, manifest snapshots and feature-ID high-water `17943`.
+This proposal is not evidence of execution; verify its terminal workflow and
+live receipt/state before deploying the fixed worker with a canary.
 
 The malformed prepared intent belongs to the original execution and executor.
 A new image, date or execution cannot take over its claim. Do not delete the
@@ -84,7 +90,8 @@ publication control objects.
 Live completion requires a reviewed, constrained recovery for this exact
 uncompleted check-in, preserving the original receipt and committed identity
 history. That recovery must be followed by a CI-tested fixed worker, a verified
-canary, both release-index checks and protected schedule resume. Observer
-deletion separately needs the reviewed protected ten-resource retirement.
-The existing retirement authority expires at `2026-11-03T00:00:00Z`; this work
-does not extend it. Do not resolve the original alert until recovery is verified.
+canary, both release-index checks and protected schedule resume. The protected
+ten-resource retirement has removed the observer job, scheduler and service
+account, and revoked its temporary grant. Live inventories verified their
+absence; do not recreate the observer or renew its retirement grant. Do not
+resolve the original alert until recovery is verified.
