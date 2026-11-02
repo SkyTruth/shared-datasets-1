@@ -153,6 +153,49 @@
       "release": "2026-08-01",
       "reuse_feature_id": "298104",
       "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "132873"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:fb596a5e0938e6046d4d9515be3d5b9e5c693dad87eac2efcd26bfd392a5ddf0"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:c2e2a8acf89e34d3d479fea756745968877938e83a8e6f1f70296cf94231e752",
+      "new_identity_key": [
+        "555732174"
+      ],
+      "new_properties_hash": "sha256:7a3f971f234bcf8827428a27474973fbddecb894f33b37d5d9dfea8b79e1d8e6",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/369",
+      "previous_feature_id_for_key": "255953",
+      "rationale": "SITE_PID 555732174 already owns feature_id 255953 for Tj\u00e4rnberget (Natura 2000 SCI). Its November geometry now matches separate Habitats Directive designation 132873 / SITE_PID 555533827, and both source records remain present in November. Keeping 255953 preserves the two distinct designations and their established identities; reusing 132873 would merge existing records. The maintainer explicitly approved keeping 255953.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "282786"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:c4f3d80f6071304e730dac3b237c32942c059fea103df0e01e3bd5242e45fff1"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:654291119790f0e40a3409f1b9ab0a25029d8ccd8364ac286670f66ed025323f",
+      "new_identity_key": [
+        "555779501"
+      ],
+      "new_properties_hash": "sha256:ac0b96325339bcd5b95b85646bc3c4ae2de91ff9345e32840972c3809a837dc1",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/369",
+      "previous_feature_id_for_key": null,
+      "rationale": "November SITE_PID 555779501 is absent from the complete October baseline and matches feature_id 282786, formerly SITE_PID 555769403, for Weid Forest Reserves in Switzerland. The old source key is absent from every November DBF, while the name, designation and stored geometry match; designation year changes from 2023 to 2025. The maintainer explicitly approved preserving 282786 as the same reserve under a replacement source identifier, retaining continuity for existing references.",
+      "release": "2026-11-01",
+      "reuse_feature_id": "282786",
+      "reviewer": "jonaraphael"
     }
   ],
   "schema_version": 1

@@ -35,11 +35,16 @@ deployment, publication verification and schedule activation. Notification
 prerequisites PRs #366 and #368 are merged. The separate catalog feature lookup
 PR #367 has no overlapping files and is outside this recovery.
 
-The release-scoped curation must retain the full captured comparison hashes,
-the real decision PR reference and reviewer. The original terrestrial Slack
-request is `C0B12LDMB1A` / `1793650665.056749`; its decision-of-record reply must
-identify the maintainer and both rationales without duplication or broadcast.
-Related review alerts settle only with evidence for the same event.
+The [release-scoped curation](../../catalog/feature-identity-resolutions/wdpa-terrestrial.json)
+retains the full captured comparison hashes, reviewer and real [PR #369](https://github.com/SkyTruth/shared-datasets-1/pull/369)
+reference. The original terrestrial Slack request is `C0B12LDMB1A` /
+`1793650665.056749`. Its [confirmed decision-of-record reply](https://skytruth.slack.com/archives/C0B12LDMB1A/p1793657090775849?thread_ts=1793650665.056749&cid=C0B12LDMB1A)
+(`1793657090.775849`) names `jonaraphael`, both choices and both rationales,
+without broadcast. The reviewed adoption retains this existing reply rather
+than sending another. No separate terrestrial Monitoring parent appeared in the
+read-only channel history after this request; the earlier generic Bonden
+incident is not rebound to this execution. Related review alerts settle only
+with evidence for the same event.
 
 After merge, deploy the retained exact tested worker image through the existing
 protected deployment with a November 1 canary. Require actual completed
