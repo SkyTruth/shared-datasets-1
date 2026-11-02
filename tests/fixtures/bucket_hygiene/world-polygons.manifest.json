@@ -1,0 +1,273 @@
+{
+  "artifacts": [
+    {
+      "content_type": "application/octet-stream",
+      "generation": 1782506287401860,
+      "latest_generation": 1782506304266479,
+      "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/latest/world-polygons.fgb",
+      "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.fgb",
+      "role": "fgb",
+      "sha256": "69122d9db756b74f1f568c695f1150dc687bd00094b5a99003cd51303cb77f70",
+      "size": 1259828896
+    },
+    {
+      "cache_control": "no-cache, max-age=0, must-revalidate",
+      "content_type": "application/vnd.pmtiles",
+      "generation": 1782506325003522,
+      "latest_generation": 1782506327892211,
+      "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/latest/world-polygons.pmtiles",
+      "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.pmtiles",
+      "role": "pmtiles",
+      "sha256": "a1f0383e468c1fd878d4de6197ab525bb78c48de345f0fff90795ea982253a29",
+      "size": 362211892
+    },
+    {
+      "content_type": "application/x-ndjson",
+      "generation": 1782509010294907,
+      "latest_generation": 1782509013634757,
+      "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/latest/world-polygons.metadata.ndjson.gz",
+      "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.metadata.ndjson.gz",
+      "role": "metadata",
+      "sha256": "33ff2d5c1100b32a678499a734c1c054edfd9c41d0a0007057bd1c1ea8c194b2",
+      "size": 71455
+    },
+    {
+      "content_type": "application/json",
+      "generation": 1782506336787761,
+      "latest_generation": 1782506339523942,
+      "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/latest/world-polygons.schema.json",
+      "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.schema.json",
+      "role": "schema",
+      "sha256": "6bfd7a2388d4d0cd3ea87b751f6459f64e578ace60d87d576c705b54fe847de2",
+      "size": 1658
+    },
+    {
+      "content_type": "application/json",
+      "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/latest/world-polygons.manifest.json",
+      "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.manifest.json",
+      "role": "manifest"
+    }
+  ],
+  "asset_slug": "world-polygons",
+  "hashes": {
+    "geometry_hash_algorithm": "sha256:source-gpkg-geometry-blob:v1",
+    "properties_hash_algorithm": "sha256:canonical-feature-properties:v1"
+  },
+  "identity": {
+    "assignment_key": [
+      "WP_ID"
+    ],
+    "canonicalization": "shared-datasets-feature-identity:v2",
+    "feature_id_regex": "^[A-Za-z0-9]{1,64}$",
+    "generated_id_type": "monotonic_integer_string",
+    "hash_algorithm": "sha256",
+    "next_generated_feature_id_after_release": 324,
+    "previous_release": null,
+    "schema_version": 1,
+    "source_fields": [
+      "WP_ID"
+    ],
+    "strategy": "generated_sequence_source_fields"
+  },
+  "index_load_status": "Firestore metadata serving is inactive",
+  "index_status_policy": {
+    "mode": "inactive_firestore_serving",
+    "path": null
+  },
+  "release": "2026-06-26",
+  "release_feature_model_schema_version": 2,
+  "schema": {
+    "asset_slug": "world-polygons",
+    "fields": [
+      {
+        "name": "feature_id",
+        "nullable": false,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "WP_Name",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "WP_Name_ND",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "DOS_Short",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "DOS_Long",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "Map_Label",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "US_Recog",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "Show_Disp",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "Map_Disp",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "NOTES",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "NOTES_Cont",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "MapTint_2",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "MapTint_3",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "GENC_Short",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "GENC_Full",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "GENC_2",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "GENC_3",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "ISO_3166_1",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "ISO_3166_2",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "WP_ID",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "WP_PREV_ID",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      },
+      {
+        "name": "WP_PAR_ID",
+        "nullable": true,
+        "projectable": true,
+        "type": "String"
+      }
+    ],
+    "release": "2026-06-26",
+    "schema_version": 2
+  },
+  "schema_version": 2,
+  "source_inputs": [
+    {
+      "name": "WorldPolygons.zip",
+      "sha256": "6b1bbad9d2c8ad4326db957756aa197d9bb0db907e1cdd36aa86a4bbf758e421",
+      "size": 2438845406,
+      "type": "download",
+      "uri": "https://data.geodata.state.gov/WorldPolygons.zip"
+    },
+    {
+      "name": "WorldPolygon_11_4_BETA_24Feb2025.zip",
+      "sha256": "e4ffc1ee55bd8a792f5c7bd515a4018b4321db0d18c914769fee0c222305a447",
+      "size": 2438844685,
+      "type": "nested_zip",
+      "upstream_published_sha256": "e4ffc1ee55bd8a792f5c7bd515a4018b4321db0d18c914769fee0c222305a447"
+    },
+    {
+      "name": "DoS_WP_11_4",
+      "path": "/private/tmp/shared-datasets-1/downloads/world-polygons/WorldPolygons11_4.gpkg",
+      "sha256": "55fab422ef09e35eb48d68141b9ece0ace86d4276dfe332a04dfd401c0bfc80c",
+      "size": 3529072640,
+      "source_metadata": "https://geodata.state.gov/geonetwork/srv/eng/catalog.search#/metadata/a3dfdc5a-9524-4a55-8e66-774690c45d73",
+      "type": "source_layer"
+    }
+  ],
+  "validation": {
+    "caspian_future_identity": "The Caspian Sea source artifact has no WP_ID in this release; its future continuity is undefined and depends on whether a future State Department release assigns it a stable WP_ID.",
+    "crs": "EPSG:4326",
+    "extent": [
+      -180.0,
+      -90.0,
+      180.0,
+      83.66625
+    ],
+    "feature_count": 323,
+    "geometry_hash_algorithm_note": "sha256 of source GeoPackage geometry blob ordered by fid for this release",
+    "geometry_type": "MultiPolygon",
+    "identity_ambiguity_count": 0,
+    "identity_decision": "preserve generated monotonic decimal feature_id values from this first release; future releases should carry IDs forward by matching non-empty WP_ID values, not geometry_hash or properties_hash",
+    "identity_key_missing_wpid_feature_ids": [
+      "323"
+    ],
+    "identity_key_non_empty_wpid_count": 322,
+    "pmtiles": {
+      "maxzoom": 12,
+      "minzoom": 0,
+      "properties": [
+        "feature_id"
+      ],
+      "validation": "magic bytes, pmtiles verify, pmtiles show, and decoded tile inspection"
+    },
+    "properties_hash_algorithm_note": "scripts.release_feature_model.properties_hash over source properties",
+    "source_layer": "DoS_WP_11_4",
+    "translation_decision": "none; authoritative source labels were preserved without autogenerated localized sidecars"
+  }
+}
