@@ -110,9 +110,11 @@ def test_conflicting_duplicates_and_ambiguity_emit_no_outputs(tmp_path):
         with pytest.raises(metadata.IdentityDecisionRequired):
             disk_allocation(tmp_path, [feature("changed-key")], baseline)
     notify.assert_called_once()
-    assert notify.call_args.kwargs["title"] == (
-        "Decision needed: wdpa-marine release 2026-10-01"
-    )
+    assert notify.call_args.kwargs["asset_slug"] == "wdpa-marine"
+    assert notify.call_args.kwargs["release"] == "2026-10-01"
+    case = notify.call_args.kwargs["ambiguities"][0]
+    assert case["new_identity_key"] == ["changed-key"]
+    assert case["matching_geometry_feature_ids"] == ["1"]
     assert not list(tmp_path.glob("*.ndjson.gz"))
     assert not list(tmp_path.glob("*.fgb"))
 
