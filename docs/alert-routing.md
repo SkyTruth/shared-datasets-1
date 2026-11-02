@@ -53,18 +53,16 @@ The hourly operational safety check discovers pending deployment records and
 requests the existing completion workflow only when work is needed; it does not
 launch a per-dataset observer while WDPA is idle.
 
-The former `wdpa-execution-observer` schedule is permanently paused and
-`wdpa_execution_observer_unhealthy` is disabled. Their definitions, narrow IAM
-and old status endpoint remain for an update-only rollout: the existing
-protected deployment paths block resource deletion. The catalog no longer
-reads or polls that endpoint. Do not resume the observer in routine deployment.
-Its exact-name exclusions do not exclude `wdpa-monthly` or any other worker.
+The obsolete `wdpa-execution-observer` job, schedule, service account, narrow
+IAM grants, bootstrap role and disabled health policy are removed through the
+protected scratch-cleanup retirement. Its exact ten-resource deletion inventory
+is separate from the active WDPA worker. Routine WDPA deployment cannot recreate
+those resources. Verify their absence after the reviewed teardown runs.
 
-When both changes deploy, the main CI graph disables the health policy before
-the WDPA deployment pauses the schedule. Verify the live policy is disabled
-and the schedule is `PAUSED` before declaring the retirement deployed. A
-separately dispatched WDPA deployment must follow the same order. A later
-infrastructure teardown needs a reviewed, constrained deletion path.
+Worker and Scheduler failure filters cover all jobs in the project/region;
+the retired observer has no alert or canonical-writer exception. The historical
+`_catalog/wdpa-monthly-execution.json` object and existing incident receipts are
+retained. The catalog does not read or poll that object.
 
 ## Editable Monitoring messages
 
@@ -83,8 +81,8 @@ execution; closure still requires separate recovery verification. Existing
 Monitoring parents receive these fields on their next closure update; duplicate
 open events remain quiet. Receipt state and delivery safeguards are unchanged.
 
-The retired WDPA metric policy retains `OPENED` and `CLOSED` for its existing
-incident history. Google supports only
+The deleted WDPA metric policy used `OPENED` and `CLOSED`; its existing
+incident receipts and Slack parents remain available. Google supports only
 `OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
 Those alerts are bot-owned too. After investigating recovery, the owner can use
 **Alerts / Legacy workflow resolution**, supplying only `monitoring_incident_id`.
@@ -109,7 +107,7 @@ only exact CI-tested image bytes, and copies the existing GitHub bot secret to
 Secret Manager through stdin. The token never enters Terraform state. The bot
 must authenticate and verify its private receipt permissions before the service
 starts listening. Terraform waits for that service, authenticated subscription
-and Monitoring publisher grant before changing any of the six policy routes;
+and Monitoring publisher grant before changing any of the five policy routes;
 startup failure leaves the existing native routes in place. Native channel
 configuration is retained for reviewed rollback. No alert conditions, grace
 windows, publication authority or dataset permissions are relaxed.
@@ -124,15 +122,14 @@ with that evidence. Policy configuration and local tests alone do not prove live
 delivery; report it as unverified when matching failure evidence is unavailable.
 Do not deliberately fail production jobs to test routing.
 
-The unapproved-writer policy retains the dormant WDPA observer exception only for the exact
-`_catalog/wdpa-monthly-execution.json` object. It grants no permissions and does
-not suppress other writes or delete alerts. Its protected sync watches
-`canonical_mutation_iam.tf` and `wdpa_execution_observer.tf` as policy inputs.
+The unapproved-writer policy has no retired-observer exception. Its protected
+sync watches `canonical_mutation_iam.tf` as an approved-principal input; the
+observer has no canonical write permissions.
 
 ## Deployment verification
 
 Use a reviewed PR, merge to `main`, and the protected cron alert policy sync.
-Review its saved plan: only the six alert policies and the explicitly allowlisted
+Review its saved plan: only the five alert policies and the explicitly allowlisted
 Monitoring transport resources may change. Ingestion jobs, Scheduler
 configuration, canonical bucket permissions and dataset objects must not.
 The workflow changes take effect on subsequent executions; existing executions
@@ -153,8 +150,8 @@ Before declaring live routing verified:
    receipt and matching Slack notification. Record delivery as unverified if no
    matching evidence exists. Delivery evidence does not prove supervision
    suppression.
-5. Verify the observer's expected status write no longer matches; writes by a
-   different principal or to a different canonical object must still match.
+5. Verify a write by the retired observer matches the unapproved-writer policy;
+   it has no object-specific exception.
 6. Check the first scheduled maintenance and automatic follow-up failures route
    through `unattended-workflow-alert.yml`. That privileged workflow checks out
    only `main`, reads event JSON as data, and never downloads source-run artifacts.

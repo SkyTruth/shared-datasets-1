@@ -101,7 +101,8 @@ Preserve owned claims, counters, generation preconditions and committed receipts
 The old manual build workflow is retired; October evidence remains historical.
 
 Do not deploy with local production Terraform or a locally pushed image.
-The former catalog observer stays paused and its health policy disabled.
+The obsolete catalog observer and its disabled health policy are removed by the
+protected scratch-cleanup retirement. WDPA deployment cannot recreate them.
 WDPA uses shared worker/Scheduler alerts and per-asset release-index check-ins.
 
 ## wdpa-monthly schedule control and teardown
@@ -119,6 +120,6 @@ executions or release publication claims. It preserves the job, identities,
 Terraform state and published data.
 
 Permanent infrastructure teardown requires a reviewed PR and a constrained
-protected production workflow with explicit worker, observer, scheduler and IAM
+protected production workflow with explicit worker, scheduler and IAM
 allowlists. Do not run a local Terraform destroy/apply or delete dataset releases,
 latest files, run records, README files or catalog rows as part of cost teardown.

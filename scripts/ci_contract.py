@@ -161,7 +161,7 @@ def classify_change(path: str) -> tuple[str, set[str]]:
     if path in {
         "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_slack.tf",
         "terraform/envs/prod/monitoring_alert_policy_iam.tf", "terraform/envs/prod/monitoring_variables.tf",
-        "terraform/envs/prod/wdpa_execution_observer.tf", "terraform/envs/prod/canonical_mutation_iam.tf",
+        "terraform/envs/prod/canonical_mutation_iam.tf",
         "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
     }:
         return "infrastructure", {"production-images"}
@@ -353,7 +353,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         if path in {
             ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
             "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
-            "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
+            "terraform/envs/prod/monitoring_variables.tf",
         }:
             selected.add("cron_alert_policy")
         if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/slack_incident_api.py", "scripts/monitoring_slack_prepare.py"}:

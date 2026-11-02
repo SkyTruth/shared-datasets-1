@@ -15,7 +15,14 @@ from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/terraform_targets/operational-retirement.json'
+OBSERVER_FIXTURE = ROOT / 'tests/fixtures/terraform_targets/wdpa-observer-retirement.json'
 NUMBER = '12695949518'
+
+
+def retirement_plan():
+    plan = json.loads(FIXTURE.read_text())
+    plan['resource_changes'].extend(json.loads(OBSERVER_FIXTURE.read_text())['resource_changes'])
+    return plan
 
 
 def retirement_jobs():
@@ -24,10 +31,10 @@ def retirement_jobs():
 
 def test_workflow_scope_matches_the_independent_audited_resource_inventory():
     inputs = retirement_jobs()['retire-operational-infrastructure']['with']
-    inventory = {row['address'] for row in json.loads(FIXTURE.read_text())['resource_changes']}
+    inventory = {row['address'] for row in retirement_plan()['resource_changes']}
     targets = inputs['targets'].splitlines()
     allowed = inputs['allowed_exact'].splitlines()
-    assert len(targets) == len(allowed) == len(inventory) == 20
+    assert len(targets) == len(allowed) == len(inventory) == 30
     assert set(targets) == set(allowed) == inventory
     assert not inputs.get('allowed_patterns')
 
@@ -45,9 +52,9 @@ def guard(tmp_path, plan):
     return subprocess.run(['bash', '-c', shell], cwd=ROOT, env=environment, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize('count', [0, 1, 20])
+@pytest.mark.parametrize('count', [0, 1, 20, 30])
 def test_actual_workflow_guard_and_permission_contract_accept_complete_partial_and_noop_retirement(tmp_path, count):
-    plan = json.loads(FIXTURE.read_text())
+    plan = retirement_plan()
     plan['resource_changes'] = plan['resource_changes'][:count]
     accepted = guard(tmp_path, plan)
     assert accepted.returncode == 0, accepted.stdout + accepted.stderr
@@ -63,11 +70,42 @@ def test_actual_workflow_guard_and_permission_contract_accept_complete_partial_a
             'monitoring.metricDescriptors.delete', 'monitoring.alertPolicies.get',
             'monitoring.alertPolicies.delete', 'logging.notificationRules.delete',
         }
+    if count == 30:
+        permissions = {permission for _, values in required for permission in values}
+        assert {'run.jobs.delete', 'cloudscheduler.jobs.delete',
+                'run.jobs.setIamPolicy', 'storage.buckets.setIamPolicy',
+                'iam.serviceAccounts.setIamPolicy'} <= permissions
+        assert not {'run.jobs.run', 'storage.objects.delete', 'storage.buckets.delete'} & permissions
+
+
+def test_observer_deletion_does_not_expand_persistent_authority_or_extend_expiry():
+    authority = (ROOT / 'terraform/envs/prod/operational_retirement_iam.tf').read_text()
+    assert '"cloudscheduler.jobs.delete"' in authority
+    assert '"run.jobs.delete"' in authority
+    assert "2026-11-03T00:00:00Z" in authority
+    assert 'default     = false' in authority
+    persistent = (ROOT / 'terraform/envs/prod/scheduled_ingestion_deploy_iam.tf').read_text()
+    assert '"cloudscheduler.jobs.delete"' not in persistent
+    assert '"run.jobs.delete"' not in persistent
+    assert not (ROOT / 'terraform/envs/prod/wdpa_execution_observer.tf').exists()
+    assert not (ROOT / 'terraform/envs/prod/wdpa_observer_bootstrap_iam.tf').exists()
+    assert not (ROOT / 'ingestion/wdpa_monthly/execution_observer.py').exists()
+
+
+@pytest.mark.parametrize('scope', ['other-project', 'us-east1', 'services'])
+def test_observer_iam_provider_names_cannot_probe_a_foreign_resource(scope):
+    plan = json.loads(OBSERVER_FIXTURE.read_text())
+    row = next(row for row in plan['resource_changes'] if row['type'] == 'google_cloud_run_v2_job_iam_member')
+    name = row['change']['before']['name']
+    field = {'other-project': 'shared-datasets-1', 'us-east1': 'us-central1', 'services': 'jobs'}[scope]
+    row['change']['before']['name'] = name.replace(field, scope)
+    with pytest.raises(ValueError, match='foreign or malformed Cloud Run'):
+        plan_checks({'format_version': '1.2', 'resource_changes': [row]}, project_number=NUMBER)
 
 
 @pytest.mark.parametrize('actions', [['create'], ['update'], ['delete', 'create'], ['create', 'delete']])
 def test_actual_workflow_refuses_resurrection_update_and_replacement_of_retired_resources(tmp_path, actions):
-    plan = json.loads(FIXTURE.read_text())
+    plan = retirement_plan()
     plan['resource_changes'][0]['change']['actions'] = actions
     rejected = guard(tmp_path, plan)
     assert rejected.returncode == 1
@@ -79,7 +117,7 @@ def test_actual_workflow_refuses_resurrection_update_and_replacement_of_retired_
                                      'google_cloud_run_v2_service.monitoring_slack',
                                      'google_iam_workload_identity_pool_provider.github'])
 def test_actual_workflow_refuses_deletion_of_active_resources(tmp_path, address):
-    plan = json.loads(FIXTURE.read_text())
+    plan = retirement_plan()
     plan['resource_changes'][0]['address'] = address
     rejected = guard(tmp_path, plan)
     assert rejected.returncode == 1 and address in rejected.stdout

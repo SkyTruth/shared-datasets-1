@@ -24,6 +24,40 @@ DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
+    def test_schedule_control_authentication_requires_its_exact_main_workflow(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/ingestion-schedule-control.yml")
+        steps = workflow_steps_by_name(workflow, "control")
+        guard = steps["Require trusted main workflow"]["run"]
+        own_path = ".github/workflows/ingestion-schedule-control.yml"
+        for ref, path, accepted in (
+            ("refs/heads/main", own_path, True),
+            ("refs/heads/feature", own_path, False),
+            ("refs/heads/main", ".github/workflows/unrelated.yml", False),
+        ):
+            with self.subTest(ref=ref, path=path):
+                result = subprocess.run(["bash", "-c", guard], capture_output=True, text=True,
+                    env={**os.environ, "GITHUB_REF": ref, "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                         "GITHUB_WORKFLOW_REF": f"SkyTruth/shared-datasets-1/{path}@refs/heads/main"})
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+        sequence = workflow["jobs"]["control"]["steps"]
+        self.assertLess(next(i for i, step in enumerate(sequence) if step.get("name") == "Validate fixed schedule scope"),
+                        next(i for i, step in enumerate(sequence) if step.get("uses", "").startswith("google-github-actions/auth")))
+
+    def test_resume_refuses_worker_without_verified_automatic_deployment(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/ingestion-schedule-control.yml")
+        script = workflow_steps_by_name(workflow, "control")["Verify publication before resuming"]["run"]
+        fake_uv = '''uv() {
+          if [[ "$*" == *wdpa_schedule_readiness.py* ]]; then
+            echo "WDPA automatic deployment is not ready" >&2
+            return 1
+          fi
+        }
+        '''
+        result = subprocess.run(["bash", "-e", "-c", fake_uv + script],
+                                env={**os.environ, "JOB_NAME": "wdpa-monthly"},
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_image_runs_the_complete_automatic_pipeline(self):
         self.assertIn('CMD ["python", "-m", "ingestion.wdpa_monthly.automatic"]', DOCKERFILE.read_text())
 
@@ -123,14 +157,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             terraform_targets(plan_run),
             {
                 "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "module.wdpa_observer_service_account.google_service_account.this",
-                "google_project_iam_custom_role.wdpa_execution_reader",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
-                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
-                "google_service_account_iam_member.wdpa_observer_deployer",
-                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
-                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
                 "google_iam_deny_policy.canonical_destructive_actions[0]",
             },
         )
@@ -146,18 +172,10 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             python_literal_string_set(enforce_run, "allowed_exact"),
             {
                 "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "module.wdpa_observer_service_account.google_service_account.this",
-                "google_project_iam_custom_role.wdpa_execution_reader",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
-                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
-                "google_service_account_iam_member.wdpa_observer_deployer",
-                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
-                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
                 "google_iam_deny_policy.canonical_destructive_actions[0]",
             },
         )
-        self.assertIn("if actions not in permitted", enforce_run)
+        self.assertIn('if actions != ["update"]', enforce_run)
         self.assertIn("image != expected_image", enforce_run)
         self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
         self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])

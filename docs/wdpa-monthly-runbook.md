@@ -49,9 +49,15 @@ IAM sync, then dispatch the protected WDPA deployment with an explicit current-m
 `canary_run_date=YYYY-MM-01` so deployment and canary share one verified attempt.
 Verify its terminal result and both release indexes, then resume with
 **Ingestion / Schedule control**, `job=wdpa-monthly`, `action=resume`.
+Schedule resume verifies the latest signed deployment and its exact-image
+successful canary against the live worker. An October publication alone cannot
+activate a worker still pinned to an October bundle or a persistent `RUN_DATE`.
+An unavailable November source may produce a verified skipped canary; the
+enabled schedule then retries during days 1–10 without a new monthly approval.
 While paused, deployment without an explicit canary date defers before mutation;
 it must not install code and leave an unverifiable deployment record.
-The dormant observer stays paused.
+The obsolete observer is removed by the protected scratch-cleanup retirement;
+WDPA deployment does not recreate it.
 
 Manual deployment dispatch uses `main`, `executor_sha`, `source_run_id` (the
 successful main-push CI run) and `source_run_attempt`. `RUN_DATE` is an optional
@@ -59,6 +65,11 @@ execution-only diagnostic override; the job template must never pin a date or
 `WDPA_PROMOTION_BUNDLE`. A regular monthly run needs neither override.
 
 ## Monitoring and recovery
+
+The [first November activation attempt](wdpa-processing-evidence/november-readiness-2026-11-01.md)
+failed while recording an unavailable-source skip and retains its exact marine
+claim. The schedule must stay paused pending reviewed claim recovery and a
+verified fixed canary; an older October success does not establish readiness.
 
 Shared worker and Scheduler alerts report failures. Per-asset release indexes
 provide the latest check-in. Source unavailability is a skip, not a successful

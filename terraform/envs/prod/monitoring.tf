@@ -101,7 +101,6 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_cloud_run_failure
 resource.type="cloud_run_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
-NOT resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
 severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
@@ -149,75 +148,6 @@ EOT
   user_labels = {
     component = "scheduled-ingestion"
     service   = "shared-datasets"
-  }
-
-  depends_on = [
-    google_project_service.required,
-    terraform_data.cron_alert_channel_configured,
-    google_pubsub_topic_iam_member.monitoring_slack_publisher,
-  ]
-}
-
-# Retain the resource for the protected sync, which blocks deletion.
-# The observer schedule is paused; lack of observer activity is expected.
-resource "google_monitoring_alert_policy" "wdpa_execution_observer_unhealthy" {
-  project      = var.project_id
-  display_name = "WDPA execution observer has stopped succeeding"
-  combiner     = "OR"
-  enabled      = false
-  severity     = "ERROR"
-
-  notification_channels = local.cron_alert_notification_channels
-
-  conditions {
-    display_name = "No successful WDPA observer completion for 15 minutes"
-
-    condition_threshold {
-      filter                  = <<-EOT
-resource.type="cloud_run_job"
-resource.labels.project_id="${var.project_id}"
-resource.labels.location="${var.region}"
-resource.labels.job_name="${local.wdpa_execution_observer_job_name}"
-metric.type="run.googleapis.com/job/completed_execution_count"
-metric.labels.result="succeeded"
-EOT
-      comparison              = "COMPARISON_LT"
-      threshold_value         = 1
-      duration                = "120s"
-      evaluation_missing_data = "EVALUATION_MISSING_DATA_ACTIVE"
-
-      # This DELTA metric includes zero-valued samples. Count successful
-      # completions, rather than treating any metric sample as a heartbeat.
-      aggregations {
-        alignment_period   = "900s"
-        per_series_aligner = "ALIGN_SUM"
-      }
-
-      trigger {
-        count = 1
-      }
-    }
-  }
-
-  documentation {
-    mime_type = "text/markdown"
-    subject   = "WDPA execution observations are stale"
-    content   = <<-EOT
-Retired policy, retained disabled because the protected alert sync blocks deletion. The wdpa-execution-observer schedule is paused. Do not resume it or enable this policy as part of routine WDPA deployment.
-
-WDPA worker and Scheduler failures use the shared ingestion failure policies. Successful publications and meaningful skips update the per-asset release indexes; the catalog displays their Last check-in. Deployment completion checks inspect only pending deployment records.
-EOT
-  }
-
-  alert_strategy {
-    auto_close           = "604800s"
-    notification_prompts = ["OPENED", "CLOSED"]
-  }
-
-  user_labels = {
-    component = "scheduled-ingestion"
-    service   = "shared-datasets"
-    kind      = "observer-health"
   }
 
   depends_on = [
@@ -304,7 +234,6 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_scheduler_failure
 resource.type="cloud_scheduler_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
-NOT resource.labels.job_id="${local.wdpa_execution_observer_job_name}"
 severity>=ERROR
 EOT
     }
@@ -435,10 +364,6 @@ protoPayload.serviceName="storage.googleapis.com"
 ${local.dataset_write_method_filter}
 ${local.dataset_delete_excluded_prefix_filter}
 ${local.dataset_write_allowed_principal_filter}
-NOT (
-  protoPayload.authenticationInfo.principalEmail="${module.wdpa_observer_service_account.email}"
-  AND protoPayload.resourceName="${local.shared_bucket_object_resource_prefix}_catalog/wdpa-monthly-execution.json"
-)
 EOT
 
       label_extractors = {

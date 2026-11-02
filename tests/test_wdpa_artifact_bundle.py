@@ -15,7 +15,7 @@ from ingestion.common import publication as p
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.wdpa_monthly import artifact_bundle as bundle, run as wdpa
 from scripts import release_feature_model as model, wdpa_processing_gate as gate
-from tests.test_wdpa_execution_observer import accepted_evidence
+from tests.test_wdpa_processing_gate import accepted_evidence
 from test_publication import operation
 
 

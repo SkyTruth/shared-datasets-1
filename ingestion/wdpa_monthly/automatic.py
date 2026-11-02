@@ -19,7 +19,7 @@ def check_in(publisher, month, attempt, reason):
     for asset in wdpa.ASSETS:
         record = {
             "schema_version": 1, "asset_slug": asset.slug, "status": "skipped",
-            "run_date": attempt.isoformat(), "target_release_date": month.isoformat(),
+            "release_date": attempt.isoformat(), "target_release_date": month.isoformat(),
             "reason": reason, "source": wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), month),
             "source_version": wdpa.source_version_for(month),
         }

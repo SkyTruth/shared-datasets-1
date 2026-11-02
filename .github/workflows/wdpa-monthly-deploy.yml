@@ -242,7 +242,7 @@ jobs:
           set -euo pipefail
 
           docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" python -c \
-            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.execution_observer; import ingestion.wdpa_monthly.run; import ingestion.wdpa_monthly.automatic; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
+            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.run; import ingestion.wdpa_monthly.automatic; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
 
       - name: Push wdpa-monthly image
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
@@ -286,14 +286,6 @@ jobs:
             -input=false \
             -out="${RUNNER_TEMP}/wdpa-monthly.tfplan" \
             -target=module.wdpa_monthly_job.google_cloud_run_v2_job.this \
-            -target="module.wdpa_observer_service_account.google_service_account.this" \
-            -target="google_project_iam_custom_role.wdpa_execution_reader" \
-            -target="google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader" \
-            -target="google_storage_bucket_iam_member.wdpa_observer_status_writer" \
-            -target="google_service_account_iam_member.wdpa_observer_deployer" \
-            -target="module.wdpa_execution_observer_job.google_cloud_run_v2_job.this" \
-            -target="google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker" \
-            -target="module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this" \
             -target="google_iam_deny_policy.canonical_destructive_actions[0]" \
             -var="wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}" \
             -var="wdpa_monthly_image_config_digest=${TESTED_IMAGE_CONFIG}" \
@@ -321,14 +313,6 @@ jobs:
           expected_config = os.environ["TESTED_IMAGE_CONFIG"]
           allowed_exact = {
               "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-              "module.wdpa_observer_service_account.google_service_account.this",
-              "google_project_iam_custom_role.wdpa_execution_reader",
-              "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
-              "google_storage_bucket_iam_member.wdpa_observer_status_writer",
-              "google_service_account_iam_member.wdpa_observer_deployer",
-              "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
-              "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
-              "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
               "google_iam_deny_policy.canonical_destructive_actions[0]",
           }
 
@@ -341,15 +325,10 @@ jobs:
               if address not in allowed_exact:
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
-              permitted = (["update"],) if address in {
-                  "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                  "google_iam_deny_policy.canonical_destructive_actions[0]",
-              } else (["create"], ["update"])
-              if actions not in permitted:
+              if actions != ["update"]:
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
-              if address not in {"module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                                  "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this"}:
+              if address != "module.wdpa_monthly_job.google_cloud_run_v2_job.this":
                   continue
               after = resource.get("change", {}).get("after", {})
               containers = (
@@ -362,25 +341,22 @@ jobs:
                   blocked.append(f"unexpected image for {address}: {image!r}")
               task = after.get("template", [{}])[0].get("template", [{}])[0]
               limits = containers[0].get("resources", [{}])[0].get("limits", {}) if containers else {}
-              worker = address == "module.wdpa_monthly_job.google_cloud_run_v2_job.this"
-              expected_limits = {"cpu": "4", "memory": "8Gi"} if worker else {"cpu": "1", "memory": "512Mi"}
-              if limits != expected_limits or task.get("timeout") != ("86400s" if worker else "120s"):
+              if limits != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "86400s":
                   blocked.append(f"unexpected processing limits for {address}")
-              if worker:
-                  volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
-                  disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
-                  mounts = containers[0].get("volume_mounts", [])
-                  env = {e.get("name"): e.get("value") for e in containers[0].get("env", [])}
-                  if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
-                      blocked.append("WDPA scheduled executions require the exact tested producer")
-                  if "WDPA_PROMOTION_BUNDLE" in env:
-                      blocked.append("WDPA must not pin a monthly bundle")
-                  if "RUN_DATE" in env:
-                      blocked.append("WDPA RUN_DATE must remain execution-only")
-                  if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(m.get("name") == "work" and m.get("mount_path") == "/work" for m in mounts):
-                      blocked.append("WDPA requires the 100 GiB disk at /work")
-                  if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":
-                      blocked.append("WDPA scratch paths must use /work")
+              volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
+              disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
+              mounts = containers[0].get("volume_mounts", [])
+              env = {e.get("name"): e.get("value") for e in containers[0].get("env", [])}
+              if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
+                  blocked.append("WDPA scheduled executions require the exact tested producer")
+              if "WDPA_PROMOTION_BUNDLE" in env:
+                  blocked.append("WDPA must not pin a monthly bundle")
+              if "RUN_DATE" in env:
+                  blocked.append("WDPA RUN_DATE must remain execution-only")
+              if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(m.get("name") == "work" and m.get("mount_path") == "/work" for m in mounts):
+                  blocked.append("WDPA requires the 100 GiB disk at /work")
+              if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":
+                  blocked.append("WDPA scratch paths must use /work")
 
           if blocked:
               print("Refusing wdpa-monthly deploy because the Terraform plan changes non-allowlisted resources:")

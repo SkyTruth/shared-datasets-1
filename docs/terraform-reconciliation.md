@@ -24,36 +24,48 @@ permission probes and signed deployment records intact.
 2. `operational-retirement-grant` temporarily binds it to the Terraform deployer
    after role creation. The grant is disabled by default. Its role name is
    independent of the managed role resource so revocation cannot recreate it.
-3. `retire-operational-infrastructure` targets exactly the 20 resource instances
+3. `retire-operational-infrastructure` targets exactly the 30 resource instances
    in its `targets`/`allowed_exact` lists. `delete_only` permits pure deletions
    and no-ops; it rejects creations, updates, replacements and unrelated deletes.
 4. `revoke-operational-retirement` disables/removes the binding after any attempted
    grant, including a failed grant or retirement. The unbound role stays
    in Terraform for auditability; it grants no authority on its own.
 
-The reviewed scope is one old WIF provider, eight filtered log views, two custom
-heartbeat metric descriptors, seven old custom roles, the old observer service
+The original twenty-resource scope is one old WIF provider, eight filtered log
+views, two custom heartbeat metric descriptors, seven old custom roles, the old observer service
 account, and the obsolete dataset-schema alert. Buckets, dataset objects, active
-Cloud Run jobs/services, schedulers, current identity providers and current alert
-policies are outside its mutation allowlist. Removing a log view preserves the
-underlying logs. Removing the two retired metric descriptors makes their old
+Cloud Run jobs/services, their schedulers, current identity providers and current
+alert policies are outside its mutation allowlist. Removing a log view preserves
+the underlying logs. Removing the two retired metric descriptors makes their old
 time series inaccessible; this is part of the reviewed retirement. See
 [Google's metric deletion contract](https://docs.cloud.google.com/monitoring/custom-metrics/creating-metrics#delete-metrics).
 
 The sanitized saved-plan fixture is
-`tests/fixtures/terraform_targets/operational-retirement.json`. Tests feed those
-serialized bytes through the actual workflow shell guard and the saved-plan
-permission derivation, including empty/partial plans and negative controls.
-`terraform/iam-plan-prerequisites.json` records the 13 absent declarations behind
-the 20 instances; it does not expand the exact instance-level mutation allowlist.
+`tests/fixtures/terraform_targets/operational-retirement.json`. The November
+observer-removal change adds a separately sanitized live-state inventory at
+`tests/fixtures/terraform_targets/wdpa-observer-retirement.json`: the obsolete
+WDPA observer job, Scheduler job, service account, two custom roles, four IAM
+bindings and disabled health policy. The protected worker deployment and alert
+sync no longer manage them. Their exact ten deletions are added to the same
+pure-delete scope, for thirty total. This preserves the historical status object,
+all dataset files and the active worker. Tests feed both fixtures' serialized
+bytes through the actual workflow shell guard and the saved-plan permission
+derivation, including empty/partial plans and negative controls.
+`terraform/iam-plan-prerequisites.json` records the absent declarations behind
+the 30 instances; it does not expand the exact instance-level mutation allowlist.
 
 ## Approved temporary authority
 
-The user explicitly approved this scope and absolute window on October 27.
+The user explicitly approved the original scope and absolute window on October 27.
+The November observer-removal change adds `cloudscheduler.jobs.delete` and
+`run.jobs.delete` for the exact retired observer resources. This extension must
+pass review/merge before live use; it creates no persistent deletion authority
+and does not renew the window.
 The project binding expires at **2026-11-03 00:00 UTC**, independently of immediate
 revocation. It grants the Terraform deployer the following additional permissions:
 
 ```text
+cloudscheduler.jobs.delete
 iam.roles.delete
 iam.serviceAccounts.delete
 iam.serviceAccounts.get
@@ -63,6 +75,7 @@ logging.views.delete
 logging.views.get
 monitoring.metricDescriptors.delete
 monitoring.metricDescriptors.get
+run.jobs.delete
 ```
 
 While enabled, this is project-level authority for those resource classes, not
@@ -90,7 +103,7 @@ The full candidate plan proves the change eliminates the WDPA update without
 changing the job's image or disk.
 
 After review/merge and the protected sequence, verify signed terminal outcomes,
-absence of the temporary binding and all 20 retired resources, and full refreshed
+absence of the temporary binding and all 30 retired resources, and full refreshed
 production/preview plans using recorded deployment image inputs. Only a clean
 plan in both environments satisfies completion. Then delete the rollback backup
 branch with its expected-OID guard and verified Git recovery evidence. Removing

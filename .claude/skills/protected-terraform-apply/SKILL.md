@@ -60,13 +60,13 @@ explicit targets and allowed resource changes.
 | `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
 | `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. 30x30 work is deferred and is outside this bootstrap. |
 | `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
-| `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer/WDPA observer roles and bindings, staged-bundle read access, create-only automatic WDPA staging, and translation notice/debt access. |
+| `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer roles and bindings, staged-bundle read access, create-only automatic WDPA staging, and translation notice/debt access. |
 | `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
-| `scratch-cleanup-iam-sync.yml` | Syncs pending-publish bindings and explicit WDPA retirement resources. Its operational retirement bootstraps the separately approved expiring authority, deletes only the 20 exact retired addresses, and revokes the grant after success or failure; see `docs/terraform-reconciliation.md`. Preserves active services and monthly retained-bundle access. |
-| `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then provisions the private authenticated Monitoring-to-Slack transport and syncs all six ingestion, observer, identity-decision, Scheduler, unapproved-writer and deletion alert policies. |
+| `scratch-cleanup-iam-sync.yml` | Syncs pending-publish bindings and explicit WDPA retirement resources. Its operational retirement bootstraps the separately approved expiring authority, deletes only the 30 exact retired addresses (including the obsolete WDPA observer), and revokes the grant after success or failure; see `docs/terraform-reconciliation.md`. Preserves active services and monthly retained-bundle access. |
+| `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then provisions the private authenticated Monitoring-to-Slack transport and syncs all five ingestion, identity-decision, Scheduler, unapproved-writer and deletion alert policies. |
 | `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` | Apply only their own Cloud Run Job through `scripts/terraform_plan_allowlist.py`, including the expected immutable image check. |
 | `mpatlas-monthly-deploy.yml` | Applies only the MPAtlas job with its exact tested image, scheduler invoker binding, monthly scheduler and optional canonical deny-policy writer exception; blocks deletes/replacements. The ingestion IAM sync owns its identities and scoped storage/actAs grants. |
-| `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker, observer job/identity/IAM/scheduler, and canonical destructive-action deny policy; also validates the exact CI-tested image/config digest, absence of monthly pins, and runtime limits. |
+| `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker and canonical destructive-action deny policy; also validates the exact CI-tested image/config digest, absence of monthly pins, and runtime limits. |
 | `pmtiles-cdn-sync.yml` | Applies managed-folder IAM bootstrap checked by `scripts/cdn_plan_readiness.py check-bootstrap`, then shared-bucket/CDN URL-map/public managed-folder changes under its inline allowlist. |
 
 Other protected publication paths:
@@ -89,7 +89,10 @@ retry while known reads are denied or hide them with refresh disabled. See
 `docs/terraform-reconciliation.md` for the observed failed boundary and scopes.
 
 The October operational retirement has explicit human approval for its temporary
-project-level delete/read scope through `2026-11-03T00:00:00Z`. Its Terraform
+project-level delete/read scope through `2026-11-03T00:00:00Z`. The November
+observer-removal change adds ten exact targets and the two Cloud Run/Scheduler
+delete permissions to that protected scope; it requires review/merge before live
+use and does not extend the absolute window. Its Terraform
 variable defaults the grant off, the pure-delete saved-plan policy refuses
 resurrection/replacement and unrelated changes, and the revocation job runs even
 after a partial grant failure. Role creation precedes the grant, and revocation

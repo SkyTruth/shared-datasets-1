@@ -170,6 +170,13 @@ def plan_checks(plan, *, project_number, target=None):
         project(value)
         region(value)
         name = value.get("name")
+        # Google persists IAM-member job/service names as full resource paths.
+        # Normalize that provider representation only after checking its scope.
+        if isinstance(name, str) and name.startswith("projects/"):
+            match = re.fullmatch(r"projects/([^/]+)/locations/([^/]+)/" + collection + r"/([^/]+)", name)
+            require(match and match[1] in {PROJECT, str(project_number)} and match[2] == REGION,
+                    "foreign or malformed Cloud Run resource name")
+            name = match[3]
         kind = "google_cloud_run_v2_" + ("service" if collection == "services" else "job")
         if name is None:
             require(future_unknown(row, kind), "unknown Cloud Run resource lacks creation dependency")

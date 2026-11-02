@@ -121,7 +121,8 @@ class ScheduleControlTests(unittest.TestCase):
         self.assertLess(list(self.steps).index("Verify publication before resuming"), list(self.steps).index("Set schedule state"))
 
     def test_scope_rejects_other_refs_jobs_and_actions(self):
-        script = self.steps["Validate reviewed main and fixed scope"]["run"]
+        script = "\n".join(self.steps[name]["run"] for name in
+                           ("Require trusted main workflow", "Validate fixed schedule scope"))
         for ref, job, action, allowed in (
             ("refs/heads/main", "wdpa-monthly", "pause", True),
             ("refs/heads/main", "sea-ice-daily", "resume", True),
@@ -132,7 +133,9 @@ class ScheduleControlTests(unittest.TestCase):
         ):
             with self.subTest(ref=ref, job=job, action=action):
                 result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                                        env={**os.environ, "GITHUB_REF": ref, "JOB_NAME": job, "SCHEDULE_ACTION": action})
+                                        env={**os.environ, "GITHUB_REF": ref, "JOB_NAME": job, "SCHEDULE_ACTION": action,
+                                             "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                                             "GITHUB_WORKFLOW_REF": "SkyTruth/shared-datasets-1/.github/workflows/ingestion-schedule-control.yml@refs/heads/main"})
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
 
     def test_eamlis_resume_executes_its_installed_identity_gate(self):

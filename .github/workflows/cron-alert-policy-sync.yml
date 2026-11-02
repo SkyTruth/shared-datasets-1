@@ -140,7 +140,6 @@ jobs:
         google_monitoring_alert_policy.dataset_object_deleted
         terraform_data.cron_alert_channel_configured
         google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
-        google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
         google_monitoring_alert_policy.release_awaiting_identity_decision
         google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
@@ -153,7 +152,6 @@ jobs:
         google_monitoring_alert_policy.dataset_object_deleted
         terraform_data.cron_alert_channel_configured
         google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
-        google_monitoring_alert_policy.wdpa_execution_observer_unhealthy
         google_monitoring_alert_policy.release_awaiting_identity_decision
         google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
         google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
