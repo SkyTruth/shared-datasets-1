@@ -103,6 +103,11 @@ def protocol_path_kind(name: str) -> str | None:
         return "state"
     if tail == ["reset.json"]:
         return "reset"
+    if parts[:3] == ["300-infrastructure-industrial", "320-mining", "eamlis-abandoned-mine-land-inventory"]:
+        if tail == ["identity-installation.json"]:
+            return "identity-installation"
+        if len(tail) == 2 and tail[0] == "identity-ledgers" and re.fullmatch(r"[0-9a-f]{64}\.json", tail[1]):
+            return "identity-ledger"
     if len(tail) == 2 and tail[0] == "receipts" and re.fullmatch(r"[0-9a-f]{64}\.json", tail[1]):
         return "receipt"
     if len(tail) == 3 and tail[0] == "inputs" and hash_value(tail[1]) and INPUT_NAME.fullmatch(tail[2]):

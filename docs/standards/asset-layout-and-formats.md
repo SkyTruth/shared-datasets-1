@@ -117,11 +117,13 @@ chunked array products where COG would be a poor access pattern.
   index-loads/
     YYYY-MM-DD/
       {load-id}.json
-  publications/                     # owned generated publishers only
+  publications/                     # publisher control records
     reset.json                      # reviewed one-time reset installation journal
     state.json                      # current owner and reserved ID counter
     receipts/{sha256}.json           # immutable intent and durable progress
     inputs/{sha256}/{ordinal}.{ext}  # generation-pinned checkpoint inputs
+    identity-installation.json      # EAMLIS reviewed identity installation only
+    identity-ledgers/{sha256}.json   # EAMLIS permanent identity allocations only
 ```
 
 Minimum valid asset:
@@ -164,6 +166,14 @@ promotion/deletion tools refuse these paths. Checkpoint suffixes are explicitly
 validated by `ingestion/common/publication.py`; the layout does not authorize
 arbitrary extensions or objects.
 
+Only `300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/`
+uses `publications/identity-installation.json` and
+`publications/identity-ledgers/{sha256}.json`. Ledger filenames contain exactly
+64 lowercase hexadecimal characters. The shared path classifier recognizes these
+records for read-only audits and path validation; generic mutation tools still
+reject them. Their writes remain owned by the reviewed installer and EAMLIS
+publisher described in the [identity runbook](../eamlis-feature-identity.md).
+
 For the three approved pre-launch identity retirements, the protected
 [reset installer](../feature-id-reset-installation.md) creates `reset.json` and
 advances it with generation preconditions. Publishers require its completed
@@ -193,6 +203,13 @@ before publication. That model must assign:
   identity evidence, such as release timestamps on daily generated assets.
   Hashes change when feature identity content changes and must not be used as
   the feature lookup ID.
+
+Manifest readers retain `sha256:source-gpkg-geometry-blob:v1`, declared by the
+World Polygons release dated `2026-06-26`. Those geometry hashes describe source
+GeoPackage blobs. Current geometry hashing and manifest builders support only
+`sha256:canonical-geometry:v1` and `sha256:canonical-geometry:v2`; accepting the
+historical declaration does not make it computable from canonical GeoJSON or
+eligible for release comparison. Historical manifest bytes remain unchanged.
 
 Identity strategy priority:
 

@@ -1,0 +1,123 @@
+{
+  "asset_slug": "world-polygons",
+  "latest_release": {
+    "date": "2026-06-26",
+    "files": [
+      {
+        "content_type": "application/octet-stream",
+        "format": "fgb",
+        "generation": 1782506287401860,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.fgb",
+        "sha256": "69122d9db756b74f1f568c695f1150dc687bd00094b5a99003cd51303cb77f70",
+        "size": 1259828896
+      },
+      {
+        "content_type": "application/json",
+        "format": "manifest",
+        "generation": 1782509029580300,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.manifest.json",
+        "sha256": "611b7499aba73470fd677fd6870567045f70d80f634d182fe06fef6bfde130a6",
+        "size": 8886
+      },
+      {
+        "content_type": "application/x-ndjson",
+        "format": "metadata",
+        "generation": 1782509010294907,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.metadata.ndjson.gz",
+        "sha256": "33ff2d5c1100b32a678499a734c1c054edfd9c41d0a0007057bd1c1ea8c194b2",
+        "size": 71455
+      },
+      {
+        "content_type": "application/vnd.pmtiles",
+        "format": "pmtiles",
+        "generation": 1782506325003522,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.pmtiles",
+        "sha256": "a1f0383e468c1fd878d4de6197ab525bb78c48de345f0fff90795ea982253a29",
+        "size": 362211892
+      },
+      {
+        "content_type": "application/json",
+        "format": "schema",
+        "generation": 1782506336787761,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.schema.json",
+        "sha256": "6bfd7a2388d4d0cd3ea87b751f6459f64e578ace60d87d576c705b54fe847de2",
+        "size": 1658
+      }
+    ],
+    "index_load_status": "Firestore metadata serving is inactive",
+    "index_status_policy": {
+      "mode": "inactive_firestore_serving",
+      "path": null
+    },
+    "release_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/",
+    "rows": 323,
+    "run_record_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/runs/2026-06-26.json",
+    "source_version": "U.S. Department of State Office of the Geographer and Global Issues World Polygons 11.4 beta, published 2025-02-24"
+  },
+  "latest_run": {
+    "date": "2026-06-26",
+    "release_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/",
+    "rows": 323,
+    "run_record_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/runs/2026-06-26.json",
+    "source_version": "U.S. Department of State Office of the Geographer and Global Issues World Polygons 11.4 beta, published 2025-02-24",
+    "status": "success"
+  },
+  "releases": [
+    {
+      "date": "2026-06-26",
+      "files": [
+        {
+          "content_type": "application/octet-stream",
+          "format": "fgb",
+          "generation": 1782506287401860,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.fgb",
+          "sha256": "69122d9db756b74f1f568c695f1150dc687bd00094b5a99003cd51303cb77f70",
+          "size": 1259828896
+        },
+        {
+          "content_type": "application/json",
+          "format": "manifest",
+          "generation": 1782509029580300,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.manifest.json",
+          "sha256": "611b7499aba73470fd677fd6870567045f70d80f634d182fe06fef6bfde130a6",
+          "size": 8886
+        },
+        {
+          "content_type": "application/x-ndjson",
+          "format": "metadata",
+          "generation": 1782509010294907,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.metadata.ndjson.gz",
+          "sha256": "33ff2d5c1100b32a678499a734c1c054edfd9c41d0a0007057bd1c1ea8c194b2",
+          "size": 71455
+        },
+        {
+          "content_type": "application/vnd.pmtiles",
+          "format": "pmtiles",
+          "generation": 1782506325003522,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.pmtiles",
+          "sha256": "a1f0383e468c1fd878d4de6197ab525bb78c48de345f0fff90795ea982253a29",
+          "size": 362211892
+        },
+        {
+          "content_type": "application/json",
+          "format": "schema",
+          "generation": 1782506336787761,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/world-polygons.schema.json",
+          "sha256": "6bfd7a2388d4d0cd3ea87b751f6459f64e578ace60d87d576c705b54fe847de2",
+          "size": 1658
+        }
+      ],
+      "index_load_status": "Firestore metadata serving is inactive",
+      "index_status_policy": {
+        "mode": "inactive_firestore_serving",
+        "path": null
+      },
+      "release_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/releases/2026-06-26/",
+      "rows": 323,
+      "run_record_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/world-polygons/runs/2026-06-26.json",
+      "source_version": "U.S. Department of State Office of the Geographer and Global Issues World Polygons 11.4 beta, published 2025-02-24"
+    }
+  ],
+  "schema_version": 1,
+  "updated_at": "2026-06-26T21:23:52+00:00"
+}
