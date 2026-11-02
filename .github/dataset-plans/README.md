@@ -54,6 +54,28 @@ object mutation path. Successful promotion removes its staged scratch objects
 with source-generation preconditions. Unpromoted staging uses the separate
 [age-based scratch cleanup contract](../../.claude/skills/gcp-shared-datasets/references/scratch-cleanup.md).
 
+## Captured WDPA check-in recovery
+
+`publish.publication_recovery` is restricted to a WDPA marine `object_repair`
+receipt containing exactly one skipped release-index effect with the historical
+`run_date` producer bug. It pins the original state and prepared receipt URI,
+generation and SHA-256, transaction ID, original destination generation and
+corrected output SHA-256. Its sole promotion stages those exact derived index
+bytes for review; it cannot promote data files, reset identity, combine deletion,
+rebuild indexes or use compatibility waivers.
+
+This subtype routes through the existing protected control installer, using the
+approved publisher and deployer's paused/drained job checks. It resumes the
+original publication executor with the original context and immutable intent.
+Only derivation interprets the captured `run_date` as `release_date`; the receipt
+intent is never rewritten. The executor writes the original generation-bound
+index effect, records its result in the same receipt, then releases its claim.
+Committed release/manifests, reservations and feature-ID history remain unchanged.
+Each write rechecks immutable review authority and paused/drained controls.
+Interrupted recovery recognizes its own exact output and resumes without changing
+generation expectations. A completed receipt never reacquires ownership, and
+does not require its disposable staged bytes to remain present.
+
 ## Consumer impact
 
 For changes that may break consumers of `{asset-slug}@latest`, include a top-level

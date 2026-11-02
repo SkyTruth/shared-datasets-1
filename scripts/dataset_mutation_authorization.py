@@ -735,7 +735,9 @@ def write_outputs(values: dict[str, Any], path: str | None) -> None:
 
 
 def plan_outputs(document: dict[str, Any]) -> dict[str, bool]:
-    reset = bool({"identity_reset", "identity_transition"}.intersection(document.get("publish", {})))
+    # All three control operations use the protected installer, never generic
+    # object promotion, localization, or release-index rebuilding.
+    reset = bool({"identity_reset", "identity_transition", "publication_recovery"}.intersection(document.get("publish", {})))
     return {"has_publish_plan": "publish" in document and not reset,
             "has_delete_plan": "delete" in document, "has_identity_reset_plan": reset}
 

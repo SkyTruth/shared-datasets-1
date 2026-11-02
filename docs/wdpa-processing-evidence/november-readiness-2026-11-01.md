@@ -65,8 +65,19 @@ local `incident/` evidence directory.
 
 ## Remaining recovery boundary
 
-This chat owns recovery. No PR or push was requested; the readiness, observer
-retirement and skip fixes are local commits.
+This chat owns recovery. PR #361 merged the readiness, observer retirement and
+future skip fixes. The existing claim still needs its separate reviewed recovery.
+
+The [immutable recovery proposal](../../.github/dataset-plans/wdpa-marine/wdpa-skip-recovery-20261102/255f7368e59828be1b71a11768bdd4f0baa5f8224730b92146d94bf4b5ad4006.json)
+pins the state and receipt above and stages the exact corrected check-in at
+`gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/wdpa-skip-recovery-20261102/recovered-index.json`,
+generation `1793637440852623`, SHA-256
+`844a118ad673db261c5ffd8e76c06e3833d79fbf5addd2639134a5617453f721`.
+The protected control installer resumes the captured transaction: index write,
+receipt result, then normal claim release. It preserves the original intent,
+October current release, manifest snapshots and feature-ID high-water `17943`.
+This proposal is not evidence of execution; verify its terminal workflow and
+live receipt/state before deploying the fixed worker with a canary.
 
 The malformed prepared intent belongs to the original execution and executor.
 A new image, date or execution cannot take over its claim. Do not delete the
