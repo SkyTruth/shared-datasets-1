@@ -1,0 +1,48 @@
+{
+  "schema": "identity-decision-adoption-v1",
+  "decision_pr": 369,
+  "event": {
+    "schema": "feature-identity-decision-event-v1",
+    "project": "shared-datasets-1",
+    "job": "wdpa-monthly",
+    "execution": "wdpa-monthly-w75n5",
+    "asset_slug": "wdpa-terrestrial",
+    "release": "2026-11-01",
+    "cases": [
+      {
+        "new_identity_key": [
+          "555732174"
+        ],
+        "new_geometry_hash": "sha256:c2e2a8acf89e34d3d479fea756745968877938e83a8e6f1f70296cf94231e752",
+        "new_properties_hash": "sha256:7a3f971f234bcf8827428a27474973fbddecb894f33b37d5d9dfea8b79e1d8e6",
+        "matching_geometry_feature_ids": [
+          "132873"
+        ],
+        "matching_properties_feature_ids": [],
+        "matching_geometry_properties_hashes": [
+          "sha256:fb596a5e0938e6046d4d9515be3d5b9e5c693dad87eac2efcd26bfd392a5ddf0"
+        ],
+        "matching_properties_geometry_hashes": []
+      },
+      {
+        "new_identity_key": [
+          "555779501"
+        ],
+        "new_geometry_hash": "sha256:654291119790f0e40a3409f1b9ab0a25029d8ccd8364ac286670f66ed025323f",
+        "new_properties_hash": "sha256:ac0b96325339bcd5b95b85646bc3c4ae2de91ff9345e32840972c3809a837dc1",
+        "matching_geometry_feature_ids": [
+          "282786"
+        ],
+        "matching_properties_feature_ids": [],
+        "matching_geometry_properties_hashes": [
+          "sha256:c4f3d80f6071304e730dac3b237c32942c059fea103df0e01e3bd5242e45fff1"
+        ],
+        "matching_properties_geometry_hashes": []
+      }
+    ]
+  },
+  "channel": "C0B12LDMB1A",
+  "parent_ts": "1793650665.056749",
+  "reply_ts": "1793657090.775849",
+  "monitoring": []
+}

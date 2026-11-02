@@ -231,8 +231,8 @@ class CheckerCliTests(unittest.TestCase):
     def test_shipped_terrestrial_decisions_pass_the_rule(self):
         repo_root = Path(__file__).resolve().parents[1]
         path = repo_root / "catalog/feature-identity-resolutions/wdpa-terrestrial.json"
-        # 555682754 already owned 300616; the other six keys were new.
-        baseline = {("555682754",): "300616"}
+        # Existing keys retain their published IDs in the August and November cases.
+        baseline = {("555682754",): "300616", ("555732174",): "255953"}
 
         self.assertEqual(checker.check_file(path, previous_feature_ids=baseline), [])
 
