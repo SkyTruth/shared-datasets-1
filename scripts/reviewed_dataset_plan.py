@@ -341,6 +341,7 @@ def normalize_publish_plan(
             "identity_transition",
             "source_loss_review",
             "historical_checksum_repair",
+            "publication_recovery",
         },
         label="publish plan",
     )
@@ -474,6 +475,14 @@ def normalize_publish_plan(
             validate_plan(normalized)
         except (IdentityError, KeyError, TypeError, ValueError) as exc:
             raise PlanValidationError(f"invalid EAMLIS checksum repair: {exc}") from exc
+    if "publication_recovery" in plan:
+        from ingestion.wdpa_monthly.checkin_recovery import validate_plan
+        from ingestion.common.publication import PublicationError
+        normalized["publication_recovery"] = plan["publication_recovery"]
+        try:
+            validate_plan(normalized)
+        except (PublicationError, KeyError, TypeError, ValueError) as exc:
+            raise PlanValidationError(f"invalid WDPA check-in recovery: {exc}") from exc
     return normalized
 
 
@@ -555,7 +564,7 @@ def normalize_document(document: Any) -> dict[str, Any]:
     ]
     if not payloads:
         raise PlanValidationError("plan document needs publish and/or delete")
-    if {"identity_reset", "identity_transition", "historical_checksum_repair"}.intersection(normalized.get("publish", {})) and "delete" in normalized:
+    if {"identity_reset", "identity_transition", "historical_checksum_repair", "publication_recovery"}.intersection(normalized.get("publish", {})) and "delete" in normalized:
         raise PlanValidationError("identity reset, transition or checksum repair cannot be combined with deletion")
     if len({(p["asset_slug"], p["proposal_id"]) for p in payloads}) != 1:
         raise PlanValidationError(

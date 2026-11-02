@@ -107,6 +107,8 @@ jobs:
           retention-days: 90
 
   install-approved-identity-reset:
+    # Shared protected control installer: resets, EAMLIS identity transitions,
+    # and generation-pinned recovery of an already-owned WDPA skip receipt.
     name: Install reviewed feature-ID reset
     needs: reviewed_pr_plans
     if: ${{ needs.reviewed_pr_plans.outputs.has_identity_reset_plan == 'true' && !inputs.authorization_rehearsal }}

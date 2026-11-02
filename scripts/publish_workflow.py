@@ -84,6 +84,7 @@ def validate_translation_bundles(plan: dict[str, Any], row: dict[str, str] | Non
 
 
 def validate_publish_plan(plan):
+    require("publication_recovery" not in plan, "owned check-in recovery requires the protected control installer")
     row = catalog_row(plan["asset_slug"])
     validate_translation_bundles(plan, row)
     if plan["asset_slug"] in ASSET_ROOTS:

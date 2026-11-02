@@ -65,8 +65,15 @@ local `incident/` evidence directory.
 
 ## Remaining recovery boundary
 
-This chat owns recovery. No PR or push was requested; the readiness, observer
-retirement and skip fixes are local commits.
+This chat owns recovery. PR #361 merged the readiness, observer retirement and
+future skip fixes. The existing claim still needs its separate reviewed recovery.
+
+The protected recovery code must reach reviewed `main` before a separate PR adds
+its first immutable recovery document. The planned-alert gate intentionally uses
+trusted base code, so a code-and-first-plan PR cannot introduce its own accepted
+mutation schema. That later plan must pin the original state/receipt above and
+the exact corrected index bytes. Verify its terminal control-installer execution
+and live receipt/state before deploying the fixed worker with a canary.
 
 The malformed prepared intent belongs to the original execution and executor.
 A new image, date or execution cannot take over its claim. Do not delete the

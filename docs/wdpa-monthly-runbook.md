@@ -71,6 +71,17 @@ failed while recording an unavailable-source skip and retains its exact marine
 claim. The schedule must stay paused pending reviewed claim recovery and a
 verified fixed canary; an older October success does not establish readiness.
 
+Recover this malformed check-in through an immutable
+`publish.publication_recovery` plan and the protected control installer in
+`publish-dataset.yml`. The plan binds the original receipt/state and a staged
+copy of the exact corrected index bytes. It completes the original transaction
+without replacing its intent, resetting IDs or activating a new release. See
+[the reviewed plan contract](../.github/dataset-plans/README.md#captured-wdpa-check-in-recovery).
+After terminal recovery, verify the receipt is `derived_complete`, the marine
+claim is absent, the October committed state/counter is unchanged and both release
+indexes remain valid. Then deploy the tested fixed worker with an explicit
+current-month canary date and use protected schedule control to resume.
+
 Shared worker and Scheduler alerts report failures. Per-asset release indexes
 provide the latest check-in. Source unavailability is a skip, not a successful
 new release; inspect the reason if the source remains absent through day 10.

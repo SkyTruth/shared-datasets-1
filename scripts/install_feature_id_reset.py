@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install an immutable reviewed reset only inside the protected workflow."""
+"""Apply reviewed identity controls or a captured WDPA skip recovery."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from ingestion.common.reset_controls import GoogleControlReader, PROJECT, PUBLIS
 from ingestion.common.reset_installation import install_reset, validate_reset_plan
 from scripts import dataset_mutation_authorization as auth
 from ingestion.eamlis_monthly import identity_installation as eamlis
+from ingestion.wdpa_monthly import checkin_recovery
 
 
 def authorized_plan(directory: Path, digest: str, *, api, env):
@@ -26,7 +27,9 @@ def authorized_plan(directory: Path, digest: str, *, api, env):
     p.require(envelope["outcome"] == "mutation" and set(envelope["document"]) == {"plan_version", "finalization_version", "publish"},
               "reset requires one immutable publish plan")
     plan = envelope["document"]["publish"]
-    if "identity_transition" in plan:
+    if "publication_recovery" in plan:
+        checkin_recovery.validate_plan(plan)
+    elif "identity_transition" in plan:
         eamlis.validate_plan(plan)
     else:
         validate_reset_plan(plan)
@@ -42,7 +45,7 @@ def main(argv=None):
     api = auth.GitHub()
     envelope, plan = authorized_plan(args.directory, args.expected_sha256, api=api, env=dict(os.environ))
     if args.check_only:
-        print("Reviewed reset plan verified; paused/drained job checks still required.")
+        print("Reviewed control plan verified; paused/drained job checks still required.")
         return 0
 
     # Import credential/storage packages only after the immutable authorization
@@ -68,7 +71,9 @@ def main(argv=None):
             reader.check_quiescent(plan["asset_slug"])
 
     client = storage.Client(project=PROJECT, credentials=credentials)
-    if "identity_transition" in plan:
+    if "publication_recovery" in plan:
+        result = checkin_recovery.recover(GcsStore(client), plan, check_authority_and_jobs=guard)
+    elif "identity_transition" in plan:
         from ingestion.common.publication_gcs import work_root
         import tempfile
         with tempfile.TemporaryDirectory(prefix="eamlis-install-", dir=work_root()) as temporary:
