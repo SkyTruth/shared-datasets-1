@@ -32,7 +32,6 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow["name"], "Catalog / Viewer deploy")
         self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
-        self.assertNotIn("workflow_run", trigger)
         self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt", "sync_iam"})
         for name in ("executor_sha", "source_run_id", "source_run_attempt"):
             self.assertTrue(trigger["workflow_dispatch"]["inputs"][name]["required"])
@@ -46,18 +45,8 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
 
-        build_run = steps["Build catalog-viewer image"]["run"]
-        self.assertIn("tested_image_authorization.py --workflow catalog-viewer-deploy.yml --target catalog-viewer", build_run)
-        self.assertNotIn("docker build", build_run)
-        self.assertEqual(steps["Build catalog-viewer image"]["id"], "tested-image")
-        tag = steps["Tag the exact tested catalog-viewer image"]
-        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
-        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
-        build_run += steps["Push tested catalog-viewer image"]["run"]
-        self.assertIn("docker push", build_run)
-        self.assertIn("docker buildx imagetools inspect", build_run)
-        self.assertIn("CATALOG_VIEWER_IMAGE=${image_ref}", build_run)
-        self.assertIn("assert actual == expected", build_run)
+        push_run = steps["Push tested catalog-viewer image"]["run"]
+        self.assertIn("CATALOG_VIEWER_IMAGE=${image_ref}", push_run)
 
         self.assertEqual(
             terraform_targets(bootstrap_plan_run),

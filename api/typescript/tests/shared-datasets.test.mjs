@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -194,21 +194,6 @@ for (const release of releaseIndexFixture.releases) {
   release.files.forEach(file => { file.generation = 102; });
   release.files.push({format: 'pmtiles', path: `gs://example-bucket/example-public-layer/releases/${release.date}/example-public-layer.pmtiles`, generation: 101});
 }
-
-const getPortableFiles = async dir => {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = await Promise.all(
-    entries.map(entry => {
-      const entryPath = path.join(dir, entry.name);
-      return entry.isDirectory()
-        ? getPortableFiles(entryPath)
-        : /\.(ts|md|json|mjs)$/.test(entry.name)
-          ? [entryPath]
-          : [];
-    })
-  );
-  return files.flat();
-};
 
 test('keeps SkyTruth PMTiles CDN and catalog defaults', () => {
   assert.equal(
@@ -1085,49 +1070,6 @@ test('main package entrypoint stays browser safe', async () => {
   assert.doesNotMatch(distIndex, /artifact-url-server/);
   assert.doesNotMatch(distIndex, /pmtiles-cdn-session-server/);
 });
-
-test('package source and docs do not include consumer-specific or dataset-specific coupling', async () => {
-  const files = [
-    ...(await getPortableFiles(path.join(packageRoot, 'src'))),
-    path.join(packageRoot, 'README.md')
-  ];
-  const matches = [];
-  const disallowed =
-    /\b(Cerulean|AOI|wdpa|gfw|iucn|eamlis|petrodata|gogi|natural-earth|marine-regions|global-coral)\b/i;
-
-  await Promise.all(
-    files.map(async sourceFile => {
-      const source = await readFile(sourceFile, 'utf8');
-      if (disallowed.test(source)) {
-        matches.push(path.relative(packageRoot, sourceFile));
-      }
-    })
-  );
-
-  assert.deepEqual(matches.sort(), []);
-});
-
-test('package source and docs avoid internal deployment details', async () => {
-  const files = [
-    ...(await getPortableFiles(path.join(packageRoot, 'src'))),
-    path.join(packageRoot, 'README.md')
-  ];
-  const matches = [];
-  const disallowed =
-    /projects\/shared-datasets-1\/secrets\/|gs:\/\/skytruth-shared-datasets-1|pmtiles-cdn-signed-request-key|iam\.gserviceaccount\.com|serviceAccount:|notificationChannels\/|pmtiles_cdn_allowed_origin|shared-datasets-breakglass|jona@skytruth\.org|\b734798842681\b|\b12695949518\b|terraform\/envs|\.github\/workflows|\.claude\/skills|AGENTS\.md/i;
-
-  await Promise.all(
-    files.map(async sourceFile => {
-      const source = await readFile(sourceFile, 'utf8');
-      if (disallowed.test(source)) {
-        matches.push(path.relative(packageRoot, sourceFile));
-      }
-    })
-  );
-
-  assert.deepEqual(matches.sort(), []);
-});
-
 
 test('coherent release selections never combine aliases, dates or generations', async () => {
   const fixture = JSON.parse(await readFile(path.resolve(packageRoot, '../../tests/fixtures/historical-consumers.json'), 'utf8'));

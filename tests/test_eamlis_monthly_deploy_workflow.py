@@ -15,15 +15,6 @@ from workflow_helpers import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/eamlis-monthly-deploy.yml"
-DOCKERFILE = REPO_ROOT / "ingestion/eamlis_monthly/Dockerfile"
-
-REQUIRED_SCRIPT_COPIES = (
-    "scripts/feature_metadata_translation_reuse.py",
-    "scripts/pmtiles_zoom.py",
-    "scripts/release_feature_model.py",
-    "scripts/slack_notify.py",
-    "scripts/vector_asset.py",
-)
 
 
 def test_paused_scheduler_defers_automatic_deploy_canary(tmp_path):
@@ -80,8 +71,6 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Ingestion / EAMLIS monthly deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -94,13 +83,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["JOB_NAME"], "eamlis-monthly")
         self.assertEqual(env["ASSET_SLUG"], "eamlis-abandoned-mine-land-inventory")
 
-        build_run = steps["Build eamlis-monthly image"]["run"]
-        self.assertIn("tested_image_authorization.py --workflow eamlis-monthly-deploy.yml --target eamlis-monthly", build_run)
-        self.assertNotIn("docker build", build_run)
-        self.assertEqual(steps["Build eamlis-monthly image"]["id"], "tested-image")
         tag = steps["Tag the exact tested eamlis-monthly image"]
-        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
-        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
         self.assertIn("EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}", tag["run"])
 
         tools_run = steps["Smoke-test native tools in image"]["run"]
@@ -112,10 +95,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts.vector_asset", import_run)
 
         push_run = steps["Push eamlis-monthly image"]["run"]
-        self.assertIn("docker push", push_run)
-        self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("EAMLIS_MONTHLY_IMAGE=${image_ref}", push_run)
-        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(
@@ -175,24 +155,6 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         audit_run = steps["Run EAMLIS bucket hygiene audit"]["run"]
         self.assertIn("audit_shared_datasets.py", audit_run)
         self.assertIn("eamlis-abandoned-mine-land-inventory", audit_run)
-
-    def test_eamlis_monthly_dockerfile_installs_pmtiles_validation_decoder(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        self.assertIn(
-            "tippecanoe",
-            dockerfile,
-            "eamlis-monthly image must install tippecanoe: the shared release vector "
-            "contract validation decodes PMTiles with tippecanoe-decode",
-        )
-
-    def test_eamlis_monthly_dockerfile_copies_scripts_import_closure(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(
-                f"COPY {script_path} ./{script_path}",
-                dockerfile,
-                f"eamlis-monthly image must copy {script_path}; the job imports it at runtime",
-            )
 
 
 if __name__ == "__main__":

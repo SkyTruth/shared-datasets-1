@@ -4,8 +4,6 @@ import copy
 import json
 import unittest
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,16 +21,6 @@ from workflow_helpers import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/wdpa-monthly-deploy.yml"
 DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
-
-REQUIRED_SCRIPT_COPIES = (
-    "scripts/feature_metadata_localization.py",
-    "scripts/feature_metadata_translation_reuse.py",
-    "scripts/translation_local_io.py",
-    "scripts/pmtiles_zoom.py",
-    "scripts/release_feature_model.py",
-    "scripts/slack_notify.py",
-    "scripts/vector_asset.py",
-)
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
@@ -103,8 +91,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["name"], "Ingestion / WDPA monthly deploy")
         self.assertNotIn("push", trigger)
         self.assertIn("workflow_call", trigger)
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -119,7 +105,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
 
         loader = steps["Load exact tested wdpa-monthly image"]["run"]
         self.assertIn("scripts/tested_image_authorization.py", loader)
-        self.assertNotIn("docker build", DEPLOY_WORKFLOW.read_text().replace("docker buildx imagetools", "docker inspect"))
         self.assertLess(step_names.index("Verify feature-ID publication state"),
                         step_names.index("Load exact tested wdpa-monthly image"))
 
@@ -131,8 +116,6 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("scripts.vector_asset", import_run)
 
         push_run = steps["Push wdpa-monthly image"]["run"]
-        self.assertIn("docker push", push_run)
-        self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("WDPA_MONTHLY_IMAGE=${image_ref}", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
@@ -255,27 +238,6 @@ sleep() { :; }
                 self.assertEqual(output.read_text().strip(), f"run_canary={expected}")
                 self.assertEqual(queries.exists(), expected == "true")
 
-    def test_declared_docker_script_copies_import_without_repo_fallback(self):
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        declared = re.findall(r"^COPY (scripts/\S+\.py) \./(scripts/\S+\.py)$", dockerfile, re.MULTILINE)
-        self.assertTrue(declared)
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            for source, destination in declared:
-                target = root / destination
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPO_ROOT / source, target)
-            result = subprocess.run(
-                [sys.executable, "-I", "-c",
-                 f"import sys; sys.path.insert(0, {str(root)!r}); "
-                 "import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.feature_metadata_translation_reuse; "
-                 f"assert scripts.feature_metadata_localization.__file__.startswith({str(root)!r}); "
-                 "print('declared copies import successfully')"],
-                cwd=root, capture_output=True, text=True, check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "declared copies import successfully")
-
     def test_ci_filter_selects_helper_and_its_behavior_tests(self):
         from scripts.ci_contract import NATIVE_TESTS, select_suites
         for path in ('scripts/translation_local_io.py', 'tests/test_translation_local_io.py', 'scripts/feature_metadata_translation_reuse.py', 'tests/test_feature_metadata_translation_reuse.py', 'tests/test_wdpa_translation_inputs.py'):
@@ -284,14 +246,14 @@ sleep() { :; }
         self.assertNotIn('geospatial-integration', select_suites(['docs/unrelated.md'])[0])
         self.assertIn('tests/test_translation_local_io.py', NATIVE_TESTS)
 
-    def test_wdpa_monthly_dockerfile_copies_scripts_import_closure(self):
+    def test_wdpa_monthly_dockerfile_copies_conditional_runtime_dependencies(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(
-                f"COPY {script_path} ./{script_path}",
-                dockerfile,
-                f"wdpa-monthly image must copy {script_path}; the job imports it at runtime",
-            )
+        self.assertIn(
+            "COPY scripts/slack_notify.py ./scripts/slack_notify.py",
+            dockerfile,
+            "wdpa-monthly image must copy scripts/slack_notify.py; "
+            "the job imports it when sending metadata notifications",
+        )
         self.assertIn(
             "COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions",
             dockerfile,

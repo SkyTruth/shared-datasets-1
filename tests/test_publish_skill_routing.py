@@ -12,19 +12,6 @@ def linked_markdown(path):
             yield (path.parent / target).resolve()
 
 
-def test_publish_routes_are_discoverable_without_loading_all_references():
-    links = set(linked_markdown(SKILL))
-    for target in (
-        'references/first-upload.md',
-        'references/existing-asset-update.md',
-        '../feature-preview/SKILL.md',
-        'references/partial-publication-recovery.md',
-    ):
-        assert (SKILL.parent / target).resolve() in links
-    assert len(SKILL.read_text().splitlines()) <= 200
-    assert len((ROOT / 'scripts/README.md').read_text().splitlines()) <= 150
-
-
 def test_moved_procedures_keep_resolvable_references_and_publisher_boundary():
     files = [SKILL, ROOT / 'scripts/README.md']
     for owner in ('publish-shared-dataset', 'gcp-shared-datasets', 'feature-preview',

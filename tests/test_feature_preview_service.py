@@ -292,7 +292,6 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["resolved_release"], "2026-06-01")
         self.assertEqual(payload["items"][0]["feature_id"], "1")
-        self.assertEqual(payload["items"][0]["feature_id"], "1")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertNotIn("provenance", payload["items"][0])
         self.assertEqual(payload["items"][1], {"feature_id": "2", "found": False})
@@ -357,7 +356,6 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["items"][0]["feature_id"], "1")
         self.assertEqual(payload["items"][0]["feature_id"], "1")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})

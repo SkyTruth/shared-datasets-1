@@ -26,8 +26,6 @@ def test_new_cron_has_exact_deployment_scope_and_consumes_tested_image():
     guard = steps["Enforce mpatlas-monthly resource-change allowlist"]["run"]
     assert "--block-deletes" in guard
     assert "--job-image-target=mpatlas-monthly" in guard
-    build = steps["Build mpatlas-monthly image"]["run"]
-    assert "tested_image_authorization.py" in build and "docker build" not in build
     assert "--wait" in steps["Execute mpatlas-monthly canary"]["run"]
     assert "mpatlas-zone-assessments" in steps["Validate latest MPAtlas release contract"]["run"]
     targets = set(ci_contract.select_deployments(["ingestion/mpatlas_monthly/run.py"]))

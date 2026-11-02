@@ -723,6 +723,12 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
     assert f"astral-sh/uv:{TOOLCHAIN['uv']}" in image
     assert 'go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .' in native
     assert 'cd /go/pkg/mod/github.com/protomaps/go-pmtiles@${PMTILES_VERSION}' in native
+    workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
+    defaults = load_workflow(ROOT / '.github/actions/ci-tools/action.yml')['inputs']['binaries']['default']
+    for suite in ('lint', 'tests'):
+        setup, = [step for step in workflow['jobs'][suite]['steps'] if step.get('uses') == './.github/actions/ci-tools']
+        installed = set(setup.get('with', {}).get('binaries', defaults).split())
+        assert set(expected_tools(suite)) & {'terraform', 'gitleaks', 'actionlint'} <= installed
 
 
 def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):

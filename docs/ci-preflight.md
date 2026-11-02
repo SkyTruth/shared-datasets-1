@@ -214,6 +214,12 @@ It adds native, SDK, image and browser suites according to component dependencie
 Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier
 and additional suites, with no separate policy file or persisted tier state.
 
+Python policy tests parse the checked-in HCL and use the pinned Terraform
+console to evaluate public-folder grants and route-specific CORS settings in
+temporary, provider-free modules. They do not initialize providers, read remote
+state, or use cloud credentials. The `tests` tool evidence includes Terraform;
+the hosted job installs it alongside gitleaks.
+
 | Tier | Additional validation | Deployment selection |
 | --- | --- | --- |
 | Documentation | None beyond the mandatory suites above | None |

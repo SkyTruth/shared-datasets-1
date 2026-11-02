@@ -60,24 +60,6 @@ class LegalActionsByStateTests(unittest.TestCase):
         # The rejection must name the correct action, not just refuse.
         self.assertIn("keep_previous_key_mapping", problem)
 
-    def test_key_that_owns_an_id_may_keep_its_mapping(self):
-        self.assertEqual(
-            legality("keep_previous_key_mapping", key="555682754", reuse=None, baseline=self.KEY_OWNS),
-            "",
-        )
-
-    def test_key_that_owns_an_id_may_deliberately_take_a_new_one(self):
-        self.assertEqual(
-            legality("assign_new_feature_id", key="555682754", reuse=None, baseline=self.KEY_OWNS),
-            "",
-        )
-
-    def test_new_key_may_reuse_a_matched_feature(self):
-        self.assertEqual(
-            legality("reuse_previous_feature_id", key="555884979", reuse="297926", baseline=self.KEY_NEW),
-            "",
-        )
-
     def test_new_key_may_not_keep_a_mapping_it_does_not_have(self):
         problem = legality(
             "keep_previous_key_mapping", key="555884979", reuse=None, baseline=self.KEY_NEW
@@ -87,21 +69,21 @@ class LegalActionsByStateTests(unittest.TestCase):
         self.assertIn("reuse_previous_feature_id", problem)
         self.assertIn("assign_new_feature_id", problem)
 
-    def test_reuse_naming_the_keys_own_id_is_allowed(self):
-        """Redundant but not wrong: the outcome equals keeping the mapping."""
-        self.assertEqual(
-            legality("reuse_previous_feature_id", key="555682754", reuse="300616", baseline=self.KEY_OWNS),
-            "",
-        )
-
-    def test_every_action_is_covered_by_the_rule(self):
-        """A new action cannot be added without deciding its legality."""
-        for action in model.IDENTITY_RESOLUTION_ACTIONS:
-            with self.subTest(action=action):
-                for baseline in (self.KEY_OWNS, self.KEY_NEW):
-                    reuse = "300615" if action == "reuse_previous_feature_id" else None
-                    # Must not raise for any known action in any state.
-                    legality(action, key="555682754", reuse=reuse, baseline=baseline)
+    def test_every_action_has_an_explicit_decision_for_each_baseline_state(self):
+        cases = [
+            ("assign_new_feature_id", self.KEY_OWNS, None, True),
+            ("assign_new_feature_id", self.KEY_NEW, None, True),
+            ("keep_previous_key_mapping", self.KEY_OWNS, None, True),
+            ("keep_previous_key_mapping", self.KEY_NEW, None, False),
+            ("reuse_previous_feature_id", self.KEY_OWNS, "300615", False),
+            ("reuse_previous_feature_id", self.KEY_NEW, "300615", True),
+            ("reuse_previous_feature_id", self.KEY_OWNS, "300616", True),
+        ]
+        self.assertEqual({action for action, *_ in cases}, model.IDENTITY_RESOLUTION_ACTIONS)
+        for action, baseline, reuse, allowed in cases:
+            with self.subTest(action=action, owns_id=bool(baseline), reuse=reuse):
+                problem = legality(action, key="555682754", reuse=reuse, baseline=baseline)
+                self.assertEqual(problem == "", allowed, problem)
 
 
 class ValidationEnforcesLegalityTests(unittest.TestCase):

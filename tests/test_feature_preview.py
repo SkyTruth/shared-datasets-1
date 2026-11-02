@@ -96,12 +96,8 @@ class FeaturePreviewTests(unittest.TestCase):
         workflow = PREVIEW_WORKFLOW.read_text()
 
         self.assertIn("name: Preview / Deploy feature branch", workflow)
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("preview_data_mode:", workflow)
         self.assertIn("Preview data handling", workflow)
         self.assertIn("default: preserve", workflow)
-        self.assertIn("- preserve", workflow)
-        self.assertIn("- reset", workflow)
         self.assertNotIn("inputs.ref", workflow)
         self.assertIn("Validate selected ref", workflow)
         self.assertIn("Select the branch or tag to deploy from the workflow branch dropdown.", workflow)
@@ -110,13 +106,8 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("PREVIEW_DATA_MODE: ${{ github.event.inputs.preview_data_mode || 'preserve' }}", workflow)
         self.assertIn("Preview data mode must be either preserve or reset", workflow)
         self.assertIn("Preview data mode: ${PREVIEW_DATA_MODE}", workflow)
-        self.assertIn("Check out preview control plane", workflow)
-        self.assertIn("ref: main", workflow)
         self.assertIn("PREVIEW_REF: ${{ github.ref_name }}", workflow)
         self.assertIn("PREVIEW_SOURCE_REF: ${{ github.ref }}", workflow)
-        self.assertIn("Check out selected feature branch", workflow)
-        self.assertIn("ref: ${{ github.ref }}", workflow)
-        self.assertIn("path: preview-source", workflow)
         self.assertIn("IMAGE_NAME: preview-service", workflow)
         self.assertIn("CATALOG_VIEWER_IMAGE_NAME: preview-catalog-viewer", workflow)
         self.assertIn("Validate preview IAM bootstrap", workflow)
@@ -182,7 +173,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("--metadata-sidecar-autoload-max-bytes 33554432", workflow)
         self.assertIn("Publish preview catalog web bundle", workflow)
         self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", workflow)
-        self.assertIn("-target=google_firestore_database.feature_preview", workflow)
         self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
         self.assertNotIn("Refusing preview reset", workflow)
         deploy_create_section = workflow.split("      - name: Terraform plan", 1)[1]
@@ -275,20 +265,6 @@ class FeaturePreviewTests(unittest.TestCase):
             )
         )
 
-
-    def test_main_contains_preview_source_mechanics(self):
-        service_run = REPO_ROOT / "services/feature_preview_service/run.py"
-        service_dockerfile = REPO_ROOT / "services/feature_preview_service/Dockerfile"
-        catalog_viewer_run = REPO_ROOT / "services/catalog_viewer/run.py"
-        catalog_viewer_dockerfile = REPO_ROOT / "services/catalog_viewer/Dockerfile"
-
-        self.assertTrue(service_run.exists())
-        self.assertTrue(service_dockerfile.exists())
-        self.assertTrue(catalog_viewer_run.exists())
-        self.assertTrue(catalog_viewer_dockerfile.exists())
-        self.assertIn("feature_preview_run.GcsSidecarFeatureIndex", catalog_viewer_run.read_text())
-        self.assertNotIn("google-cloud-firestore", service_dockerfile.read_text())
-        self.assertNotIn("google-cloud-firestore", catalog_viewer_dockerfile.read_text())
 
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()

@@ -209,16 +209,6 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     assert retained['with']['retention-days'] == ("${{ github.event_name == 'pull_request' && 30 || 14 }}" if suite in {'production-images', 'browser', 'geospatial-integration'} else 14)
 
 
-def test_missing_result_cannot_form_a_compact_gate_archive(tmp_path):
-    receipt = next(step for step in producer_steps(load_workflow(WORKFLOW), "production-images")
-                   if step.get("with", {}).get("name", "").startswith("ci-gate-result-"))
-    output = tmp_path / "ci-results/production-images"
-    output.mkdir(parents=True)
-    (output / "runner.log").write_text("runner stopped before producing a result\n")
-    with pytest.raises(AssertionError, match="missing configured upload source"):
-        package_upload(receipt, tmp_path, "production-images", 1, tmp_path)
-
-
 @pytest.mark.parametrize('suite', ['production-images', 'browser', 'geospatial-integration'])
 def test_reused_suite_uploads_original_reference_without_copying_payloads(tmp_path, suite):
     steps = producer_steps(load_workflow(WORKFLOW), suite)

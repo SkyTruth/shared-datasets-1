@@ -892,7 +892,6 @@ class CatalogViewerTests(unittest.TestCase):
         )
         self.assertEqual(payload["items"][0]["feature_id"], "48943")
         self.assertTrue(payload["items"][0]["found"])
-        self.assertEqual(payload["items"][0]["feature_id"], "48943")
         self.assertEqual(payload["items"][0]["properties_hash"], "hash-48943")
         self.assertEqual(payload["items"][0]["properties"]["GEONAME"], "Overlapping claim: Canada / United States")
         self.assertEqual(payload["items"][0]["properties"]["MRGID"], 48943)
