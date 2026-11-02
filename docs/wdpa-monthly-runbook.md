@@ -67,9 +67,11 @@ execution-only diagnostic override; the job template must never pin a date or
 ## Monitoring and recovery
 
 The [first November activation attempt](wdpa-processing-evidence/november-readiness-2026-11-01.md)
-failed while recording an unavailable-source skip and retains its exact marine
-claim. The schedule must stay paused pending reviewed claim recovery and a
-verified fixed canary; an older October success does not establish readiness.
+failed while recording an unavailable-source skip. Its exact marine transaction
+was recovered through PR #364 and protected run `41492611273/1`, preserving the
+original intent, October release and feature-ID history. Schedule activation
+requires the fixed-worker canary and protected control checks below; an older
+October success does not establish readiness.
 
 Recover this malformed check-in through an immutable
 `publish.publication_recovery` plan and the protected control installer in
