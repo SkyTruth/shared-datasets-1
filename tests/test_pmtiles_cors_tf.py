@@ -3,11 +3,42 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from terraform_helpers import evaluate, load_terraform, resources
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class PmtilesCorsTerraformTests(unittest.TestCase):
+    def test_each_static_route_has_its_own_enabled_cors_policy(self):
+        document = load_terraform(REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf")
+        url_map, = [attributes for kind, name, attributes in resources(document)
+                    if (kind, name) == ("google_compute_url_map", "pmtiles_cdn")]
+        routes = [{"paths": route["paths"], "route_action": route["route_action"]}
+                  for matcher in url_map["path_matcher"] for route in matcher["path_rule"]]
+        origins = ["https://viewer.example.test"]
+        actual = evaluate({"pmtiles_browser_allowed_origins": origins, "routes": routes}, "local.routes")
+        by_paths = {tuple(route["paths"]): route["route_action"][0] for route in actual}
+        artifact_headers = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]
+        expected = {
+            ("/_catalog/shared-datasets-catalog.csv", "/_catalog/web/catalog.json", "/_catalog/*"):
+                (["*"], None, ["Cache-Control", "Content-Length", "Content-Type", "ETag"]),
+            ("/artifacts/*",): (["*"], "/", artifact_headers),
+            ("/private/*",): (origins, "/", artifact_headers),
+        }
+        self.assertEqual(len(actual), len(expected))
+        self.assertEqual(set(by_paths), set(expected))
+        for paths, (allowed_origins, rewrite, exposed_headers) in expected.items():
+            with self.subTest(paths=paths):
+                action = by_paths[paths]
+                policy, = action["cors_policy"]
+                self.assertIs(policy["disabled"], False)
+                self.assertIs(policy["allow_credentials"], False)
+                self.assertEqual(policy["allow_origins"], allowed_origins)
+                self.assertEqual(policy["allow_methods"], ["GET", "HEAD", "OPTIONS"])
+                self.assertEqual(policy["expose_headers"], exposed_headers)
+                self.assertEqual(action.get("url_rewrite", []), [] if rewrite is None else [{"path_prefix_rewrite": rewrite}])
+
     def test_cdn_cors_splits_public_wildcard_and_private_exact_origins(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
         variables_tf = (REPO_ROOT / "terraform/envs/prod/variables.tf").read_text()
@@ -45,11 +76,6 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
     def test_tiles_endpoint_serves_catalog_without_credentials(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 
-        self.assertIn('"/_catalog/shared-datasets-catalog.csv"', pmtiles_cdn_tf)
-        self.assertIn('"/_catalog/web/catalog.json"', pmtiles_cdn_tf)
-        self.assertIn('"/_catalog/*"', pmtiles_cdn_tf)
-        self.assertIn("allow_credentials = false", pmtiles_cdn_tf)
-        self.assertIn('allow_origins     = ["*"]', pmtiles_cdn_tf)
         self.assertIn('path                = "/_catalog/shared-datasets-catalog.csv"', pmtiles_cdn_tf)
         self.assertIn('path                = "/_catalog/web/catalog.json"', pmtiles_cdn_tf)
         self.assertIn(
@@ -60,15 +86,6 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
     def test_artifact_routes_rewrite_to_bucket_object_paths(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 
-        self.assertIn('paths   = ["/artifacts/*"]', pmtiles_cdn_tf)
-        self.assertIn('paths   = ["/private/*"]', pmtiles_cdn_tf)
-        self.assertIn('allow_methods     = ["GET", "HEAD", "OPTIONS"]', pmtiles_cdn_tf)
-        self.assertIn("allow_origins     = local.pmtiles_browser_allowed_origins", pmtiles_cdn_tf)
-        self.assertIn(
-            'expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]',
-            pmtiles_cdn_tf,
-        )
-        self.assertIn('path_prefix_rewrite = "/"', pmtiles_cdn_tf)
         self.assertIn(
             'path                = "/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"',
             pmtiles_cdn_tf,

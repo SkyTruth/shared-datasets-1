@@ -5,6 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
+from terraform_helpers import load_terraform, resources
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TF_DIR = REPO_ROOT / "terraform/envs/prod"
 GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
@@ -213,8 +215,21 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertIn("assertion.workflow == 'Dataset breaking change alert'", readonly_tf)
         self.assertIn('account_id   = "shared-datasets-gh-readonly"', readonly_tf)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', readonly_tf)
-        self.assertIn('role   = "roles/storage.objectViewer"', readonly_tf)
-        self.assertNotIn('roles/storage.objectUser', readonly_tf)
+        grants = {}
+        for path in sorted(PROD_TF_DIR.glob("*.tf")):
+            for kind, name, attributes in resources(load_terraform(path)):
+                principals = json.dumps({key: attributes[key] for key in ("member", "members", "policy_data") if key in attributes})
+                if "module.github_readonly_service_account." in principals or "shared-datasets-gh-readonly" in principals:
+                    grants[f"{kind}.{name}"] = {
+                        key: attributes.get(key) for key in ("bucket", "role", "member", "members", "policy_data")
+                    }
+        self.assertEqual(grants, {
+            "google_storage_bucket_iam_member.github_readonly_object_viewer": {
+                "bucket": "${var.bucket_name}", "role": "roles/storage.objectViewer",
+                "member": "${module.github_readonly_service_account.member}",
+                "members": None, "policy_data": None,
+            },
+        })
         self.assertIn("github_readonly_workload_identity_provider", outputs_tf)
         self.assertIn("github_readonly_service_account", outputs_tf)
         readonly_provider_var = 'variable "github_readonly_workload_identity_pool_' + "provider" + '_id"'

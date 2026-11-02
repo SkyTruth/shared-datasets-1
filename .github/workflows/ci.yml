@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/ci-tools
         with:
-          binaries: gitleaks
+          binaries: gitleaks terraform
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-validation-plan-attempt*

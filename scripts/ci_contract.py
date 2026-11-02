@@ -483,7 +483,8 @@ def expected_tools(suite: str) -> dict[str, str]:
     if suite == "lint":
         tools.update({key: TOOLCHAIN[key] for key in ("terraform", "actionlint")})
     elif suite == "tests":
-        tools.update({"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"]})
+        tools.update({"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"],
+                      "terraform": TOOLCHAIN["terraform"]})
     elif suite in {"sdk-node22", "sdk-node24", "browser"}:
         tools["node"] = TOOLCHAIN["node24" if suite == "sdk-node24" else "node22"]
     elif suite == "geospatial-integration":
