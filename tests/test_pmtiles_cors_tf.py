@@ -16,15 +16,15 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
                     if (kind, name) == ("google_compute_url_map", "pmtiles_cdn")]
         routes = [{"paths": route["paths"], "route_action": route["route_action"]}
                   for matcher in url_map["path_matcher"] for route in matcher["path_rule"]]
-        origins = ["https://viewer.example.test"]
+        origins = ["https://viewer.example.test", "https://comparison.example.test"]
         actual = evaluate({"pmtiles_browser_allowed_origins": origins, "routes": routes}, "local.routes")
-        by_paths = {tuple(route["paths"]): route["route_action"][0] for route in actual}
+        by_paths = {frozenset(route["paths"]): route["route_action"][0] for route in actual}
         artifact_headers = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]
         expected = {
-            ("/_catalog/shared-datasets-catalog.csv", "/_catalog/web/catalog.json", "/_catalog/*"):
+            frozenset({"/_catalog/shared-datasets-catalog.csv", "/_catalog/web/catalog.json", "/_catalog/*"}):
                 (["*"], None, ["Cache-Control", "Content-Length", "Content-Type", "ETag"]),
-            ("/artifacts/*",): (["*"], "/", artifact_headers),
-            ("/private/*",): (origins, "/", artifact_headers),
+            frozenset({"/artifacts/*"}): (["*"], "/", artifact_headers),
+            frozenset({"/private/*"}): (origins, "/", artifact_headers),
         }
         self.assertEqual(len(actual), len(expected))
         self.assertEqual(set(by_paths), set(expected))
@@ -34,9 +34,9 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
                 policy, = action["cors_policy"]
                 self.assertIs(policy["disabled"], False)
                 self.assertIs(policy["allow_credentials"], False)
-                self.assertEqual(policy["allow_origins"], allowed_origins)
-                self.assertEqual(policy["allow_methods"], ["GET", "HEAD", "OPTIONS"])
-                self.assertEqual(policy["expose_headers"], exposed_headers)
+                self.assertEqual(set(policy["allow_origins"]), set(allowed_origins))
+                self.assertEqual(set(policy["allow_methods"]), {"GET", "HEAD", "OPTIONS"})
+                self.assertEqual(set(policy["expose_headers"]), set(exposed_headers))
                 self.assertEqual(action.get("url_rewrite", []), [] if rewrite is None else [{"path_prefix_rewrite": rewrite}])
 
     def test_cdn_cors_splits_public_wildcard_and_private_exact_origins(self):
