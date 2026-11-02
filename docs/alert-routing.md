@@ -49,8 +49,9 @@ WDPA uses the same Cloud Run execution-failure and Scheduler dispatch-failure
 policies as the other ingestion jobs. Successes and meaningful skips update
 each asset's release index, which supplies the catalog's **Last check-in**.
 An old check-in while no update is scheduled is not an observer outage.
-The hourly deployment-completion workflow verifies only pending deployment
-records; it does not launch a per-dataset observer while WDPA is idle.
+The hourly operational safety check discovers pending deployment records and
+requests the existing completion workflow only when work is needed; it does not
+launch a per-dataset observer while WDPA is idle.
 
 The former `wdpa-execution-observer` schedule is permanently paused and
 `wdpa_execution_observer_unhealthy` is disabled. Their definitions, narrow IAM
@@ -159,7 +160,10 @@ Before declaring live routing verified:
    only `main`, reads event JSON as data, and never downloads source-run artifacts.
 
 Successful/skipped upstream outcomes are filtered before allocating the legacy
-failure worker. When incident tracking is enabled, its separate reconciliation
+failure worker, except completion handoffs that must inspect their verified
+safety parent for a failure. The safety timer has no unconditional completion
+subscription: failures request reconciliation, and a lost runner is caught by
+the next hourly check. When incident tracking is enabled, its separate reconciliation
 worker also inspects successful completions for matching recovery evidence;
 routine healthy completions produce no Slack messages. CI now includes reusable dataset publication, catalog refresh and
 deployment jobs. For a failed main-push CI run, the alert worker verifies the

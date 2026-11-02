@@ -36,6 +36,7 @@ MONITORED_WORKFLOWS = {
     "deployment-verification.yml",
     "eamlis-monthly-deploy.yml",
     "mpatlas-monthly-deploy.yml",
+    "operational-safety-check.yml",
     "pmtiles-cdn-sync.yml",
     "preview-terraform-iam-sync.yml",
     "prod-terraform-state-reconcile.yml",
@@ -50,7 +51,13 @@ MONITORED_WORKFLOWS = {
     "wdpa-monthly-build.yml",
 }
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
+# A successful idle safety check must not start a notification workflow. Its
+# failures and recoveries remain in the existing hourly authoritative replay.
+REPLAY_ONLY_WORKFLOWS = {"operational-safety-check.yml"}
 OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
+UNATTENDED_DISPATCH_WORKFLOWS = OBSERVER_WORKFLOWS | {
+    name for path in REPLAY_ONLY_WORKFLOWS | {"catalog-web-deploy.yml"} for name in WORKFLOW_NAMES[path]
+}
 
 
 def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
@@ -63,8 +70,8 @@ def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
 
 
 def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
-    """Recognize an idle scheduled probe from authoritative same-attempt jobs."""
-    if run["name"] not in WORKFLOW_NAMES["catalog-web-deploy.yml"] or run["event"] != "schedule":
+    """Recognize an idle automatic probe from authoritative same-attempt jobs."""
+    if run["name"] not in WORKFLOW_NAMES["catalog-web-deploy.yml"] or run["event"] not in {"schedule", "workflow_dispatch"}:
         return False
     probes = [job for job in jobs if job["name"] == "Check for catalog input changes"]
     publishers = [job for job in jobs if job["name"] == "Build and publish catalog web"]
@@ -81,7 +88,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     if (
         not (run["event"] in {"schedule", "workflow_run"}
              or (run["event"] == "push" and run["name"] in WORKFLOW_NAMES["ci.yml"])
-             or (run["event"] == "workflow_dispatch" and run["name"] in OBSERVER_WORKFLOWS))
+             or (run["event"] == "workflow_dispatch" and run["name"] in UNATTENDED_DISPATCH_WORKFLOWS))
         or run["conclusion"] not in FAILED_CONCLUSIONS
         or run["status"] != "completed"
         or run["head_branch"] != "main"
@@ -202,11 +209,21 @@ def main() -> None:
         parser.error("notification requires --event-path")
     event = json.loads(args.event_path.read_text())
     run = event["workflow_run"]
+    if (run.get("name") in WORKFLOW_NAMES["deployment-verification.yml"] and run.get("event") == "workflow_dispatch"
+            and run.get("conclusion") == "success"):
+        api = GitHub()
+        if verify_source_event(api, run):
+            authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
+            match = re.fullmatch(r"Operational follow-up: safety ([1-9][0-9]*)/([1-9][0-9]*)", authoritative.get("display_title", ""))
+            if match:
+                from scripts.operational_safety_check import safety_parent
+                run = safety_parent(api, int(match[1]), int(match[2]))
+                event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
     jobs = None
     alert = alert_for_run(event)
     # Both CI publication and scheduled catalog activity need exact job evidence.
     needs_jobs = ((run["name"] in WORKFLOW_NAMES["ci.yml"] and run["event"] == "push"
-                   or run["name"] in WORKFLOW_NAMES["catalog-web-deploy.yml"] and run["event"] == "schedule")
+                   or run["name"] in WORKFLOW_NAMES["catalog-web-deploy.yml"] and run["event"] in {"schedule", "workflow_dispatch"})
                    and run["conclusion"] in FAILED_CONCLUSIONS and run["status"] == "completed"
                    and run["head_branch"] == "main" and run["head_repository"]["full_name"] == REPOSITORY
                    and event["repository"]["full_name"] == REPOSITORY)
