@@ -24,6 +24,35 @@ DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
+    def test_schedule_control_authentication_requires_its_exact_main_workflow(self):
+        workflow = load_workflow(REPO_ROOT / ".github/workflows/ingestion-schedule-control.yml")
+        steps = workflow_steps_by_name(workflow, "control")
+        guard = steps["Require trusted main workflow"]["run"]
+        own_path = ".github/workflows/ingestion-schedule-control.yml"
+        for ref, path, accepted in (
+            ("refs/heads/main", own_path, True),
+            ("refs/heads/feature", own_path, False),
+            ("refs/heads/main", ".github/workflows/unrelated.yml", False),
+        ):
+            with self.subTest(ref=ref, path=path):
+                result = subprocess.run(["bash", "-c", guard], capture_output=True, text=True,
+                    env={**os.environ, "GITHUB_REF": ref, "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                         "GITHUB_WORKFLOW_REF": f"SkyTruth/shared-datasets-1/{path}@refs/heads/main"})
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+        scope = steps["Validate fixed schedule scope"]["run"]
+        for job, action, accepted in (
+            ("wdpa-monthly", "resume", True), ("sea-ice-daily", "pause", True),
+            ("eamlis-monthly", "resume", True), ("unrelated", "pause", False),
+            ("wdpa-monthly", "delete", False),
+        ):
+            with self.subTest(job=job, action=action):
+                result = subprocess.run(["bash", "-c", scope], capture_output=True, text=True,
+                                        env={**os.environ, "JOB_NAME": job, "SCHEDULE_ACTION": action})
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+        sequence = workflow["jobs"]["control"]["steps"]
+        self.assertLess(next(i for i, step in enumerate(sequence) if step.get("name") == "Validate fixed schedule scope"),
+                        next(i for i, step in enumerate(sequence) if step.get("uses", "").startswith("google-github-actions/auth")))
+
     def test_resume_refuses_worker_without_verified_automatic_deployment(self):
         workflow = load_workflow(REPO_ROOT / ".github/workflows/ingestion-schedule-control.yml")
         script = workflow_steps_by_name(workflow, "control")["Verify publication before resuming"]["run"]

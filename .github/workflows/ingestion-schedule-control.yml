@@ -32,13 +32,12 @@ jobs:
       JOB_NAME: ${{ inputs.job }}
       SCHEDULE_ACTION: ${{ inputs.action }}
     steps:
-      - name: Validate reviewed main and fixed scope
+      - name: Require trusted main workflow
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]] ||
-             [[ "${JOB_NAME}" != wdpa-monthly && "${JOB_NAME}" != sea-ice-daily && "${JOB_NAME}" != eamlis-monthly ]] ||
-             [[ "${SCHEDULE_ACTION}" != pause && "${SCHEDULE_ACTION}" != resume ]]; then
-            echo "Only pause/resume of WDPA, sea ice or EAMLIS from reviewed main is allowed." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ingestion-schedule-control.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
 
@@ -47,6 +46,15 @@ jobs:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate fixed schedule scope
+        run: |
+          set -euo pipefail
+          if [[ "${JOB_NAME}" != wdpa-monthly && "${JOB_NAME}" != sea-ice-daily && "${JOB_NAME}" != eamlis-monthly ]] ||
+             [[ "${SCHEDULE_ACTION}" != pause && "${SCHEDULE_ACTION}" != resume ]]; then
+            echo "Only pause/resume of WDPA, sea ice or EAMLIS is allowed." >&2
+            exit 1
+          fi
 
       - name: Install pinned durable receipt verifier
         if: ${{ inputs.action == 'resume' && inputs.job == 'wdpa-monthly' }}
