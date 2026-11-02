@@ -37,6 +37,9 @@ HASH_ALGORITHM = "sha256"
 GEOMETRY_HASH_ALGORITHM = "sha256:canonical-geometry:v1"
 GEOMETRY_HASH_ALGORITHM_V2 = "sha256:canonical-geometry:v2"
 GEOMETRY_HASH_ALGORITHMS = frozenset({GEOMETRY_HASH_ALGORITHM, GEOMETRY_HASH_ALGORITHM_V2})
+# Historical source-blob declarations remain readable without making them
+# computable by geometry_hash(), buildable, or eligible for release comparison.
+MANIFEST_GEOMETRY_HASH_ALGORITHMS = GEOMETRY_HASH_ALGORITHMS | {"sha256:source-gpkg-geometry-blob:v1"}
 PROPERTIES_HASH_ALGORITHM = "sha256:canonical-feature-properties:v1"
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -1617,7 +1620,7 @@ def validate_release_manifest(
         hashes = manifest["hashes"]
         if (not isinstance(hashes, Mapping)
                 or not isinstance(hashes.get("geometry_hash_algorithm"), str)
-                or hashes["geometry_hash_algorithm"] not in GEOMETRY_HASH_ALGORITHMS
+                or hashes["geometry_hash_algorithm"] not in MANIFEST_GEOMETRY_HASH_ALGORITHMS
                 or hashes.get("properties_hash_algorithm") != PROPERTIES_HASH_ALGORITHM):
             errors.append("manifest has unsupported hash algorithms")
     if "translations" in manifest:
