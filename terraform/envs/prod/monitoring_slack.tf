@@ -225,6 +225,9 @@ resource "google_pubsub_subscription" "identity_decision_events" {
   topic                      = google_pubsub_topic.identity_decision_events.id
   ack_deadline_seconds       = 30
   message_retention_duration = "604800s"
+  expiration_policy {
+    ttl = ""
+  }
   retry_policy {
     minimum_backoff = "10s"
     maximum_backoff = "600s"

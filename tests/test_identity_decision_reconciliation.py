@@ -136,6 +136,40 @@ def test_late_event_uses_indexed_review_and_rejects_changed_capture():
     assert slack.post.call_count == 2
 
 
+def test_changed_decision_history_never_repeats_an_already_acknowledged_choice():
+    source = decision_event()
+    first = source["cases"][0]
+    second = {**first, "new_identity_key": ["second"]}
+    source = wire.event({**source, "cases": [first, second]})
+    current = proof(source, first)
+    first_key = decisions.proof_key(current)
+    new_records = {first_key: current}
+    old = copy.deepcopy(current)
+    for index in range(100):
+        old["decision"]["rationale"] = f"Superseded rationale {index}"
+        if wire.digest({first_key: old}) > wire.digest(new_records):
+            break
+    else:
+        raise AssertionError("test must reproduce receipt key order, not decision chronology")
+    store = relay.Store(Bucket())
+    record = {"schema": decisions.EVENT_SCHEMA, "event": source, "identity": IDENTITY,
+              "parent": {"owner": "bot", "ts": "1234567890.000001"}, "parent_view": None, "replies": {}}
+    for item, ts in (({first_key: old}, "1234567890.000002"), (new_records, "1234567890.000003")):
+        record["replies"][wire.digest(item)] = {"records": item, "owner": "bot", "ts": ts}
+    decisions.save(store, wire.event_key(source), record, 0)
+    second_proof = proof(source, second)
+    records = {**new_records, decisions.proof_key(second_proof): second_proof}
+    store.write("identity/approvals.json", {"schema": decisions.APPROVAL_SCHEMA, "revision": "b" * 40,
+                                          "known": {}, "records": records}, 0)
+    slack = Mock()
+    slack.post.return_value = "1234567890.000004"
+    for _ in range(2):
+        decisions.reconcile(store, wire.event_key(source), slack, IDENTITY)
+    slack.post.assert_called_once()
+    assert "second" in slack.post.call_args.args[0]["text"]
+    assert "555729583" not in slack.post.call_args.args[0]["text"]
+
+
 def test_foreign_producers_and_local_diagnostics_cannot_post():
     source = decision_event()
     session = Mock()

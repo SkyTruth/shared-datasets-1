@@ -154,13 +154,13 @@ def reconcile(store, key, slack, identity):
     event = value["event"]
     wanted = {wire.case_key(event["asset_slug"], event["release"], item) for item in event["cases"]}
     current = {item: index["records"][item] for item in wanted if item in index["records"]}
-    confirmed = {}
+    confirmed = set()
     for reply in value["replies"].values():
         require(reply["ts"] is not None, "unconfirmed decision reply; repair its receipt before retrying")
-        confirmed.update(reply["records"])
+        confirmed.update(wire.digest(proof) for proof in reply["records"].values())
     groups = defaultdict(dict)
     for item, proof in current.items():
-        if confirmed.get(item) != proof:
+        if wire.digest(proof) not in confirmed:
             groups[proof["decision"]["pr_reference"]][item] = proof
     for reference in sorted(groups):
         records = groups[reference]

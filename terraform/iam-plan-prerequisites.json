@@ -109,7 +109,9 @@
       "module.wdpa_job_service_account.google_service_account.this",
       "module.sea_ice_job_service_account.google_service_account.this",
       "module.eamlis_job_service_account.google_service_account.this",
-      "module.mpatlas_job_service_account.google_service_account.this"
+      "module.mpatlas_job_service_account.google_service_account.this",
+      "google_project_iam_member.github_actions_dataset_usage_deployer",
+      "google_project_iam_custom_role.dataset_usage_deployer"
     ],
     "scratch-cleanup-iam-sync.yml/operational-retirement-bootstrap": [],
     "scratch-cleanup-iam-sync.yml/retire-operational-infrastructure": [],

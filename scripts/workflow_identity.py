@@ -21,6 +21,7 @@ WORKFLOW_NAMES = {
     'eamlis-monthly-deploy.yml': ('Ingestion / EAMLIS monthly deploy', 'EAMLIS monthly deploy'),
     'feature-preview-deploy.yml': ('Preview / Deploy feature branch', 'Deploy Feature Branch to Preview'),
     'feature-preview-destroy.yml': ('Preview / Destroy environment', 'Destroy Preview Environment'),
+    'identity-decision-reconcile.yml': ('Alerts / Identity decision reconciliation',),
     'ingestion-schedule-control.yml': ('Ingestion / Schedule control', 'Ingestion schedule control'),
     'mpatlas-monthly-deploy.yml': ('Ingestion / MPAtlas monthly deploy', 'MPAtlas monthly deploy'),
     'operational-safety-check.yml': ('Operations / Safety check',),
