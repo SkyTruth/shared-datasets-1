@@ -68,7 +68,10 @@
       "module.shared_datasets_publisher_service_account.google_service_account.this",
       "module.wdpa_job_service_account.google_service_account.this",
       "terraform_data.cron_alert_channel_configured",
-      "google_storage_bucket_iam_member.monitoring_slack_recovery"
+      "google_storage_bucket_iam_member.monitoring_slack_recovery",
+      "google_pubsub_topic.identity_decision_events",
+      "google_project_iam_member.monitoring_slack_incident_reader",
+      "google_project_iam_custom_role.monitoring_incident_reader"
     ],
     "dataset-usage-deploy.yml/bootstrap": [],
     "preview-terraform-iam-sync.yml/bootstrap": [],
@@ -101,7 +104,12 @@
       "module.feature_preview_service_account.google_service_account.this"
     ],
     "cron-alert-policy-sync.yml/resources": [
-      "google_project_service.required"
+      "google_project_service.required",
+      "google_project_iam_custom_role.monitoring_incident_reader",
+      "module.wdpa_job_service_account.google_service_account.this",
+      "module.sea_ice_job_service_account.google_service_account.this",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.mpatlas_job_service_account.google_service_account.this"
     ],
     "scratch-cleanup-iam-sync.yml/operational-retirement-bootstrap": [],
     "scratch-cleanup-iam-sync.yml/retire-operational-infrastructure": [],

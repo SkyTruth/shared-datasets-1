@@ -1,0 +1,88 @@
+name: Alerts / Identity decision reconciliation
+
+on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        required: true
+        type: string
+      source_run_id:
+        required: true
+        type: string
+      source_run_attempt:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact current main revision with successful ci-ready
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested this executor
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact source CI attempt
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  id-token: write
+
+concurrency:
+  group: identity-decision-reconciliation
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'jonaraphael')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: shared-datasets-production
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/identity-decision-reconcile.yml@refs/heads/main" &&
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+            echo "Execution must use this workflow or CI from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --no-dev
+      - name: Verify tested main executor before cloud authentication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: uv run --no-sync python scripts/reconcile_identity_decisions.py --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" --check-only
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - name: Record accepted decisions and reconcile original notification threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+        run: uv run --no-sync python scripts/reconcile_identity_decisions.py --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"

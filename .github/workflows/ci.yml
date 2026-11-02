@@ -668,8 +668,8 @@ jobs:
     secrets: inherit
 
   eamlis:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.eamlis == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -702,8 +702,8 @@ jobs:
     secrets: inherit
 
   sea-ice:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.sea_ice == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -830,6 +830,21 @@ jobs:
     uses: ./.github/workflows/cron-alert-policy-sync.yml
     with:
       sync_iam: ${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  identity-decision-reconcile:
+    needs: [ci-ready, geospatial-changes, cron-alert-policy]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    uses: ./.github/workflows/identity-decision-reconcile.yml
+    with:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}

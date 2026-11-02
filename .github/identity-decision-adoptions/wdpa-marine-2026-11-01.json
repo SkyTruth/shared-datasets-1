@@ -1,0 +1,40 @@
+{
+  "schema": "identity-decision-adoption-v1",
+  "decision_pr": 365,
+  "event": {
+    "schema": "feature-identity-decision-event-v1",
+    "project": "shared-datasets-1",
+    "job": "wdpa-monthly",
+    "execution": "wdpa-monthly-5s4cw",
+    "asset_slug": "wdpa-marine",
+    "release": "2026-11-01",
+    "cases": [
+      {
+        "new_identity_key": [
+          "555729583"
+        ],
+        "new_geometry_hash": "sha256:484ac4f1a9f775f2d42563b88d8d9af5242bfb366ed9f791d1334fa59f84d810",
+        "new_properties_hash": "sha256:e0d10096661a702a34049f72518e151e35d371cf913e6b39e1ef2e31dee008d2",
+        "matching_geometry_feature_ids": [
+          "11347",
+          "15093"
+        ],
+        "matching_properties_feature_ids": [],
+        "matching_geometry_properties_hashes": [
+          "sha256:3585706db1d804017ad9b710edbb95e93322af030374e90f136d45e558a8c7b3",
+          "sha256:c5f533e5ab67dabb14dafd6ddc7d908a9b07ffa756f80dc53f702bc49528f326"
+        ],
+        "matching_properties_geometry_hashes": []
+      }
+    ]
+  },
+  "channel": "C0B12LDMB1A",
+  "parent_ts": "1793644451.878259",
+  "reply_ts": "1793647419.860789",
+  "monitoring": [
+    {
+      "incident_id": "0.oejurkps0izq",
+      "parent_ts": "1793644518.730859"
+    }
+  ]
+}

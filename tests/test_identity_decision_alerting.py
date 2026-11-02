@@ -17,7 +17,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from ingestion.common import feature_metadata
+from ingestion.common import feature_metadata, decision_events
+from services.monitoring_slack import decisions
 from ingestion.common.runtime import run_job_main
 from scripts import release_feature_model as model
 from scripts.slack_notify import build_slack_payload
@@ -88,56 +89,19 @@ class BlockedReleaseExitTests(unittest.TestCase):
 
 
 class DecisionAlertCopyTests(unittest.TestCase):
-    def test_body_leads_with_the_decision_not_the_stoppage(self):
-        body = feature_metadata.identity_ambiguity_alert_body(
-            asset_slug="wdpa-terrestrial",
-            release="2026-08-01",
-            ambiguities=[ambiguity()],
-        )
-
-        self.assertIn("need a maintainer to confirm identity", body)
-        self.assertIn("Nothing is broken and nothing is at risk", body)
-        self.assertIn("published dataset is unchanged", body)
-        self.assertIn("catalog/feature-identity-resolutions/wdpa-terrestrial.json", body)
-        # Plain-language explanation rather than the internal enum name.
-        self.assertIn("same footprint as an existing feature", body)
-        for scary in ("failed", "failure", "error", "unresolved partial identity hash"):
-            self.assertNotIn(scary, body.lower(), f"decision request should not read as {scary!r}")
-
-    def test_body_singularizes_and_summarizes_the_remainder(self):
-        one = feature_metadata.identity_ambiguity_alert_body(
-            asset_slug="a", release="r", ambiguities=[ambiguity()]
-        )
-        self.assertIn("1 feature need", one.replace("features", "feature"))
-
-        many = feature_metadata.identity_ambiguity_alert_body(
-            asset_slug="a",
-            release="r",
-            ambiguities=[ambiguity(str(index)) for index in range(12)],
-            limit=5,
-        )
-        self.assertIn("12 features need", many)
-        self.assertIn("7 more of the same kind", many)
-        self.assertIn("identity ambiguity evidence", many)
-
-    def test_notification_is_titled_as_a_decision_and_marked_distinctly(self):
-        sent = {}
-
-        def fake_notify(**kwargs):
-            sent.update(kwargs)
-            return True
-
-        with mock.patch("scripts.slack_notify.notify", fake_notify):
+    def test_producer_queues_complete_cases_for_the_owned_decision_thread(self):
+        with mock.patch.object(decision_events, "publish", return_value=True) as send:
             feature_metadata.notify_identity_ambiguities(
-                asset_slug="wdpa-terrestrial",
-                release="2026-08-01",
-                ambiguities=[ambiguity()],
-            )
-
-        self.assertEqual(sent["title"], "Decision needed: wdpa-terrestrial release 2026-08-01")
-        self.assertEqual(sent["status"], "decision")
-        self.assertEqual(sent["fields"]["published data"], "unchanged")
-        self.assertEqual(sent["fields"]["awaiting decisions"], "1")
+                asset_slug="wdpa-terrestrial", release="2026-08-01", ambiguities=[ambiguity()])
+        sent = send.call_args.kwargs
+        self.assertEqual(sent["ambiguities"], [model.identity_ambiguity_to_dict(ambiguity())])
+        value = decision_events.event({"schema": decision_events.SCHEMA, "project": decision_events.PROJECT,
+            "job": "wdpa-monthly", "execution": "wdpa-monthly-abcde", **{k: sent[k] for k in ("asset_slug", "release")},
+            "cases": [{key: sent["ambiguities"][0][key] for key in decision_events.CASE_FIELDS}]})
+        body = decisions.primary(value)["text"]
+        self.assertIn("Decision needed: wdpa-terrestrial release 2026-08-01", body)
+        self.assertIn("published data is unchanged", body)
+        self.assertIn("catalog/feature-identity-resolutions/", body)
 
     def test_decision_status_has_its_own_mark_distinct_from_failure(self):
         decision = build_slack_payload(title="t", body="b", status="decision")
@@ -217,6 +181,7 @@ class AlertPolicyTests(unittest.TestCase):
             "google_cloud_run_v2_service.monitoring_slack",
             "google_cloud_run_v2_service_iam_member.monitoring_slack_push",
             "google_pubsub_subscription.monitoring_slack",
+            "google_pubsub_subscription.identity_decision_events",
             "google_monitoring_notification_channel.monitoring_slack",
             "google_pubsub_topic_iam_member.monitoring_slack_publisher",
         }

@@ -12,7 +12,8 @@ import urllib.error
 import urllib.request
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
-from services.monitoring_slack import run as relay
+from services.monitoring_slack import run as relay, decisions
+from ingestion.common import decision_events as wire
 from scripts.slack_incident_api import Slack
 
 
@@ -23,6 +24,9 @@ class Bucket:
 
     def test_iam_permissions(self, permissions):
         return permissions
+
+    def list_blobs(self, *, prefix):
+        return [type("Listed", (), {"name": key})() for key in sorted(self.objects) if key.startswith(prefix)]
 
     def blob(self, name):
         bucket = self
@@ -42,7 +46,7 @@ class Bucket:
                 previous = bucket.objects.get(name, (0, None))[0]
                 if previous != if_generation_match:
                     raise PreconditionFailed("concurrent write")
-                if bucket.fail_receipt and json.loads(raw)["ts"] is not None:
+                if bucket.fail_receipt and json.loads(raw).get("ts") is not None:
                     raise OSError("receipt write unavailable")
                 self.generation = previous + 1
                 bucket.objects[name] = self.generation, raw.encode()
@@ -60,10 +64,29 @@ def envelope(state="open", incident_id="0.oe73n791vhsd"):
     return {"subscription": relay.SUBSCRIPTION, "message": {"data": base64.b64encode(json.dumps(payload).encode()).decode(), "messageId": "123"}}
 
 
+def decision_event():
+    return wire.event({"schema": wire.SCHEMA, "project": wire.PROJECT, "job": "wdpa-monthly",
+        "execution": "wdpa-monthly-abcde", "asset_slug": "wdpa-marine", "release": "2026-11-01", "cases": [{
+            "new_identity_key": ["555729583"], "new_geometry_hash": "sha256:" + "a" * 64,
+            "new_properties_hash": "sha256:" + "b" * 64, "matching_geometry_feature_ids": ["11347", "15093"],
+            "matching_properties_feature_ids": [], "matching_geometry_properties_hashes": ["sha256:" + "c" * 64],
+            "matching_properties_geometry_hashes": []}]})
+
+
+def proof(source, case):
+    return {"asset_slug": source["asset_slug"], "decision": {**case, "release": source["release"],
+        "action": "keep_previous_key_mapping", "previous_feature_id_for_key": "15378", "reviewer": "jonaraphael",
+        "rationale": "Preserve three distinct Bonden designations; reusing another ID would merge records.",
+        "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/365"},
+        "head_sha": "a" * 40, "merge_sha": "b" * 40,
+        "acceptance": {"kind": "self_authored_merge", "reviewed_commit": "a" * 40}}
+
+
 class ReceiverTests(unittest.TestCase):
     def setUp(self):
         self.bucket = Bucket()
         self.calls, self.messages = [], {}
+        self.alerts = {}
         self.drop_post, self.fail_update = False, False
         owner = self
         class API(BaseHTTPRequestHandler):
@@ -113,6 +136,7 @@ class ReceiverTests(unittest.TestCase):
         self.stack.enter_context(patch.object(relay, "Slack", side_effect=lambda token, channel: Slack(token, channel, opener=opener, sleep=lambda _: None)))
         self.stack.enter_context(patch.object(relay.storage, "Client", return_value=Client()))
         self.stack.enter_context(patch.object(relay, "HTTPServer", side_effect=server))
+        self.stack.enter_context(patch.object(relay, "read_alert", side_effect=lambda key: self.alerts[key]))
         self.worker = threading.Thread(target=relay.main, daemon=True)
         self.worker.start()
         self.assertTrue(ready.wait(5), "real entrypoint did not start")
@@ -214,6 +238,109 @@ class ReceiverTests(unittest.TestCase):
         store.save("0.concurrent", first, 0)
         with self.assertRaises(PreconditionFailed):
             store.save("0.concurrent", first, 0)
+
+    def approve(self, source, cases=None):
+        records = {wire.case_key(source["asset_slug"], source["release"], item): proof(source, item)
+                   for item in (source["cases"] if cases is None else cases)}
+        store = relay.Store(self.bucket)
+        _, generation = store.read("identity/approvals.json")
+        store.write("identity/approvals.json", {"schema": decisions.APPROVAL_SCHEMA, "revision": "b" * 40,
+                                              "known": {}, "records": records}, generation)
+
+    def send_decision(self, source):
+        return self.send({"subscription": wire.SUBSCRIPTION, "message": {"data": base64.b64encode(wire.canonical(source)).decode()}})
+
+    def review_alert(self, source, incident_id="0.review", state="open"):
+        labels = {"project_id": wire.PROJECT, "location": "us-central1", "job_name": source["job"]}
+        self.alerts[incident_id] = {"name": f"projects/{wire.PROJECT}/alerts/{incident_id}",
+            "policy": {"displayName": decisions.POLICY, "userLabels": {"kind": "decision-required"}},
+            "resource": {"type": "cloud_run_job", "labels": labels}, "log": {"extractedLabels": {
+                "decision_execution": source["execution"], "decision_asset": source["asset_slug"], "decision_release": source["release"]}}}
+        value = envelope(state, incident_id)
+        payload = json.loads(base64.b64decode(value["message"]["data"]))
+        payload["incident"]["policy_name"] = decisions.POLICY
+        value["message"]["data"] = base64.b64encode(json.dumps(payload).encode()).decode()
+        return self.send(value)
+
+    def test_producer_to_receiver_replies_once_and_settles_only_exact_review_alerts(self):
+        source = decision_event()
+        self.assertEqual(self.review_alert(source), 204)  # Monitoring may arrive first.
+        foreign = {**source, "execution": "wdpa-monthly-zzzzz"}
+        self.assertEqual(self.review_alert(foreign, "0.other-review"), 204)
+        self.assertEqual(self.send(envelope(incident_id="0.unrelated-failure")), 204)
+        owner = self
+        class Session:
+            def post(self, url, *, json, timeout):
+                assert url == "https://pubsub.googleapis.com/v1/" + wire.TOPIC + ":publish"
+                assert timeout == 30
+                assert owner.send({"subscription": wire.SUBSCRIPTION, "message": json["messages"][0]}) == 204
+                return type("Response", (), {"raise_for_status": lambda self: None, "json": lambda self: {"messageIds": ["123"]}})()
+        wire.publish(asset_slug=source["asset_slug"], release=source["release"], ambiguities=source["cases"],
+                     env={"CLOUD_RUN_JOB": source["job"], "CLOUD_RUN_EXECUTION": source["execution"]}, session=Session())
+        self.approve(source)
+        self.assertEqual(self.send_decision(source), 204)
+        for state in ("open", "closed", "open"):
+            self.assertEqual(self.review_alert(source, state=state), 204)
+            self.assertEqual(self.send_decision(source), 204)
+        replies = [body for method, body in self.calls if method == "chat.postMessage" and body.get("thread_ts")]
+        self.assertEqual(len(replies), 1)
+        self.assertFalse(replies[0]["reply_broadcast"])
+        for text in ("15378", "jonaraphael", "Why recommended", "distinct Bonden", "/pull/365"):
+            self.assertIn(text, replies[0]["text"])
+        store = relay.Store(self.bucket)
+        resolved, _ = store.load("0.review")
+        self.assertTrue(resolved["closed"])
+        self.assertIn("Decision recorded", self.messages[resolved["ts"]]["text"])
+        for key in ("0.other-review", "0.unrelated-failure"):
+            record, _ = store.load(key)
+            self.assertEqual(record["schema"], relay.SCHEMA)
+            self.assertIn(" Open", self.messages[record["ts"]]["text"])
+
+    def test_partial_decisions_wait_and_late_monitoring_is_settled_without_duplicate_replies(self):
+        source = decision_event()
+        second = {**source["cases"][0], "new_identity_key": ["another"]}
+        source = wire.event({**source, "cases": [*source["cases"], second]})
+        self.approve(source, [source["cases"][0]])
+        self.assertEqual(self.send_decision(source), 204)
+        self.assertEqual(self.review_alert(source), 204)
+        record, _ = relay.Store(self.bucket).load("0.review")
+        self.assertIn(" Open", self.messages[record["ts"]]["text"])
+        self.approve(source)
+        self.assertEqual(self.send_decision(source), 204)
+        self.assertEqual(self.review_alert(source, "0.late-review"), 204)
+        posts = [body for method, body in self.calls if method == "chat.postMessage" and body.get("thread_ts")]
+        self.assertEqual(len(posts), 2)
+        self.assertNotEqual(posts[0]["text"], posts[1]["text"])
+        for key in ("0.review", "0.late-review"):
+            receipt, _ = relay.Store(self.bucket).load(key)
+            self.assertFalse(receipt["closed"])  # No fabricated GCP closure.
+            self.assertIn("Decision recorded", self.messages[receipt["ts"]]["text"])
+
+    def test_lost_reply_response_never_reposts_or_resolves_review(self):
+        source = decision_event()
+        self.assertEqual(self.send_decision(source), 204)
+        self.assertEqual(self.review_alert(source), 204)
+        self.approve(source)
+        self.drop_post = True
+        self.assertEqual(self.send_decision(source), 503)
+        self.drop_post = False
+        count = len(self.messages)
+        self.assertEqual(self.send_decision(source), 503)
+        self.assertEqual(len(self.messages), count)
+        receipt, _ = relay.Store(self.bucket).load("0.review")
+        self.assertEqual(receipt["schema"], relay.SCHEMA)
+
+    def test_update_failure_and_late_open_finish_decision_view_without_new_reply(self):
+        source = decision_event()
+        self.approve(source)
+        self.assertEqual(self.send_decision(source), 204)
+        self.fail_update = True
+        self.assertEqual(self.review_alert(source), 503)
+        self.fail_update = False
+        self.assertEqual(self.review_alert(source), 204)
+        self.assertEqual(sum(method == "chat.postMessage" and bool(body.get("thread_ts")) for method, body in self.calls), 1)
+        record, _ = relay.Store(self.bucket).load("0.review")
+        self.assertIn("Decision recorded", self.messages[record["ts"]]["text"])
 
 
 if __name__ == "__main__":

@@ -129,3 +129,15 @@ decision, so those counts cannot silently disagree with what was published.
 ```
 
 For `assign_new_feature_id`, omit `reuse_feature_id`.
+
+
+## Decision notification closure
+
+For scheduled ingestion, use the actual GitHub PR URL in `pr_reference`, record
+`jonaraphael` as `reviewer`, and explain the recommendation in `rationale`.
+After merge and successful main validation, the protected decision reconciliation
+workflow checks the accepted final-head bytes and replies to the original Slack
+**Decision needed** thread with those fields and the selected identity action.
+It closes related Monitoring review messages only when every captured case is
+covered. This records a review decision; publication and worker acceptance are
+verified separately. See [alert routing](../../docs/alert-routing.md#identity-decision-threads).
