@@ -496,7 +496,7 @@ class KeepPreviousKeyMappingTests(unittest.TestCase):
 
 
 class TerrestrialDecisionFileTests(unittest.TestCase):
-    """Pin the shipped wdpa-terrestrial decisions against their real conflict."""
+    """Pin the August wdpa-terrestrial decisions against their real conflict."""
 
     def test_the_key_that_already_owned_an_id_keeps_its_mapping(self):
         import json as _json
@@ -504,7 +504,11 @@ class TerrestrialDecisionFileTests(unittest.TestCase):
 
         path = _Path(__file__).resolve().parents[1] / "catalog/feature-identity-resolutions/wdpa-terrestrial.json"
         payload = _json.loads(path.read_text(encoding="utf-8"))
-        by_key = {tuple(d["new_identity_key"]): d for d in payload["decisions"]}
+        by_key = {
+            tuple(d["new_identity_key"]): d
+            for d in payload["decisions"]
+            if d["release"] == "2026-08-01"
+        }
 
         self.assertEqual(len(by_key), 7)
         conflicting = by_key[("555682754",)]
