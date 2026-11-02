@@ -33,9 +33,9 @@ jobs:
         id: trust
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main ||
-                "$GITHUB_WORKFLOW_REF" != "${GITHUB_REPOSITORY}/.github/workflows/operational-safety-check.yml@refs/heads/main" ]]; then
-            echo "Operational checks require the trusted main workflow." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/operational-safety-check.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
