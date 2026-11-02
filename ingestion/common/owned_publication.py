@@ -261,6 +261,9 @@ class OwnedGeneratedPublisher(GcsPublisher):
         operations = {op["id"]: op for op in value["operations"]}
         if value["mode"] == "object_repair":
             p.require(set(operations) == {"release-index"} and operations["release-index"]["source"]["parameters"]["kind"] == "skip-index", "only run-index skips are supported without a release")
+            # These inputs are captured completely in the intent. Validate their
+            # derived bytes before persisting a receipt or acquiring ownership.
+            derive(operations["release-index"]["source"]["parameters"], {})
             return
         if value["mode"] == "metadata_update":
             parameters = operations["release-manifest"]["source"]["parameters"]

@@ -10,11 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from ingestion.common import publication as p
+from ingestion.common import publication as p, release_index
 from ingestion.common.identity_reset import CONTRACT_ID, IdentityResetCandidate
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.sea_ice_daily import run as sea_ice
-from ingestion.wdpa_monthly import run as wdpa
+from ingestion.wdpa_monthly import automatic, run as wdpa
 from scripts import gcs_asset
 from test_compliance_audit import audit, blob_info
 from test_identity_reset import fixture, install_fixture
@@ -251,6 +251,37 @@ class OwnedPublicationTests(unittest.TestCase):
                 with self.assertRaises((p.PublicationError, ValueError, OSError)):
                     publish(publisher, sea_ice.ASSET, outputs)
                 self.assertEqual(store.events, before)
+
+    def test_wdpa_unavailable_source_checkin_reaches_the_real_persisted_index(self):
+        for asset in wdpa.ASSETS:
+            with self.subTest(asset=asset.slug), publication_temp_directory() as temporary:
+                publisher, store = publisher_fixture(asset)
+                publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+                checker, _ = publisher_fixture(asset, execution="november-check", store=store)
+                before = store.read_json(checker.context(asset).state_uri).value
+                with mock.patch.object(wdpa, "ASSETS", (asset,)):
+                    records = automatic.check_in(checker, dt.date(2026, 11, 1),
+                                                 dt.date(2026, 11, 2), "source not available (HTTP 404)")
+                index = store.read_json(release_index.release_index_uri("bucket", asset.slug)).value
+                self.assertEqual(index["latest_run"]["date"], "2026-11-02")
+                self.assertEqual(index["latest_run"]["status"], "skipped")
+                self.assertEqual(records[0]["target_release_date"], "2026-11-01")
+                self.assertEqual(index["latest_release"]["date"], DATE.isoformat())
+                self.assertEqual(store.read_json(checker.context(asset).state_uri).value, before)
+
+    def test_malformed_checkin_is_rejected_before_receipt_or_claim_writes(self):
+        asset = sea_ice.ASSET
+        with publication_temp_directory() as temporary:
+            publisher, store = publisher_fixture(asset)
+            publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+            checker, _ = publisher_fixture(asset, execution="invalid-skip", store=store)
+            before = list(store.events)
+            with self.assertRaisesRegex(release_index.ReleaseIndexError, "missing release_date"):
+                checker.update_latest_run_index(asset=asset, payload={
+                    "schema_version": 1, "asset_slug": asset.slug, "status": "skipped",
+                    "run_date": "2026-11-02", "reason": "source unavailable",
+                })
+            self.assertEqual(store.events, before)
 
     def test_skip_preserves_counter_current_release_and_existing_history(self):
         asset = sea_ice.ASSET

@@ -66,6 +66,11 @@ execution-only diagnostic override; the job template must never pin a date or
 
 ## Monitoring and recovery
 
+The [first November activation attempt](wdpa-processing-evidence/november-readiness-2026-11-01.md)
+failed while recording an unavailable-source skip and retains its exact marine
+claim. The schedule must stay paused pending reviewed claim recovery and a
+verified fixed canary; an older October success does not establish readiness.
+
 Shared worker and Scheduler alerts report failures. Per-asset release indexes
 provide the latest check-in. Source unavailability is a skip, not a successful
 new release; inspect the reason if the source remains absent through day 10.

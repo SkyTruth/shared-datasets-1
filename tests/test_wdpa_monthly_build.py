@@ -151,7 +151,7 @@ def test_completed_month_checks_in_without_rebuilding(scheduled):
     scheduled.publisher.load_successful_run_record.return_value = ({'status': 'success'}, {})
     records = automatic.run()
     assert len(records) == 2
-    assert all(r['status'] == 'skipped' and r['target_release_date'] == '2026-11-01' and r['run_date'] == '2026-11-02' for r in records)
+    assert all(r['status'] == 'skipped' and r['target_release_date'] == '2026-11-01' and r['release_date'] == '2026-11-02' for r in records)
     scheduled.build.assert_not_called()
     scheduled.promote.assert_not_called()
 
