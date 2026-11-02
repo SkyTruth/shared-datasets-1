@@ -193,7 +193,7 @@ def main(argv=None):
     parser.add_argument("--source-run-attempt", required=True, type=int)
     parser.add_argument("--check-only", action="store_true")
     args = parser.parse_args(argv)
-    api = auth.GitHub()
+    api = deployment.GitHub()
     if not verify_source(args, api, dict(os.environ)):
         print("Decision reconciliation deferred: this tested revision is superseded by current main.")
         return 0
