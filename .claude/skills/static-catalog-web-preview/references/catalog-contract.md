@@ -327,6 +327,33 @@ is excluded from source changes. Identity incompatibility withholds authoritativ
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](../../../../docs/compare-releases.md).
 
+## Find a published feature
+
+For a single dataset with generation-pinned source metadata, **Feature ID** and
+**Find feature** appear below the Version row. Enter the published `feature_id`
+(for example, `132873`), rather than a provider assignment key such as WDPA
+`SITE_PID`. Enter submits the lookup. Source attributes appear in the existing
+inspector even for assets without map tiles; the lookup does not locate the
+feature on the map. Missing IDs and unavailable metadata have distinct messages.
+Lookup is hidden for multiple selections and during release comparison.
+
+**Copy feature link** in a loaded inspector copies the current catalog URL with
+`asset`, `release`, `feature_id`, and `metadata_generation` query parameters.
+`release` is a concrete date, and `metadata_generation` pins the canonical
+source-language sidecar. Opening the link selects that exact release and looks
+up the record's source attributes. An unavailable dataset/release, malformed
+handle, or changed metadata generation shows **Feature link unavailable**;
+it never substitutes latest. Preview links preserve the `published:` asset
+namespace and load the existing published catalog when required. Links grant
+no access: restricted records still require the authorized viewer.
+
+The feature lookup reuses the existing metadata size budget, bounded viewer API,
+and public sidecar streaming routes. Late responses cannot restore an inspector
+after a selection changes or is cleared. Source-attribute lookup remains in the
+source language when the map's metadata language changes. The catalog includes
+published releases only; pending ingestion identity cases require the evidence
+and review work described in [the implementation plan](../../../../docs/feature-identity-review-plan.md).
+
 ## Dataset integration
 
 **Use this dataset** is an inline section immediately above the canonical paths. Its

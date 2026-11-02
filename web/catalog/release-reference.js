@@ -74,6 +74,30 @@ function validDate(date) {
   return typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date)) && new Date(date).toISOString().slice(0, 10) === date;
 }
 
+const FEATURE_LINK_PARAMS = ["asset", "release", "feature_id", "metadata_generation"];
+
+export function parseFeatureLink(href) {
+  const params = new URL(href).searchParams;
+  if (!FEATURE_LINK_PARAMS.some(key => params.has(key))) return null;
+  if (FEATURE_LINK_PARAMS.some(key => params.getAll(key).length !== 1)) throw new Error("Feature link is incomplete or contains duplicate parameters.");
+  const [asset, release, featureId, generation] = FEATURE_LINK_PARAMS.map(key => params.get(key));
+  if (!/^(?:published:)?[a-z0-9]+(?:-[a-z0-9]+)*$/.test(asset) || !validDate(release) || !/^[A-Za-z0-9]{1,64}$/.test(featureId)) {
+    throw new Error("Feature link must identify a dataset, a dated release, and a valid feature ID.");
+  }
+  return {asset, release, featureId, generation: artifactGeneration(generation)};
+}
+
+export function featureLinkUrl(reference, featureId, href) {
+  const file = metadataFile(reference.files || []);
+  if (!file) throw new Error("This release has no source metadata for a feature link.");
+  const url = new URL(href);
+  url.search = new URLSearchParams({asset: assetKey(reference), release: reference.date,
+    feature_id: featureId, metadata_generation: artifactGeneration(file.generation)}).toString();
+  url.hash = "";
+  parseFeatureLink(url.href);
+  return url.href;
+}
+
 export function selectReleaseReference(asset, version = "latest", {bucket, baseUrl} = {}) {
   if (asset.release_error) throw new Error(asset.release_error);
   const versions = asset.versions || [];

@@ -57,7 +57,10 @@ const test = base.extend({
         const records = data.trim().split('\n').map(JSON.parse);
         const ids = request.postDataJSON().ids;
         return json({asset_slug:lookup[1], resolved_release:lookup[2], sidecar_uri:file.path, sidecar_generation:file.generation,
-          items:ids.map(id => ({feature_id:id, found:true, properties:records.find(record => record.feature_id === id).properties}))});
+          items:ids.map(id => {
+            const record = records.find(record => record.feature_id === id);
+            return record ? {...record, found:true} : {feature_id:id, found:false};
+          })});
       }
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
@@ -240,6 +243,107 @@ test('public latest and historical maps keep tile and inspector identity togethe
   await clickPoint(page, false, testInfo);
   await expectMetadata(page, false);
   expect(transport.requests.filter(entry => new URL(entry.url).pathname === '/api/usage/report')).toEqual([]);
+});
+
+test('find a feature by ID and copy a historical source-attribute link', async ({page, context, transport}, testInfo) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await select(page, 'public');
+  await page.locator('#feature-id-input').fill('absent');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expect(page.locator('#feature-lookup-status')).toContainText('was not found in release 2026-09-22');
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await page.locator('#feature-id-input').fill('a2');
+  await page.locator('#feature-id-input').press('Enter');
+  await expectMetadata(page, true);
+  await page.getByRole('button', {name:'Copy feature link', exact:true}).click();
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  const params = new URL(link).searchParams;
+  expect(Object.fromEntries(params)).toEqual({asset:'smoke-public', release:'2026-01-01', feature_id:'a2', metadata_generation:'102'});
+  const index = transport.indexes.get('smoke-public');
+  index.latest_release = index.releases.find(release => release.date === '2026-01-01');
+  await page.goto(link);
+  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
+  await expect(page.locator('#feature-id-input')).toHaveValue('a2');
+  await expectMetadata(page, true);
+  await page.locator('#metadata-language-select').selectOption('es');
+  await expectMetadata(page, true);
+  await expect(page.locator('#feature-inspector')).not.toContainText('Español');
+  await page.setViewportSize({width:390, height:844});
+  await page.locator('#feature-lookup').scrollIntoViewIfNeeded();
+  expect(await page.locator('#feature-lookup').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await testInfo.attach('feature-lookup-narrow.png', {body:await page.screenshot(), contentType:'image/png'});
+});
+
+test('feature links reject changed generations, missing releases and malformed handles', async ({page, transport}) => {
+  const params = new URLSearchParams({asset:'smoke-public', release:'2026-01-01', feature_id:'a2', metadata_generation:'102'});
+  for (const [key, value] of [['metadata_generation','999'], ['release','2020-01-01'], ['feature_id','bad/id'], ['asset','absent']]) {
+    const bad = new URLSearchParams(params); bad.set(key, value);
+    await page.goto(`${baseURL}/?${bad}`);
+    await expect(page.locator('#detail-empty h2')).toHaveText('Feature link unavailable');
+    await expect(page.locator('#detail-view')).toBeHidden();
+    await expect(page.locator('#feature-inspector')).toBeHidden();
+  }
+  expect(transport.requests.filter(entry => entry.url.endsWith(':lookup'))).toEqual([]);
+  await page.locator('#asset-list [data-slug="smoke-public"]').click();
+  await expect(page.locator('#feature-lookup')).toBeVisible();
+});
+
+test('late ID lookup cannot restore historical attributes after selection changes', async ({page, transport}) => {
+  await select(page, 'public');
+  await page.locator('#version-select').selectOption('2026-01-01');
+  transport.holdMetadata = true;
+  await page.locator('#feature-id-input').fill('a2');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expect.poll(() => transport.held).toBe(true);
+  await page.locator('#version-select').selectOption('latest');
+  await page.locator('#feature-id-input').fill('b2');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expectMetadata(page, false);
+  const completed = page.waitForResponse(response => response.url().includes('/2026-01-01/') && response.url().includes('.metadata.ndjson.gz'));
+  transport.release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await expectMetadata(page, false);
+  await expect(page.locator('#feature-lookup-status')).toContainText('feature b2');
+  await page.locator('#asset-list [data-slug="smoke-private"]').click();
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await expect(page.locator('#feature-id-input')).toHaveValue('');
+});
+
+test('feature ID lookup uses the bounded API and preserves restricted access', async ({page, transport}) => {
+  await page.addInitScript(() => { window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 1; });
+  await select(page, 'private');
+  await page.locator('#feature-id-input').fill('absent');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expect(page.locator('#feature-lookup-status')).toContainText('was not found');
+  await page.locator('#feature-id-input').fill('b2');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expectMetadata(page, false);
+  transport.lookupStatus = 403;
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expect(page.locator('#feature-lookup-status')).toContainText('Feature lookup unavailable');
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  expect(transport.requests.some(entry => entry.url.includes('smoke-private.metadata.ndjson.gz'))).toBe(false);
+});
+
+test('feature attributes are available without map tiles and lookup hides during comparison', async ({page, transport}) => {
+  const asset = transport.catalog.assets.find(asset => asset.slug === 'smoke-public');
+  asset.has_pmtiles = false;
+  asset.pmtiles_url = null;
+  for (const release of transport.indexes.get('smoke-public').releases) release.files = release.files.filter(file => file.format !== 'pmtiles');
+  await select(page, 'public');
+  await expect(page.locator('#map-section')).toBeHidden();
+  await page.locator('#feature-id-input').fill('b2');
+  await page.getByRole('button', {name:'Find feature', exact:true}).click();
+  await expectMetadata(page, false);
+  await page.locator('#asset-list [data-slug="smoke-private"]').click({modifiers:['ControlOrMeta']});
+  await expect(page.locator('#feature-lookup')).toBeHidden();
+  await page.locator('#asset-list [data-slug="smoke-comparison"]').click();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#feature-lookup')).toBeHidden();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#feature-lookup')).toBeVisible();
 });
 
 test('color labels filter large metadata groups and show complete counts without moving the map', async ({ page }, testInfo) => {
@@ -1081,6 +1185,10 @@ test('feature preview includes published datasets without merging duplicate slug
   await expect(page.getByLabel('Include published datasets')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await testInfo.attach('preview-mobile.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.goto(`${baseURL}/?asset=published%3Asmoke-public&release=2026-01-01&feature_id=a2&metadata_generation=102`);
+  await expect(page.getByLabel('Include published datasets')).toBeChecked();
+  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveAttribute('aria-selected', 'true');
+  await expectMetadata(page, true);
 });
 
 test('empty preview can retry a failed published catalog and handle an empty catalog', async ({page, transport}) => {
