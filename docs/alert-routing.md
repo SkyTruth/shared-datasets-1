@@ -112,6 +112,42 @@ startup failure leaves the existing native routes in place. Native channel
 configuration is retained for reviewed rollback. No alert conditions, grace
 windows, publication authority or dataset permissions are relaxed.
 
+## Identity decision threads
+
+Scheduled feature identity review uses a typed event on the private
+`identity-decision-events` Pub/Sub topic. The existing Monitoring Slack service
+owns the **Decision needed** parent and its string timestamp. Local diagnostics
+do not send production messages. Cloud Run publishers must match the configured
+asset/job pair; each event binds project, execution, asset, release and the full
+captured identity hashes and match sets.
+
+After reviewed curation merges to main, **Alerts / Identity decision
+reconciliation** verifies the exact accepted PR head and runtime-legal choice.
+It replies in the original thread with the decision of record, `jonaraphael` as
+the decision maker, the recorded recommendation rationale and the reviewed PR.
+The reply does not broadcast to the channel. Each case must be covered before
+the review is marked **Decision recorded**. Partial decisions receive replies
+while the remaining cases stay open.
+
+The same reconciliation updates every bot-owned **Shared datasets release
+waiting on a maintainer decision** parent whose authoritative Monitoring incident
+matches the exact execution, asset and release. Policy label extractors provide
+these keys; unrelated failure incidents are excluded. This settles the review
+request without asserting native Monitoring closure, publication success or
+consumer recovery. Duplicate or late open notifications cannot reopen it.
+New workers wait for the selected protected transport sync to succeed.
+
+The private operations bucket retains the approved decision index and
+`identity/events/<event-id>.json` parent/reply receipts, plus exact incident links.
+Generation preconditions claim each non-idempotent post before sending it.
+Uncertain parent/reply delivery blocks another post; inspect the service's
+`Identity decision Slack receipt` log and original thread before a reviewed
+receipt repair. The existing Slack `chat:write` scope is sufficient; no channel
+history/search permission is added. Reviewed legacy adoption documents under
+`.github/identity-decision-adoptions/` can bind inspected historical webhook
+parents and already-confirmed replies without duplicating them. These documents
+carry notification bookkeeping authority only.
+
 ## Execution and delivery verification
 
 WDPA's ten-minute worker watch retains Cloud Monitoring coverage.

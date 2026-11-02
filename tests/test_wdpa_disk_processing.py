@@ -105,14 +105,16 @@ def test_conflicting_duplicates_and_ambiguity_emit_no_outputs(tmp_path):
     )
     (tmp_path / "old.ndjson.gz").unlink()
     (tmp_path / "old.geojsonseq").unlink()
-    # This synthetic ambiguity must not use a maintainer's real Slack webhook.
-    with mock.patch("scripts.slack_notify.notify", return_value=True) as notify:
+    # This synthetic ambiguity must not queue a production decision event.
+    with mock.patch("ingestion.common.decision_events.publish", return_value=True) as notify:
         with pytest.raises(metadata.IdentityDecisionRequired):
             disk_allocation(tmp_path, [feature("changed-key")], baseline)
     notify.assert_called_once()
-    assert notify.call_args.kwargs["title"] == (
-        "Decision needed: wdpa-marine release 2026-10-01"
-    )
+    assert notify.call_args.kwargs["asset_slug"] == "wdpa-marine"
+    assert notify.call_args.kwargs["release"] == "2026-10-01"
+    case = notify.call_args.kwargs["ambiguities"][0]
+    assert case["new_identity_key"] == ["changed-key"]
+    assert case["matching_geometry_feature_ids"] == ["1"]
     assert not list(tmp_path.glob("*.ndjson.gz"))
     assert not list(tmp_path.glob("*.fgb"))
 

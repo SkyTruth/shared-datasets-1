@@ -60,10 +60,12 @@ jobs:
         google_project_service.monitoring_slack_pubsub
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
+        google_project_iam_custom_role.monitoring_incident_reader
       allowed_exact: |
         google_project_service.monitoring_slack_pubsub
         google_project_iam_custom_role.monitoring_alert_policy_manager
         google_project_iam_member.github_actions_monitoring_alert_policy_manager
+        google_project_iam_custom_role.monitoring_incident_reader
       tf_vars: |
         wdpa_monthly_image=unused-by-cron-alert-policy-sync
         sea_ice_daily_image=unused-by-cron-alert-policy-sync
@@ -97,6 +99,12 @@ jobs:
         google_project_iam_member.monitoring_slack_token_writer
         google_project_iam_member.monitoring_slack_token_version_writer
         google_pubsub_topic.monitoring_slack
+        google_pubsub_topic.identity_decision_events
+        google_project_iam_member.monitoring_slack_incident_reader
+        google_pubsub_topic_iam_member.identity_decision_publisher["wdpa"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["sea_ice"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["eamlis"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["mpatlas"]
       allowed_exact: |
         google_service_account.monitoring_slack
         google_service_account.monitoring_slack_push
@@ -110,6 +118,12 @@ jobs:
         google_project_iam_member.monitoring_slack_token_writer
         google_project_iam_member.monitoring_slack_token_version_writer
         google_pubsub_topic.monitoring_slack
+        google_pubsub_topic.identity_decision_events
+        google_project_iam_member.monitoring_slack_incident_reader
+        google_pubsub_topic_iam_member.identity_decision_publisher["wdpa"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["sea_ice"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["eamlis"]
+        google_pubsub_topic_iam_member.identity_decision_publisher["mpatlas"]
       tf_vars: |
         wdpa_monthly_image=unused-by-monitoring-slack-resources
         sea_ice_daily_image=unused-by-monitoring-slack-resources
@@ -135,6 +149,7 @@ jobs:
         google_cloud_run_v2_service.monitoring_slack
         google_cloud_run_v2_service_iam_member.monitoring_slack_push
         google_pubsub_subscription.monitoring_slack
+        google_pubsub_subscription.identity_decision_events
         google_monitoring_notification_channel.monitoring_slack
         google_pubsub_topic_iam_member.monitoring_slack_publisher
         google_monitoring_alert_policy.dataset_object_deleted
@@ -147,6 +162,7 @@ jobs:
         google_cloud_run_v2_service.monitoring_slack
         google_cloud_run_v2_service_iam_member.monitoring_slack_push
         google_pubsub_subscription.monitoring_slack
+        google_pubsub_subscription.identity_decision_events
         google_monitoring_notification_channel.monitoring_slack
         google_pubsub_topic_iam_member.monitoring_slack_publisher
         google_monitoring_alert_policy.dataset_object_deleted

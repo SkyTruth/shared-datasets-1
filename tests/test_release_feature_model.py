@@ -271,7 +271,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             matching_properties_geometry_hashes=(),
         )
 
-        with mock.patch("scripts.slack_notify.notify", return_value=True) as notify:
+        with mock.patch("ingestion.common.decision_events.publish", return_value=True) as notify:
             with self.assertRaisesRegex(
                 feature_metadata.IdentityDecisionRequired,
                 "waiting on .* maintainer identity decision",
@@ -283,7 +283,8 @@ class ReleaseFeatureModelTests(unittest.TestCase):
                 )
 
         notify.assert_called_once()
-        self.assertIn("catalog/feature-identity-resolutions/example.json", notify.call_args.kwargs["body"])
+        self.assertEqual(notify.call_args.kwargs["asset_slug"], "example")
+        self.assertEqual(notify.call_args.kwargs["ambiguities"], [model.identity_ambiguity_to_dict(ambiguity)])
 
     def test_unresolved_ambiguities_log_full_evidence_and_cap_message(self):
         def ambiguity_for(index: int) -> model.IdentityAmbiguity:
@@ -301,7 +302,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         total = feature_metadata.IDENTITY_AMBIGUITY_MESSAGE_LIMIT + 5
         ambiguities = [ambiguity_for(index) for index in range(total)]
 
-        with mock.patch("scripts.slack_notify.notify", return_value=True):
+        with mock.patch("ingestion.common.decision_events.publish", return_value=True):
             with self.assertLogs("ingestion.common.feature_metadata", level="ERROR") as logs:
                 with self.assertRaisesRegex(
                     feature_metadata.IdentityDecisionRequired,

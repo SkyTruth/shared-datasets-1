@@ -482,3 +482,24 @@ covers the failed revision. Runtime targets, including dataset usage, require
 it never posts a replacement or reply. Unsupported failures remain unresolved.
 This action does not enable incident management or reinterpret retained incident
 records from other protocol versions.
+
+
+## Feature identity decision replies
+
+The failure incident outbox above keeps its no-reply contract. Feature identity
+review is a separate typed lifecycle: its original decision thread receives the
+accepted choice, decision maker, recommendation rationale and exact reviewed PR.
+See [identity decision alert routing](alert-routing.md#identity-decision-threads).
+A reviewed decision closes only matching review requests; actual dataset
+publication, deployment acceptance and native Monitoring closure retain their
+own evidence requirements.
+
+The protected main-only `identity-decision-reconcile.yml` workflow runs after
+successful `ci-ready` and any selected transport deployment. Owner dispatches
+supply the exact tested current-main SHA and source CI run/attempt. It validates
+same-repository merged PRs, final-head maintainer acceptance, immutable decision
+bytes and runtime identity legality before updating the private approved index.
+The existing authenticated receiver uses that index for late events. All cases
+in the captured event must have confirmed decision replies before linked
+Monitoring review parents become green; partial decisions leave them open.
+Uncertain Slack posts retain their claims and cannot automatically send again.

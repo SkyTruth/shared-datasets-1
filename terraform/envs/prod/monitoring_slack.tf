@@ -118,6 +118,25 @@ resource "google_pubsub_topic" "monitoring_slack" {
   depends_on = [google_project_service.monitoring_slack_pubsub]
 }
 
+resource "google_pubsub_topic" "identity_decision_events" {
+  project    = var.project_id
+  name       = "identity-decision-events"
+  depends_on = [google_project_service.monitoring_slack_pubsub]
+}
+
+resource "google_pubsub_topic_iam_member" "identity_decision_publisher" {
+  for_each = {
+    wdpa    = module.wdpa_job_service_account.member
+    sea_ice = module.sea_ice_job_service_account.member
+    eamlis  = module.eamlis_job_service_account.member
+    mpatlas = module.mpatlas_job_service_account.member
+  }
+  project = var.project_id
+  topic   = google_pubsub_topic.identity_decision_events.name
+  role    = "roles/pubsub.publisher"
+  member  = each.value
+}
+
 resource "google_cloud_run_v2_service" "monitoring_slack" {
   project             = var.project_id
   name                = "monitoring-slack"
@@ -133,6 +152,10 @@ resource "google_cloud_run_v2_service" "monitoring_slack" {
     }
     containers {
       image = var.monitoring_slack_image
+      env {
+        name  = "IDENTITY_DECISION_PROTOCOL"
+        value = "feature-identity-decisions-v1"
+      }
       env {
         name  = "MONITORING_SLACK_STATE_BUCKET"
         value = google_storage_bucket.monitoring_slack.name
@@ -162,7 +185,7 @@ resource "google_cloud_run_v2_service" "monitoring_slack" {
       error_message = "Monitoring Slack requires a fixed Slack channel ID."
     }
   }
-  depends_on = [google_project_iam_member.monitoring_slack_token, google_storage_bucket_iam_member.monitoring_slack_state]
+  depends_on = [google_project_iam_member.monitoring_slack_token, google_storage_bucket_iam_member.monitoring_slack_state, google_project_iam_member.monitoring_slack_incident_reader]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "monitoring_slack_push" {
@@ -178,6 +201,29 @@ resource "google_pubsub_subscription" "monitoring_slack" {
   name                       = "monitoring-slack"
   topic                      = google_pubsub_topic.monitoring_slack.id
   ack_deadline_seconds       = 90
+  message_retention_duration = "604800s"
+  expiration_policy {
+    ttl = ""
+  }
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+  push_config {
+    push_endpoint = google_cloud_run_v2_service.monitoring_slack.uri
+    oidc_token {
+      service_account_email = google_service_account.monitoring_slack_push.email
+      audience              = google_cloud_run_v2_service.monitoring_slack.uri
+    }
+  }
+  depends_on = [google_cloud_run_v2_service_iam_member.monitoring_slack_push]
+}
+
+resource "google_pubsub_subscription" "identity_decision_events" {
+  project                    = var.project_id
+  name                       = "identity-decision-events"
+  topic                      = google_pubsub_topic.identity_decision_events.id
+  ack_deadline_seconds       = 30
   message_retention_duration = "604800s"
   expiration_policy {
     ttl = ""

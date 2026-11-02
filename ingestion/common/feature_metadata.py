@@ -486,95 +486,17 @@ def write_generated_id_release(
     )
 
 
-AMBIGUITY_TYPE_EXPLANATIONS = {
-    "same_geometry_changed_properties": (
-        "same footprint as an existing feature, but its attributes changed"
-    ),
-    "same_properties_changed_geometry": (
-        "same attributes as an existing feature, but its footprint moved"
-    ),
-    "conflicting_partial_matches": (
-        "partially matches more than one existing feature"
-    ),
-}
-
-
-def identity_ambiguity_alert_body(
-    *,
-    asset_slug: str,
-    release: str,
-    ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
-    limit: int = 5,
-) -> str:
-    """Write the Slack body for a release paused on a maintainer decision.
-
-    This is a request for a decision, not an outage report. The wording says so
-    up front, states what is and is not affected, and gives the exact next step,
-    because an alert that reads like a broken pipeline gets escalated or
-    ignored rather than acted on.
-    """
-
-    visible = list(ambiguities[:limit])
-    count = len(ambiguities)
-    noun = "feature" if count == 1 else "features"
-    lines = [
-        f"*{asset_slug}* is ready to publish release `{release}`, but {count} {noun} "
-        "need a maintainer to confirm identity before it can go out.",
-        "",
-        "*Nothing is broken and nothing is at risk.* The published dataset is unchanged, "
-        "the job stopped before writing anything, and it will keep retrying on its normal "
-        "schedule. This release simply waits until someone decides.",
-        "",
-        "*Why this happens:* shared-datasets keeps a stable `feature_id` for each feature "
-        "across releases. When the source changes a record in a way that makes its identity "
-        "genuinely uncertain, the job asks rather than guesses, because a wrong guess "
-        "silently breaks every saved reference to that feature.",
-        "",
-        "*What to do:* add reviewed decisions to "
-        f"`catalog/feature-identity-resolutions/{asset_slug}.json` and merge them. "
-        "The job picks them up on its next run. See "
-        "`catalog/feature-identity-resolutions/README.md`.",
-    ]
-    if visible:
-        lines.append("")
-        lines.append(f"*{'Case' if count == 1 else 'Cases'} needing a decision:*")
-    for index, ambiguity in enumerate(visible, start=1):
-        explanation = AMBIGUITY_TYPE_EXPLANATIONS.get(ambiguity.ambiguity_type, ambiguity.ambiguity_type)
-        lines.extend(
-            [
-                f"{index}. Source key `{'/'.join(ambiguity.identity_key)}` — {explanation}.",
-                f"    Existing feature(s) it resembles: "
-                f"`{', '.join(ambiguity.matching_geometry_feature_ids + ambiguity.matching_properties_feature_ids) or 'none'}`",
-            ]
-        )
-    if count > len(visible):
-        lines.append(
-            f"\n_{count - len(visible)} more of the same kind. Full evidence for every case is in the "
-            "job logs, one line each, searchable for `identity ambiguity evidence`._"
-        )
-    return "\n".join(lines)
-
-
 def notify_identity_ambiguities(
     *,
     asset_slug: str,
     release: str,
     ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
 ) -> bool:
-    from scripts.slack_notify import notify
+    from ingestion.common import decision_events
 
-    count = len(ambiguities)
-    return notify(
-        title=f"Decision needed: {asset_slug} release {release}",
-        body=identity_ambiguity_alert_body(asset_slug=asset_slug, release=release, ambiguities=ambiguities),
-        status="decision",
-        fields={
-            "asset_slug": asset_slug,
-            "release": release,
-            "awaiting decisions": str(count),
-            "published data": "unchanged",
-        },
-        strict=False,
+    return decision_events.publish(
+        asset_slug=asset_slug, release=release,
+        ambiguities=[release_feature_model.identity_ambiguity_to_dict(item) for item in ambiguities],
     )
 
 
@@ -629,7 +551,6 @@ def raise_unresolved_identity_ambiguities(
 ) -> None:
     if not ambiguities:
         return
-    notify_identity_ambiguities(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
     # One log line per ambiguity: a single entry holding all evidence can
     # exceed the Cloud Logging entry size limit and get truncated, which
     # leaves maintainers without the evidence the resolutions file needs.
@@ -655,6 +576,7 @@ def raise_unresolved_identity_ambiguities(
             "per-ambiguity 'identity ambiguity evidence' log lines."
         )
     )
+    notify_identity_ambiguities(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
     raise IdentityDecisionRequired(
         f"{asset_slug} release {release} is waiting on {total} maintainer identity decision(s); "
         "nothing was published: "

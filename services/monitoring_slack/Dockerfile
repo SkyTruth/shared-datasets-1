@@ -5,5 +5,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock /app/
 RUN uv sync --locked --no-dev --no-install-project
 COPY scripts/slack_incident_api.py /app/scripts/slack_incident_api.py
+COPY ingestion/__init__.py /app/ingestion/__init__.py
+COPY ingestion/common/__init__.py /app/ingestion/common/__init__.py
+COPY ingestion/common/decision_events.py /app/ingestion/common/decision_events.py
 COPY services/monitoring_slack /app/services/monitoring_slack
 CMD ["/app/.venv/bin/python", "-m", "services.monitoring_slack.run"]

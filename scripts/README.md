@@ -103,3 +103,11 @@ offers a local canonical installation command. See the
 `concierge_profiling.py` owns source readers, attribute profiles and curator field recommendations; it has no CLI. Use `uv run python scripts/publishing_concierge.py start --help` and read the saved plan's field options.
 
 `feature_metadata_translation_reuse.py` handles canonical translation-source reuse for ingestion/localization callers; it has no CLI. Use `uv run python scripts/feature_metadata_localization.py --help` for materialization.
+
+
+`reconcile_identity_decisions.py` is the protected current-main notification
+reconciler. It requires an exact successful main `ci-ready` run/attempt, verifies
+accepted curation PR heads, and updates only private notification receipts and
+original Slack decision/review messages. It does not publish datasets or close
+native Monitoring incidents. Use `identity-decision-reconcile.yml`; local
+canonical data mutation and blind notification replay are not recovery paths.

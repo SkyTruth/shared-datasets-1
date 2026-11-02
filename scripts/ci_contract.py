@@ -226,6 +226,8 @@ def select_production_images(paths: list[str] | None) -> list[str]:
             continue
         if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
             selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
+            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
+                selected.add("monitoring-slack")
         elif path in {"services/__init__.py", "services/http_base.py"}:
             selected.add("catalog-viewer")
         elif path == "docs/assets/ims-sea-ice-extent.md":
@@ -294,6 +296,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
         }:
             selected.update(ingestion)
+            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
+                selected.add("cron_alert_policy")
         if path == "scripts/catalog_csv.py":
             selected.update({"eamlis", "wdpa", "dataset_usage"})
         if path == "catalog/shared-datasets-catalog.csv":

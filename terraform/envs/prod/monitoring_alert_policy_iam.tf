@@ -41,3 +41,17 @@ resource "google_project_iam_member" "github_actions_monitoring_alert_policy_man
   role    = google_project_iam_custom_role.monitoring_alert_policy_manager.name
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
+
+# Correlation reads only the exact incident delivered by Monitoring.
+resource "google_project_iam_custom_role" "monitoring_incident_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsMonitoringIncidentReader"
+  title       = "Shared Datasets Monitoring Incident Reader"
+  permissions = ["monitoring.alerts.get"]
+}
+
+resource "google_project_iam_member" "monitoring_slack_incident_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.monitoring_incident_reader.name
+  member  = "serviceAccount:${google_service_account.monitoring_slack.email}"
+}

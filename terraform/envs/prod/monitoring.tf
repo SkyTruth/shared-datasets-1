@@ -176,6 +176,11 @@ resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 textPayload:"shared_datasets_release_blocked=identity_decision_required"
 EOT
+      label_extractors = {
+        decision_asset     = "REGEXP_EXTRACT(textPayload, \"identity_decision_required ([a-z0-9-]+) release\")"
+        decision_release   = "REGEXP_EXTRACT(textPayload, \" release ([0-9]{4}-[0-9]{2}-[0-9]{2}) paused\")"
+        decision_execution = "EXTRACT(labels.\"run.googleapis.com/execution_name\")"
+      }
     }
   }
 
