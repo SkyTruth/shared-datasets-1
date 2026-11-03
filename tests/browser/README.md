@@ -6,6 +6,11 @@ Chromium. The tests click rendered vector points and inspect their release-bound
 metadata, then exercise denied selections and a delayed historical response.
 No production source is replaced and no map objects are mocked.
 
+Feature-ID scenarios inspect source attributes without a map click, copy/open
+generation-pinned historical links, reject unavailable snapshots, distinguish
+missing IDs from denied lookups, and discard late results. They also cover
+keyboard submission, narrow layouts, assets without tiles, and comparison mode.
+
 From the repository root, after following the repository Python environment
 instructions:
 

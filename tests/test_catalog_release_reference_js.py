@@ -52,6 +52,23 @@ assert.equal(api.lookupMatchesReference({asset_slug:asset.slug,resolved_release:
 assert.equal(api.lookupMatchesReference({asset_slug:asset.slug,resolved_release:old.date,sidecar_uri:old.files[2].path,sidecar_generation:102},old),true);
 assert.throws(() => api.assertArtifactResponse({gs_uri:old.pmtiles_file.path,resolved_release:old.date,generation:999},old,old.pmtiles_file),/changed/);
 
+// Feature links carry a concrete release and source metadata generation.
+const link = api.featureLinkUrl(old, 'old1', 'https://viewer.test/catalog/index.html?locale=es#other');
+assert.deepEqual(api.parseFeatureLink(link), {asset:asset.slug, release:old.date, featureId:'old1', generation:'102'});
+assert.equal(new URL(link).pathname, '/catalog/index.html');
+assert.equal(new URL(link).hash, '');
+assert.equal(new URL(link).searchParams.has('locale'), false);
+assert.equal(api.parseFeatureLink('https://viewer.test/?locale=es'), null);
+assert.equal(api.parseFeatureLink(api.featureLinkUrl({...old, catalog_source:'published'}, 'old1', link)).asset, `published:${asset.slug}`);
+for (const [key, value] of [['asset', '../other'], ['release', 'latest'], ['release', '2026-02-30'], ['feature_id', 'source_key'], ['metadata_generation', '0']]) {
+  const bad = new URL(link); bad.searchParams.set(key, value);
+  assert.throws(() => api.parseFeatureLink(bad.href));
+}
+assert.throws(() => api.parseFeatureLink(link + '&feature_id=other'), /duplicate/);
+assert.throws(() => api.parseFeatureLink('https://viewer.test/?asset=example-layer'), /incomplete/);
+assert.throws(() => api.featureLinkUrl(old, 'bad/id', link), /valid feature ID/);
+assert.throws(() => api.featureLinkUrl(bareRef, 'old1', link), /no source metadata/);
+
 // Exercise the actual orchestration functions, with only transport and DOM absent.
 const app = fs.readFileSync('web/catalog/app.js','utf8');
 const map = fs.readFileSync('web/catalog/map-preview.js','utf8');
@@ -179,6 +196,7 @@ assert.equal(mountCount,0);
 
 // Actual inspector completion cannot restore a cleared error/empty selection.
 renderContext.elements.featureInspector={hidden:false,replaceChildren:noOp};
+renderContext.elements.featureLookupStatus={textContent:''};
 let finishInspection;
 const inspectionRenders=[];
 renderContext.renderFeatureInspector=features=>inspectionRenders.push(features);

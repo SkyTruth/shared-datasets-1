@@ -1,5 +1,5 @@
 import {createComparisonController, changedPropertyFields} from "./compare-releases.js";
-import {assetKey, catalogApiUrl, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
+import {assetKey, catalogApiUrl, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference, parseFeatureLink, featureLinkUrl} from "./release-reference.js";
 
 import {captureWorkspace, pythonSnippet, typescriptSnippet} from "./workspace.js";
 
@@ -127,6 +127,9 @@ const elements = {
   mapStatus: document.querySelector("#map-status"),
   colorLegend: document.querySelector("#color-legend"),
   featureInspector: document.querySelector("#feature-inspector"),
+  featureLookup: document.querySelector("#feature-lookup"),
+  featureIdInput: document.querySelector("#feature-id-input"),
+  featureLookupStatus: document.querySelector("#feature-lookup-status"),
   basemap: document.querySelector("#basemap-select"),
   metadataLanguageControl: document.querySelector("#metadata-language-control"),
   metadataLanguage: document.querySelector("#metadata-language-select"),
@@ -158,6 +161,7 @@ const comparisonController = createComparisonController({loadMapModule, getBasem
     elements.mapSection.classList.toggle("comparison-active", enabled);
     if (enabled) elements.mapSection.hidden = false;
     document.querySelector("#use-section").hidden = enabled || state.selectedSlugs.length !== 1;
+    renderFeatureLookup(enabled ? null : selectedAssets().length === 1 ? selectedReference(selectedAssets()[0]) : null);
     if (restore) renderSelectedPmtiles();
   },
 });
@@ -209,6 +213,7 @@ async function init() {
     populateFilters();
     wireEvents();
     applyFilters();
+    await restoreFeatureLink();
   } catch (error) {
     renderFatalError(error);
   }
@@ -397,6 +402,10 @@ function gsToHttps(path) {
 
 function wireEvents() {
   wireUseEvents();
+  elements.featureLookup.addEventListener("submit", event => {
+    event.preventDefault();
+    void findFeatureById(elements.featureIdInput.value.trim());
+  });
   elements.includePublished.addEventListener("change", togglePublishedDatasets);
   elements.search.addEventListener("input", applyFilters);
   for (const select of [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier]) {
@@ -734,6 +743,7 @@ function renderDetail(asset) {
   renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
   const rendering = renderPmtiles([reference]);
+  renderFeatureLookup(reference);
   renderUseSection(reference);
   return rendering;
 }
@@ -750,6 +760,7 @@ function renderDocsLink(asset) {
 
 function renderMultiDetail(assets) {
   comparisonController.setAsset(null);
+  renderFeatureLookup(null);
   const references = selectedReferences(assets);
   const mapAssets = references.filter((asset) => asset.pmtiles_url);
   elements.empty.hidden = true;
@@ -1358,7 +1369,67 @@ async function loadMapModule() {
   return state.mapModule;
 }
 
+function renderFeatureLookup(reference) {
+  const file = metadataFile(reference?.files || []);
+  elements.featureLookup.hidden = !file?.generation || comparisonController.isOpen();
+  elements.featureIdInput.value = "";
+  elements.featureLookupStatus.textContent = "";
+}
+
+async function restoreFeatureLink() {
+  try {
+    const link = parseFeatureLink(window.location.href);
+    if (!link) return;
+    if (link.asset.startsWith("published:") && state.catalog.feature_preview && !state.publishedLoaded) {
+      elements.includePublished.checked = true;
+      await togglePublishedDatasets();
+    }
+    const asset = state.assets.find(candidate => assetKey(candidate) === link.asset);
+    if (!asset) throw new Error("The linked dataset is unavailable in this catalog.");
+    const reference = selectReleaseReference(asset, link.release, {bucket: asset.catalog_bucket || state.catalog.bucket});
+    const file = metadataFile(reference.files);
+    if (!file || artifactGeneration(file.generation) !== link.generation) {
+      throw new Error("The linked metadata snapshot has changed or is unavailable. Select the dataset to inspect an available release.");
+    }
+    state.versionBySlug[link.asset] = link.release;
+    selectAsset(link.asset, {scroll: false});
+    elements.featureIdInput.value = link.featureId;
+    await findFeatureById(link.featureId);
+  } catch (error) {
+    clearDetail();
+    elements.empty.querySelector("h2").textContent = "Feature link unavailable";
+    elements.empty.querySelector("p:last-child").textContent = error.message;
+  }
+}
+
+async function findFeatureById(id) {
+  const assets = selectedAssets();
+  if (assets.length !== 1 || comparisonController.isOpen()) return;
+  clearFeatureInspector();
+  const serial = state.featureLookupSerial;
+  try {
+    if (!FEATURE_METADATA_ID_VALUE_RE.test(id)) throw new Error("Enter a feature ID of 1–64 letters or digits.");
+    const reference = selectedReference(assets[0]);
+    elements.featureLookupStatus.textContent = `Looking up ${id} in release ${reference.date}…`;
+    const lookup = await lookupFeatureMetadata({reference, assetSlug: reference.slug, release: reference.date, locale: "", ids: new Set([id])});
+    if (serial !== state.featureLookupSerial) return;
+    const item = lookup.get(id);
+    if (!item?.found) {
+      elements.featureLookupStatus.textContent = `Feature ${id} was not found in release ${reference.date}. Use the published feature_id, not an upstream source key.`;
+      return;
+    }
+    const feature = enrichFeature({assetSlug: reference.slug, assetTitle: reference.title, accessTier: reference.access_tier,
+      release: reference.date, releaseReference: reference, metadataLocale: "", properties: {feature_id: id}}, item);
+    state.inspectedFeatures = [feature];
+    renderFeatureInspector([feature]);
+    elements.featureLookupStatus.textContent = `Source attributes for feature ${id} · release ${reference.date}.`;
+  } catch (error) {
+    if (serial === state.featureLookupSerial) elements.featureLookupStatus.textContent = `Feature lookup unavailable. ${error.message}`;
+  }
+}
+
 async function handleFeatureSelect(features) {
+  elements.featureLookupStatus.textContent = "";
   const selectedFeatures = Array.isArray(features) ? features : [features].filter(Boolean);
   state.inspectedFeatures = selectedFeatures;
   const requestSerial = ++state.featureLookupSerial;
@@ -1461,7 +1532,7 @@ function showToast(message) {
 function featureLookupGroups(features) {
   const groups = new Map();
   for (const feature of features) {
-    const locale = feature.comparisonSide ? "" : state.metadataLocale;
+    const locale = feature.metadataLocale ?? (feature.comparisonSide ? "" : state.metadataLocale);
     const featureId = featureIdFor(feature);
     const assetSlug = String(feature?.assetSlug || "").trim();
     const release = String(feature?.release || "latest").trim();
@@ -1499,7 +1570,7 @@ async function lookupFeatureMetadata(group) {
   if (publicFeatureMetadataLookupCanLoad(asset, group.locale)) {
     return lookupFeatureMetadataFromPublicSidecar(group, asset);
   }
-  return emptyFeatureMetadataLookup(group.ids);
+  throw new Error("Feature metadata requires an available, authorized catalog lookup or a public sidecar.");
 }
 
 function lookupFeatureMetadataFromIndex(ids, index) {
@@ -2345,6 +2416,7 @@ function clearFeatureInspector() {
   elements.featureInspector.hidden = true;
   elements.featureInspector.replaceChildren();
   state.inspectedFeatures = [];
+  elements.featureLookupStatus.textContent = "";
   state.mapModule?.clearFeatureInspectionIndicator?.();
 }
 
@@ -2481,6 +2553,15 @@ function appendFeatureHit(feature, changedFields) {
     meta.title = `Geometry hash: ${feature.geometryHash}`;
   }
   hitHeader.append(title, meta);
+  const sourceMetadata = metadataFile(feature.releaseReference?.files || []);
+  if (feature.metadataLoaded && sourceMetadata?.generation && FEATURE_METADATA_ID_VALUE_RE.test(featureIdFor(feature))) {
+    const copy = document.createElement("button");
+    copy.className = "icon-button";
+    copy.type = "button";
+    copy.textContent = "Copy feature link";
+    copy.addEventListener("click", () => copyValue(featureLinkUrl(feature.releaseReference, featureIdFor(feature), window.location.href), copy));
+    hitHeader.append(copy);
+  }
   hit.append(hitHeader);
 
   const unavailableMessage = featureMetadataUnavailableMessage(feature);
@@ -2892,6 +2973,7 @@ function safeMarkdownHref(href) {
 
 function clearDetail() {
   comparisonController.setAsset(null);
+  renderFeatureLookup(null);
   state.selectedSlug = null;
   state.selectedSlugs = [];
   elements.detail.hidden = true;

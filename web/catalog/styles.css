@@ -1046,6 +1046,18 @@ h3 {
   border-top: 1px solid var(--line);
 }
 
+.feature-lookup {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.feature-lookup label { font-weight: 600; }
+.feature-lookup-controls { display: flex; gap: 8px; margin-top: 6px; }
+.feature-lookup-controls input { min-width: 0; width: 15rem; max-width: 100%; }
+.feature-lookup p { margin: 6px 0 0; font-size: 0.8rem; color: var(--muted); }
+.feature-lookup-controls button { flex-shrink: 0; }
+.feature-hit-heading .icon-button { font-size: 0.75rem; }
+
 .feature-inspector-heading {
   display: flex;
   align-items: baseline;
@@ -1080,6 +1092,7 @@ h3 {
 
 .feature-hit-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;

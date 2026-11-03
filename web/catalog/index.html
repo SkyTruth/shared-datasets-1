@@ -126,7 +126,6 @@
             </div>
             <p id="compare-map-note" class="compare-map-note" role="status" hidden></p>
             <div id="color-legend" class="color-legend" hidden></div>
-            <div id="feature-inspector" class="feature-inspector" hidden></div>
           </section>
 
           <div id="version-path-row" class="path-row version-row" hidden>
@@ -144,6 +143,16 @@
               <progress id="compare-progress-bar" aria-labelledby="compare-progress-label compare-progress-count"></progress>
             </div>
           </div>
+          <form id="feature-lookup" class="feature-lookup" hidden>
+            <label for="feature-id-input">Feature ID</label>
+            <div class="feature-lookup-controls">
+              <input id="feature-id-input" type="text" required pattern="[A-Za-z0-9]{1,64}" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="feature-lookup-help" />
+              <button class="icon-button" type="submit">Find feature</button>
+            </div>
+            <p id="feature-lookup-help">Look up source attributes in the selected release using its published feature_id, rather than an upstream source key.</p>
+            <p id="feature-lookup-status" role="status" aria-live="polite"></p>
+          </form>
+          <div id="feature-inspector" class="feature-inspector" hidden></div>
           <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
               <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
