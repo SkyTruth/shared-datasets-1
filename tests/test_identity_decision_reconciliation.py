@@ -17,6 +17,44 @@ from workflow_helpers import load_workflow
 IDENTITY = {"team": "T12345678", "user": "U12345678", "channel": "C12345678"}
 
 
+@pytest.mark.parametrize("ready", [True, False])
+def test_actual_cli_transport_preserves_the_verifier_pagination_contract(monkeypatch, capsys, ready):
+    sha = "a" * 40
+    repository = {"id": 42, "full_name": command.REPOSITORY}
+    prefix = f"repos/{command.REPOSITORY}"
+    responses = {
+        prefix: repository,
+        prefix + "/actions/workflows/ci.yml": {"id": 9, "path": ".github/workflows/ci.yml"},
+        prefix + "/actions/runs/7/attempts/1": {
+            "id": 7, "run_attempt": 1, "workflow_id": 9, "path": ".github/workflows/ci.yml",
+            "event": "push", "head_branch": "main", "head_sha": sha,
+            "repository": repository, "head_repository": repository},
+        prefix + "/actions/runs/7/attempts/1/jobs?per_page=100": [{"total_count": 1, "jobs": [{
+            "name": "ci-ready", "status": "completed", "conclusion": "success" if ready else "failure"}]}],
+        prefix + "/git/ref/heads/main": {"object": {"sha": sha}},
+    }
+    calls = []
+    def read(path, *, paginate=False):
+        calls.append((path, paginate))
+        return json.dumps(responses[path]).encode()
+    # Keep both real adapters intact: mocking pages() hides their incompatible
+    # calling conventions. Substitute only their shared read-only HTTP boundary.
+    monkeypatch.setattr(command.deployment, "read", read)
+    monkeypatch.setattr(command.auth, "read", read)
+    monkeypatch.setattr(command.subprocess, "check_output", lambda *args, **kwargs: sha + "\n")
+    monkeypatch.setenv("GITHUB_REPOSITORY", command.REPOSITORY)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_WORKFLOW_REF", f"{command.REPOSITORY}/.github/workflows/ci.yml@refs/heads/main")
+    args = ["--executor-sha", sha, "--source-run-id", "7", "--source-run-attempt", "1", "--check-only"]
+    if ready:
+        assert command.main(args) == 0
+        assert "Tested main decision executor verified" in capsys.readouterr().out
+    else:
+        with pytest.raises(command.deployment.DeploymentError, match="ci-ready"):
+            command.main(args)
+    assert (prefix + "/actions/runs/7/attempts/1/jobs?per_page=100", True) in calls
+
+
 @pytest.fixture
 def authority(monkeypatch):
     source = decision_event()
