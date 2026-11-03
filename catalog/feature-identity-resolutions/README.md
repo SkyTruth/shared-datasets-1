@@ -1,5 +1,9 @@
 # Feature Identity Resolutions
 
+Start with [SkyTruth's process for resolving feature identity conflicts](../../docs/standards/feature-identity-resolution.md)
+for recommendations, evidence requirements, automation limits and new edge
+conditions. This guide defines the resolution-file contract.
+
 This directory stores reviewed, release-scoped decisions for generated
 `feature_id` ambiguities. Scheduled ingestion jobs load
 `{asset-slug}.json` when building a release. A decision is applied only when its
@@ -19,8 +23,9 @@ available, and picking the wrong one corrupts identity rather than failing safe:
   under a new source key. Give it that feature's ID. Requires
   `reuse_feature_id`, which must be one of the matched feature IDs.
 - `keep_previous_key_mapping` — the source key already owns a `feature_id` and
-  keeps it. Use when the key is unchanged but its content moved enough to trip
-  the gate: the key settles identity. Takes no `reuse_feature_id`.
+  keeps it. Use after reviewed evidence supports continuity despite the content
+  change that tripped the gate. The unchanged key alone is not proof against
+  source-key recycling. Takes no `reuse_feature_id`.
 - `assign_new_feature_id` — this is genuinely not the feature it resembles.
   Break continuity deliberately and issue a new ID.
 
