@@ -493,7 +493,7 @@ def main():
                     "source_counts": source_counts,
                     "artifact_sha256": output.sha256,
                     "next_generated_feature_id": output.next_generated_feature_id,
-                    "compatibility_verified": legacy is not None,
+                    "compatibility_verified": args.compare_legacy,
                     "baseline": vars(baselines[asset.slug].snapshot)
                     if baselines[asset.slug].snapshot
                     else None,

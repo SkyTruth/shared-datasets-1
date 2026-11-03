@@ -265,8 +265,12 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await select(page, 'public');
   const field = page.getByRole('textbox', {name:'Find feature', exact:true});
-  const version = await page.locator('#version-select').boundingBox();
-  const input = await field.boundingBox();
+  await expect(field).toBeVisible();
+  // Compare one layout snapshot: the map can reflow the panel between API calls.
+  const {version, input} = await field.evaluate(element => ({
+    version: document.querySelector('#version-select').getBoundingClientRect().toJSON(),
+    input: element.getBoundingClientRect().toJSON(),
+  }));
   expect(input.x).toBeGreaterThan(version.x + version.width);
   expect(Math.abs(input.y - version.y)).toBeLessThan(1);
   expect(Math.abs(input.height - version.height)).toBeLessThan(1);

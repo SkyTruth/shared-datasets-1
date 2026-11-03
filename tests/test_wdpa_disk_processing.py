@@ -351,6 +351,134 @@ def test_replay_source_counts_deduplicate_across_layers(monkeypatch, tmp_path):
     assert not (tmp_path / "source-counts.sqlite").exists()
 
 
+@pytest.mark.parametrize("mode", ["stage", "sample", "compare", "compare-failure"])
+def test_successful_replay_modes_persist_per_realm_compatibility(
+    monkeypatch, tmp_path, capsys, mode
+):
+    """Run real CLI/report/comparison/staging code with local native/GCS providers."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    import shutil
+
+    from ingestion.wdpa_monthly import artifact_bundle as bundle
+    from scripts import local_wdpa_sample as replay
+    from test_wdpa_artifact_bundle import Objects
+    from test_wdpa_monthly import fake_asset_outputs
+
+    wdpa = replay.wdpa
+    source = tmp_path / "source.zip"
+    source.write_bytes(b"frozen source fixture")
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "pins.json").write_text("{}")
+    translations = inputs / "translation-sources.json"
+    translations.write_text("{}")
+    work = tmp_path / "replay"
+    argv = ["local_wdpa_sample.py", "--source", str(source), "--baselines", str(inputs),
+            "--translation-sources", str(translations), "--workdir", str(work),
+            "--run-date", "2026-04-01"]
+    argv += ["--stage-build"] if mode == "stage" else ["--fraction", "0.001"]
+    if mode.startswith("compare"):
+        argv.append("--compare-legacy")
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(replay, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(replay, "cgroup_limits", lambda: (4, 8 * 1024**3))
+    monkeypatch.setattr(resources, "cgroup_memory", lambda: (100, 123))
+    monkeypatch.setattr(resources, "cgroup_memory_stat", lambda: {})
+    monkeypatch.setattr(wdpa, "native_versions", lambda: {})
+    fields = tuple(wdpa.FieldSpec(name, "String") for name in ("SITE_PID", "SITE_ID", "ISO3"))
+    monkeypatch.setattr(wdpa, "prepare_source_datasets", lambda path, _: [str(path)])
+    monkeypatch.setattr(wdpa, "discover_source_layers", lambda paths: (
+        [wdpa.SourceLayer("fixture", fields, "GEOMETRY", paths[0])], "MARINE", fields))
+    monkeypatch.setattr(wdpa, "assert_sample_field_available", lambda *_: None)
+    rows = [feature("a", SITE_ID=1, ISO3="IND"), feature("b", 2, SITE_ID=2, ISO3="FRA")]
+    monkeypatch.setattr(replay, "source_count_features", lambda *_: (r["properties"] for r in rows))
+    snapshot = model.GeneratedIdentitySnapshot("gs://fixture/manifest.json", 1, "a" * 64)
+    monkeypatch.setattr(replay, "load_baseline", lambda *_: model.GeneratedIdentityBaseline(
+        (), 1, "2026-03-01", contract_id=wdpa.CONTRACT_ID, snapshot=snapshot))
+
+    def memory(_config, directory):
+        database = directory / "translation-memory.sqlite"
+        database.write_bytes(b"translation index fixture")
+        return SimpleNamespace(database=database, locales=bundle.LOCALES, close=lambda: None)
+
+    monkeypatch.setattr(replay, "build_frozen_translation_memory", memory)
+    objects = Objects()
+    stager = bundle.BuildStager(objects, "wdpa-monthly-replay")
+    monkeypatch.setattr(bundle.BuildStager, "from_runtime", lambda: stager)
+
+    def native_outputs(*, asset, workdir, **_kwargs):
+        output = fake_asset_outputs(workdir, asset=asset, release="2026-04-01")
+        records = []
+        for index, row in enumerate(rows, 1):
+            gh, ph = model.content_hashes(geometry=row["geometry"], properties=row["properties"])
+            records.append(dict(schema_version=1, asset_slug=asset.slug, release="2026-04-01",
+                                feature_id=str(index), identity_key=[row["properties"]["SITE_PID"]],
+                                geometry_hash=gh, properties_hash=ph, properties=row["properties"], provenance={}))
+        model.write_metadata_sidecar(records, output.metadata)
+        for path in output.localized_metadata.values():
+            shutil.copyfile(output.metadata, path)
+        output.schema.write_text(json.dumps(output.schema_payload))
+        output.fgb.write_text(json.dumps([
+            {**row, "properties": {**row["properties"], "feature_id": str(i)}}
+            for i, row in enumerate(rows, 1)]))
+        hashes = {role: wdpa.sha256_file(path) for role, path in bundle.artifact_paths(output).items()}
+        hashes["csv"] = hashes["metadata_translations"]
+        return replace(output, sha256=hashes, next_generated_feature_id=3)
+
+    monkeypatch.setattr(wdpa, "build_asset_outputs", native_outputs)
+    legacy_calls = []
+
+    def legacy_outputs(directory, *, asset, **kwargs):
+        directory.mkdir()
+        legacy_calls.append(asset.slug)
+        output = native_outputs(asset=asset, workdir=directory)
+        if mode == "compare-failure":
+            records = list(model.read_metadata_sidecar(output.metadata))
+            records[0]["properties"]["NAME"] = "different legacy output"
+            model.write_metadata_sidecar(records, output.metadata)
+        localized = directory / "localized"
+        localized.mkdir()
+        for path in (*output.localized_metadata.values(), output.metadata_translations):
+            shutil.move(path, localized / path.name)
+        return output.metadata, output.schema, output.fgb, localized, SimpleNamespace(
+            next_generated_feature_id=output.next_generated_feature_id,
+            identity_decisions=output.identity_decisions)
+
+    monkeypatch.setattr(replay, "legacy_sample", legacy_outputs)
+    monkeypatch.setattr(wdpa, "layer_fields", lambda _: fields)
+
+    @contextmanager
+    def native_geometry(command, **_kwargs):
+        yield iter(json.loads(Path(command[-1]).read_text()))
+
+    monkeypatch.setattr(replay, "feature_stream", native_geometry)
+    if mode == "compare-failure":
+        with pytest.raises(RuntimeError, match="legacy IDs, hashes or properties differ"):
+            replay.main()
+        report = json.loads((work / "benchmark.json").read_text())
+        assert report["state"] == "failed" and report["assets"] == {}
+        assert not objects.data
+        return
+    replay.main()
+    report = json.loads((work / "benchmark.json").read_text())
+    assert report == json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert report["state"] == "succeeded"
+    expected = mode == "compare"
+    assert report["compatibility_verified"] is expected
+    assert set(report["assets"]) == {a.slug for a in wdpa.ASSETS}
+    assert all(v["compatibility_verified"] is expected for v in report["assets"].values())
+    assert legacy_calls == ([a.slug for a in wdpa.ASSETS] if expected else [])
+    if mode == "stage":
+        assert set(report["staged_assets"]) == set(report["assets"])
+        for asset in wdpa.ASSETS:
+            for ref in report["staged_assets"][asset.slug]["artifacts"].values():
+                name = bundle.check_reference(ref, execution=stager.execution)
+                assert objects.data[name][1] and not (work / Path(name).name).exists()
+    else:
+        assert not objects.data
+
+
 def test_normalized_store_matches_old_export_semantically(tmp_path):
     pytest.importorskip("osgeo")
     from ingestion.wdpa_monthly.geometry_store import NormalizedGeometryStore
