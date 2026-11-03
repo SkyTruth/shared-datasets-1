@@ -69,6 +69,18 @@ CONTRACT_FILES = (
 )
 
 
+# These ingestion sources are copied into the catalog-viewer image and imported
+# by its HTTP/review reader. Keep validation coverage with the actual Docker COPY
+# boundary, independently of which deployment the changed path selects.
+VIEWER_INGESTION_INPUTS = frozenset({
+    "ingestion/__init__.py", "ingestion/common/__init__.py",
+    "ingestion/common/decision_events.py", "ingestion/common/identity_index.py",
+    "ingestion/common/publication.py", "ingestion/common/runtime.py",
+    "ingestion/common/http.py", "ingestion/wdpa_monthly/__init__.py",
+    "ingestion/wdpa_monthly/identity_review.py",
+})
+
+
 # Additional suites beyond ALWAYS, only after tracing imports (including other
 # scripts), subprocess/workflow callers, Docker COPY sources and generated data.
 # Unproved paths retain production-images; the image selector below narrows
@@ -133,6 +145,8 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         return "documentation", set()
     if path.startswith(".github/"):
         return "shared", set(SUITES)
+    if path in VIEWER_INGESTION_INPUTS:
+        return "component", {"geospatial-integration", "production-images", "browser"}
     if path.startswith("ingestion/") or path in NATIVE_TESTS:
         return "component", {"geospatial-integration", "production-images"}
     if path.startswith("api/"):
@@ -219,6 +233,8 @@ def select_production_images(paths: list[str] | None) -> list[str]:
             continue
         if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
             continue
+        if path in VIEWER_INGESTION_INPUTS:
+            selected.add("catalog-viewer")
         if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
             selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
             if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:

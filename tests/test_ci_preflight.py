@@ -136,9 +136,9 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
     (["ingestion/mpatlas_monthly/run.py", "tests/test_mpatlas_monthly.py"], {"mpatlas-monthly"}),
     (["ingestion/sea_ice_daily/run.py"], {"sea-ice-daily", "wdpa-monthly"}),
     (["ingestion/wdpa_monthly/build.py"], {"wdpa-monthly"}),
-    (["ingestion/common/runtime.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"}),
-    (["ingestion/__init__.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack"}),
-    (["ingestion/common/decision_events.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack"}),
+    (["ingestion/common/runtime.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "catalog-viewer"}),
+    (["ingestion/__init__.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack", "catalog-viewer"}),
+    (["ingestion/common/decision_events.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack", "catalog-viewer"}),
     (["services/catalog_viewer/run.py"], {"catalog-viewer"}),
     (["services/feature_preview_service/run.py"], {"catalog-viewer"}),
     (["services/http_base.py"], {"catalog-viewer"}),
@@ -151,6 +151,18 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
 def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):
     assert set(select_production_images(paths)) == expected
     assert select_production_images(paths) == select_production_images(list(reversed(paths)))
+
+
+@pytest.mark.parametrize("path", [
+    source
+    for line in (ROOT / "services/catalog_viewer/Dockerfile").read_text().splitlines()
+    if line.startswith("COPY ")
+    for source in shlex.split(line)[1:-1]
+    if source.startswith("ingestion/")
+])
+def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
+    assert "catalog-viewer" in select_production_images([path])
+    assert "browser" in select_suites([path])[0]
 
 
 @pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
