@@ -121,6 +121,18 @@ do not send production messages. Cloud Run publishers must match the configured
 asset/job pair; each event binds project, execution, asset, release and the full
 captured identity hashes and match sets.
 
+After WDPA retains complete review evidence, a separate typed
+`feature-identity-review-ready-v1` event attaches its generation/size/checksum
+reference to that same captured context. The existing parent gains direct
+links to each visible case and a selector for the complete captured case set.
+The IAP-protected catalog checks the exact bundle before displaying fields and
+stored footprints. A late original event cannot downgrade a linked review;
+changed cases or references are rejected. The receipt persists the configured
+authenticated catalog origin, so retries keep the original links. Existing
+v1 events and their persisted receipts remain readable; linked captures use an
+explicit `identity-review-notification-v1` receipt schema. See
+[WDPA review evidence](wdpa-identity-review.md#review-from-the-alert).
+
 After reviewed curation merges to main, **Alerts / Identity decision
 reconciliation** verifies the exact accepted PR head and runtime-legal choice.
 It replies in the original thread with the decision of record, `jonaraphael` as

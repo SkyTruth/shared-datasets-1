@@ -46,6 +46,8 @@ styles.css
 app.js
 map-preview.js
 release-reference.js
+compare-releases.js
+identity-review.js
 workspace.js
 workspace-contract.js
 catalog.json
@@ -350,9 +352,36 @@ no access: restricted records still require the authorized viewer.
 The feature lookup reuses the existing metadata size budget, bounded viewer API,
 and public sidecar streaming routes. Late responses cannot restore an inspector
 after a selection changes or is cleared. Source-attribute lookup remains in the
-source language when the map's metadata language changes. The catalog includes
-published releases only; pending ingestion identity cases require the evidence
-and review work described in [the implementation plan](../../../../docs/feature-identity-review-plan.md).
+source language when the map's metadata language changes. Dataset discovery
+lists published releases. Pending WDPA identity cases are available separately
+through exact evidence links in the authenticated viewer.
+
+## Pending identity review
+
+Slack case links carry prefixed `review_*` query parameters for a captured case,
+asset/date, execution and bundle generation/size/SHA-256. The catalog lazily
+loads `identity-review.js` only for these links, keeping ordinary startup usable
+with the previous viewer allowlist. A read-only dialog calls the same-origin
+`GET /api/identity-review`, which always requires the SkyTruth IAP identity.
+The production reader derives one managed WDPA staging path, checks the exact
+generation and byte integrity, validates the bundle and rejects cross-case or
+cross-release identity mismatches. No URL parameters grant access to another
+object. Responses are no-store; bundle reads and serialized case responses are
+limited to 16 MiB. Candidate expansion charges its output against that budget.
+One read runs per instance; another receives 429. Larger producer bundles use
+the offline report. Preview readers retain their existing grants and cannot read evidence.
+
+The dialog shows all previous candidates and key ownership, highlights every
+field difference including JSON types and absence, overlays stored incoming and
+previous GeoJSON footprints, and links previous IDs to their pinned published
+metadata. Separate records sharing a footprint remain separately selectable.
+Sample evidence is explicit and cannot establish global source-key absence.
+The choices explain effects without approving or submitting decisions. Closing
+the dialog cancels pending reads/maps and restores published browsing. Missing,
+inaccessible or changed evidence gives an explicit unavailable state.
+
+See [WDPA review evidence](../../../../docs/wdpa-identity-review.md) for notification
+enrichment, retention and the protected reader/receiver/worker deployment paths.
 
 ## Dataset integration
 

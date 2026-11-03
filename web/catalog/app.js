@@ -214,6 +214,7 @@ async function init() {
     wireEvents();
     applyFilters();
     await restoreFeatureLink();
+    await restoreIdentityReviewLink();
   } catch (error) {
     renderFatalError(error);
   }
@@ -1290,6 +1291,7 @@ function renderSelectedPmtiles() {
 }
 
 async function renderPmtiles(assets) {
+  if (document.querySelector("#identity-review")?.open) return;
   if (comparisonController.isOpen()) return;
   const requestSerial = ++state.mapRequestSerial;
   state.mapModule?.cancelMapPreview();
@@ -1358,6 +1360,46 @@ async function renderPmtiles(assets) {
     if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
+  }
+}
+
+async function restoreIdentityReviewLink() {
+  const params = new URLSearchParams(window.location.search);
+  if (![...params.keys()].some(key => key.startsWith("review_"))) return;
+  const dialog = document.createElement("dialog");
+  dialog.id = "identity-review";
+  dialog.className = "identity-review-dialog";
+  dialog.setAttribute("aria-labelledby", "identity-review-title");
+  // Keep the requested review and its unavailable state self-contained when
+  // the public shell and protected viewer roll out at different times.
+  dialog.innerHTML = `<header class="section-title-row">
+    <div><p class="eyebrow">Maintainer review</p><h2 id="identity-review-title">Feature identity comparison</h2></div>
+    <button id="identity-review-close" class="icon-button" type="button" autofocus>Close review</button>
+    </header><p id="identity-review-status" role="status" aria-live="polite">Loading captured evidence…</p>
+    <div id="identity-review-content" hidden></div>`;
+  document.body.append(dialog);
+  let dispose = () => {};
+  const close = () => dialog.close();
+  document.querySelector("#identity-review-close").addEventListener("click", close, {once: true});
+  dialog.addEventListener("close", () => {
+    dispose();
+    dialog.remove();
+    const url = new URL(window.location.href);
+    for (const key of [...url.searchParams.keys()]) if (key.startsWith("review_")) url.searchParams.delete(key);
+    history.replaceState(null, "", url);
+    renderSelectedPmtiles();
+  }, {once: true});
+  dialog.showModal();
+  state.mapRequestSerial++;
+  state.mapModule?.cancelMapPreview();
+  try {
+    // Older viewers can keep serving ordinary browsing before this lazy route
+    // and its private reader have deployed.
+    const module = await import(`./identity-review.js?v=${encodeURIComponent(state.catalog.generated_at)}`);
+    if (dialog.open) dispose = module.openIdentityReview({dialog, href: window.location.href, loadMapModule});
+  } catch (error) {
+    if (dialog.open) document.querySelector("#identity-review-status").textContent =
+      `Identity review unavailable. ${error.message} Close review to continue browsing published data.`;
   }
 }
 

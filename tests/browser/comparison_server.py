@@ -10,6 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.catalog_viewer import comparisons, run as viewer
+from services.catalog_viewer.identity_review import ReviewReader
+from google.api_core.exceptions import NotFound
 
 work = Path(sys.argv[1])
 
@@ -63,7 +65,9 @@ class ScenarioJobs:
         with self.lock:
             if owner not in self.scenarios:
                 self.scenarios[owner] = comparisons.ComparisonJobs(
-                    root=work / "comparison-jobs" / hashlib.sha256(owner.encode()).hexdigest(),
+                    root=work
+                    / "comparison-jobs"
+                    / hashlib.sha256(owner.encode()).hexdigest(),
                     reader=reader,
                     geometry_opener=geometry_opener,
                 )
@@ -84,6 +88,36 @@ class ScenarioJobs:
 
 store = FixtureStore(work / "site")
 jobs = ScenarioJobs()
+
+
+class EvidenceClient:
+    def bucket(self, name):
+        assert name == "skytruth-shared-datasets-1"
+        return self
+
+    def blob(self, name, *, generation):
+        fixtures = json.loads((work / "identity-review-alerts.json").read_bytes())
+        found = next(
+            (
+                row
+                for row in fixtures
+                if row["event"]["review_bundle"]["uri"]
+                == f"gs://skytruth-shared-datasets-1/{name}"
+                and row["event"]["review_bundle"]["generation"] == generation
+            ),
+            None,
+        )
+        if found is None:
+            raise NotFound("Synthetic exact generation unavailable")
+
+        class Blob:
+            def download_as_bytes(self, *, start, end, if_generation_match, timeout):
+                assert if_generation_match == generation and timeout == 30
+                return (work / found["file"]).read_bytes()[start : end + 1]
+
+        return Blob()
+
+
 handler = viewer.make_handler(
     catalog_cache=viewer.CatalogJsonCache(loader=store.read_catalog_json),
     object_store=store,
@@ -93,6 +127,7 @@ handler = viewer.make_handler(
     allowed_email_domains=("skytruth.org",),
     comparison_jobs=jobs,
     usage_reader=None,
+    identity_review_reader=ReviewReader(EvidenceClient()),
 )
 ThreadingHTTPServer(
     ("127.0.0.1", int(os.environ.get("CATALOG_BROWSER_PORT", "4179"))), handler

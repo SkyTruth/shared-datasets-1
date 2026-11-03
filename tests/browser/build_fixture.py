@@ -16,9 +16,68 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts import release_feature_model as model
+from ingestion.common import decision_events as wire
+from ingestion.wdpa_monthly import identity_review as review
+from services.monitoring_slack import decisions
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def build_identity_review(work):
+    original = json.loads(
+        (REPO / "tests/fixtures/wdpa-identity-review.json").read_bytes()
+    )
+    fixtures = []
+    for name, execution, generation, fraction in (
+        ("complete", "wdpa-monthly-abcde", 1001, 1),
+        ("sample", "wdpa-monthly-fghij", 1002, 0.001),
+    ):
+        bundle = json.loads(json.dumps(original))
+        bundle["producer"]["execution"] = execution
+        bundle["sample_fraction"] = fraction
+        review.validate_bundle(bundle)
+        raw = wire.canonical(bundle)
+        path = work / f"identity-review-{name}.json"
+        path.write_bytes(raw)
+        source = {
+            "project": wire.PROJECT,
+            "job": "wdpa-monthly",
+            "execution": execution,
+            "asset_slug": bundle["capture"]["asset_slug"],
+            "release": bundle["capture"]["release"],
+        }
+        ref = {
+            "uri": f"gs://{review.BUCKET}/_scratch/wdpa-builds/{execution}/{source['asset_slug']}/identity-review.json",
+            "generation": generation,
+            "size": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        event = wire.event(
+            {
+                "schema": wire.REVIEW_SCHEMA,
+                **source,
+                "review_bundle": ref,
+                "cases": [row["ambiguity"] for row in bundle["capture"]["cases"]],
+            }
+        )
+        url = wire.review_url(
+            event,
+            "https://catalog-viewer-example.a.run.app",
+            bundle["capture"]["cases"][0]["ambiguity"],
+        )
+        fixtures.append(
+            {
+                "name": name,
+                "file": path.name,
+                "event": event,
+                "url": url,
+                "message": decisions.primary(
+                    event, catalog_url="https://catalog-viewer-example.a.run.app"
+                )["text"],
+            }
+        )
+    (work / "identity-review-alerts.json").write_text(json.dumps(fixtures))
 
 
 def build(work: Path) -> None:
@@ -406,6 +465,7 @@ def build(work: Path) -> None:
     )
 
     shutil.copytree(REPO / "api/typescript/dist", work / "site/sdk", dirs_exist_ok=True)
+    build_identity_review(work)
 
     if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "large-color-filter":
         map_path = work / "site/map-preview.js"

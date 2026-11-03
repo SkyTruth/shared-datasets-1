@@ -147,7 +147,7 @@ def handler(store, slack, identity, *, alert_reader=None):
                 length = int(self.headers.get("Content-Length", "0"))
                 require(0 < length <= 10 * 1024 * 1024, "invalid event size")
                 incident = event(self.rfile.read(length))
-                if incident.get("schema") == decision_events.SCHEMA:
+                if incident.get("schema") in {decision_events.SCHEMA, decision_events.REVIEW_SCHEMA}:
                     decisions.deliver(incident, store, slack, identity)
                 else:
                     logging.info("Monitoring event incident=%s state=%s", incident["incident_id"], incident["state"])

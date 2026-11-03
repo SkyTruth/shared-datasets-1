@@ -68,7 +68,7 @@ print(json.dumps({"schema_version": 1, "native_tools": tools}, sort_keys=True))
 '''
 
 
-VIEWER_HEALTH_PROBE = r'''import time, urllib.request
+VIEWER_HEALTH_PROBE = r'''import time, urllib.error, urllib.request
 for attempt in range(20):
     try:
         with urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=1) as response:
@@ -79,6 +79,12 @@ for attempt in range(20):
         if attempt == 19:
             raise
         time.sleep(0.5)
+try:
+    urllib.request.urlopen("http://127.0.0.1:8080/api/identity-review?uri=gs://foreign/object", timeout=2)
+except urllib.error.HTTPError as error:
+    assert error.code == 401, "Installed evidence reader must authenticate before storage access"
+else:
+    raise AssertionError("Installed evidence reader admitted an anonymous request")
 '''
 
 

@@ -156,6 +156,22 @@ class ReceiverTests(unittest.TestCase):
         except urllib.error.HTTPError as error:
             return error.code
 
+    def test_review_ready_upgrades_the_original_parent_through_real_http(self):
+        source = decision_event()
+        ref = {"uri": f"gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/{source['execution']}/{source['asset_slug']}/identity-review.json",
+               "generation": 1001, "size": 3, "sha256": "a" * 64}
+        ready = wire.event({**source, "schema":wire.REVIEW_SCHEMA, "review_bundle":ref})
+        with patch.dict(os.environ, {"CATALOG_VIEWER_URL":"https://catalog-viewer-example.a.run.app"}):
+            for value in (source, ready, ready, source):
+                packet = {"subscription":wire.SUBSCRIPTION,"message":{"data":base64.b64encode(wire.canonical(value)).decode()}}
+                self.assertEqual(self.send(packet), 204)
+        self.assertEqual(len(self.messages),1)
+        self.assertEqual(sum(method == "chat.postMessage" for method,_ in self.calls),1)
+        self.assertEqual(sum(method == "chat.update" for method,_ in self.calls),1)
+        text = next(iter(self.messages.values()))["text"]
+        self.assertIn("Compare this case",text)
+        self.assertIn("review_generation=1001",text)
+
     def test_open_closed_duplicates_and_late_open_edit_one_original_parent(self):
         for state in ("open", "open", "closed", "closed", "open"):
             self.assertEqual(self.send(envelope(state)), 204)

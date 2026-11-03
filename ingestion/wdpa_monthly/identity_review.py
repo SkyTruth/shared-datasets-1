@@ -602,9 +602,15 @@ def complete(
         return target
 
 
-def legal_actions(bundle, item):
+def action_options(bundle, item):
     if item["previous_feature_id_for_key"] is not None:
-        return "keep_previous_key_mapping; assign_new_feature_id"
+        return [
+            {
+                "action": "keep_previous_key_mapping",
+                "feature_ids": [item["previous_feature_id_for_key"]],
+            },
+            {"action": "assign_new_feature_id", "feature_ids": []},
+        ]
     evidence = item["ambiguity"]
     targets = sorted(
         (
@@ -613,11 +619,49 @@ def legal_actions(bundle, item):
         )
         - set(bundle["capture"]["previous_keys_present"])
     )
-    return (
-        f"reuse_previous_feature_id (eligible targets: {', '.join(targets)}); "
-        if targets
-        else ""
-    ) + "assign_new_feature_id"
+    options = [{"action": "assign_new_feature_id", "feature_ids": []}]
+    if targets and bundle["sample_fraction"] == 1:
+        options.insert(
+            0, {"action": "reuse_previous_feature_id", "feature_ids": targets}
+        )
+    return options
+
+
+def legal_actions(bundle, item):
+    return "; ".join(
+        option["action"]
+        + (
+            f" (eligible targets: {', '.join(option['feature_ids'])})"
+            if option["action"] == "reuse_previous_feature_id"
+            else ""
+        )
+        for option in action_options(bundle, item)
+    )
+
+
+def property_differences(previous, incoming):
+    """Preserve JSON type distinctions through browser parsing and display."""
+
+    def cell(properties, key):
+        return {
+            "present": key in properties,
+            "display": model.canonical_json(properties[key])
+            if key in properties
+            else "absent",
+        }
+
+    rows = []
+    for key in sorted(set(previous) | set(incoming)):
+        before, after = cell(previous, key), cell(incoming, key)
+        rows.append(
+            {
+                "field": key,
+                "previous": before,
+                "incoming": after,
+                "changed": before != after,
+            }
+        )
+    return rows
 
 
 def render_report(bundle, directory):
@@ -669,26 +713,20 @@ def render_report(bundle, directory):
         )
         for feature_id in previous_ids:
             before = bundle["previous_records"][feature_id]
-            fields_all = sorted(set(before["properties"]) | set(incoming["properties"]))
             rows = []
-            for key in fields_all:
-                changed = (
-                    key in before["properties"],
-                    p.canonical(before["properties"].get(key)),
-                ) != (
-                    key in incoming["properties"],
-                    p.canonical(incoming["properties"].get(key)),
-                )
+            for row in property_differences(
+                before["properties"], incoming["properties"]
+            ):
 
-                def cell(properties):
+                def cell(value):
                     return (
-                        escape(json.dumps(properties[key], ensure_ascii=False))
-                        if key in properties
+                        escape(value["display"])
+                        if value["present"]
                         else "<em>absent</em>"
                     )
 
                 rows.append(
-                    f'<tr class="{"changed" if changed else ""}"><th>{escape(key)}</th><td>{cell(before["properties"])}</td><td>{cell(incoming["properties"])}</td></tr>'
+                    f'<tr class="{"changed" if row["changed"] else ""}"><th>{escape(row["field"])}</th><td>{cell(row["previous"])}</td><td>{cell(row["incoming"])}</td></tr>'
                 )
             same = before["geometry_hash"] == evidence["new_geometry_hash"]
             section(

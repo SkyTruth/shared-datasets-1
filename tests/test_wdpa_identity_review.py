@@ -665,6 +665,12 @@ def test_monthly_parent_stages_review_and_preserves_pause_without_publication(
     from ingestion.wdpa_monthly import build
 
     monkeypatch.setenv("CLOUD_RUN_EXECUTION", example.producer["execution"])
+    monkeypatch.setenv("CLOUD_RUN_JOB", "wdpa-monthly")
+    import base64
+    original_publish = decision_events.publish
+    session = mock.Mock()
+    session.post.return_value.json.return_value = {"messageIds": ["confirmed-review"]}
+    monkeypatch.setattr(decision_events, "publish", lambda **kwargs: original_publish(**kwargs, session=session))
     monkeypatch.setenv("WDPA_BUILD_IMAGE", example.producer["image"])
     monkeypatch.setenv(
         "WDPA_BUILD_IMAGE_CONFIG_DIGEST", example.producer["image_digest"]
@@ -716,6 +722,7 @@ def test_monthly_parent_stages_review_and_preserves_pause_without_publication(
     compatibility.assert_not_called()
     if missing_capture:
         assert example.storage.writes == []
+        session.post.assert_not_called()
     else:
         assert stopped.value is example.blocked
         assert example.storage.writes == [
@@ -730,3 +737,8 @@ def test_monthly_parent_stages_review_and_preserves_pause_without_publication(
             and event["review_bundle"]["generation"] == 1001
         )
         assert event["awaiting_decisions"] == 2
+        queued = json.loads(base64.b64decode(session.post.call_args.kwargs["json"]["messages"][0]["data"]))
+        assert decision_events.event(queued) == queued
+        assert queued["schema"] == decision_events.REVIEW_SCHEMA
+        assert queued["review_bundle"] == event["review_bundle"]
+        assert queued["cases"] == sorted([item["ambiguity"] for item in bundle["capture"]["cases"]], key=decision_events.canonical)

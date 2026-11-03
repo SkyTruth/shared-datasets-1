@@ -34,7 +34,7 @@ const test = base.extend({
     const scenarioEmail = `browser-${testInfo.testId.replace(/[^a-z0-9]/gi, '')}@skytruth.org`;
     const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
-    const state = { deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    const state = { deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, reviewEnabled: false, reviewUnavailable: false, reviewEmail: null, holdReview: false, reviewHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -80,6 +80,17 @@ const test = base.extend({
       if (url.origin === baseURL && /^\/sdk\/[a-z-]+\.js$/.test(url.pathname)) {
         return route.fulfill({path: resolve(siteDir, url.pathname.slice(1)), contentType: 'text/javascript'});
       }
+      if (url.origin === baseURL && url.pathname === '/api/identity-review') {
+        const email = state.reviewEmail === null ? scenarioEmail : state.reviewEmail;
+        const headers = {...request.headers(), ...(email ? {'X-Goog-Authenticated-User-Email': `accounts.google.com:${email}`} : {})};
+        const response = await route.fetch({headers});
+        if (!response.ok()) expectedErrors.add(url.href);
+        if (state.holdReview) {
+          state.holdReview = false; state.reviewHeld = true;
+          await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
+        }
+        return route.fulfill({response});
+      }
       if (url.origin === baseURL && url.pathname.startsWith('/api/comparisons')) {
         if (state.comparisonUnavailable) {
           expectedErrors.add(url.href);
@@ -108,7 +119,12 @@ const test = base.extend({
         return route.fulfill({response});
       }
       if (url.origin === baseURL && url.pathname.endsWith('.js') && !url.pathname.startsWith('/sdk/')) {
+        if (url.pathname === '/identity-review.js' && state.reviewUnavailable) {
+          expectedErrors.add(url.href);
+          return route.fulfill({status:404, contentType:'text/plain', body:'Not found'});
+        }
         const existing = new Set(['/app.js', '/map-preview.js', '/release-reference.js', '/compare-releases.js', '/workspace.js', '/workspace-contract.js']);
+        if (state.reviewEnabled) existing.add('/identity-review.js');
         if (!existing.has(url.pathname)) {
           forbidden.push(`Module unavailable in the previously deployed viewer: ${url.href}`);
           return route.fulfill({status:404, contentType:'text/plain', body:'Not found'});
@@ -182,7 +198,7 @@ const test = base.extend({
       expect(forbidden, 'All data/auth/CDN boundaries must be explicitly served').toEqual([]);
       // Chromium SwiftShader emits a documented performance warning on screenshot readback.
       const expectedDriverWarning = (entry) => entry.type === 'warning' && /^\[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/.test(entry.text);
-      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (403|404|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
+      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (401|403|404|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
     }
   }, { auto: true }],
 });
@@ -1215,4 +1231,108 @@ test('empty preview can retry a failed published catalog and handle an empty cat
   await page.getByLabel('Include published datasets').check();
   await expect(page.locator('#published-status')).toContainText('Ctrl/⌘-click');
   await expect(page.locator('#catalog-count')).toContainText('0 of 0 assets');
+});
+
+async function identityReviewFixture(name = 'complete') {
+  const fixtures = await readJSON(resolve(workDir, 'identity-review-alerts.json'));
+  const fixture = fixtures.find(item => item.name === name);
+  expect(fixture.message).toContain(`<${fixture.url}|Compare this case>`);
+  return fixture;
+}
+
+async function openIdentityReview(page, transport, name = 'complete', mutate = () => {}) {
+  transport.reviewEnabled = true;
+  const fixture = await identityReviewFixture(name);
+  const url = new URL(fixture.url); mutate(url.searchParams);
+  // Substitute only the host transport; the notification's exact query handle
+  // is consumed unchanged by the real catalog viewer and GCS reader adapter.
+  await page.goto(`${baseURL}/?${url.searchParams}`);
+  return fixture;
+}
+
+test('identity review follows an alert to fields, exact footprints and published candidates', async ({page, transport}) => {
+  const fixture = await openIdentityReview(page, transport);
+  await expect(page.locator('#identity-review-content')).toBeVisible();
+  await expect(page.locator('#identity-review-content')).toContainText('Incoming source key: new-key');
+  await expect(page.locator('#identity-review-fields')).toContainText('Reserve A');
+  await expect(page.locator('#identity-review-fields')).toContainText(JSON.stringify('<script>alert("unsafe")</script>'));
+  await expect(page.locator('#identity-review-content script')).toHaveCount(0);
+  await expect(page.locator('#identity-review-previous option')).toHaveCount(2);
+  const canvas = page.locator('.identity-review-map canvas');
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => { const image = await sampleCanvas(canvas); return nearColor(image, [31,111,178]) && nearColor(image, [216,79,42]); }).toBe(true);
+  await page.locator('#identity-review').screenshot({path:resolve(workDir,'identity-review-desktop.png')});
+  await page.locator('#identity-review-previous').selectOption('2');
+  await expect(page.locator('#identity-review-fields')).toContainText('Reserve B');
+  await page.locator('#identity-review-show-incoming').uncheck();
+  await expect.poll(async () => nearColor(await sampleCanvas(canvas), [216,79,42])).toBe(false);
+  await page.locator('#identity-review-case').selectOption({label:'existing-key'});
+  await expect(page.locator('#identity-review-content')).toContainText('already owns published feature ID 3');
+  await expect(page.locator('#identity-review-previous')).toHaveValue('3');
+  await expect(page.locator('#identity-review-previous option')).toHaveCount(3);
+  await expect(page.locator('#identity-review-fields')).toContainText('Stored footprints changed');
+  const published = new URL(await page.getByRole('link', {name:'Open this published feature'}).getAttribute('href'));
+  const bundle = await readJSON(resolve(workDir, fixture.file));
+  expect(Object.fromEntries(published.searchParams)).toEqual({asset:'wdpa-marine',release:'2026-10-01',feature_id:'3',metadata_generation:String(bundle.baseline.metadata.generation)});
+  await expect(page).toHaveURL(/review_case=/);
+  await page.getByRole('button', {name:'Close review'}).click();
+  await expect(page.locator('#identity-review')).not.toBeVisible();
+  await page.locator('[data-slug="smoke-public"]').click();
+  await expect(page.locator('#detail-title')).toBeVisible();
+});
+
+test('identity review fits a narrow screen and closes with the keyboard', async ({page, transport}) => {
+  await page.setViewportSize({width:390,height:844});
+  await openIdentityReview(page, transport);
+  await expect(page.locator('#identity-review-fields')).toContainText('Previous feature 1');
+  const canvas = page.locator('.identity-review-map canvas');
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => nearColor(await sampleCanvas(canvas), [31,111,178])).toBe(true);
+  await page.locator('#identity-review').screenshot({path:resolve(workDir,'identity-review-narrow.png')});
+  expect(await page.locator('#identity-review').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#identity-review')).not.toBeVisible();
+  await expect(page).not.toHaveURL(/review_case=/);
+});
+
+test('identity review rejects private or missing generations and keeps published browsing available', async ({page, transport}) => {
+  for (const email of ['', 'outsider@example.org']) {
+    transport.reviewEmail = email;
+    await openIdentityReview(page, transport);
+    await expect(page.locator('#identity-review-status')).toContainText('Identity review unavailable');
+    await expect(page.locator('#identity-review-content')).not.toBeVisible();
+    await page.getByRole('button', {name:'Close review'}).click();
+    await page.locator('[data-slug="smoke-public"]').click();
+    await expect(page.locator('#detail-title')).toBeVisible();
+  }
+  transport.reviewEmail = null;
+  await openIdentityReview(page, transport, 'complete', params => params.set('review_generation','9999'));
+  await expect(page.locator('#identity-review-status')).toContainText('exact generation is no longer retained');
+  expect(transport.requests.filter(item => new URL(item.url).pathname === '/api/identity-review')).toHaveLength(3);
+  await page.getByRole('button', {name:'Close review'}).click();
+  await page.locator('[data-slug="smoke-public"]').click();
+  transport.reviewUnavailable = true;
+  await openIdentityReview(page, transport);
+  await expect(page.locator('#identity-review-status')).toContainText('Identity review unavailable');
+  await page.getByRole('button', {name:'Close review'}).click();
+  await page.locator('[data-slug="smoke-public"]').click();
+});
+
+test('identity review discards a response after the dialog closes', async ({page, transport}) => {
+  transport.holdReview = true;
+  await openIdentityReview(page, transport);
+  await expect.poll(() => transport.reviewHeld).toBe(true);
+  await page.getByRole('button', {name:'Close review'}).click();
+  transport.release();
+  await page.locator('[data-slug="smoke-public"]').click();
+  await expect(page.locator('#detail-title')).toBeVisible();
+  await expect(page.locator('#identity-review')).not.toBeVisible();
+});
+
+test('identity review labels samples and withholds unsupported replacement choices', async ({page, transport}) => {
+  await openIdentityReview(page, transport, 'sample');
+  await expect(page.locator('.identity-review-warning')).toContainText('Compatibility sample (0.1%)');
+  await expect(page.locator('.identity-review-warning')).toContainText('cannot establish the full release');
+  await expect(page.locator('#identity-review-content li')).toHaveCount(1);
+  await expect(page.locator('#identity-review-content li')).toContainText('Assign a new ID');
 });

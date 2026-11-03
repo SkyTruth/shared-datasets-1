@@ -2054,6 +2054,51 @@ export async function renderComparisonMap({container, status, baseline, target, 
   }
 }
 
+export async function renderIdentityReviewMap({container, status, features, signal}) {
+  const serial = ++activeRenderSerial;
+  clearActiveMap();
+  let map = null;
+  const current = () => !signal.aborted && renderIsCurrent(serial);
+  signal.addEventListener("abort", () => { if (activeMap === map) clearActiveMap(); }, {once: true});
+  await loadDependencies();
+  if (!current()) return null;
+  const canvas = document.createElement("div"); canvas.className = "map-canvas";
+  container.append(canvas);
+  map = new window.maplibregl.Map({container: canvas, style: styleFor([], "map"), center: [0, 15], zoom: 1,
+    cooperativeGestures: true, attributionControl: false});
+  activeMap = map;
+  map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+  map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
+  await withTimeout(new Promise((resolve, reject) => {
+    map.once("load", resolve);
+    map.once("error", event => reject(event.error || new Error("Stored footprint map failed")));
+    signal.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")), {once: true});
+  }), 10000, "Stored footprint map timed out");
+  if (!current()) return null;
+  map.addSource("identity-evidence", {type: "geojson", data: features});
+  for (const [side, color, width, radius] of [["previous", "#1f6fb2", 5, 8], ["incoming", "#d84f2a", 2, 5]]) {
+    const filter = type => ["all", ["==", ["get", "side"], side], ["==", ["geometry-type"], type]];
+    map.addLayer({id: `review-${side}-fill`, type: "fill", source: "identity-evidence", filter: filter("Polygon"),
+      paint: {"fill-color": color, "fill-opacity": 0.12}});
+    map.addLayer({id: `review-${side}-outline`, type: "line", source: "identity-evidence", filter: filter("Polygon"),
+      paint: {"line-color": color, "line-width": width, ...(side === "incoming" ? {"line-dasharray": [3, 2]} : {})}});
+    map.addLayer({id: `review-${side}-line`, type: "line", source: "identity-evidence", filter: filter("LineString"),
+      paint: {"line-color": color, "line-width": width}});
+    map.addLayer({id: `review-${side}-point`, type: "circle", source: "identity-evidence", filter: filter("Point"),
+      paint: {"circle-color": color, "circle-radius": radius}});
+  }
+  function update(data) {
+    if (!current()) return;
+    map.getSource("identity-evidence").setData(data);
+    const bounds = combinedBounds(data.features.map(feature => boundsFromFeatureGeometry(feature.geometry)).filter(Boolean));
+    status.hidden = Boolean(bounds);
+    status.textContent = bounds ? "" : "No stored geometry is visible for this selection.";
+    if (bounds) map.fitBounds(bounds, {padding: 48, duration: 0, maxZoom: 12});
+  }
+  update(features);
+  return {update};
+}
+
 export function captureViewport() {
   if (!activeMap) return null;
   const center = activeMap.getCenter();
