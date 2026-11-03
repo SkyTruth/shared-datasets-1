@@ -19,6 +19,7 @@ from ingestion.common import feature_metadata
 from ingestion.common.process_stream import feature_stream
 from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
+from ingestion.wdpa_monthly import identity_review
 from scripts import release_feature_model as model
 from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
 from scripts.wdpa_processing_gate import source_digest
@@ -421,20 +422,6 @@ def main():
                 decisions = model.load_identity_resolution_decisions(
                     asset_slug=asset.slug, release=args.run_date
                 )
-                legacy = None
-                if args.compare_legacy:
-                    with profiler.phase(f"{asset.slug}:legacy-sample"):
-                        legacy = legacy_sample(
-                            args.workdir / f"{asset.slug}-legacy",
-                            layers=layers,
-                            asset=asset,
-                            where=where,
-                            source=sources[0],
-                            baseline=baselines[asset.slug],
-                            memory=memory,
-                            run_date=run_date,
-                            decisions=decisions,
-                        )
                 output = wdpa.build_asset_outputs(
                     source=sources[0],
                     source_layers=layers,
@@ -447,15 +434,32 @@ def main():
                     translation_memory=memory,
                     identity_resolution_decisions=decisions,
                     cleanup_after_gpkg=(args.workdir / "source-zips", source_copy)
-                    if asset == selected_assets[-1]
+                    if asset == selected_assets[-1] and not args.compare_legacy
                     else (),
                     profiler=profiler,
+                    on_identity_review=lambda plan, store: identity_review.capture(
+                        plan, store, baselines[asset.slug], asset_slug=asset.slug,
+                        release=args.run_date, directory=args.workdir),
                 )
-                if legacy:
+                if args.compare_legacy:
+                    # The normalized producer owns review capture. Run it first
+                    # so a real pause retains evidence before stores are closed.
+                    with profiler.phase(f"{asset.slug}:legacy-sample"):
+                        try:
+                            legacy = legacy_sample(
+                                args.workdir / f"{asset.slug}-legacy", layers=layers,
+                                asset=asset, where=where, source=sources[0],
+                                baseline=baselines[asset.slug], memory=memory,
+                                run_date=run_date, decisions=decisions)
+                        except feature_metadata.IdentityDecisionRequired as exc:
+                            raise RuntimeError("legacy identity gate disagrees with normalized allocation") from exc
                     with profiler.phase(f"{asset.slug}:compatibility"):
                         compare_legacy_sample(
                             legacy, output, asset, memory, args.workdir
                         )
+                    if asset == selected_assets[-1]:
+                        for path in (args.workdir / "source-zips", source_copy):
+                            wdpa.remove_if_exists(path)
                 summary = semantic_summary(output.metadata)
                 if any(summary[key] != source_counts[key] for key in ("rows", "india_rows", "india_sites")):
                     raise RuntimeError(f"{asset.slug} output realm/India counts differ from the frozen source")

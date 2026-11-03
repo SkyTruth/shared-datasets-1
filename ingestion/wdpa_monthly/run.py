@@ -20,7 +20,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from google.cloud import storage
 
@@ -807,6 +807,7 @@ def build_asset_outputs(
     translation_memory: TranslationMemory,
     identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
     profiler: PhaseProfiler | None = None,
+    on_identity_review: Callable[[DiskIdentityPlan, NormalizedGeometryStore], None] | None = None,
 ) -> AssetOutputs:
     profiler = profiler or PhaseProfiler(workdir)
     with profiler.phase(f"{asset.slug}:source-count"):
@@ -864,12 +865,17 @@ def build_asset_outputs(
                 )
             remove_if_exists(gpkg)
         with profiler.phase(f"{asset.slug}:allocate"):
-            next_feature_id, identity_decisions = plan.resolve(
-                baseline=baseline,
-                asset_slug=asset.slug,
-                release=run_date.isoformat(),
-                decisions=identity_resolution_decisions,
-            )
+            try:
+                next_feature_id, identity_decisions = plan.resolve(
+                    baseline=baseline,
+                    asset_slug=asset.slug,
+                    release=run_date.isoformat(),
+                    decisions=identity_resolution_decisions,
+                )
+            except feature_metadata.IdentityDecisionRequired:
+                if on_identity_review is not None:
+                    on_identity_review(plan, store)
+                raise
         with profiler.phase(f"{asset.slug}:metadata"):
             store.prepare_fields()
             accumulator = feature_metadata.SchemaAccumulator()

@@ -6,6 +6,12 @@ This directory stores reviewed, release-scoped decisions for generated
 release, new identity key, hashes, and matching previous feature IDs exactly
 match the ambiguity observed during that run.
 
+Automatic WDPA runs retain complete review bundles when they pause. Follow the
+[offline review procedure](../../docs/wdpa-identity-review.md) to inspect exact
+old/incoming attributes and stored footprints, including previous key ownership.
+Capture begins with the deployment containing this feature; older alerts may
+have only their original hash evidence and separately preserved source inputs.
+
 Use this only after reviewing the proposed release evidence. Three actions are
 available, and picking the wrong one corrupts identity rather than failing safe:
 

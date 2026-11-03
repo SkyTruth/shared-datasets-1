@@ -1,12 +1,15 @@
 # Feature inspection and identity review
 
-Owner: the catalog feature-inspection chat, branch
-`codex/catalog-feature-lookup`. This chat owns final integration for this series.
+Owner: the catalog feature-inspection chat. This chat owns final integration for
+this series. PR 1 used `codex/catalog-feature-lookup`; PR 2 uses
+`codex/wdpa-identity-review-evidence`.
 Each PR starts from current main after its prerequisites merge. No dataset
 identity decision, publication, or production infrastructure change is part of
 these UI and evidence improvements.
 
 ## PR 1: Find a published feature
+
+Merged as [PR #367](https://github.com/SkyTruth/shared-datasets-1/pull/367).
 
 Add a feature ID field beside the selected release and display the record's
 source attributes in the existing inspector. Reuse release-bound metadata
@@ -26,6 +29,10 @@ Likely overlap: `web/catalog/app.js`, `index.html`, `styles.css`,
 No prerequisite PRs.
 
 ## PR 2: Capture identity review evidence
+
+Implementation and review procedure: [WDPA identity review](wdpa-identity-review.md).
+Prerequisite #367 is merged. This branch starts from its merged main revision.
+The writer uses the existing WDPA build-staging prefix and adds no IAM grants.
 
 When ingestion pauses, retain a versioned, release-scoped review bundle with
 each incoming record, all candidate previous records, their source attributes

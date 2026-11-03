@@ -12,7 +12,7 @@ import time
 from ingestion.common import publication as p
 from ingestion.common.feature_metadata import IdentityDecisionRequired
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
-from ingestion.wdpa_monthly import run as wdpa, translations
+from ingestion.wdpa_monthly import run as wdpa, translations, identity_review
 from ingestion.wdpa_monthly.artifact_bundle import BuildStager
 from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, cgroup_memory, prepare_scratch, validation_limits
 from scripts import wdpa_processing_gate as gate
@@ -100,8 +100,26 @@ def build_month(client, month, root):
             gate.monthly_date(run_date)), source)
     identity = {"cloud_execution": os.environ["CLOUD_RUN_EXECUTION"],
         "cloud_image": os.environ["WDPA_BUILD_IMAGE"], "image_digest": os.environ["WDPA_BUILD_IMAGE_CONFIG_DIGEST"]}
-    sample = {**replay(source, inputs, root / "sample", run_date, sample=True), **identity}
-    report = {**replay(source, inputs, root / "complete", run_date, sample=False), **identity}
+    results = []
+    for name, sampled in (("sample", True), ("complete", False)):
+        directory = root / name
+        try:
+            results.append({**replay(source, inputs, directory, run_date, sample=sampled), **identity})
+        except IdentityDecisionRequired as blocked:
+            with profiler.phase(f"{blocked.asset_slug}:identity-review"):
+                target = identity_review.complete(client, inputs=inputs, replay_directory=directory,
+                    directory=root / "identity-review", blocked=blocked, source=source,
+                    source_url=wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), month),
+                    producer={"execution": identity["cloud_execution"], "executor_sha": os.environ["SHARED_DATASETS_EXECUTOR_SHA"],
+                              "image": identity["cloud_image"], "image_digest": identity["image_digest"]})
+                expected_sha = wdpa.sha256_file(target)
+                reference = BuildStager(client, identity["cloud_execution"]).upload(f"{blocked.asset_slug}/identity-review.json", target)
+                p.require(reference["sha256"] == expected_sha, "review evidence changed before staging")
+                print(json.dumps({"event": "wdpa_identity_review", "asset_slug": blocked.asset_slug,
+                    "release": blocked.release, "awaiting_decisions": blocked.ambiguity_count,
+                    "review_bundle": reference}), flush=True)
+            raise
+    sample, report = results
     report["memory_peak_bytes"] = cgroup_memory()[1]
     report["resource_warnings"] = gate.memory_warnings(report)
     report["phases"] = profiler.records + sample["phases"] + report["phases"]
