@@ -60,6 +60,13 @@ deployment prerequisite must be a reviewed, protected change before activation.
 
 ## PR 3: Review cases from the alert
 
+Published feature search also becomes an inline field at the right of the
+Version row. Enter shows source attributes and filters all map layers to that
+ID; the filter area shows the ID and selection zoom. The inline clear control
+removes the filter and cancels pending lookup results. Dataset/release changes
+clear it, while basemap and color changes retain it. Zoom uses available display
+geometry and stays visibly disabled when that geometry is unavailable.
+
 Implementation uses the existing private WDPA bundle, the IAP-protected
 `GET /api/identity-review` reader and a lazy catalog dialog. The production
 viewer gains read access only to identity-review JSON under monthly WDPA staging;

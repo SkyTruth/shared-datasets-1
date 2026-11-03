@@ -331,12 +331,21 @@ route. See [comparison semantics, authorization, budgets and CLI](../../../../do
 
 ## Find a published feature
 
-For a single dataset with generation-pinned source metadata, **Feature ID** and
-**Find feature** appear below the Version row. Enter the published `feature_id`
+For a single dataset with generation-pinned source metadata, a **Find feature**
+field appears at the right of the Version row below the map, with matching
+control height. Enter the published `feature_id`
 (for example, `132873`), rather than a provider assignment key such as WDPA
 `SITE_PID`. Enter submits the lookup. Source attributes appear in the existing
-inspector even for assets without map tiles; the lookup does not locate the
-feature on the map. Missing IDs and unavailable metadata have distinct messages.
+inspector even for assets without map tiles. A successful lookup also filters
+every display layer to that exact ID, replacing any legend selection. The
+filter area below the map shows the selected ID and **Zoom to selection**.
+Zoom uses the selected feature's geometry from loaded display tiles; when those
+tiles do not contain it, the button stays visible but disabled with an
+explanation, rather than zooming to the full dataset. The field's inline ×
+clears the entry, pending lookup, inspector and ID filter without moving the
+camera. Deleting the entry has the same effect. Selecting a legend value
+replaces the ID filter. Changing the dataset or release clears the search;
+basemap and color changes retain the ID filter. Missing IDs and unavailable metadata have distinct messages.
 Lookup is hidden for multiple selections and during release comparison.
 
 **Copy feature link** in a loaded inspector copies the current catalog URL with

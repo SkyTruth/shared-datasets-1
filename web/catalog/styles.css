@@ -160,6 +160,7 @@ select {
 }
 
 .search-input,
+.feature-lookup input,
 select {
   width: 100%;
   min-height: 42px;
@@ -179,6 +180,7 @@ select {
 }
 
 .search-input:focus,
+.feature-lookup input:focus,
 select:focus,
 button:focus-visible,
 a:focus-visible {
@@ -1047,15 +1049,33 @@ h3 {
 }
 
 .feature-lookup {
-  padding: 14px 0;
-  border-top: 1px solid var(--line);
+  position: relative;
+  width: 220px;
+  max-width: 100%;
+  margin: 0 0 0 auto;
 }
 
-.feature-lookup label { font-weight: 600; }
-.feature-lookup-controls { display: flex; gap: 8px; margin-top: 6px; }
-.feature-lookup-controls input { min-width: 0; width: 15rem; max-width: 100%; }
-.feature-lookup p { margin: 6px 0 0; font-size: 0.8rem; color: var(--muted); }
-.feature-lookup-controls button { flex-shrink: 0; }
+.feature-lookup input { padding: 0 36px 0 12px; }
+.feature-lookup button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+.feature-lookup button:hover { background: var(--field-hover); color: var(--ink); }
+.feature-lookup-status { margin: 8px 14px 0; font-size: 0.8rem; color: var(--muted); }
+.feature-lookup-status:empty { display: none; }
+@media (max-width: 680px) {
+  .feature-lookup { flex-basis: 100%; width: 100%; }
+}
 .feature-hit-heading .icon-button { font-size: 0.75rem; }
 
 .feature-inspector-heading {
