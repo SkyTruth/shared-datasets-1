@@ -228,13 +228,12 @@ class CheckerCliTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("unsupported action", problems[0])
 
-    def test_shipped_terrestrial_decisions_pass_the_rule(self):
+    def test_shipped_terrestrial_decisions_pass_offline_cli(self):
         repo_root = Path(__file__).resolve().parents[1]
-        path = repo_root / "catalog/feature-identity-resolutions/wdpa-terrestrial.json"
-        # Existing keys retain their published IDs in the August and November cases.
-        baseline = {("555682754",): "300616", ("555732174",): "255953"}
-
-        self.assertEqual(checker.check_file(path, previous_feature_ids=baseline), [])
+        self.assertEqual(
+            checker.main(["--repo-root", str(repo_root), "--asset-slug", "wdpa-terrestrial", "--offline"]),
+            0,
+        )
 
 
 if __name__ == "__main__":

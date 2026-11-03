@@ -83,6 +83,7 @@ this explicitly limited evidence.
 
 The release-scoped [terrestrial resolution file](../../catalog/feature-identity-resolutions/wdpa-terrestrial.json)
 records each accepted case, action, prior key ownership, rationale and reviewer.
+Its decision-of-record reference is [PR #379](https://github.com/SkyTruth/shared-datasets-1/pull/379).
 The exact hashes and match sets must still agree during the next complete build;
 changed evidence fails validation. No publication claim, ID counter, captured
 intent or receipt is rewritten by these decisions.
