@@ -150,6 +150,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Dataset README templates | [templates/](templates/) |
 | Artifact builds and catalog generation commands | [scripts/README.md](scripts/README.md) |
 | Consumer integration guide | [consumer guide](docs/consumer-guide.md) |
+| Feature identity conflicts, decision authority and heuristics | [SkyTruth's identity-resolution process](docs/standards/feature-identity-resolution.md) |
 | Feature metadata lookup contract | [feature metadata API](docs/feature-metadata-api.md) |
 | Feature preview architecture | [feature preview](docs/feature-preview.md) |
 | Static catalog architecture | [catalog web preview](docs/catalog-web-preview.md) |
@@ -229,6 +230,10 @@ Dataset metadata and local files:
   key or from the pair of stored geometry and properties hashes. Do not infer
   and publish any generated ID from guessed fields or without that decision
   point.
+- Before recommending or recording a release identity resolution, read
+  [SkyTruth's feature identity process](docs/standards/feature-identity-resolution.md).
+  It separates implemented automatic rules, exact accepted decisions and
+  human-reviewed heuristics. A similar precedent does not approve a new case.
 - Asset `status` must be one of `active`, `deprecated`, `superseded`, or
   `retired`. These are consumer-guidance states, not deletion states. Deprecated,
   superseded, and retired assets remain readable and citable, keep their README,
