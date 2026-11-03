@@ -184,6 +184,9 @@ The 30-second shared runtime probe exercises two-asset discovery, persisted JSON
 decision application, immutable reuse and actual allocation. Focused tests cover
 source-field tables, raster/Zarr sources, corrupted/stale evidence and failed
 members. Native WDPA fixtures exercise normalization and spool reopening.
+The probe also checks that tests directly requiring GDAL's Python bindings are
+registered as required native executions before the non-native suite may skip
+them. A missing registration fails before Docker builds or hosted fanout.
 
 Run these focused checks while editing. Complete the actual affected entrypoint,
 serialization and relevant runtime-resource probes before full preflight. Local

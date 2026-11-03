@@ -41,6 +41,16 @@ def test_full_runtime_boundary_probe(tmp_path):
     assert publication_runtime_check.check(tmp_path) == {"state": "READY", "assets": 2, "preparations": 2}
 
 
+def test_fast_gate_rejects_missing_native_fixture_registration(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    publication_runtime_check.check_native_registration(root)
+    monkeypatch.setattr(publication_runtime_check, "REQUIRED_TESTS", tuple(
+        item for item in publication_runtime_check.REQUIRED_TESTS
+        if item[1] != "test_complete_discovery_cli_normalizes_both_realms_and_reuses_spools"))
+    with pytest.raises(RuntimeError, match="missing required CI registration"):
+        publication_runtime_check.check_native_registration(root)
+
+
 def test_all_assets_discovered_and_no_ids_allocated_when_first_needs_decision(tmp_path):
     calls = []
     report = r.discover_batch([target("first", calls), target("second", calls)], tmp_path)

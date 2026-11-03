@@ -34,6 +34,10 @@ REQUIRED_TESTS = (
         "test_normalized_store_matches_old_export_semantically",
     ),
     (
+        "tests.test_wdpa_disk_processing",
+        "test_complete_discovery_cli_normalizes_both_realms_and_reuses_spools",
+    ),
+    (
         "tests.test_mpatlas_monthly",
         "test_mixed_geometry_bundle_has_source_ids_valid_tiles_and_stored_hashes",
     ),

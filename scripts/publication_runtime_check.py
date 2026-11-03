@@ -6,6 +6,7 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import replace
 import json
+import ast
 import os
 from pathlib import Path
 import subprocess
@@ -17,6 +18,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common import publication_readiness as readiness
 from ingestion.common.identity_index import DiskIdentityPlan
 from scripts import release_feature_model as model
+from scripts.check_geospatial_test_results import REQUIRED_TESTS
+
+
+def check_native_registration(root):
+    """Catch unregistered GDAL fixtures before the non-native suite skips them."""
+    for path in sorted((root / "tests").glob("test_*.py")):
+        source = path.read_text()
+        if "importorskip" not in source:
+            continue
+        tree = ast.parse(source)
+        functions = [(node, f"tests.{path.stem}") for node in tree.body if isinstance(node, ast.FunctionDef)]
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                functions.extend((method, f"tests.{path.stem}.{node.name}")
+                    for method in node.body if isinstance(method, ast.FunctionDef))
+        for function, classname in functions:
+            if not function.name.startswith("test_"):
+                continue
+            native = any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "importorskip" and call.args
+                and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+                and call.args[0].value.startswith("osgeo") for call in ast.walk(function))
+            if native and (classname, function.name) not in REQUIRED_TESTS:
+                raise RuntimeError(f"Native fixture is missing required CI registration: {classname}.{function.name}")
 
 
 def check(directory):
@@ -74,6 +99,7 @@ def main():
     work_root.mkdir(parents=True, exist_ok=True)
     # An explicit child-process timeout bounds this gate before Docker/CI fanout.
     if "--worker" in sys.argv:
+        check_native_registration(Path(__file__).resolve().parents[1])
         with tempfile.TemporaryDirectory(prefix="publication-runtime-", dir=work_root) as temp:
             print(json.dumps(check(Path(temp)), sort_keys=True))
     else:
