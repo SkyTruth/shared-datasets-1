@@ -149,6 +149,28 @@ def source_count_summary(layers, where, workdir):
         database.unlink(missing_ok=True)
 
 
+def scope_identity_decisions(decisions, *, layers, where, sample):
+    """Restrict only fractional replays to keys present in their source filter.
+
+    Keep payloads and duplicates intact: selected stale/illegal decisions still
+    fail at the allocator. Complete builds validate every release decision.
+    """
+    if sample is None or not decisions:
+        return decisions
+    keyed = [
+        (model.normalize_identity_key(row.get("new_identity_key"), label="new_identity_key"), row)
+        for row in decisions
+    ]
+    wanted = {key for key, _ in keyed}
+    selected = set()
+    for layer in layers:
+        for properties in source_count_features(layer, where):
+            key = model.source_fields_identity_key(properties, ("SITE_PID",))
+            if key in wanted:
+                selected.add(key)
+    return [row for key, row in keyed if key in selected]
+
+
 def build_frozen_translation_memory(config_path, workdir):
     config = json.loads(config_path.read_text())
     if config.get("schema_version") != 1 or {
@@ -420,6 +442,9 @@ def main():
                     source_counts = source_count_summary(layers, where, args.workdir)
                 decisions = model.load_identity_resolution_decisions(
                     asset_slug=asset.slug, release=args.run_date
+                )
+                decisions = scope_identity_decisions(
+                    decisions, layers=layers, where=where, sample=sample
                 )
                 legacy = None
                 if args.compare_legacy:
