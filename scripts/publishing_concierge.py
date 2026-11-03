@@ -1934,9 +1934,20 @@ def validate_decision_readiness(state, evidence):
     from ingestion.common.publication_sources import input_digest
 
     path = Path(require_non_empty_string(evidence, "readiness_report"))
+    if state["plan"]["canonical_format"] in {"cog", "zarr"}:
+        contract = {"identity_strategy": "not_applicable", "format": state["plan"]["canonical_format"]}
+    else:
+        profile = state.get("steps", {}).get("profile-fields", {}).get("evidence", {})
+        decision = profile.get("feature_id_decision")
+        if decision not in {"source-field", "generated-sequence"}:
+            raise WorkflowError("publication identity contract requires completed field profiling")
+        contract = {"identity_strategy": "source_field" if decision == "source-field" else "generated",
+            "source_fields": profile["feature_id_fields"] if decision == "source-field"
+                else profile["assignment_key_fields"]}
     try:
         validate_ready_report(path, asset_slug=state["plan"]["asset_slug"],
-            source_sha256=input_digest(Path(state["source"])), release=state["plan"].get("release_date"))
+            source_sha256=input_digest(Path(state["source"])), release=state["plan"].get("release_date"),
+            identity_contract=contract)
     except (ValueError, RuntimeError, OSError) as exc:
         raise WorkflowError(str(exc)) from exc
     return {"readiness_report": str(path)}
@@ -2005,6 +2016,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_profile_fields,
         validate_profile_fields,
+        is_required=lambda state: state["plan"]["canonical_format"] not in {"cog", "zarr"},
     ),
     StepDefinition(
         "translation-decision",

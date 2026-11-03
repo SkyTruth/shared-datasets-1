@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -16,9 +17,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path)
     args = parser.parse_args(argv)
-    config = json.loads(args.plan.read_text())
+    plan_bytes = args.plan.read_bytes()
+    config = json.loads(plan_bytes)
     try:
-        report = run(config)
+        report = run(config, review_inputs={str(args.plan.resolve()): hashlib.sha256(plan_bytes).hexdigest()})
     except (ValueError, RuntimeError, OSError) as exc:
         # Invalid batch inputs cannot leave an old READY result behind.
         report = {"schema": readiness.SCHEMA, "state": "INCOMPLETE", "error": str(exc)}

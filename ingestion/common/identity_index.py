@@ -18,6 +18,20 @@ from pathlib import Path
 from scripts import release_feature_model as model
 
 
+def baseline_digest(baseline, *, match_properties=True):
+    """Bind retained matches to the complete baseline and matching policy."""
+    digest = hashlib.sha256()
+    digest.update(model.canonical_json({
+        "contract": baseline.contract_id, "next": baseline.next_feature_id,
+        "release": baseline.release,
+        "snapshot": asdict(baseline.snapshot) if baseline.snapshot else None,
+        "match_properties": match_properties,
+    }).encode())
+    for record in baseline.records:
+        digest.update(model.canonical_json(dict(record)).encode() + b"\n")
+    return digest.hexdigest()
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
@@ -289,16 +303,7 @@ class DiskIdentityPlan:
 
     def discover(self, *, baseline, match_properties=True):
         """Match the entire input without allocating IDs or sending notifications."""
-        digest = hashlib.sha256()
-        digest.update(model.canonical_json({
-            "contract": baseline.contract_id, "next": baseline.next_feature_id,
-            "release": baseline.release,
-            "snapshot": asdict(baseline.snapshot) if baseline.snapshot else None,
-            "match_properties": match_properties,
-        }).encode())
-        for record in baseline.records:
-            digest.update(model.canonical_json(dict(record)).encode() + b"\n")
-        binding = digest.hexdigest()
+        binding = baseline_digest(baseline, match_properties=match_properties)
         retained = self.db.execute("SELECT binding FROM analysis").fetchone()
         if retained:
             if retained[0] != binding:

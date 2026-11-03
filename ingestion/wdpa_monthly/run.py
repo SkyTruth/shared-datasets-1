@@ -1302,6 +1302,7 @@ def run() -> list[dict[str, Any]]:
                 records.append(record)
             return records
         with profiler.phase("source-prepare"):
+            source_sha256 = sha256_file(source_zip)
             source_datasets = prepare_source_datasets(source_zip, workdir)
             source = source_datasets[0]
             source_layers, split_field, source_fields = discover_source_layers(
@@ -1310,7 +1311,7 @@ def run() -> list[dict[str, Any]]:
             assert_sample_field_available(source_layers, sample_spec)
         discovery = discover_assets(assets=publish_specs, source=source, source_layers=source_layers,
             split_field=split_field, workdir=workdir, run_date=run_date, baselines=baselines_by_slug,
-            decisions=decisions_by_slug, binding={"source_sha256": sha256_file(source_zip)},
+            decisions=decisions_by_slug, binding={"source_sha256": source_sha256},
             profiler=profiler, sample=sample_spec)
         publication_readiness.require_ready(discovery, notify=True)
         with profiler.phase("translation-index"):

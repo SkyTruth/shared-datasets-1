@@ -94,7 +94,7 @@ def test_changed_evidence_or_inputs_cannot_reuse_ready_analysis(tmp_path, monkey
     else:
         monkeypatch.setattr(r, "engine_digest", lambda: "c" * 64)
     result = r.discover_batch([first], tmp_path)
-    if change in {"source", "engine"}:
+    if change in {"source", "engine", "baseline"}:
         assert len(calls) == 2
         assert not result["assets"]["example"]["reused"]
     else:
@@ -152,7 +152,7 @@ def test_real_cli_handles_table_and_nonfeature_assets_and_reuses_analysis(tmp_pa
     raster = tmp_path / "source.tif"
     raster.write_bytes(b"source bytes; raster validity remains a separate build check")
     config["assets"].append({"asset_slug": "raster-example", "source": str(raster),
-        "source_sha256": sources.input_digest(raster), "identity_strategy": "not_applicable",
+        "source_sha256": sources.input_digest(raster), "format": "cog", "identity_strategy": "not_applicable",
         "identity_not_applicable_reason": "Raster has no feature rows"})
     config_path = tmp_path / "plan.json"
     config_path.write_text(json.dumps(config))
@@ -246,7 +246,9 @@ def test_manual_concierge_rejects_missing_or_stale_readiness_before_build(tmp_pa
     from scripts import publishing_concierge as concierge
     config = config_for_file(tmp_path)
     state = {"source": config["assets"][0]["source"], "plan": {
-        "asset_slug": "table-example", "release_date": config["release"]}, "steps": {}}
+        "asset_slug": "table-example", "release_date": config["release"], "canonical_format": "csv"},
+        "steps": {"profile-fields": {"status": "completed", "evidence": {
+            "feature_id_decision": "source-field", "feature_id_fields": ["key"]}}}}
     with pytest.raises(concierge.WorkflowError, match="readiness_report"):
         concierge.validate_build_artifacts(state, {"artifacts": []})
     sources.run(config)
@@ -255,3 +257,115 @@ def test_manual_concierge_rejects_missing_or_stale_readiness_before_build(tmp_pa
     Path(state["source"]).write_text("key,name\n3,Changed\n")
     with pytest.raises(concierge.WorkflowError, match="source changed"):
         concierge.validate_decision_readiness(state, evidence)
+
+
+@pytest.mark.parametrize("changed", ["decisions", "plan"])
+def test_real_cli_ready_report_rejects_changed_review_inputs(tmp_path, changed):
+    config = config_for_file(tmp_path, "generated")
+    config["assets"][0]["baseline"] = {"genesis": True, "contract_id": "test-v1"}
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({"schema_version": 1, "asset_slug": "table-example", "decisions": []}))
+    config["assets"][0]["decisions"] = str(decisions)
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps(config))
+    completed = subprocess.run([sys.executable, "scripts/publication_readiness.py", "--plan", str(plan)],
+        text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
+    report_path = Path(config["work_dir"]) / "readiness.json"
+    kwargs = {"asset_slug": "table-example", "source_sha256": config["assets"][0]["source_sha256"]}
+    r.validate_ready_report(report_path, **kwargs)
+    if changed == "decisions":
+        decisions.write_text(decisions.read_text() + "\n")
+    else:
+        config["assets"][0]["source_fields"] = ["name"]
+        plan.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="review input changed"):
+        r.validate_ready_report(report_path, **kwargs)
+    if changed == "decisions":
+        completed = subprocess.run([sys.executable, "scripts/publication_readiness.py", "--plan", str(plan)],
+            text=True, capture_output=True)
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout)["assets"]["table-example"]["reused"]
+        r.validate_ready_report(report_path, **kwargs)
+
+
+def test_missing_input_invalidates_old_ready_and_continues_other_assets(tmp_path):
+    config = config_for_file(tmp_path)
+    assert sources.run(config)["state"] == "READY"
+    config["assets"].append({**config["assets"][0], "asset_slug": "second"})
+    del config["assets"][0]["source_sha256"]
+    report = sources.run(config)
+    assert report["state"] == "INCOMPLETE"
+    assert report["assets"]["second"]["state"] == "READY"
+    assert json.loads((Path(config["work_dir"]) / "readiness.json").read_text())["state"] == "INCOMPLETE"
+
+
+def test_baseline_records_change_selects_new_analysis_even_without_snapshot(tmp_path):
+    calls = []
+    unit = target("example", calls)
+    assert r.discover_batch([unit], tmp_path)["state"] == "NEEDS_DECISION"
+    updated = replace(unit.baseline, records=({**unit.baseline.records[0], "geometry_hash": "0" * 64},))
+    report = r.discover_batch([replace(unit, baseline=updated)], tmp_path)
+    assert report["state"] == "READY"
+    assert not report["assets"]["example"]["reused"]
+    assert calls == ["example", "example"]
+
+
+def test_manual_identity_profile_change_invalidates_ready(tmp_path):
+    from scripts import publishing_concierge as concierge
+    config = config_for_file(tmp_path)
+    assert sources.run(config)["state"] == "READY"
+    state = {"source": config["assets"][0]["source"], "plan": {
+        "asset_slug": "table-example", "release_date": config["release"], "canonical_format": "csv"},
+        "steps": {"profile-fields": {"status": "completed", "evidence": {
+            "feature_id_decision": "source-field", "feature_id_fields": ["name"]}}}}
+    with pytest.raises(concierge.WorkflowError, match="identity contract"):
+        concierge.validate_decision_readiness(state,
+            {"readiness_report": str(Path(config["work_dir"]) / "readiness.json")})
+
+
+def test_feature_publication_rejects_nonfeature_readiness(tmp_path):
+    from scripts import publishing_concierge as concierge
+    config = config_for_file(tmp_path, "not_applicable")
+    config["assets"][0].update(format="cog", identity_not_applicable_reason="Incorrect declaration")
+    assert sources.run(config)["state"] == "READY"
+    state = {"source": config["assets"][0]["source"], "plan": {
+        "asset_slug": "table-example", "release_date": config["release"], "canonical_format": "csv"},
+        "steps": {"profile-fields": {"status": "completed", "evidence": {
+            "feature_id_decision": "source-field", "feature_id_fields": ["key"]}}}}
+    with pytest.raises(concierge.WorkflowError, match="identity contract"):
+        concierge.validate_decision_readiness(state,
+            {"readiness_report": str(Path(config["work_dir"]) / "readiness.json")})
+
+
+def test_nonfeature_strategy_requires_explicit_nonfeature_format(tmp_path):
+    config = config_for_file(tmp_path, "not_applicable")
+    config["assets"][0].pop("format")
+    config["assets"][0]["identity_not_applicable_reason"] = "Omitted format cannot bypass identity"
+    assert sources.run(config)["state"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("format_name", ["cog", "zarr"])
+def test_nonfeature_concierge_requires_readiness_without_feature_profile(tmp_path, format_name):
+    from scripts import publishing_concierge as concierge
+    config = config_for_file(tmp_path, "not_applicable")
+    config["assets"][0].update(format=format_name, identity_not_applicable_reason="No feature rows")
+    assert sources.run(config)["state"] == "READY"
+    state = {"source": config["assets"][0]["source"], "plan": {
+        "asset_slug": "table-example", "release_date": config["release"], "canonical_format": format_name},
+        "steps": {}}
+    steps = {step.step_id: step for step in concierge.STEP_DEFINITIONS}
+    assert not steps["profile-fields"].is_required(state)
+    assert steps["decision-readiness"].is_required(state)
+    concierge.validate_decision_readiness(state,
+        {"readiness_report": str(Path(config["work_dir"]) / "readiness.json")})
+
+
+def test_resolution_file_filters_decisions_to_requested_release(tmp_path):
+    config = config_for_file(tmp_path, "generated")
+    config["assets"][0]["baseline"] = {"genesis": True, "contract_id": "test-v1"}
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({"schema_version": 1, "asset_slug": "table-example", "decisions": [
+        {"release": "2026-01-01", "action": "assign_new_feature_id"}]}))
+    config["assets"][0]["decisions"] = str(decisions)
+    assert sources.run(config)["state"] == "READY"

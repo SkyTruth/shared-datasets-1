@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest.mock import patch
 from unittest import mock
 
@@ -58,6 +59,12 @@ class TranslationInputTests(unittest.TestCase):
         publisher.load_generated_identity_baseline.return_value = model.GeneratedIdentityBaseline.genesis(contract_id="test-v1")
         memory = object()
         made = []
+        inner, outer = io.BytesIO(), io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as archive:
+            archive.writestr("fixture.shp", b"synthetic shapefile boundary")
+        with zipfile.ZipFile(outer, "w") as archive:
+            archive.writestr("source.zip", inner.getvalue())
+        source_bytes = outer.getvalue()
         def build(**kwargs):
             self.assertIs(kwargs["translation_memory"], memory)
             outputs = fake_asset_outputs(kwargs["workdir"], asset=kwargs["asset"])
@@ -69,11 +76,10 @@ class TranslationInputTests(unittest.TestCase):
             patch.object(wdpa, "native_versions", return_value={}),
             patch.object(wdpa.storage, "Client"),
             patch.object(wdpa.GcsPublisher, "from_runtime", return_value=publisher),
-            patch.object(wdpa, "download_file", side_effect=lambda url, path: path.write_bytes(b"frozen source")),
-            patch.object(wdpa, "prepare_source_datasets", return_value=["fixture"]),
+            patch.object(wdpa, "download_file", side_effect=lambda url, path: path.write_bytes(source_bytes)),
             patch.object(wdpa, "discover_source_layers", return_value=([], "REALM", ())),
             patch.object(wdpa, "discover_assets", return_value={"state": "READY", "assets": {
-                asset.slug: {} for asset in wdpa.ASSETS}}),
+                asset.slug: {} for asset in wdpa.ASSETS}}) as discover,
             patch.object(wdpa.release_feature_model, "load_identity_resolution_decisions", return_value=[]),
             patch.object(wdpa.translations, "prepare_memory", return_value=nullcontext(memory)) as prepare,
             patch.object(wdpa, "build_asset_outputs", side_effect=build),
@@ -83,6 +89,8 @@ class TranslationInputTests(unittest.TestCase):
             result = wdpa.run()
             self.assertEqual(len(result), 2)
             prepare.assert_called_once()
+            self.assertEqual(discover.call_args.kwargs["binding"]["source_sha256"],
+                hashlib.sha256(source_bytes).hexdigest())
             removed = {call.args[0] for call in remove.call_args_list}
             self.assertTrue(all(path in removed for outputs in made for path in outputs.localized_metadata.values()))
 

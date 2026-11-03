@@ -4,7 +4,6 @@ from __future__ import annotations
 from contextlib import closing
 import csv
 import hashlib
-import json
 from pathlib import Path
 import tempfile
 
@@ -39,10 +38,14 @@ def source_features(path, format_name):
         raise ValueError("identity discovery requires normalized geojsonseq, geojson or csv")
 
 
-def _load_targets(config, stack):
+def _load_targets(config, stack, review_inputs):
     """Read the explicit full batch; every row count and source hash is checked."""
     targets = []
     for item in config["assets"]:
+        missing = {"source", "source_sha256", "format", "identity_strategy"} - item.keys()
+        if missing:
+            raise ValueError("missing discovery fields: " + ", ".join(sorted(missing)))
+        pins = dict(review_inputs)
         source = Path(item["source"]).resolve()
         source_sha = input_digest(source)
         if source_sha != item["source_sha256"]:
@@ -53,14 +56,20 @@ def _load_targets(config, stack):
         baseline = None
         baseline_hash = None
         if strategy == "generated":
-            raw = item["baseline"]
+            raw = item.get("baseline", {})
+            if not isinstance(raw, dict) or not raw:
+                raise ValueError("generated discovery requires an explicit baseline")
             if raw.get("genesis") is True:
                 if set(raw) != {"genesis", "contract_id"}:
                     raise ValueError("explicit genesis must not invent previous records or sequence state")
                 baseline = model.GeneratedIdentityBaseline.genesis(contract_id=raw["contract_id"])
             else:
-                records_path = Path(raw["records"])
+                missing = {"records", "sha256", "release", "next_feature_id", "contract_id"} - raw.keys()
+                if missing:
+                    raise ValueError("missing baseline fields: " + ", ".join(sorted(missing)))
+                records_path = Path(raw["records"]).resolve()
                 baseline_hash = sha256_file(records_path)
+                pins[str(records_path)] = baseline_hash
                 if baseline_hash != raw["sha256"]:
                     raise ValueError("baseline checksum differs")
                 # A disk index prevents a large sidecar from becoming a Python tuple.
@@ -77,8 +86,8 @@ def _load_targets(config, stack):
         fields = tuple(item.get("source_fields", ()))
         if strategy == "source_field" and len(fields) != 1:
             raise ValueError("source_field discovery requires exactly one field")
-        if strategy == "not_applicable" and item.get("format") in {"csv", "geojson", "geojsonseq", "fgb", "pmtiles"}:
-            raise ValueError("feature datasets cannot bypass identity discovery")
+        if strategy == "not_applicable" and item["format"] not in {"cog", "zarr"}:
+            raise ValueError("only explicit cog/zarr artifacts may omit feature identity discovery")
         if strategy == "not_applicable" and not item.get("identity_not_applicable_reason"):
             raise ValueError("non-feature artifacts require an identity_not_applicable_reason")
         if strategy != "not_applicable" and (type(item.get("expected_rows")) is not int or item["expected_rows"] <= 0):
@@ -109,21 +118,29 @@ def _load_targets(config, stack):
 
         decisions = item.get("decisions", [])
         if isinstance(decisions, str):
-            decisions = json.loads(Path(decisions).read_text())["decisions"]
+            path = Path(decisions).resolve()
+            pins[str(path)] = sha256_file(path)
+            decisions = model.read_identity_resolution_decisions(path,
+                asset_slug=item["asset_slug"], release=config["release"])
         targets.append(readiness.Target(item["asset_slug"], config["release"],
             {"source": str(source), "source_sha256": source_sha, "baseline_sha256": baseline_hash,
              **({"original_source_sha256": item["original_source_sha256"]} if "original_source_sha256" in item else {}),
              "definition": {k: v for k, v in item.items() if k != "decisions"}},
             prepare, baseline=baseline, decisions=tuple(decisions),
-            match_properties=item.get("match_properties", True), blockers=tuple(item.get("blockers", ()))))
+            match_properties=item.get("match_properties", True), blockers=tuple(item.get("blockers", ())),
+            review_inputs=pins))
     return targets
 
 
-def load_targets(config, stack):
+def load_targets(config, stack, review_inputs):
+    if not isinstance(config.get("assets"), list) or not config["assets"] or not config.get("release"):
+        raise ValueError("discovery requires a release and a nonempty asset list")
     targets = []
     for item in config["assets"]:
+        if not isinstance(item, dict) or not isinstance(item.get("asset_slug"), str):
+            raise ValueError("every discovery asset requires an asset_slug")
         try:
-            targets.extend(_load_targets({**config, "assets": [item]}, stack))
+            targets.extend(_load_targets({**config, "assets": [item]}, stack, review_inputs))
         except (ValueError, RuntimeError, OSError) as exc:
             message = str(exc)
             def failed_prepare(_directory, message=message):
@@ -133,11 +150,12 @@ def load_targets(config, stack):
     return targets
 
 
-def run(config):
+def run(config, *, review_inputs=None):
     from contextlib import ExitStack
 
     directory = Path(config["work_dir"]).resolve()
     directory.mkdir(parents=True, exist_ok=True)
+    readiness.write_json(directory / "readiness.json", {"schema": readiness.SCHEMA, "state": "INCOMPLETE"})
     with ExitStack() as stack:
-        report = readiness.discover_batch(load_targets(config, stack), directory)
+        report = readiness.discover_batch(load_targets(config, stack, review_inputs or {}), directory)
     return report

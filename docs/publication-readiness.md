@@ -47,6 +47,7 @@ Example plan for a source-field table and a raster:
       "asset_slug": "example-raster",
       "source": "/tmp/shared-datasets-1/downloads/example-raster/source.tif",
       "source_sha256": "REPLACE_WITH_ACTUAL_SHA256",
+      "format": "cog",
       "identity_strategy": "not_applicable",
       "identity_not_applicable_reason": "Raster cells do not use feature IDs",
       "blockers": ["License decision pending"]
@@ -130,6 +131,13 @@ binding before artifact evidence and PR readiness. If normalized vector input
 differs from the original supplied source, include `original_source_sha256` in
 the discovery plan; the concierge compares it with the actual supplied source.
 Older unfinished concierge proposals must complete this newly required step.
+The CLI pins the plan and external decision documents, and the adapter pins
+baseline files. Changing these review inputs invalidates READY; rerun discovery
+to apply the current choices while reusing unchanged normalization. Decision
+documents use the standard schema and select only the requested release.
+The concierge also compares the report's identity strategy and fields with its
+current field-profile decision. Only explicitly declared COG/Zarr artifacts may
+use `not_applicable`.
 
 WDPA's automatic worker performs complete discovery for both realms before its
 sample or complete artifact build. Each realm's review bundle is completed and

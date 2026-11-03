@@ -7,7 +7,7 @@ declare the complete batch and supply normalized inputs using their real reader.
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -16,7 +16,7 @@ import shutil
 import tempfile
 from typing import Callable
 
-from ingestion.common.identity_index import DiskIdentityPlan
+from ingestion.common.identity_index import DiskIdentityPlan, baseline_digest
 from ingestion.common.runtime import sha256_file
 from scripts import release_feature_model as model
 
@@ -43,6 +43,13 @@ class Target:
     decisions: tuple = ()
     match_properties: bool = True
     blockers: tuple[str, ...] = ()
+    review_inputs: dict[str, str] = field(default_factory=dict)
+
+
+def verify_review_inputs(inputs):
+    for name, digest in inputs.items():
+        if sha256_file(Path(name)) != digest:
+            raise ValueError("publication review input changed: " + name)
 
 
 def write_json(path, value):
@@ -135,11 +142,14 @@ def discover_batch(targets, directory, *, on_pending=None):
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
             raise ValueError("invalid discovery asset slug")
         binding = {"asset_slug": slug, "release": target.release, "inputs": target.binding,
-                   "engine": engine_digest(), "match_properties": target.match_properties}
+                   "engine": engine_digest(), "match_properties": target.match_properties,
+                   "baseline_sha256": baseline_digest(target.baseline, match_properties=target.match_properties)
+                       if target.baseline is not None else None}
         key = hashlib.sha256(model.canonical_json(binding).encode()).hexdigest()
         retained = directory / slug / key
         result = {"state": "INCOMPLETE", "analysis": str(retained), "unresolved": 0,
-                  "blockers": list(target.blockers), "reused": retained.exists()}
+                  "blockers": list(target.blockers), "reused": retained.exists(),
+                  "review_inputs": target.review_inputs}
         report["assets"][slug] = result
         try:
             if not retained.exists():
@@ -177,6 +187,7 @@ def discover_batch(targets, directory, *, on_pending=None):
                         result["cases"] = str(cases)
                         if unresolved and on_pending is not None:
                             on_pending(target, plan, retained, result)
+            verify_review_inputs(target.review_inputs)
             result["state"] = ("BLOCKED" if result["blockers"] else
                                "NEEDS_DECISION" if result["unresolved"] else "READY")
         except (ValueError, RuntimeError, OSError) as exc:
@@ -223,7 +234,7 @@ def require_ready(report, *, notify=False):
     raise error
 
 
-def validate_ready_report(path, *, asset_slug, source_sha256, release=None):
+def validate_ready_report(path, *, asset_slug, source_sha256, release=None, identity_contract=None):
     """Revalidate retained evidence at a manual workflow's build/PR boundary."""
     report = json.loads(path.read_text())
     if (report.get("schema") != SCHEMA or report.get("state") != "READY"
@@ -233,6 +244,7 @@ def validate_ready_report(path, *, asset_slug, source_sha256, release=None):
     for slug, item in report["assets"].items():
         if item["state"] != "READY" or item["unresolved"] or item["blockers"]:
             raise ValueError("every declared asset must be READY")
+        verify_review_inputs(item["review_inputs"])
         directory = Path(item["analysis"])
         if sha256_file(directory / "analysis.json") != item["analysis_sha256"]:
             raise ValueError("retained analysis manifest changed")
@@ -247,6 +259,10 @@ def validate_ready_report(path, *, asset_slug, source_sha256, release=None):
             if input_digest(Path(inputs["source"])) != inputs["source_sha256"]:
                 raise ValueError("publication source changed since discovery")
         if slug == asset_slug:
+            definition = inputs.get("definition", {})
+            if identity_contract is not None and any(
+                    definition.get(key) != value for key, value in identity_contract.items()):
+                raise ValueError("publication identity contract changed since discovery")
             if inputs.get("original_source_sha256", inputs.get("source_sha256")) != source_sha256:
                 raise ValueError("publication source changed since discovery")
             if release and binding["release"] != release:

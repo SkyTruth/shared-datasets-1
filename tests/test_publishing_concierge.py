@@ -778,6 +778,8 @@ class PublishingConciergeTests(unittest.TestCase):
                 "release_date": "2026-05-01",
             },
             "steps": {
+                "profile-fields": {"status": "completed", "evidence": {
+                    "feature_id_decision": "source-field", "feature_id_fields": ["source_id"]}},
                 "translation-decision": {
                     "status": "completed",
                     "evidence": {"decision": "autogenerate", "locales": ["es", "fr"], "fields": ["name"]},
@@ -792,7 +794,9 @@ class PublishingConciergeTests(unittest.TestCase):
             state["source"] = str(source)
             directory = root / "readiness"
             readiness.discover_batch([readiness.Target("example", "2026-05-01",
-                {"source_sha256": input_digest(source)}, lambda _: {"fixture": True})], directory)
+                {"source_sha256": input_digest(source), "definition": {
+                    "identity_strategy": "source_field", "source_fields": ["source_id"]}},
+                lambda _: {"fixture": True})], directory)
             state["steps"]["decision-readiness"] = {"status": "completed",
                 "evidence": {"readiness_report": str(directory / "readiness.json")}}
         return state
@@ -896,9 +900,13 @@ class PublishingConciergeTests(unittest.TestCase):
         if publishing_concierge.step_completed(state, "decision-readiness"):
             return
         directory = root / "fixture-readiness"
+        profile = state["steps"]["profile-fields"]["evidence"]
+        source_field = profile["feature_id_decision"] == "source-field"
         readiness.discover_batch([readiness.Target(state["plan"]["asset_slug"],
             state["plan"].get("release_date") or "fixture-release",
-            {"source_sha256": input_digest(Path(state["source"]))},
+            {"source_sha256": input_digest(Path(state["source"])), "definition": {
+                "identity_strategy": "source_field" if source_field else "generated",
+                "source_fields": profile["feature_id_fields"] if source_field else profile["assignment_key_fields"]}},
             lambda _: {"complete_test_provider": True})], directory)
         self.assertEqual(self._confirm(root, state_file, "decision-readiness",
             {"readiness_report": str(directory / "readiness.json")}), 0)
