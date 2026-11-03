@@ -1055,7 +1055,7 @@ h3 {
   margin: 0 0 0 auto;
 }
 
-.feature-lookup input { padding: 0 36px 0 12px; }
+.feature-lookup input { display: block; padding: 0 36px 0 12px; }
 .feature-lookup button {
   position: absolute;
   right: 4px;
