@@ -73,7 +73,7 @@ def feature(key, x, **properties):
     }
 
 
-def fixture(root, *, native=False):
+def fixture(root, *, native=False, compared_values=()):
     root.mkdir(exist_ok=True)
     slug, previous_release, release = "wdpa-marine", "2026-10-01", "2026-11-01"
     previous = [
@@ -86,6 +86,9 @@ def fixture(root, *, native=False):
         feature("existing-key", 1, NAME="Key owner"),
         previous[0],
     ]
+    for field, before, after in compared_values:
+        previous[0]["properties"][field] = before
+        incoming[0]["properties"][field] = after
     if native:
         for row in previous + incoming:
             if row["geometry"]["type"] == "Point":
@@ -394,6 +397,44 @@ def test_complete_capture_retains_siblings_owner_and_source_and_renders_offline(
     }
     with pytest.raises(FileExistsError):
         review.render_report(bundle, output)
+
+
+def test_report_highlights_json_type_changes(tmp_path, monkeypatch):
+    fx = fixture(
+        tmp_path,
+        compared_values=(
+            ("NUMBER_KIND", 1, 1.0),
+            ("BOOLEAN_KIND", True, 1),
+            ("NESTED_KIND", {"values": [1, False]}, {"values": [1.0, 0]}),
+            ("SAME_OBJECT", {"a": 1, "b": 2}, {"b": 2, "a": 1}),
+        ),
+    )
+
+    def native_boundary(path, records):
+        for feature_id, record in records.items():
+            record["geometry"] = fx.previous[int(feature_id) - 1]["geometry"]
+
+    monkeypatch.setattr(review, "previous_geometries", native_boundary)
+    bundle = complete(fx, tmp_path / "complete")
+    output = tmp_path / "report"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ingestion.wdpa_monthly.identity_review",
+            str(bundle),
+            "--out",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    html = (output / "report.html").read_text()
+    comparison = html.split("<h3>Previous feature 1</h3>", 1)[1].split("<h3>", 1)[0]
+    for field in ("NUMBER_KIND", "BOOLEAN_KIND", "NESTED_KIND"):
+        assert f'<tr class="changed"><th>{field}</th>' in comparison
+    assert '<tr class=""><th>SAME_OBJECT</th>' in comparison
 
 
 @pytest.mark.parametrize(

@@ -672,11 +672,12 @@ def render_report(bundle, directory):
             fields_all = sorted(set(before["properties"]) | set(incoming["properties"]))
             rows = []
             for key in fields_all:
-                left = before["properties"].get(key)
-                right = incoming["properties"].get(key)
-                changed = (key in before["properties"], left) != (
+                changed = (
+                    key in before["properties"],
+                    p.canonical(before["properties"].get(key)),
+                ) != (
                     key in incoming["properties"],
-                    right,
+                    p.canonical(incoming["properties"].get(key)),
                 )
 
                 def cell(properties):
