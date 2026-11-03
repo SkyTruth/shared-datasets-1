@@ -60,6 +60,10 @@ NDGeoJSON interchange, geometry-free CSV tables, and release metadata sidecars.
 Read it for format requirements, naming, preview/source exceptions, and feature
 identity contracts.
 
+[SkyTruth's identity-resolution process](docs/standards/feature-identity-resolution.md)
+describes conflict categories, evidence, human review, automation limits and how
+to extend the rules for a new edge condition.
+
 ## Standard local setup
 
 Use the [Python environment workflow](.claude/skills/align-virtual-environment/SKILL.md)
