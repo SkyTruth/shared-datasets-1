@@ -110,6 +110,10 @@ NOT (
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )
 EOT
+      label_extractors = {
+        execution      = "EXTRACT(protoPayload.response.metadata.name)"
+        failure_reason = "EXTRACT(protoPayload.status.message)"
+      }
     }
   }
 

@@ -103,6 +103,10 @@ NARROW_PATHS = {
     # Exact reverse-import test closure of these automation scripts. SDK/WDPA names
     # describe mocked incident histories, not SDK/native fixture execution.
     "tests/test_failure_alert_routing.py": (),
+    # Cross-source alert tests use local HTTP/storage fixtures and mocked
+    # deployment provenance; they produce no native, SDK or browser inputs.
+    # Receiver/image edits retain their own production-image coverage.
+    "tests/test_execution_alerts.py": (),
     "tests/test_repo_alerts.py": (),
     "tests/test_sdk_incident_recovery.py": (),
     "tests/test_slack_incident_claim_cli.py": (),

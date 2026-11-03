@@ -350,10 +350,14 @@ def test_real_pubsub_decode_and_persisted_retries_enrich_one_parent(
     for item in (original, decoded, original, decoded):
         decisions.deliver(item, store, slack, IDENTITY)
     slack.post.assert_called_once()
-    assert slack.update.call_count == (0 if first_ready else 1)
+    # Quiet updates can repeat to repair a competing writer's stale Slack
+    # update. The invariant is one parent with the original pinned evidence.
+    assert slack.update.called
+    assert all(call.args[0] == slack.post.return_value for call in slack.update.call_args_list)
+    assert example[4] in slack.update.call_args.args[1]["text"]
     value, _ = decisions.load(store, wire.event_key(ready), IDENTITY)
     assert value["event"] == ready and value["catalog_url"] == ORIGIN
-    assert value["schema"] == decisions.REVIEW_EVENT_SCHEMA
+    assert value["schema"] == decisions.EXECUTION_EVENT_SCHEMA
     assert (
         example[4]
         in decisions.primary(value["event"], catalog_url=value["catalog_url"])["text"]
@@ -395,7 +399,9 @@ def test_failed_parent_enrichment_finishes_on_late_original_event(example, monke
     saved, _ = decisions.load(store, wire.event_key(ready), IDENTITY)
     assert saved["event"] == ready and saved["catalog_url"] == ORIGIN
     slack.update.side_effect = None
+    before_retry = slack.update.call_count
     decisions.deliver(original, store, slack, IDENTITY)
     slack.post.assert_called_once()
-    assert slack.update.call_count == 2
+    assert slack.update.call_count == before_retry + 1
+    assert slack.update.call_args.args[0] == slack.post.return_value
     assert example[4] in slack.update.call_args.args[1]["text"]

@@ -73,13 +73,35 @@ reply or new parent. Duplicate events are quiet, closure is permanent for that
 incident ID, and an out-of-order open cannot turn the message red again.
 Google's original Slack app messages cannot be adopted by a different bot.
 
-Messages include impact, mutation state, owner and required action. Monitoring
+Standalone Monitoring messages include impact, mutation state, owner and required action. Monitoring
 cannot establish consumer impact or mutation outcome, so both remain explicitly
 unknown, including after closure. `jonaraphael` owns triage while the operation
 owner is unknown. The action directs triage to the linked incident and affected
 execution; closure still requires separate recovery verification. Existing
 Monitoring parents receive these fields on their next closure update; duplicate
 open events remain quiet. Receipt state and delivery safeguards are unchanged.
+
+Execution failures and feature identity reviews share one parent keyed by the
+exact project, job and Cloud Run execution. The failure policy extracts
+`protoPayload.response.metadata.name`; the review policy and typed decision
+events supply the same execution name. Distinct executions remain distinct.
+The private `executions/<context-hash>.json` receipt claims the parent before
+posting, and each Monitoring receipt aliases its confirmed string timestamp.
+Events in either order enrich that parent instead of creating another one.
+Uncertain posts block every producer until the original receipt is repaired.
+
+Failure parents identify the job and execution, show a bounded error from that
+execution's logs, and link directly to its execution, filtered logs and
+Monitoring incident. The receiver reads at most twenty recent error entries,
+prefers an application exception over generic task-exit summaries, and escapes
+the error text. Empty error results retain the audit failure reason; failed API
+reads remain queued. The existing incident-reader role adds only
+`logging.logEntries.list` for this read. It gains no data-write permissions.
+Identity evidence and recorded decisions enrich the same parent. Recording a
+decision cannot resolve an execution failure; Monitoring closure cannot establish
+publication or deployment recovery. Other policies retain one parent per native
+incident. Historical parents and uncorrelated pre-rollout incidents keep their
+existing receipt and reconciliation paths rather than being matched by time.
 
 The deleted WDPA metric policy used `OPENED` and `CLOSED`; its existing
 incident receipts and Slack parents remain available. Google supports only
@@ -141,8 +163,17 @@ The reply does not broadcast to the channel. Each case must be covered before
 the review is marked **Decision recorded**. Partial decisions receive replies
 while the remaining cases stay open.
 
-The same reconciliation updates every bot-owned **Shared datasets release
-waiting on a maintainer decision** parent whose authoritative Monitoring incident
+The original **Decision needed** request remains in the parent, including its
+case summaries, context and source/review links. A shared execution parent shows
+review status separately above that retained request. Acceptance never replaces
+the request body with a short resolved summary. For an older bot-owned parent
+already shortened by that renderer, reconciliation restores the request from
+its frozen event and pinned links while retaining the existing decision replies.
+Legacy parents and uncertain delivery claims keep their existing safeguards.
+
+The same reconciliation updates the shared execution parent, including its
+identity review, and historical bot-owned **Shared datasets release
+waiting on a maintainer decision** parents whose authoritative Monitoring incident
 matches the exact execution, asset and release. Policy label extractors provide
 these keys; unrelated failure incidents are excluded. This settles the review
 request without asserting native Monitoring closure, publication success or
@@ -151,6 +182,11 @@ New workers wait for the selected protected transport sync to succeed.
 
 The private operations bucket retains the approved decision index and
 `identity/events/<event-id>.json` parent/reply receipts, plus exact incident links.
+New shared parents use the `identity-execution-notification-v1` decision receipt;
+it freezes the event's complete cases before the execution outbox can render it.
+If recording its shared timestamp is interrupted after a confirmed execution
+post, redelivery reuses that timestamp. Historical unconfirmed decision-post
+claims still require owner repair and cannot be reinterpreted as unsent.
 Generation preconditions claim each non-idempotent post before sending it.
 Uncertain parent/reply delivery blocks another post; inspect the service's
 `Identity decision Slack receipt` log and original thread before a reviewed
@@ -215,8 +251,14 @@ deployment jobs. For a failed main-push CI run, the alert worker verifies the
 workflow identity and exact current run attempt, then checks its actual jobs.
 Publication failures and failed deployment jobs after passing `ci-ready` are
 announced; ordinary PR and validation-only
-failures stay in GitHub. Failed terminal deployment verification and explicit
-read-only reconciliation also remain visible in Slack. A scheduled catalog input
+failures stay in GitHub. In incident mode, a completion job that successfully
+attests a signed `failed` outcome for its exact WDPA execution is a second report
+of the worker failure already owned by Monitoring; it creates no second Slack
+parent. Its GitHub check stays failed. Failed attestation, missing or invalid
+receipts, unknown outcomes and other observer failures still alert, with the title
+**WDPA execution verification** and an action identifying the verification and
+receipt-signing steps. Explicit read-only reconciliation failures also remain
+visible in Slack. A scheduled catalog input
 probe stays in Actions when same-attempt job evidence proves the publisher was
 skipped and no other job failed. Actual catalog deployment failures still alert.
 Every subscribed source
