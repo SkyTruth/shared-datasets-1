@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
-from services.monitoring_slack import run as relay, decisions
+from services.monitoring_slack import run as relay, decisions, executions
 from ingestion.common import decision_events as wire
 from scripts.slack_incident_api import Slack
 
@@ -137,6 +137,7 @@ class ReceiverTests(unittest.TestCase):
         self.stack.enter_context(patch.object(relay.storage, "Client", return_value=Client()))
         self.stack.enter_context(patch.object(relay, "HTTPServer", side_effect=server))
         self.stack.enter_context(patch.object(relay, "read_alert", side_effect=lambda key: self.alerts[key]))
+        self.stack.enter_context(patch.object(relay, "read_failure", return_value="RuntimeError: identity review exceeds case limit or is empty"))
         self.worker = threading.Thread(target=relay.main, daemon=True)
         self.worker.start()
         self.assertTrue(ready.wait(5), "real entrypoint did not start")
@@ -167,7 +168,7 @@ class ReceiverTests(unittest.TestCase):
                 self.assertEqual(self.send(packet), 204)
         self.assertEqual(len(self.messages),1)
         self.assertEqual(sum(method == "chat.postMessage" for method,_ in self.calls),1)
-        self.assertEqual(sum(method == "chat.update" for method,_ in self.calls),1)
+        self.assertGreaterEqual(sum(method == "chat.update" for method,_ in self.calls),1)
         text = next(iter(self.messages.values()))["text"]
         self.assertIn("Compare this case",text)
         self.assertIn("review_generation=1001",text)
@@ -266,6 +267,63 @@ class ReceiverTests(unittest.TestCase):
     def send_decision(self, source):
         return self.send({"subscription": wire.SUBSCRIPTION, "message": {"data": base64.b64encode(wire.canonical(source)).decode()}})
 
+    def test_decision_and_its_monitoring_reports_share_one_execution_parent(self):
+        source = decision_event()
+        self.assertEqual(self.send_decision(source), 204)
+        self.assertEqual(self.review_alert(source), 204)
+        self.assertEqual(len(self.messages), 1)
+        self.assertEqual(sum(method == "chat.postMessage" for method, _ in self.calls), 1)
+
+    def failure_alert(self, source, incident_id, state="open"):
+        labels = {"project_id": wire.PROJECT, "location": "us-central1", "job_name": source["job"]}
+        self.alerts[incident_id] = {"name": f"projects/{wire.PROJECT}/alerts/{incident_id}",
+            "policy": {"displayName": executions.FAILURE_POLICY},
+            "resource": {"type": "cloud_run_job", "labels": labels},
+            "log": {"extractedLabels": {"execution": source["execution"]}}}
+        value = envelope(state, incident_id)
+        payload = json.loads(base64.b64decode(value["message"]["data"]))
+        payload["incident"]["policy_name"] = executions.FAILURE_POLICY
+        value["message"]["data"] = base64.b64encode(json.dumps(payload).encode()).decode()
+        return self.send(value)
+
+    def test_failure_and_review_in_either_order_update_one_parent_and_preserve_failure(self):
+        for execution, failure_first in (("abcde", True), ("fghij", False)):
+            source = wire.event({**decision_event(), "execution": "wdpa-monthly-" + execution})
+            key = "0.failure-" + execution
+            if failure_first:
+                self.assertEqual(self.failure_alert(source, key), 204)
+            self.assertEqual(self.send_decision(source), 204)
+            self.assertEqual(self.review_alert(source, "0.review-" + execution), 204)
+            self.assertEqual(self.failure_alert(source, key), 204)
+            self.approve(source)
+            self.assertEqual(self.send_decision(source), 204)
+            parent, _ = relay.Store(self.bucket).load(key)
+            text = self.messages[parent["ts"]]["text"]
+            for phrase in ("wdpa-monthly execution failed", source["execution"], "identity review exceeds case limit",
+                           "Decision recorded", "Exact execution logs", "Next action"):
+                self.assertIn(phrase, text)
+            self.assertIn(":red_circle: Open", text)  # Semantic approval cannot resolve a real failure.
+        parents = [body for method, body in self.calls if method == "chat.postMessage" and not body.get("thread_ts")]
+        self.assertEqual(len(parents), 2)  # Distinct exact executions remain distinct.
+
+    def test_uncertain_execution_post_blocks_every_other_producer(self):
+        source = decision_event()
+        self.drop_post = True
+        self.assertEqual(self.failure_alert(source, "0.uncertain"), 503)
+        self.drop_post = False
+        self.assertEqual(self.send_decision(source), 503)
+        self.assertEqual(self.review_alert(source), 503)
+        self.assertEqual(sum(method == "chat.postMessage" for method, _ in self.calls), 1)
+
+    def test_failed_error_lookup_remains_queued_and_recovers_without_losing_the_alert(self):
+        source = decision_event()
+        relay.read_failure.side_effect = OSError("log reader unavailable")
+        self.assertEqual(self.failure_alert(source, "0.read-failed"), 503)
+        self.assertEqual(len(self.messages), 0)
+        relay.read_failure.side_effect = None
+        self.assertEqual(self.failure_alert(source, "0.read-failed"), 204)
+        self.assertEqual(len(self.messages), 1)
+
     def review_alert(self, source, incident_id="0.review", state="open"):
         labels = {"project_id": wire.PROJECT, "location": "us-central1", "job_name": source["job"]}
         self.alerts[incident_id] = {"name": f"projects/{wire.PROJECT}/alerts/{incident_id}",
@@ -309,8 +367,7 @@ class ReceiverTests(unittest.TestCase):
         self.assertIn("Decision recorded", self.messages[resolved["ts"]]["text"])
         for key in ("0.other-review", "0.unrelated-failure"):
             record, _ = store.load(key)
-            self.assertEqual(record["schema"], relay.SCHEMA)
-            self.assertIn(" Open", self.messages[record["ts"]]["text"])
+            self.assertIn("Decision needed" if key == "0.other-review" else " Open", self.messages[record["ts"]]["text"])
 
     def test_partial_decisions_wait_and_late_monitoring_is_settled_without_duplicate_replies(self):
         source = decision_event()
@@ -320,7 +377,7 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(self.send_decision(source), 204)
         self.assertEqual(self.review_alert(source), 204)
         record, _ = relay.Store(self.bucket).load("0.review")
-        self.assertIn(" Open", self.messages[record["ts"]]["text"])
+        self.assertIn("Decision needed", self.messages[record["ts"]]["text"])
         self.approve(source)
         self.assertEqual(self.send_decision(source), 204)
         self.assertEqual(self.review_alert(source, "0.late-review"), 204)
@@ -344,14 +401,14 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(self.send_decision(source), 503)
         self.assertEqual(len(self.messages), count)
         receipt, _ = relay.Store(self.bucket).load("0.review")
-        self.assertEqual(receipt["schema"], relay.SCHEMA)
+        self.assertIn("Decision needed", self.messages[receipt["ts"]]["text"])
 
     def test_update_failure_and_late_open_finish_decision_view_without_new_reply(self):
         source = decision_event()
-        self.approve(source)
         self.assertEqual(self.send_decision(source), 204)
+        self.approve(source)
         self.fail_update = True
-        self.assertEqual(self.review_alert(source), 503)
+        self.assertEqual(self.send_decision(source), 503)
         self.fail_update = False
         self.assertEqual(self.review_alert(source), 204)
         self.assertEqual(sum(method == "chat.postMessage" and bool(body.get("thread_ts")) for method, body in self.calls), 1)

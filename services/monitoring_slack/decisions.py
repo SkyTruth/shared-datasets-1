@@ -13,6 +13,7 @@ from scripts.slack_incident_api import TIMESTAMP
 POLICY = "Shared datasets release waiting on a maintainer decision"
 EVENT_SCHEMA = "identity-decision-notification-v1"
 REVIEW_EVENT_SCHEMA = "identity-review-notification-v1"
+EXECUTION_EVENT_SCHEMA = "identity-execution-notification-v1"
 APPROVAL_SCHEMA = "identity-decision-approvals-v1"
 REPOSITORY = "SkyTruth/shared-datasets-1"
 
@@ -80,7 +81,7 @@ def load(store, key, identity):
         fields.add("catalog_url")
         wire.catalog_origin(value["catalog_url"])
         schema = REVIEW_EVENT_SCHEMA
-    require(set(value) == fields and value["schema"] == schema
+    require(set(value) == fields and value["schema"] in {schema, EXECUTION_EVENT_SCHEMA}
             and value["identity"] == identity and wire.event_key(wire.event(value["event"])) == key, "incompatible decision receipt")
     require(value["parent_view"] is None or isinstance(value["parent_view"], str)
             and re.fullmatch(r"[0-9a-f]{64}", value["parent_view"]), "invalid decision parent acknowledgement")
@@ -188,7 +189,13 @@ def reconcile(store, key, slack, identity):
     if value["parent"]["owner"] == "bot":
         payload = primary(event, resolved=set(current) == wanted, catalog_url=value.get("catalog_url"))
         fingerprint = wire.digest(payload)
-        if value["parent_view"] != fingerprint:
+        from services.monitoring_slack import executions
+        shared, _ = executions.load(store, executions.source(event), identity)
+        if shared is not None:
+            require(shared["ts"] == value["parent"]["ts"], "decision differs from its execution parent")
+            executions.report(store, slack, identity, executions.source(event),
+                              decision=(key, payload["text"], set(current) == wanted))
+        elif value["parent_view"] != fingerprint:
             slack.update(value["parent"]["ts"], payload)
             value = {**value, "parent_view": fingerprint}
             generation = save(store, key, value, generation)
@@ -201,6 +208,8 @@ def reconcile(store, key, slack, identity):
         receipt, version = store.load(incident_id)
         from services.monitoring_slack.run import validate_record
         require(receipt is not None, "missing linked Monitoring parent")
+        if receipt["schema"] == "monitoring-slack-execution-v1":
+            continue  # The shared execution view above owns this parent's rendering.
         validate_record(receipt, identity)
         resolution = {"event_id": key, "records": current}
         payload = resolved_monitoring({"incident_id": incident_id, "policy_name": POLICY}, resolution)
@@ -219,15 +228,13 @@ def deliver(event, store, slack, identity):
     key = wire.event_key(event)
     value, generation = load(store, key, identity)
     if value is None:
-        value = {"schema": REVIEW_EVENT_SCHEMA if event["schema"] == wire.REVIEW_SCHEMA else EVENT_SCHEMA, "event": event, "identity": identity,
+        value = {"schema": EXECUTION_EVENT_SCHEMA, "event": event, "identity": identity,
                  "parent": {"owner": "bot", "ts": None}, "replies": {}, "parent_view": None}
         if event["schema"] == wire.REVIEW_SCHEMA:
             value["catalog_url"] = wire.catalog_origin(os.environ["CATALOG_VIEWER_URL"])
+        # Freeze the complete event before another producer can render its
+        # shared parent. The execution receipt alone owns the Slack post claim.
         generation = save(store, key, value, generation)
-        payload = primary(event, catalog_url=value.get("catalog_url"))
-        ts = slack.post(payload)
-        logging.info("Identity decision Slack receipt event=%s operation=parent channel=%s ts=%s", key, identity["channel"], ts)
-        save(store, key, {**value, "parent": {"owner": "bot", "ts": ts}, "parent_view": wire.digest(payload)}, generation)
     else:
         def core(source):
             return {field: item for field, item in source.items() if field not in {"schema", "review_bundle"}}
@@ -236,8 +243,16 @@ def deliver(event, store, slack, identity):
             if value["event"]["schema"] == wire.REVIEW_SCHEMA:
                 require(value["event"] == event, "review reference changed after capture")
             else:
-                value = {**value, "schema": REVIEW_EVENT_SCHEMA, "event": event, "catalog_url": wire.catalog_origin(os.environ["CATALOG_VIEWER_URL"])}
-                save(store, key, value, generation)
+                value = {**value, "schema": EXECUTION_EVENT_SCHEMA if value["schema"] == EXECUTION_EVENT_SCHEMA else REVIEW_EVENT_SCHEMA,
+                         "event": event, "catalog_url": wire.catalog_origin(os.environ["CATALOG_VIEWER_URL"])}
+                generation = save(store, key, value, generation)
+    if value["parent"]["ts"] is None:
+        require(value["schema"] == EXECUTION_EVENT_SCHEMA, "unconfirmed historical decision parent; repair its receipt before retrying")
+        payload = primary(value["event"], catalog_url=value.get("catalog_url"))
+        from services.monitoring_slack import executions
+        ts = executions.report(store, slack, identity, executions.source(value["event"]), decision=(key, payload["text"], False))
+        logging.info("Identity decision Slack receipt event=%s operation=parent channel=%s ts=%s", key, identity["channel"], ts)
+        save(store, key, {**value, "parent": {"owner": "bot", "ts": ts}, "parent_view": wire.digest(payload)}, generation)
     reconcile(store, key, slack, identity)
 
 

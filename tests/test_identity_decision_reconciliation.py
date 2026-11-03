@@ -233,4 +233,4 @@ def test_workflow_waits_for_transport_and_existing_review_authority():
     assert 'name  = "IDENTITY_DECISION_PROTOCOL"' in terraform
     assert '"roles/pubsub.publisher"' in terraform
     reader = Path("terraform/envs/prod/monitoring_alert_policy_iam.tf").read_text().split('"monitoring_incident_reader"', 1)[1].split('\nresource ', 1)[0]
-    assert 'permissions = ["monitoring.alerts.get"]' in reader
+    assert 'permissions = ["monitoring.alerts.get", "logging.logEntries.list"]' in reader

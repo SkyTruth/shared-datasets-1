@@ -1,4 +1,4 @@
-"""Authenticated Pub/Sub receiver: one editable Slack parent per Monitoring incident."""
+"""Authenticated receiver: one execution parent, with native receipts for other policies."""
 from __future__ import annotations
 
 import base64
@@ -14,7 +14,7 @@ from google.cloud import storage
 
 from scripts.slack_incident_api import Slack, TIMESTAMP
 from ingestion.common import decision_events
-from services.monitoring_slack import decisions
+from services.monitoring_slack import decisions, executions
 
 PROJECT = "shared-datasets-1"
 SUBSCRIPTION = f"projects/{PROJECT}/subscriptions/monitoring-slack"
@@ -102,6 +102,18 @@ def validate_record(record, identity):
 def deliver(incident, store, slack, identity, *, create=True):
     key = incident["incident_id"]
     record, generation = store.load(key)
+    if record is not None and record["schema"] == executions.RECEIPT_SCHEMA:
+        require(set(record) == {"schema", "identity", "ts", "source", "closed"}
+                and record["identity"] == identity and isinstance(record["ts"], str)
+                and TIMESTAMP.fullmatch(record["ts"]) and type(record["closed"]) is bool, "incompatible execution receipt")
+        shared, _ = executions.load(store, record["source"], identity)
+        require(shared is not None and shared["ts"] == record["ts"], "missing original execution parent")
+        # Owner-requested Monitoring closure reuses the execution alias, too.
+        if incident["policy_name"] == executions.FAILURE_POLICY:
+            executions.report(store, slack, identity, record["source"],
+                              failure=(key, incident["state"] == "closed", ""))
+        store.save(key, {**record, "closed": record["closed"] or incident["state"] == "closed"}, generation)
+        return
     if record is None:
         require(create, "no original bot-owned Monitoring message")
         # A durable claim precedes the non-idempotent Slack post. An interrupted
@@ -138,8 +150,43 @@ def read_alert(incident_id):
     return response.json()
 
 
-def handler(store, slack, identity, *, alert_reader=None):
+def read_failure(alert):
+    """Read bounded error evidence for the exact execution, never another attempt."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
+
+    labels = alert.get("log", {}).get("extractedLabels", {})
+    if not labels.get("execution"):
+        return ""
+    resource = alert.get("resource", {})
+    require(resource.get("type") == "cloud_run_job" and resource.get("labels", {}).get("location") == "us-central1", "foreign failure resource")
+    ctx = executions.context({"project": resource["labels"].get("project_id"), "job": resource["labels"].get("job_name"), "execution": labels["execution"]})
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform.read-only"])
+    response = AuthorizedSession(credentials).post("https://logging.googleapis.com/v2/entries:list", json={
+        "resourceNames": [f"projects/{PROJECT}"], "orderBy": "timestamp desc", "pageSize": 20,
+        "filter": (f'resource.type="cloud_run_job" resource.labels.project_id="{PROJECT}" '
+                   f'resource.labels.location="us-central1" resource.labels.job_name="{ctx["job"]}" '
+                   f'labels."run.googleapis.com/execution_name"="{ctx["execution"]}" severity>=ERROR'),
+    }, timeout=30)
+    response.raise_for_status()
+    messages = []
+    for row in response.json().get("entries", []):
+        require(row.get("resource") == resource
+                and row.get("labels", {}).get("run.googleapis.com/execution_name") == ctx["execution"], "foreign failure log evidence")
+        text = row.get("textPayload") or row.get("jsonPayload", {}).get("message")
+        if text:
+            lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+            if lines:
+                messages.append(lines[-1][:800])
+    # System task-exit summaries arrive after application tracebacks. Prefer
+    # the actual exception over the later generic "exit code 1" observation.
+    return next((text for text in messages if re.match(r"[\w.]+(?:Error|Exception):", text)),
+                messages[0] if messages else labels.get("failure_reason", ""))
+
+
+def handler(store, slack, identity, *, alert_reader=None, failure_reader=None):
     alert_reader = read_alert if alert_reader is None else alert_reader
+    failure_reader = read_failure if failure_reader is None else failure_reader
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -151,6 +198,13 @@ def handler(store, slack, identity, *, alert_reader=None):
                     decisions.deliver(incident, store, slack, identity)
                 else:
                     logging.info("Monitoring event incident=%s state=%s", incident["incident_id"], incident["state"])
+                    if incident["policy_name"] in {decisions.POLICY, executions.FAILURE_POLICY}:
+                        alert = alert_reader(incident["incident_id"])
+                        cause = failure_reader(alert) if incident["policy_name"] == executions.FAILURE_POLICY else ""
+                        if executions.monitoring(incident, alert, store, slack, identity, cause=cause):
+                            self.send_response(204)
+                            self.end_headers()
+                            return
                     deliver(incident, store, slack, identity)
                     if incident.get("policy_name") == decisions.POLICY:
                         decisions.link(incident, alert_reader(incident["incident_id"]), store, slack, identity)
