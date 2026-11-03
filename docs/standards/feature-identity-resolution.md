@@ -228,6 +228,9 @@ override conflict, or repair a disagreement by resetting publication state.
    cases; full terrestrial processing can reveal more. A zero-exit review stop
    or signed runtime success is not publication acceptance. Verify actual
    receipts, indexes and the owning runbook's activation conditions.
+   Fractional replays scope curation to keys present in their exact source
+   filter. Decisions for included keys retain every hash and legality check;
+   a complete build must still validate the entire release-scoped decision list.
 7. **Reconcile the original review.** The existing protected notification path
    records the decision in the original Slack thread, names its decision maker,
    explains the rationale and links the reviewed PR. Large batches can summarize

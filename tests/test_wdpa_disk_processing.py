@@ -390,6 +390,16 @@ def test_normalized_store_matches_old_export_semantically(tmp_path):
     assert source_count_summary(
         [wdpa.SourceLayer(asset.tile_layer, (), "GEOMETRY", str(filtered))], "1=1", tmp_path
     ) == dict(rows=3, india_rows=2, india_sites=1, raw_rows=3)
+    from scripts.local_wdpa_sample import scope_identity_decisions
+    candidates = [{"new_identity_key": [key]} for key in ("a", "b", "polygon", "absent")]
+    assert scope_identity_decisions(
+        candidates,
+        layers=[wdpa.SourceLayer(asset.tile_layer, (), "GEOMETRY", str(filtered))],
+        where="SITE_ID = 1", sample=wdpa.SampleSpec(0.001, 7919),
+    ) == [candidates[0], candidates[2]]
+    assert scope_identity_decisions(
+        candidates, layers=[], where="unused", sample=None
+    ) is candidates
     normalized_path = tmp_path / "normalized.geojsonseq"
     wdpa.convert_gpkg_to_geojsonseq(filtered, asset, normalized_path)
     normalized = list(metadata.iter_geojsonseq(normalized_path))
@@ -501,3 +511,108 @@ def test_reviewed_decisions_match_the_existing_allocator(tmp_path, action):
     assert rows[0]["feature_id"] == old[0]["feature_id"]
     assert next_id == result.next_generated_feature_id
     assert evidence == result.identity_decisions
+
+
+@pytest.fixture
+def reviewed_sample_cases(tmp_path):
+    from dataclasses import asdict
+
+    seed = tmp_path / "baseline"
+    seed.mkdir()
+    old, _ = legacy(seed, [feature("old-a", 1), feature("old-b", 2)],
+                    model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
+    baseline = model.GeneratedIdentityBaseline(tuple(old), 3, "2026-09-01", contract_id="test-v1")
+    incoming = [feature("new-a", 1, NAME="A"), feature("new-b", 2, NAME="B")]
+    decisions = []
+    for row in incoming:
+        gh, ph = model.content_hashes(geometry=row["geometry"], properties=row["properties"])
+        key = model.source_fields_identity_key(row["properties"], ("SITE_PID",))
+        case = model.find_identity_ambiguities(
+            [dict(identity_key=key, geometry_hash=gh, properties_hash=ph)],
+            previous_records=baseline.records,
+        )[0]
+        decisions.append({
+            "release": "2026-10-01", "action": "reuse_previous_feature_id",
+            "new_identity_key": list(key), "new_geometry_hash": gh,
+            "new_properties_hash": ph, "previous_feature_id_for_key": None,
+            "reuse_feature_id": case.matching_geometry_feature_ids[0],
+            "rationale": "Reviewed replacement with the old key absent",
+            "reviewer": "jonaraphael", "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/133",
+            **{k: list(v) for k, v in asdict(case).items() if k.startswith("matching_")},
+        })
+    return baseline, incoming, decisions
+
+
+@pytest.mark.parametrize("count", [0, 1, 2])
+def test_fractional_source_scope_feeds_both_strict_allocators(
+    tmp_path, monkeypatch, reviewed_sample_cases, count
+):
+    from scripts import local_wdpa_sample as replay
+    from ingestion.wdpa_monthly import run as wdpa
+
+    baseline, incoming, decisions = reviewed_sample_cases
+    sample_rows = incoming[:count]
+    def source(layer, where):
+        assert layer == "source-layer" and where == "exact realm and SITE_ID filter"
+        return (row["properties"] for row in sample_rows)
+    monkeypatch.setattr(replay, "source_count_features", source)
+    scoped = replay.scope_identity_decisions(
+        decisions, layers=["source-layer"], where="exact realm and SITE_ID filter",
+        sample=wdpa.SampleSpec(0.001, 7919),
+    )
+    assert scoped == decisions[:count]
+    if count == 1:
+        # Reproduce the deployed failure at both real allocator boundaries.
+        for name, allocate in [("legacy-unscoped", legacy), ("disk-unscoped", disk_allocation)]:
+            root = tmp_path / name
+            root.mkdir()
+            with pytest.raises((RuntimeError, model.ReleaseFeatureModelError), match="stale feature identity resolution"):
+                allocate(root, sample_rows, baseline, decisions)
+    if count:
+        old_root, new_root = tmp_path / "legacy", tmp_path / "disk"
+        old_root.mkdir()
+        new_root.mkdir()
+        old, result = legacy(old_root, sample_rows, baseline, scoped)
+        rows, next_id, evidence = disk_allocation(new_root, sample_rows, baseline, scoped)
+        assert [r["feature_id"] for r in rows] == [r["feature_id"] for r in old]
+        assert next_id == result.next_generated_feature_id
+        assert evidence == result.identity_decisions
+
+
+@pytest.mark.parametrize("invalid", ["hash", "duplicate", "missing", "full-build", "illegal", "stale-present"])
+def test_source_scope_preserves_strict_rejections(
+    tmp_path, monkeypatch, reviewed_sample_cases, invalid
+):
+    from scripts import local_wdpa_sample as replay
+    from ingestion.wdpa_monthly import run as wdpa
+
+    baseline, incoming, decisions = reviewed_sample_cases
+    monkeypatch.setattr(replay, "source_count_features", lambda *_: iter([incoming[0]["properties"]]))
+    expected = "new_geometry_hash"
+    if invalid == "hash":
+        decisions[0] = {**decisions[0], "new_geometry_hash": "sha256:" + "0" * 64}
+    elif invalid == "duplicate":
+        decisions.append(decisions[0])
+        expected = "duplicate"
+    elif invalid == "missing":
+        decisions = decisions[1:]
+        expected = "identity"
+    elif invalid == "illegal":
+        decisions[0] = {**decisions[0], "action": "keep_previous_key_mapping"}
+        decisions[0].pop("reuse_feature_id")
+        expected = "no mapping to keep"
+    else:
+        expected = "stale feature identity resolution"
+        if invalid == "stale-present":
+            incoming[0] = feature("new-a", 99, NAME="New entity")
+    scoped = replay.scope_identity_decisions(
+        decisions, layers=["source"], where="sample",
+        sample=None if invalid == "full-build" else wdpa.SampleSpec(0.001, 7919),
+    )
+    for name, allocate in [("legacy", legacy), ("disk", disk_allocation)]:
+        root = tmp_path / name
+        root.mkdir()
+        with mock.patch("ingestion.common.decision_events.publish", return_value=True):
+            with pytest.raises((RuntimeError, model.ReleaseFeatureModelError), match=expected):
+                allocate(root, incoming[:1], baseline, scoped)
+        assert not list(root.glob("*.ndjson.gz"))
