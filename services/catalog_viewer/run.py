@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
-from services.catalog_viewer import comparisons, usage
+from services.catalog_viewer import comparisons, usage, identity_review
 from services.http_base import (
     NO_STORE,
     Response,
@@ -49,7 +49,7 @@ LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-
 EXECUTION_STATUS_FILE = "wdpa-monthly-execution.json"
 ROOT_STATIC_FILES = {
     "index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js",
-    "compare-releases.js", "workspace.js",
+    "compare-releases.js", "identity-review.js", "workspace.js",
     "workspace-contract.js", "catalog.json", EXECUTION_STATUS_FILE,
 }
 
@@ -325,6 +325,7 @@ def handle_request(
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
     usage_reader=None,
+    identity_review_reader=None,
     published_context: dict[str, Any] | None = None,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
@@ -352,6 +353,8 @@ def handle_request(
         )
     if request_path == "/api/usage" or request_path == "/usage" or request_path.startswith("/usage/"):
         return usage.handle(method, request_path, headers, reader=usage_reader, domains=allowed_email_domains, now=now())
+    if request_path == "/api/identity-review":
+        return identity_review.handle(method, path, headers, reader=identity_review_reader, domains=allowed_email_domains)
     if request_path == "/healthz":
         return text_response(HTTPStatus.OK, "ok", {"Cache-Control": NO_STORE}, include_body=method != "HEAD")
     if request_path == "/api/comparisons" or request_path.startswith("/api/comparisons/"):
@@ -915,6 +918,7 @@ def make_handler(
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
     usage_reader=None,
+    identity_review_reader=None,
     published_context: dict[str, Any] | None = None,
 ):
     comparison_jobs = comparison_jobs or comparisons.ComparisonJobs()
@@ -985,6 +989,7 @@ def make_handler(
             feature_require_iap=feature_require_iap,
             comparison_jobs=comparison_jobs,
             usage_reader=usage_reader,
+            identity_review_reader=identity_review_reader,
             published_context=published_context,
         )
 
@@ -1062,6 +1067,7 @@ def main() -> None:
         comparison_jobs=comparison_jobs_from_env(),
         published_context=published_context_from_env(),
         usage_reader=usage.ReportReader(os.environ["DATASET_USAGE_STATE_BUCKET"]) if os.environ.get("DATASET_USAGE_STATE_BUCKET") else None,
+        identity_review_reader=identity_review.ReviewReader() if bucket_name == DEFAULT_BUCKET else None,
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()

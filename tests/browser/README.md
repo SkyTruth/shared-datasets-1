@@ -9,7 +9,21 @@ No production source is replaced and no map objects are mocked.
 Feature-ID scenarios inspect source attributes without a map click, copy/open
 generation-pinned historical links, reject unavailable snapshots, distinguish
 missing IDs from denied lookups, and discard late results. They also cover
-keyboard submission, narrow layouts, assets without tiles, and comparison mode.
+keyboard submission, alignment with Version, narrow layouts, assets without
+tiles, and comparison mode. Real map pixels and hit tests prove that a searched
+ID hides other features and the inline clear button restores them. Selection
+zoom, legend replacement and clearing a pending lookup exercise the same map
+and metadata boundary.
+
+Five identity-review scenarios follow a generated notification handle through
+the real viewer and bounded GCS reader with tiny synthetic bundle bytes. They
+exercise candidate/key ownership, exact orange/blue footprint pixels, published
+feature-link identity, narrow keyboard use, private/missing evidence, late
+responses and sample limitations. The native-produced JSON fixture is synthetic;
+no real WDPA records or cloud credentials are included. The new UI module is
+permitted only in explicit review scenarios, so ordinary startup still proves
+compatibility with the previously deployed viewer module allowlist. The full
+count gate requires all 42 scenarios, with no skips or retries.
 
 From the repository root, after following the repository Python environment
 instructions:

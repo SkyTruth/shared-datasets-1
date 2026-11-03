@@ -46,6 +46,8 @@ styles.css
 app.js
 map-preview.js
 release-reference.js
+compare-releases.js
+identity-review.js
 workspace.js
 workspace-contract.js
 catalog.json
@@ -329,12 +331,21 @@ route. See [comparison semantics, authorization, budgets and CLI](../../../../do
 
 ## Find a published feature
 
-For a single dataset with generation-pinned source metadata, **Feature ID** and
-**Find feature** appear below the Version row. Enter the published `feature_id`
+For a single dataset with generation-pinned source metadata, a **Find feature**
+field appears at the right of the Version row below the map, with matching
+control height. Enter the published `feature_id`
 (for example, `132873`), rather than a provider assignment key such as WDPA
 `SITE_PID`. Enter submits the lookup. Source attributes appear in the existing
-inspector even for assets without map tiles; the lookup does not locate the
-feature on the map. Missing IDs and unavailable metadata have distinct messages.
+inspector even for assets without map tiles. A successful lookup also filters
+every display layer to that exact ID, replacing any legend selection. The
+filter area below the map shows the selected ID and **Zoom to selection**.
+Zoom uses the selected feature's geometry from loaded display tiles; when those
+tiles do not contain it, the button stays visible but disabled with an
+explanation, rather than zooming to the full dataset. The field's inline ×
+clears the entry, pending lookup, inspector and ID filter without moving the
+camera. Deleting the entry has the same effect. Selecting a legend value
+replaces the ID filter. Changing the dataset or release clears the search;
+basemap and color changes retain the ID filter. Missing IDs and unavailable metadata have distinct messages.
 Lookup is hidden for multiple selections and during release comparison.
 
 **Copy feature link** in a loaded inspector copies the current catalog URL with
@@ -350,9 +361,36 @@ no access: restricted records still require the authorized viewer.
 The feature lookup reuses the existing metadata size budget, bounded viewer API,
 and public sidecar streaming routes. Late responses cannot restore an inspector
 after a selection changes or is cleared. Source-attribute lookup remains in the
-source language when the map's metadata language changes. The catalog includes
-published releases only; pending ingestion identity cases require the evidence
-and review work described in [the implementation plan](../../../../docs/feature-identity-review-plan.md).
+source language when the map's metadata language changes. Dataset discovery
+lists published releases. Pending WDPA identity cases are available separately
+through exact evidence links in the authenticated viewer.
+
+## Pending identity review
+
+Slack case links carry prefixed `review_*` query parameters for a captured case,
+asset/date, execution and bundle generation/size/SHA-256. The catalog lazily
+loads `identity-review.js` only for these links, keeping ordinary startup usable
+with the previous viewer allowlist. A read-only dialog calls the same-origin
+`GET /api/identity-review`, which always requires the SkyTruth IAP identity.
+The production reader derives one managed WDPA staging path, checks the exact
+generation and byte integrity, validates the bundle and rejects cross-case or
+cross-release identity mismatches. No URL parameters grant access to another
+object. Responses are no-store; bundle reads and serialized case responses are
+limited to 16 MiB. Candidate expansion charges its output against that budget.
+One read runs per instance; another receives 429. Larger producer bundles use
+the offline report. Preview readers retain their existing grants and cannot read evidence.
+
+The dialog shows all previous candidates and key ownership, highlights every
+field difference including JSON types and absence, overlays stored incoming and
+previous GeoJSON footprints, and links previous IDs to their pinned published
+metadata. Separate records sharing a footprint remain separately selectable.
+Sample evidence is explicit and cannot establish global source-key absence.
+The choices explain effects without approving or submitting decisions. Closing
+the dialog cancels pending reads/maps and restores published browsing. Missing,
+inaccessible or changed evidence gives an explicit unavailable state.
+
+See [WDPA review evidence](../../../../docs/wdpa-identity-review.md) for notification
+enrichment, retention and the protected reader/receiver/worker deployment paths.
 
 ## Dataset integration
 

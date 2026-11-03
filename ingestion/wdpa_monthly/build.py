@@ -10,6 +10,7 @@ import sys
 import time
 
 from ingestion.common import publication as p
+from ingestion.common import decision_events
 from ingestion.common.feature_metadata import IdentityDecisionRequired
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.wdpa_monthly import run as wdpa, translations, identity_review
@@ -118,6 +119,9 @@ def build_month(client, month, root):
                 print(json.dumps({"event": "wdpa_identity_review", "asset_slug": blocked.asset_slug,
                     "release": blocked.release, "awaiting_decisions": blocked.ambiguity_count,
                     "review_bundle": reference}), flush=True)
+                bundle = identity_review.read_json(target)
+                decision_events.publish(asset_slug=blocked.asset_slug, release=blocked.release,
+                    ambiguities=[item["ambiguity"] for item in bundle["capture"]["cases"]], review_bundle=reference)
             raise
     sample, report = results
     report["memory_peak_bytes"] = cgroup_memory()[1]

@@ -88,6 +88,7 @@ export async function renderMapPreview({
   assets,
   basemap = "map",
   colorField = "",
+  featureId = "",
   selectedLayer = "",
   onLayerOptionsChange = () => {},
   onColorFieldsChange = () => {},
@@ -198,7 +199,7 @@ export async function renderMapPreview({
     basemap: resolvedBasemap,
     colorField: "",
     colorMode: { type: "dataset" },
-    focusedLegendValue: "",
+    focus: featureId ? {type: "feature", value: featureId, bounds: null} : null,
     fieldSignature: "",
     colorSignature: "",
     colorSampleSerial: 0,
@@ -237,13 +238,12 @@ export function setColorizeField(fieldName) {
   const nextField = String(fieldName || "");
   const previousField = context.colorField;
   context.colorField = context.availableFields?.includes(nextField) ? nextField : "";
-  if (context.colorField !== previousField) {
-    context.focusedLegendValue = "";
+  if (context.colorField !== previousField && context.focus?.type === "legend") {
+    context.focus = null;
   }
   if (!context.colorField) {
     context.colorMode = { type: "dataset" };
     context.colorSignature = "";
-    context.focusedLegendValue = "";
     applyDatasetColors(context);
     applyFocusFilters(context);
     notifyColorLegend(context);
@@ -286,7 +286,23 @@ export function toggleLegendFocus(value) {
     return;
   }
 
-  context.focusedLegendValue = context.focusedLegendValue === nextValue ? "" : nextValue;
+  context.focus = context.focus?.type === "legend" && context.focus.value === nextValue ? null : {type: "legend", value: nextValue};
+  applyFocusFilters(context);
+  notifyColorLegend(context);
+}
+
+export function setFeatureFilter(featureId) {
+  const context = activeColorContext;
+  if (!context || context.mapSources.length !== 1) return;
+  if (featureId) {
+    if (context.focus?.type !== "feature" || context.focus.value !== featureId) {
+      context.focus = {type: "feature", value: featureId, bounds: null};
+    }
+    refreshFeatureSelectionBounds(context);
+  } else if (context.focus?.type === "feature") {
+    context.focus = null;
+  }
+  clearFeatureInspectionIndicator();
   applyFocusFilters(context);
   notifyColorLegend(context);
 }
@@ -299,15 +315,15 @@ export function clearFeatureInspectionIndicator() {
 }
 
 export function canZoomToSelection() {
-  return Boolean(activeMap && (focusedLegendBounds() || activeSelectionBounds));
+  return Boolean(activeMap && selectionBounds());
 }
 
-export function canZoomToLegendSelection() {
-  return Boolean(activeMap && focusedLegendBounds());
+export function canZoomToFocusedSelection() {
+  return Boolean(activeMap && focusedSelectionBounds());
 }
 
 export function zoomToSelection() {
-  const bounds = focusedLegendBounds() || activeSelectionBounds;
+  const bounds = selectionBounds();
   if (!activeMap || !bounds) {
     return false;
   }
@@ -315,16 +331,36 @@ export function zoomToSelection() {
   return true;
 }
 
-function focusedLegendBounds() {
+function selectionBounds() {
+  return activeColorContext?.focus ? focusedSelectionBounds() : activeSelectionBounds;
+}
+
+function focusedSelectionBounds() {
   const context = activeColorContext;
-  if (!context?.map || !context.focusedLegendValue || !modeSupportsLegendFocus(context.colorMode)) {
+  if (!context?.focus) return null;
+  if (context.focus.type === "feature") return context.focus.bounds;
+  if (!modeSupportsLegendFocus(context.colorMode)) {
     return null;
   }
-  const cachedBounds = context.colorMode?.boundsByValue?.get(context.focusedLegendValue);
+  const cachedBounds = context.colorMode.boundsByValue.get(context.focus.value);
   if (cachedBounds) {
     return cachedBounds;
   }
   return focusedRenderedLegendBounds(context);
+}
+
+function refreshFeatureSelectionBounds(context) {
+  if (context.focus?.type !== "feature") return;
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      const features = querySourceLayerFeatures(context.map, source, layer);
+      for (const feature of features) {
+        if (featureIdForProperties(feature.properties) === context.focus.value) {
+          context.focus.bounds = combineTwoBounds(context.focus.bounds, boundsFromFeatureGeometry(feature.geometry));
+        }
+      }
+    }
+  }
 }
 
 function focusedRenderedLegendBounds(context) {
@@ -358,9 +394,9 @@ function featureMatchesLegendFocus(feature, context) {
   }
   if (mode.valueSource === "metadata") {
     const featureId = featureIdForProperties(feature?.properties);
-    return Boolean(featureId && mode.featureIdsByValue?.get(context.focusedLegendValue)?.has(featureId));
+    return Boolean(featureId && mode.featureIdsByValue.get(context.focus.value).has(featureId));
   }
-  return normalizedValue(feature?.properties?.[field]) === context.focusedLegendValue;
+  return normalizedValue(feature?.properties?.[field]) === context.focus.value;
 }
 
 export function cancelMapPreview() {
@@ -855,6 +891,10 @@ function scheduleColorRefresh(context) {
     if (context.colorField) {
       refreshColorSample(context);
     }
+    if (context.focus?.type === "feature") {
+      refreshFeatureSelectionBounds(context);
+      notifyColorLegend(context);
+    }
   }, 80);
 }
 
@@ -930,10 +970,10 @@ function refreshColorSample(context) {
   mode.boundsByValue = samples.boundsByValue;
   mode.countsByValue = samples.countsByValue;
   const signature = colorModeSignature(mode);
-  const previousFocus = context.focusedLegendValue;
+  const previousFocus = context.focus;
   context.colorMode = mode;
   syncFocusedLegendValue(context);
-  if (signature !== context.colorSignature || previousFocus !== context.focusedLegendValue) {
+  if (signature !== context.colorSignature || previousFocus !== context.focus) {
     context.colorSignature = signature;
     applyColorMode(context);
     notifyColorLegend(context);
@@ -994,7 +1034,7 @@ function resetMetadataColorMode(context, options = {}) {
   }
   context.colorMode = { type: "dataset" };
   context.colorSignature = "";
-  context.focusedLegendValue = "";
+  if (context.focus?.type === "legend") context.focus = null;
   applyDatasetColors(context);
   applyFocusFilters(context);
   notifyColorLegend(context);
@@ -1009,10 +1049,10 @@ function applyMetadataColorValues(context, field, valuesByFeatureId) {
   mode.featureIdsByValue = metadataFeatureIdsByValue(valuesByFeatureId);
   mode.countsByValue = new Map([...mode.featureIdsByValue].map(([value, ids]) => [value, ids.size]));
   const signature = colorModeSignature(mode);
-  const previousFocus = context.focusedLegendValue;
+  const previousFocus = context.focus;
   context.colorMode = mode;
   syncFocusedLegendValue(context);
-  if (signature !== context.colorSignature || previousFocus !== context.focusedLegendValue) {
+  if (signature !== context.colorSignature || previousFocus !== context.focus) {
     context.colorSignature = signature;
     applyColorMode(context);
     notifyColorLegend(context);
@@ -1284,14 +1324,11 @@ function applyColorMode(context) {
 function notifyColorLegend(context) {
   const mode = context.colorMode;
   const values = legendValuesForMode(mode);
-  if (!mode || !values.length) {
-    context.onColorLegendChange(null);
-    return;
-  }
   context.onColorLegendChange({
     type: mode.type,
     field: mode.field,
-    focusedValue: context.focusedLegendValue || "",
+    focusedValue: context.focus?.type === "legend" ? context.focus.value : "",
+    featureId: context.focus?.type === "feature" ? context.focus.value : "",
     countScope: mode.valueSource === "metadata" ? "dataset" : "loaded",
     entries: values.map((value) => ({
       value,
@@ -1323,24 +1360,18 @@ function setPaintColor(map, layerId, property, color) {
 }
 
 function syncFocusedLegendValue(context) {
-  if (
-    !modeSupportsLegendFocus(context.colorMode) ||
-    !context.focusedLegendValue ||
-    !legendValuesForMode(context.colorMode).includes(context.focusedLegendValue)
-  ) {
-    context.focusedLegendValue = "";
+  if (context.focus?.type === "legend" && !legendValuesForMode(context.colorMode).includes(context.focus.value)) {
+    context.focus = null;
   }
 }
 
 function applyFocusFilters(context) {
-  const focusedValue =
-    modeSupportsLegendFocus(context.colorMode) && context.focusedLegendValue ? context.focusedLegendValue : "";
   for (const source of context.mapSources) {
     for (const layer of source.sourceLayers) {
-      setLayerFilter(context.map, layer.fillId, layerFilter("Polygon", context.colorMode, focusedValue));
-      setLayerFilter(context.map, layer.polygonOutlineId, layerFilter("Polygon", context.colorMode, focusedValue));
-      setLayerFilter(context.map, layer.lineId, layerFilter("LineString", context.colorMode, focusedValue));
-      setLayerFilter(context.map, layer.pointId, layerFilter("Point", context.colorMode, focusedValue));
+      setLayerFilter(context.map, layer.fillId, layerFilter("Polygon", context.colorMode, context.focus));
+      setLayerFilter(context.map, layer.polygonOutlineId, layerFilter("Polygon", context.colorMode, context.focus));
+      setLayerFilter(context.map, layer.lineId, layerFilter("LineString", context.colorMode, context.focus));
+      setLayerFilter(context.map, layer.pointId, layerFilter("Point", context.colorMode, context.focus));
     }
   }
 }
@@ -1351,16 +1382,19 @@ function setLayerFilter(map, layerId, filter) {
   }
 }
 
-function layerFilter(geometryType, mode, focusedValue) {
+function layerFilter(geometryType, mode, focus) {
   const geometryFilter = ["==", ["geometry-type"], geometryType];
-  if (!modeSupportsLegendFocus(mode) || !focusedValue) {
+  if (!focus) {
     return geometryFilter;
   }
+  if (focus.type === "feature") {
+    return ["all", geometryFilter, ["==", featureIdStringExpression(), focus.value]];
+  }
   if (mode.valueSource === "metadata") {
-    const featureIds = [...mode.featureIdsByValue.get(focusedValue)];
+    const featureIds = [...mode.featureIdsByValue.get(focus.value)];
     return ["all", geometryFilter, ["in", featureIdStringExpression(), ["literal", featureIds]]];
   }
-  return ["all", geometryFilter, ["==", fieldStringExpression(mode.field), focusedValue]];
+  return ["all", geometryFilter, ["==", fieldStringExpression(mode.field), focus.value]];
 }
 
 function modeSupportsLegendFocus(mode) {
@@ -2052,6 +2086,51 @@ export async function renderComparisonMap({container, status, baseline, target, 
     if (!signal.aborted && renderIsCurrent(renderSerial)) { status.hidden = false; status.textContent = `Map inspection unavailable: ${error.message}`; }
     throw error;
   }
+}
+
+export async function renderIdentityReviewMap({container, status, features, signal}) {
+  const serial = ++activeRenderSerial;
+  clearActiveMap();
+  let map = null;
+  const current = () => !signal.aborted && renderIsCurrent(serial);
+  signal.addEventListener("abort", () => { if (activeMap === map) clearActiveMap(); }, {once: true});
+  await loadDependencies();
+  if (!current()) return null;
+  const canvas = document.createElement("div"); canvas.className = "map-canvas";
+  container.append(canvas);
+  map = new window.maplibregl.Map({container: canvas, style: styleFor([], "map"), center: [0, 15], zoom: 1,
+    cooperativeGestures: true, attributionControl: false});
+  activeMap = map;
+  map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+  map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
+  await withTimeout(new Promise((resolve, reject) => {
+    map.once("load", resolve);
+    map.once("error", event => reject(event.error || new Error("Stored footprint map failed")));
+    signal.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")), {once: true});
+  }), 10000, "Stored footprint map timed out");
+  if (!current()) return null;
+  map.addSource("identity-evidence", {type: "geojson", data: features});
+  for (const [side, color, width, radius] of [["previous", "#1f6fb2", 5, 8], ["incoming", "#d84f2a", 2, 5]]) {
+    const filter = type => ["all", ["==", ["get", "side"], side], ["==", ["geometry-type"], type]];
+    map.addLayer({id: `review-${side}-fill`, type: "fill", source: "identity-evidence", filter: filter("Polygon"),
+      paint: {"fill-color": color, "fill-opacity": 0.12}});
+    map.addLayer({id: `review-${side}-outline`, type: "line", source: "identity-evidence", filter: filter("Polygon"),
+      paint: {"line-color": color, "line-width": width, ...(side === "incoming" ? {"line-dasharray": [3, 2]} : {})}});
+    map.addLayer({id: `review-${side}-line`, type: "line", source: "identity-evidence", filter: filter("LineString"),
+      paint: {"line-color": color, "line-width": width}});
+    map.addLayer({id: `review-${side}-point`, type: "circle", source: "identity-evidence", filter: filter("Point"),
+      paint: {"circle-color": color, "circle-radius": radius}});
+  }
+  function update(data) {
+    if (!current()) return;
+    map.getSource("identity-evidence").setData(data);
+    const bounds = combinedBounds(data.features.map(feature => boundsFromFeatureGeometry(feature.geometry)).filter(Boolean));
+    status.hidden = Boolean(bounds);
+    status.textContent = bounds ? "" : "No stored geometry is visible for this selection.";
+    if (bounds) map.fitBounds(bounds, {padding: 48, duration: 0, maxZoom: 12});
+  }
+  update(features);
+  return {update};
 }
 
 export function captureViewport() {

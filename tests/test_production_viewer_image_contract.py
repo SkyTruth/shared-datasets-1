@@ -1,6 +1,7 @@
 """The actual default viewer entrypoint must start and serve its credential-free health route."""
 import json
 import subprocess
+import urllib.error
 from unittest.mock import Mock
 
 import pytest
@@ -186,15 +187,20 @@ def test_failed_build_cannot_run_or_retain_old_tagged_image(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize('body,valid', [(b'ok', True), (b'wrong', False)])
-def test_health_probe_requires_actual_expected_response(monkeypatch, body, valid):
+@pytest.mark.parametrize('api_status', [401, 200, 404])
+def test_health_probe_requires_actual_expected_response(monkeypatch, body, valid, api_status):
     response = Mock(status=200)
     response.read.return_value = body
     context = Mock()
     context.__enter__ = Mock(return_value=response)
     context.__exit__ = Mock(return_value=False)
-    monkeypatch.setattr('urllib.request.urlopen', lambda *args, **kwargs: context)
+    def request(url, **kwargs):
+        if '/api/identity-review' in url and api_status != 200:
+            raise urllib.error.HTTPError(url, api_status, 'synthetic response', {}, None)
+        return context
+    monkeypatch.setattr('urllib.request.urlopen', request)
     monkeypatch.setattr('time.sleep', lambda duration: None)
-    if valid:
+    if valid and api_status == 401:
         exec(VIEWER_HEALTH_PROBE)
     else:
         with pytest.raises(AssertionError):

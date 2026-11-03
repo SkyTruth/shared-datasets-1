@@ -40,8 +40,8 @@ assert.equal(byValue.get('0').size, 2);
 assert.equal(byValue.get('Other').size, 1);
 assert.equal(byValue.has(''), false);
 assert.equal(metadataFeatureIdsByValue(new Map()).size, 0);
-assert.equal(layerFilter('Point', {type: 'dataset'}, '').length, 3);
-assert.throws(() => layerFilter('Point', {...mode, valueSource: 'metadata', featureIdsByValue: new Map()}, 'Label'), TypeError);
+assert.equal(layerFilter('Point', {type: 'dataset'}, null).length, 3);
+assert.throws(() => layerFilter('Point', {...mode, valueSource: 'metadata', featureIdsByValue: new Map()}, {type: 'legend', value: 'Label'}), TypeError);
 `, {assert});
 '''
         result = subprocess.run(

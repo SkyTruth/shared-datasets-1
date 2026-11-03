@@ -142,16 +142,12 @@
               <div class="compare-progress-caption"><span id="compare-progress-label"></span><span id="compare-progress-count"></span></div>
               <progress id="compare-progress-bar" aria-labelledby="compare-progress-label compare-progress-count"></progress>
             </div>
+            <form id="feature-lookup" class="feature-lookup" hidden>
+              <input id="feature-id-input" type="text" aria-label="Find feature" placeholder="Find feature" title="Enter a published feature_id and press Enter" required pattern="[A-Za-z0-9]{1,64}" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="feature-lookup-status" />
+              <button id="feature-lookup-clear" type="button" aria-label="Clear feature search" title="Clear feature search" hidden>×</button>
+            </form>
           </div>
-          <form id="feature-lookup" class="feature-lookup" hidden>
-            <label for="feature-id-input">Feature ID</label>
-            <div class="feature-lookup-controls">
-              <input id="feature-id-input" type="text" required pattern="[A-Za-z0-9]{1,64}" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="feature-lookup-help" />
-              <button class="icon-button" type="submit">Find feature</button>
-            </div>
-            <p id="feature-lookup-help">Look up source attributes in the selected release using its published feature_id, rather than an upstream source key.</p>
-            <p id="feature-lookup-status" role="status" aria-live="polite"></p>
-          </form>
+          <p id="feature-lookup-status" class="feature-lookup-status" role="status" aria-live="polite"></p>
           <div id="feature-inspector" class="feature-inspector" hidden></div>
           <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>

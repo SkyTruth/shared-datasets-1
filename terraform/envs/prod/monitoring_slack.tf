@@ -157,6 +157,10 @@ resource "google_cloud_run_v2_service" "monitoring_slack" {
         value = "feature-identity-decisions-v1"
       }
       env {
+        name  = "CATALOG_VIEWER_URL"
+        value = data.google_cloud_run_v2_service.catalog_viewer_live.uri
+      }
+      env {
         name  = "MONITORING_SLACK_STATE_BUCKET"
         value = google_storage_bucket.monitoring_slack.name
       }

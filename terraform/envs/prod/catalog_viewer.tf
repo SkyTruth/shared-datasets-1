@@ -1,6 +1,10 @@
 locals {
   catalog_viewer_iap_service_agent = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
   catalog_viewer_service_name      = "catalog-viewer"
+  catalog_viewer_identity_review_condition = join(" && ", [
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/wdpa-builds/wdpa-monthly-')",
+    "resource.name.endsWith('/identity-review.json')",
+  ])
   pmtiles_browser_allowed_origins = distinct(concat(
     var.pmtiles_cdn_allowed_origins,
     [data.google_cloud_run_v2_service.catalog_viewer_live.uri],
@@ -40,9 +44,9 @@ resource "google_storage_bucket_iam_member" "catalog_viewer_object_viewer" {
   member = module.catalog_viewer_service_account.member
 
   condition {
-    title       = "catalog_and_canonical_dataset_read"
-    description = "Allow catalog viewer reads of generated catalog web objects and canonical dataset objects only."
-    expression  = local.catalog_viewer_object_viewer_condition
+    title       = "catalog_canonical_and_identity_review_read"
+    description = "Read catalog, canonical datasets and WDPA identity-review JSON; no other staged build artifacts."
+    expression  = "(${local.catalog_viewer_object_viewer_condition}) || (${local.catalog_viewer_identity_review_condition})"
   }
 
 }

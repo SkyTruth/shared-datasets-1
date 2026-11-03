@@ -48,10 +48,13 @@ pause. No publication descriptor is committed for the paused build and the
 published dataset remains unchanged. A failure to create complete evidence is
 a real execution error, not a successful evidence capture.
 
-These objects are noncanonical, access-controlled operational evidence. This
-change adds no public grants or reader permissions. Maintainers need existing
-read access to the exact object; catalog-viewer access and alert links belong
-to the next PR. Do not cite scratch URIs as dataset contracts.
+These objects are noncanonical, access-controlled operational evidence. The
+production catalog viewer has a narrow read grant for identity-review JSON
+under the monthly WDPA staging prefix, in addition to its existing catalog and
+canonical dataset access. No public grants or write permissions are added;
+other build bytes remain outside that grant. The API further restricts the
+execution, asset, filename and exact generation. Preview readers retain their
+existing permissions. Do not cite scratch URIs as dataset contracts.
 
 Retention is **until explicit reviewed cleanup**. There is no automatic expiry
 for this prefix in the current Terraform or scratch-cleanup policy. The
@@ -67,6 +70,60 @@ to disk. Normal releases incur no new canonical FGB download; that download
 happens only after an identity pause. Offline HTML is capped at 128 MiB and
 exported footprint GeoJSON at 64 MiB. Exceeding a limit requires an explicit
 follow-up design; it never produces a sampled or incomplete review bundle.
+
+## Review from the alert
+
+Once the verified bundle is staged, the worker queues a
+`feature-identity-review-ready-v1` event on the existing private decision topic.
+It contains the same captured cases and context as the original review stop,
+plus the exact bundle reference. The receiver adds **Compare this case** links
+to the existing bot-owned Slack parent; it does not post another parent.
+An older event arriving later cannot remove the evidence reference, and a
+different bundle or case set for the same execution is rejected. The receipt
+retains the viewer origin and reference for later retries and reconciliation.
+
+Open a link in the authenticated production catalog. The read-only dialog
+shows the incoming source key, its previously owned ID or verified absence,
+all matching previous records, all source fields with changes highlighted,
+and exact stored footprints. Select a previous candidate to inspect it; orange
+and blue map controls let you distinguish coincident footprints. Published
+candidate links use the baseline date and canonical metadata generation from
+the evidence. A missing published generation never switches to latest.
+
+**Choices to review** explains available actions and their effects. It does
+not recommend or submit a decision. Sample evidence is labelled; a sample
+cannot prove global source-key absence, so it does not offer reuse targets.
+Complete asset input still requires the source/continuity checks in
+[SkyTruth's identity process](standards/feature-identity-resolution.md).
+Accepted decisions still go through the resolution-file PR workflow.
+
+`GET /api/identity-review` always requires the viewer's SkyTruth IAP identity,
+even for a public asset or a viewer with public feature lookup enabled. Its
+strict query parameters are `review_case`, `review_asset`, `review_release`,
+`review_execution`, `review_generation`, `review_size` and `review_sha256`.
+It derives the managed object path, reads the pinned generation with a bounded
+range, checks exact length/checksum and bundle validity, then returns only the
+selected case, its previous records and a case-selector summary. It never
+accepts a caller-supplied URI. All responses use `Cache-Control: no-store`.
+The viewer reads bundles up to 16 MiB and limits serialized case responses to
+16 MiB, charging each candidate against the budget before expanding the next.
+Each instance processes one evidence read at a time and returns 429 while busy.
+Larger bundles remain valid for the offline report within the 64 MiB producer
+limit. Missing, inaccessible, changed and invalid evidence fail
+explicitly. Close the dialog to continue ordinary published browsing.
+
+The UI module loads only when a review link is opened. Ordinary startup remains
+compatible with the previous viewer's static module allowlist. During rollout,
+an unavailable module or reader gives an explicit review error. Older executions
+without a retained bundle do not acquire invented links or reconstructed data.
+
+Activation uses reviewed main CI and the existing protected paths:
+`catalog-viewer-deploy.yml` installs the reader image and its existing IAM
+binding with the narrowed evidence condition; `cron-alert-policy-sync.yml`
+updates the receiver and `CATALOG_VIEWER_URL` from the existing viewer URI;
+`wdpa-monthly-deploy.yml` installs the ready-event producer. The private Pub/Sub
+queue retains delivery failures during rollout. No local infrastructure apply,
+public scratch route or new notification channel is needed.
 
 ## Offline review
 

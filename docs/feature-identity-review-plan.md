@@ -1,11 +1,12 @@
 # Feature inspection and identity review
 
 Owner: the catalog feature-inspection chat. This chat owns final integration for
-this series. PR 1 used `codex/catalog-feature-lookup`; PR 2 uses
-`codex/wdpa-identity-review-evidence`.
-Each PR starts from current main after its prerequisites merge. No dataset
-identity decision, publication, or production infrastructure change is part of
-these UI and evidence improvements.
+this series. PR 1 used `codex/catalog-feature-lookup`; PR 2 used
+`codex/wdpa-identity-review-evidence`; PR 3 uses `codex/catalog-identity-review`.
+Each PR starts from current main after its prerequisites merge. These changes
+do not make dataset identity decisions or publish data. PR 3 includes a narrow
+private-evidence read grant and notification origin configuration through the
+existing protected deployment paths.
 
 ## PR 1: Find a published feature
 
@@ -29,6 +30,9 @@ Likely overlap: `web/catalog/app.js`, `index.html`, `styles.css`,
 No prerequisite PRs.
 
 ## PR 2: Capture identity review evidence
+
+Merged as [PR #371](https://github.com/SkyTruth/shared-datasets-1/pull/371), including
+the current sample-scoped decisions from #373.
 
 Implementation and review procedure: [WDPA identity review](wdpa-identity-review.md).
 Prerequisite #367 is merged. This branch starts from its merged main revision.
@@ -55,6 +59,20 @@ WDPA ingestion, identity tests, and the resolutions guide. Any required IAM or
 deployment prerequisite must be a reviewed, protected change before activation.
 
 ## PR 3: Review cases from the alert
+
+Published feature search also becomes an inline field at the right of the
+Version row. Enter shows source attributes and filters all map layers to that
+ID; the filter area shows the ID and selection zoom. The inline clear control
+removes the filter and cancels pending lookup results. Dataset/release changes
+clear it, while basemap and color changes retain it. Zoom uses available display
+geometry and stays visibly disabled when that geometry is unavailable.
+
+Implementation uses the existing private WDPA bundle, the IAP-protected
+`GET /api/identity-review` reader and a lazy catalog dialog. The production
+viewer gains read access only to identity-review JSON under monthly WDPA staging;
+preview readers retain their existing permissions. The notification service
+learns the existing authenticated viewer origin. These resources are already
+covered by the protected viewer and alert-policy workflows.
 
 Add a read-only catalog view of one captured case: old/incoming source fields,
 highlighted differences, overlaid footprints, and existing key ownership.

@@ -21,6 +21,7 @@ const state = {
   colorFieldsByReference: {},
   docsRequestSerial: 0,
   featureLookupSerial: 0,
+  featureFilterId: "",
   toastTimer: null,
   inspectedFeatures: [],
   metadataLocale: "",
@@ -38,7 +39,7 @@ function createZoomSelectionButton() {
   button.hidden = true;
   button.disabled = true;
   button.textContent = "Zoom to selection";
-  button.title = "Select a legend item to enable zoom";
+  button.title = "Select a feature or legend item to enable zoom";
   return button;
 }
 
@@ -129,6 +130,7 @@ const elements = {
   featureInspector: document.querySelector("#feature-inspector"),
   featureLookup: document.querySelector("#feature-lookup"),
   featureIdInput: document.querySelector("#feature-id-input"),
+  featureLookupClear: document.querySelector("#feature-lookup-clear"),
   featureLookupStatus: document.querySelector("#feature-lookup-status"),
   basemap: document.querySelector("#basemap-select"),
   metadataLanguageControl: document.querySelector("#metadata-language-control"),
@@ -214,6 +216,7 @@ async function init() {
     wireEvents();
     applyFilters();
     await restoreFeatureLink();
+    await restoreIdentityReviewLink();
   } catch (error) {
     renderFatalError(error);
   }
@@ -405,6 +408,14 @@ function wireEvents() {
   elements.featureLookup.addEventListener("submit", event => {
     event.preventDefault();
     void findFeatureById(elements.featureIdInput.value.trim());
+  });
+  elements.featureIdInput.addEventListener("input", () => {
+    elements.featureLookupClear.hidden = !elements.featureIdInput.value;
+    if (!elements.featureIdInput.value) clearFeatureSearch();
+  });
+  elements.featureLookupClear.addEventListener("click", () => {
+    clearFeatureSearch();
+    elements.featureIdInput.focus();
   });
   elements.includePublished.addEventListener("change", togglePublishedDatasets);
   elements.search.addEventListener("input", applyFilters);
@@ -742,8 +753,8 @@ function renderDetail(asset) {
   elements.url.textContent = reference.public_url;
   renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
-  const rendering = renderPmtiles([reference]);
   renderFeatureLookup(reference);
+  const rendering = renderPmtiles([reference]);
   renderUseSection(reference);
   return rendering;
 }
@@ -1290,6 +1301,7 @@ function renderSelectedPmtiles() {
 }
 
 async function renderPmtiles(assets) {
+  if (document.querySelector("#identity-review")?.open) return;
   if (comparisonController.isOpen()) return;
   const requestSerial = ++state.mapRequestSerial;
   state.mapModule?.cancelMapPreview();
@@ -1333,7 +1345,7 @@ async function renderPmtiles(assets) {
   elements.mapSection.hidden = false;
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
   clearColorLegend();
-  clearFeatureInspector();
+  if (!state.featureFilterId) clearFeatureInspector();
 
   try {
     const mapModule = await loadMapModule();
@@ -1344,6 +1356,7 @@ async function renderPmtiles(assets) {
       assets: mapAssets,
       basemap: state.basemap,
       colorField,
+      featureId: state.featureFilterId,
       selectedLayer,
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
@@ -1353,11 +1366,51 @@ async function renderPmtiles(assets) {
       loadFeatureMetadataColorValues,
     });
     if (requestSerial !== state.mapRequestSerial) return;
-    setZoomSelectionEnabled(false);
+    mapModule.setFeatureFilter(state.featureFilterId);
   } catch (error) {
     if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
+  }
+}
+
+async function restoreIdentityReviewLink() {
+  const params = new URLSearchParams(window.location.search);
+  if (![...params.keys()].some(key => key.startsWith("review_"))) return;
+  const dialog = document.createElement("dialog");
+  dialog.id = "identity-review";
+  dialog.className = "identity-review-dialog";
+  dialog.setAttribute("aria-labelledby", "identity-review-title");
+  // Keep the requested review and its unavailable state self-contained when
+  // the public shell and protected viewer roll out at different times.
+  dialog.innerHTML = `<header class="section-title-row">
+    <div><p class="eyebrow">Maintainer review</p><h2 id="identity-review-title">Feature identity comparison</h2></div>
+    <button id="identity-review-close" class="icon-button" type="button" autofocus>Close review</button>
+    </header><p id="identity-review-status" role="status" aria-live="polite">Loading captured evidence…</p>
+    <div id="identity-review-content" hidden></div>`;
+  document.body.append(dialog);
+  let dispose = () => {};
+  const close = () => dialog.close();
+  document.querySelector("#identity-review-close").addEventListener("click", close, {once: true});
+  dialog.addEventListener("close", () => {
+    dispose();
+    dialog.remove();
+    const url = new URL(window.location.href);
+    for (const key of [...url.searchParams.keys()]) if (key.startsWith("review_")) url.searchParams.delete(key);
+    history.replaceState(null, "", url);
+    renderSelectedPmtiles();
+  }, {once: true});
+  dialog.showModal();
+  state.mapRequestSerial++;
+  state.mapModule?.cancelMapPreview();
+  try {
+    // Older viewers can keep serving ordinary browsing before this lazy route
+    // and its private reader have deployed.
+    const module = await import(`./identity-review.js?v=${encodeURIComponent(state.catalog.generated_at)}`);
+    if (dialog.open) dispose = module.openIdentityReview({dialog, href: window.location.href, loadMapModule});
+  } catch (error) {
+    if (dialog.open) document.querySelector("#identity-review-status").textContent =
+      `Identity review unavailable. ${error.message} Close review to continue browsing published data.`;
   }
 }
 
@@ -1372,8 +1425,15 @@ async function loadMapModule() {
 function renderFeatureLookup(reference) {
   const file = metadataFile(reference?.files || []);
   elements.featureLookup.hidden = !file?.generation || comparisonController.isOpen();
+  clearFeatureSearch();
+}
+
+function clearFeatureSearch() {
   elements.featureIdInput.value = "";
-  elements.featureLookupStatus.textContent = "";
+  elements.featureLookupClear.hidden = true;
+  state.featureFilterId = "";
+  state.mapModule?.setFeatureFilter("");
+  clearFeatureInspector();
 }
 
 async function restoreFeatureLink() {
@@ -1394,6 +1454,7 @@ async function restoreFeatureLink() {
     state.versionBySlug[link.asset] = link.release;
     selectAsset(link.asset, {scroll: false});
     elements.featureIdInput.value = link.featureId;
+    elements.featureLookupClear.hidden = false;
     await findFeatureById(link.featureId);
   } catch (error) {
     clearDetail();
@@ -1406,6 +1467,8 @@ async function findFeatureById(id) {
   const assets = selectedAssets();
   if (assets.length !== 1 || comparisonController.isOpen()) return;
   clearFeatureInspector();
+  state.featureFilterId = "";
+  state.mapModule?.setFeatureFilter("");
   const serial = state.featureLookupSerial;
   try {
     if (!FEATURE_METADATA_ID_VALUE_RE.test(id)) throw new Error("Enter a feature ID of 1–64 letters or digits.");
@@ -1422,6 +1485,8 @@ async function findFeatureById(id) {
       release: reference.date, releaseReference: reference, metadataLocale: "", properties: {feature_id: id}}, item);
     state.inspectedFeatures = [feature];
     renderFeatureInspector([feature]);
+    state.featureFilterId = id;
+    state.mapModule?.setFeatureFilter(id);
     elements.featureLookupStatus.textContent = `Source attributes for feature ${id} · release ${reference.date}.`;
   } catch (error) {
     if (serial === state.featureLookupSerial) elements.featureLookupStatus.textContent = `Feature lookup unavailable. ${error.message}`;
@@ -2420,10 +2485,10 @@ function clearFeatureInspector() {
   state.mapModule?.clearFeatureInspectionIndicator?.();
 }
 
-function setZoomSelectionEnabled(enabled) {
-  elements.zoomSelection.hidden = !enabled;
+function setZoomSelectionEnabled(enabled, visible = enabled) {
+  elements.zoomSelection.hidden = !visible;
   elements.zoomSelection.disabled = !enabled;
-  elements.zoomSelection.title = enabled ? "Zoom map to selected legend item" : "Select a legend item to enable zoom";
+  elements.zoomSelection.title = enabled ? "Zoom map to selection" : "Selection geometry is not available in loaded display tiles";
 }
 
 function clearColorLegend() {
@@ -2434,7 +2499,8 @@ function clearColorLegend() {
 
 function renderColorLegend(legend) {
   const entries = Array.isArray(legend?.entries) ? legend.entries : [];
-  if (!["categorical", "numeric", "temporal"].includes(legend?.type) || !entries.length) {
+  const featureId = legend?.featureId || "";
+  if (!featureId && !entries.length) {
     clearColorLegend();
     return;
   }
@@ -2443,15 +2509,16 @@ function renderColorLegend(legend) {
   const heading = document.createElement("div");
   heading.className = "color-legend-heading";
   const title = document.createElement("strong");
-  title.textContent = legend.field || "Categories";
+  title.textContent = featureId ? `feature_id = ${featureId}` : legend.field || "Categories";
   const count = document.createElement("span");
-  count.textContent = `${entries.length} unique values · ${legend.countScope === "dataset" ? "dataset counts" : "loaded tile counts"}`;
+  count.textContent = featureId ? "1 selected feature" : `${entries.length} unique values · ${legend.countScope === "dataset" ? "dataset counts" : "loaded tile counts"}`;
   const actions = document.createElement("div");
   actions.className = "color-legend-actions";
   actions.append(count);
-  const canZoomToLegend = Boolean(legend.focusedValue && state.mapModule?.canZoomToLegendSelection?.());
-  setZoomSelectionEnabled(canZoomToLegend);
-  if (canZoomToLegend) {
+  const hasSelection = Boolean(featureId || legend.focusedValue);
+  const canZoom = hasSelection && state.mapModule.canZoomToFocusedSelection();
+  setZoomSelectionEnabled(canZoom, hasSelection);
+  if (hasSelection) {
     actions.append(elements.zoomSelection);
   }
   heading.append(title, actions);
@@ -2478,8 +2545,11 @@ function renderColorLegend(legend) {
     count.className = "color-legend-count";
     count.textContent = ` [${entry.count.toLocaleString()}]`;
     item.addEventListener("click", () => {
-      const toggleFocus = state.mapModule?.toggleLegendFocus || state.mapModule?.toggleCategoricalFocus;
-      toggleFocus?.(entry.value);
+      state.featureFilterId = "";
+      elements.featureIdInput.value = "";
+      elements.featureLookupClear.hidden = true;
+      clearFeatureInspector();
+      state.mapModule.toggleLegendFocus(entry.value);
     });
     item.append(swatch, label, count);
     items.append(item);

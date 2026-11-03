@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 import html
 import logging
+import os
 import re
 
 from ingestion.common import decision_events as wire
@@ -11,6 +12,7 @@ from scripts.slack_incident_api import TIMESTAMP
 
 POLICY = "Shared datasets release waiting on a maintainer decision"
 EVENT_SCHEMA = "identity-decision-notification-v1"
+REVIEW_EVENT_SCHEMA = "identity-review-notification-v1"
 APPROVAL_SCHEMA = "identity-decision-approvals-v1"
 REPOSITORY = "SkyTruth/shared-datasets-1"
 
@@ -72,7 +74,13 @@ def load(store, key, identity):
     value, generation = store.read(f"identity/events/{key}.json")
     if value is None:
         return None, generation
-    require(set(value) == {"schema", "event", "identity", "parent", "replies", "parent_view"} and value["schema"] == EVENT_SCHEMA
+    fields = {"schema", "event", "identity", "parent", "replies", "parent_view"}
+    schema = EVENT_SCHEMA
+    if value["event"]["schema"] == wire.REVIEW_SCHEMA:
+        fields.add("catalog_url")
+        wire.catalog_origin(value["catalog_url"])
+        schema = REVIEW_EVENT_SCHEMA
+    require(set(value) == fields and value["schema"] == schema
             and value["identity"] == identity and wire.event_key(wire.event(value["event"])) == key, "incompatible decision receipt")
     require(value["parent_view"] is None or isinstance(value["parent_view"], str)
             and re.fullmatch(r"[0-9a-f]{64}", value["parent_view"]), "invalid decision parent acknowledgement")
@@ -95,7 +103,7 @@ def save(store, key, value, generation):
     return store.write(f"identity/events/{key}.json", value, generation)
 
 
-def primary(event, *, resolved=False):
+def primary(event, *, resolved=False, catalog_url=None):
     title = "Decision recorded" if resolved else "Decision needed"
     text = f"{':white_check_mark:' if resolved else ':raising_hand:'} {title}: {event['asset_slug']} release {event['release']}\n"
     if resolved:
@@ -105,7 +113,11 @@ def primary(event, *, resolved=False):
         for item in event["cases"][:5]:
             matched = item["matching_geometry_feature_ids"] + item["matching_properties_feature_ids"]
             text += f"\nSource key `{html.escape('/'.join(item['new_identity_key']), quote=False)}`; existing matching IDs `{', '.join(matched)}`."
+            if event["schema"] == wire.REVIEW_SCHEMA:
+                text += f" <{wire.review_url(event, catalog_url, item)}|Compare this case>"
         text += "\n\nRecord reviewed release-scoped decisions in `catalog/feature-identity-resolutions/` to settle these cases."
+    if event["schema"] == wire.REVIEW_SCHEMA:
+        text += f"\n<{wire.review_url(event, catalog_url, event['cases'][0])}|Open captured review ({len(event['cases'])} cases)> · SkyTruth sign-in required."
     url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{event['execution']}?project={wire.PROJECT}"
     return {"text": text + f"\n<{url}|Source execution>", "blocks": []}
 
@@ -173,15 +185,15 @@ def reconcile(store, key, slack, identity):
             value = {**value, "replies": {**value["replies"], fingerprint: {**value["replies"][fingerprint], "ts": ts}}}
             generation = save(store, key, value, generation)
         require(value["replies"][fingerprint]["ts"] is not None, "unconfirmed decision reply; repair its receipt before retrying")
-    if set(current) != wanted:
-        return
     if value["parent"]["owner"] == "bot":
-        payload = primary(event, resolved=True)
+        payload = primary(event, resolved=set(current) == wanted, catalog_url=value.get("catalog_url"))
         fingerprint = wire.digest(payload)
         if value["parent_view"] != fingerprint:
             slack.update(value["parent"]["ts"], payload)
             value = {**value, "parent_view": fingerprint}
             generation = save(store, key, value, generation)
+    if set(current) != wanted:
+        return
     for path in store.paths(f"identity/links/{key}/"):
         link, _ = store.read(path)
         require(set(link) == {"context", "incident_id"} and wire.event_key(link["context"]) == key, "foreign linked incident")
@@ -207,14 +219,25 @@ def deliver(event, store, slack, identity):
     key = wire.event_key(event)
     value, generation = load(store, key, identity)
     if value is None:
-        value = {"schema": EVENT_SCHEMA, "event": event, "identity": identity,
+        value = {"schema": REVIEW_EVENT_SCHEMA if event["schema"] == wire.REVIEW_SCHEMA else EVENT_SCHEMA, "event": event, "identity": identity,
                  "parent": {"owner": "bot", "ts": None}, "replies": {}, "parent_view": None}
+        if event["schema"] == wire.REVIEW_SCHEMA:
+            value["catalog_url"] = wire.catalog_origin(os.environ["CATALOG_VIEWER_URL"])
         generation = save(store, key, value, generation)
-        ts = slack.post(primary(event))
+        payload = primary(event, catalog_url=value.get("catalog_url"))
+        ts = slack.post(payload)
         logging.info("Identity decision Slack receipt event=%s operation=parent channel=%s ts=%s", key, identity["channel"], ts)
-        save(store, key, {**value, "parent": {"owner": "bot", "ts": ts}, "parent_view": wire.digest(primary(event))}, generation)
+        save(store, key, {**value, "parent": {"owner": "bot", "ts": ts}, "parent_view": wire.digest(payload)}, generation)
     else:
-        require(value["event"] == event, "decision event content changed after capture")
+        def core(source):
+            return {field: item for field, item in source.items() if field not in {"schema", "review_bundle"}}
+        require(core(value["event"]) == core(event), "decision event content changed after capture")
+        if event["schema"] == wire.REVIEW_SCHEMA:
+            if value["event"]["schema"] == wire.REVIEW_SCHEMA:
+                require(value["event"] == event, "review reference changed after capture")
+            else:
+                value = {**value, "schema": REVIEW_EVENT_SCHEMA, "event": event, "catalog_url": wire.catalog_origin(os.environ["CATALOG_VIEWER_URL"])}
+                save(store, key, value, generation)
     reconcile(store, key, slack, identity)
 
 
