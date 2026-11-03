@@ -190,6 +190,33 @@ def from_workflow(run):
     })
 
 
+def reported_runtime_failure(api, run, job):
+    """Monitoring owns worker failures; observer/signing failures still alert.
+
+    Only a signed failed outcome emitted by this exact completion attempt can
+    identify the second report of a detached worker failure. A job name or a
+    successful wrapper alone is never sufficient evidence to suppress it.
+    """
+    match = re.fullmatch(r"verify \(([1-9][0-9]*)\)", job["name"])
+    if (alerts.WORKFLOW_PATHS[run["name"]] != "deployment-verification.yml" or match is None
+            or not step_verified(job, "Attest verified execution outcome")):
+        return False
+    record = api.get(f"repos/{REPOSITORY}/deployments/{match[1]}")
+    statuses = api.pages(f"repos/{REPOSITORY}/deployments/{match[1]}/statuses?per_page=100")
+    exact = [item for item in statuses if item.get("log_url") == run_link({"run_id": run["id"], "attempt": run["run_attempt"]})
+             and item.get("state") == "failure" and item.get("description") == "failed"]
+    if len(exact) != 1:
+        return False
+    try:
+        payload = deployments.verify_record(api, REPOSITORY, record, statuses=statuses)
+        deployments.verify_receipt(api, REPOSITORY, record, exact[0])
+    except (deployments.DeploymentError, subprocess.CalledProcessError):
+        return False  # Unverified external evidence retains the original failure alert.
+    return (record["id"] == int(match[1]) and payload["target"] == "wdpa-monthly"
+            and re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/wdpa-monthly-[a-z0-9]{5}\?project=shared-datasets-1",
+                             exact[0].get("environment_url", "")) is not None)
+
+
 def source_observations(api, event, targets):
     run = event["workflow_run"]
     if not alerts.verify_source_event(api, run):
@@ -212,7 +239,8 @@ def source_observations(api, event, targets):
         return []  # Supervised manual failures keep existing GitHub-only routing.
     if alerts.WORKFLOW_PATHS[run["name"]] in {"bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"}:
         return [from_workflow(run)]
-    failures = [job for job in jobs if job["status"] == "completed" and job["conclusion"] in alerts.FAILED_CONCLUSIONS]
+    failed = [job for job in jobs if job["status"] == "completed" and job["conclusion"] in alerts.FAILED_CONCLUSIONS]
+    failures = [job for job in failed if not reported_runtime_failure(api, run, job)]
     # Observer failures need their own exact job scope. A healthy observer with
     # no verification matrix cannot cover a previously failed matrix record.
     successful = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
@@ -222,7 +250,7 @@ def source_observations(api, event, targets):
                   and (not job["name"].startswith("Complete publication receipt (")
                        or step_verified(job, REPAIR_STEP))]
     result = [from_job(run, job, targets) for job in failures + successful]
-    if not failures or run["conclusion"] == "success":
+    if not failed or run["conclusion"] == "success":
         result.append(from_workflow(run))  # Includes startup failures with no allocated jobs.
     if alerts.WORKFLOW_PATHS[run["name"]] == "publish-dataset.yml":
         prs = {match[1] for job in jobs if (match := re.fullmatch(r"Apply approved PR mutation plans \(PR #([1-9][0-9]*)\)", job["name"]))}
@@ -585,9 +613,17 @@ def render(state):
     resolution = incident["resolution"]
     status = "success" if resolution else "error"
     title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
+    observer = re.fullmatch(r"verify \(([1-9][0-9]*)\)", first["job_name"])
+    if state["scope"] != scope_for_job(first["job_name"], {}, "deployment-verification.yml")[0]:
+        observer = None
+    if observer:
+        title = f"{'Resolved' if resolution else 'Open'} · WDPA execution verification · {incident['id']}"
     impact = "Unknown; consumer impact has not been established."
     mutation = "Unknown; the failed attempt may have written data or changed resources."
     action = "Inspect the failed attempt and authoritative mutation records before any replay; use the existing recovery path."
+    if observer:
+        action = (f"Inspect the failed verification or receipt-signing step for deployment {observer[1]} in the linked Actions attempt. "
+                  "The completion check could not establish a signed worker outcome; check its execution and publication records before recovery.")
     if resolution:
         impact = "Historical consumer impact unknown; recovery verified for this incident scope."
         action = "Record any consumer impact; no replay is required for this recovered operation."

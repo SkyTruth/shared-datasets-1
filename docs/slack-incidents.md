@@ -1,6 +1,6 @@
 # Slack incident lifecycle
 
-Operational failures have one searchable incident ID (`SD-` plus twelve hex
+GitHub operational failures have one searchable incident ID (`SD-` plus twelve hex
 characters). The first failure creates an **Open** parent message. Additional
 failed attempts update that parent's count and latest evidence; the worker
 creates no automatic per-attempt replies.
@@ -17,6 +17,14 @@ Signed terminal deployment success and verified publication-receipt repair recei
 specific outcome text. A successful job/workflow alone does not establish
 published-data state. These fields use existing evidence without changing the
 checkpoint schema or recovery authorization.
+
+Detached worker failures use the [shared execution parent](alert-routing.md#editable-monitoring-messages)
+owned by the existing Monitoring receiver. Its exact project/job/execution key
+joins failure, review and typed identity evidence. A completion check that
+successfully attests that exact execution's signed failed outcome adds no
+GitHub incident parent; it remains a failed GitHub check. Missing, invalid or
+unknown outcome evidence and actual verifier/signing failures retain Slack
+coverage. Decision acceptance never establishes worker or publication recovery.
 
 The existing parent-view acknowledgement causes eligible GitHub parents to
 receive the new rendering on their next reconciliation. Historical reply records
@@ -489,6 +497,10 @@ records from other protocol versions.
 The failure incident outbox above keeps its no-reply contract. Feature identity
 review is a separate typed lifecycle: its original decision thread receives the
 accepted choice, decision maker, recommendation rationale and exact reviewed PR.
+The parent retains the original request, case summaries, context and links;
+review status is a separate marker, not a replacement for that body. The
+reconciler can restore an older shortened bot-owned request from its retained
+event without posting another decision reply.
 See [identity decision alert routing](alert-routing.md#identity-decision-threads).
 A reviewed decision closes only matching review requests; actual dataset
 publication, deployment acceptance and native Monitoring closure retain their
