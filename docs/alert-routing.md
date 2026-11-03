@@ -163,6 +163,14 @@ The reply does not broadcast to the channel. Each case must be covered before
 the review is marked **Decision recorded**. Partial decisions receive replies
 while the remaining cases stay open.
 
+The original **Decision needed** request remains in the parent, including its
+case summaries, context and source/review links. A shared execution parent shows
+review status separately above that retained request. Acceptance never replaces
+the request body with a short resolved summary. For an older bot-owned parent
+already shortened by that renderer, reconciliation restores the request from
+its frozen event and pinned links while retaining the existing decision replies.
+Legacy parents and uncertain delivery claims keep their existing safeguards.
+
 The same reconciliation updates the shared execution parent, including its
 identity review, and historical bot-owned **Shared datasets release
 waiting on a maintainer decision** parents whose authoritative Monitoring incident

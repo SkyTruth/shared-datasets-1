@@ -295,6 +295,7 @@ class ReceiverTests(unittest.TestCase):
             self.assertEqual(self.send_decision(source), 204)
             self.assertEqual(self.review_alert(source, "0.review-" + execution), 204)
             self.assertEqual(self.failure_alert(source, key), 204)
+            original_request = decisions.primary(source)["text"]
             self.approve(source)
             self.assertEqual(self.send_decision(source), 204)
             parent, _ = relay.Store(self.bucket).load(key)
@@ -303,8 +304,45 @@ class ReceiverTests(unittest.TestCase):
                            "Decision recorded", "Exact execution logs", "Next action"):
                 self.assertIn(phrase, text)
             self.assertIn(":red_circle: Open", text)  # Semantic approval cannot resolve a real failure.
+            self.assertIn(original_request, text)
         parents = [body for method, body in self.calls if method == "chat.postMessage" and not body.get("thread_ts")]
         self.assertEqual(len(parents), 2)  # Distinct exact executions remain distinct.
+
+    def test_decision_reply_preserves_original_request_cases_and_review_links(self):
+        origin = "https://catalog-viewer-example.a.run.app"
+        for count in (1, 2, 6):
+            with self.subTest(cases=count):
+                source = decision_event()
+                cases = [{**source["cases"][0], "new_identity_key": [f"source-{count}-{index}"]}
+                         for index in range(count)]
+                source = wire.event({**source, "execution": f"wdpa-monthly-save{count}", "cases": cases,
+                    "schema": wire.REVIEW_SCHEMA, "review_bundle": {
+                        "uri": f"gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-monthly-save{count}/wdpa-marine/identity-review.json",
+                        "generation": 1001, "size": 3, "sha256": "a" * 64}})
+                with patch.dict(os.environ, {"CATALOG_VIEWER_URL": origin}):
+                    self.assertEqual(self.send_decision(source), 204)
+                    journal = json.loads(self.bucket.objects[f"identity/events/{wire.event_key(source)}.json"][1])
+                    parent = journal["parent"]["ts"]
+                    original_request = decisions.primary(source, catalog_url=origin)["text"]
+                    self.assertIn(original_request, self.messages[parent]["text"])
+                    records = {}
+                    for index, case in enumerate(source["cases"]):
+                        accepted = proof(source, case)
+                        accepted["decision"]["previous_feature_id_for_key"] = str(15378 + index)
+                        records[wire.case_key(source["asset_slug"], source["release"], case)] = accepted
+                    store = relay.Store(self.bucket)
+                    _, generation = store.read("identity/approvals.json")
+                    store.write("identity/approvals.json", {"schema": decisions.APPROVAL_SCHEMA,
+                        "revision": "b" * 40, "known": {}, "records": records}, generation)
+                    for _ in range(2):
+                        self.assertEqual(self.send_decision(source), 204)
+                self.assertIn(original_request, self.messages[parent]["text"])
+                replies = [body for method, body in self.calls
+                           if method == "chat.postMessage" and body.get("thread_ts") == parent]
+                self.assertEqual(len(replies), 1)
+                self.assertFalse(replies[0]["reply_broadcast"])
+                for phrase in ("Decision of record", "jonaraphael", "Why recommended", "/pull/365"):
+                    self.assertIn(phrase, replies[0]["text"])
 
     def test_uncertain_execution_post_blocks_every_other_producer(self):
         source = decision_event()

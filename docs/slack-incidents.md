@@ -497,6 +497,10 @@ records from other protocol versions.
 The failure incident outbox above keeps its no-reply contract. Feature identity
 review is a separate typed lifecycle: its original decision thread receives the
 accepted choice, decision maker, recommendation rationale and exact reviewed PR.
+The parent retains the original request, case summaries, context and links;
+review status is a separate marker, not a replacement for that body. The
+reconciler can restore an older shortened bot-owned request from its retained
+event without posting another decision reply.
 See [identity decision alert routing](alert-routing.md#identity-decision-threads).
 A reviewed decision closes only matching review requests; actual dataset
 publication, deployment acceptance and native Monitoring closure retain their

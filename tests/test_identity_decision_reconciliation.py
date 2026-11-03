@@ -208,6 +208,34 @@ def test_changed_decision_history_never_repeats_an_already_acknowledged_choice()
     assert "555729583" not in slack.post.call_args.args[0]["text"]
 
 
+@pytest.mark.parametrize("overwritten", [False, True])
+def test_standalone_request_is_preserved_or_restored_without_reposting_decision(overwritten):
+    source = decision_event()
+    accepted = proof(source, source["cases"][0])
+    records = {decisions.proof_key(accepted): accepted}
+    original = decisions.primary(source)
+    old_summary = {"text": ":white_check_mark: Decision recorded: wdpa-marine release 2026-11-01\n"
+                   "The reviewed identity decisions are recorded in this thread.", "blocks": []}
+    store = relay.Store(Bucket())
+    journal = {"schema": decisions.EVENT_SCHEMA, "event": source, "identity": IDENTITY,
+        "parent": {"owner": "bot", "ts": "1234567890.000001"},
+        "parent_view": wire.digest(old_summary if overwritten else original),
+        "replies": {wire.digest(records): {"records": records, "owner": "bot", "ts": "1234567890.000002"}}}
+    decisions.save(store, wire.event_key(source), journal, 0)
+    store.write("identity/approvals.json", {"schema": decisions.APPROVAL_SCHEMA,
+        "revision": "b" * 40, "known": {}, "records": records}, 0)
+    slack = Mock()
+    for _ in range(2):
+        decisions.reconcile(store, wire.event_key(source), slack, IDENTITY)
+    slack.post.assert_not_called()
+    if overwritten:
+        slack.update.assert_called_once_with(journal["parent"]["ts"], original)
+    else:
+        slack.update.assert_not_called()
+    persisted, _ = decisions.load(store, wire.event_key(source), IDENTITY)
+    assert persisted["event"] == source and persisted["replies"] == journal["replies"]
+
+
 def test_foreign_producers_and_local_diagnostics_cannot_post():
     source = decision_event()
     session = Mock()

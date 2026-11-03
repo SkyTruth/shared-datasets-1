@@ -104,19 +104,15 @@ def save(store, key, value, generation):
     return store.write(f"identity/events/{key}.json", value, generation)
 
 
-def primary(event, *, resolved=False, catalog_url=None):
-    title = "Decision recorded" if resolved else "Decision needed"
-    text = f"{':white_check_mark:' if resolved else ':raising_hand:'} {title}: {event['asset_slug']} release {event['release']}\n"
-    if resolved:
-        text += "The reviewed identity decisions are recorded in this thread. Publication and deployment acceptance are verified separately."
-    else:
-        text += f"{len(event['cases'])} feature identity case(s) need maintainer review. The published data is unchanged by this review stop.\n"
-        for item in event["cases"][:5]:
-            matched = item["matching_geometry_feature_ids"] + item["matching_properties_feature_ids"]
-            text += f"\nSource key `{html.escape('/'.join(item['new_identity_key']), quote=False)}`; existing matching IDs `{', '.join(matched)}`."
-            if event["schema"] == wire.REVIEW_SCHEMA:
-                text += f" <{wire.review_url(event, catalog_url, item)}|Compare this case>"
-        text += "\n\nRecord reviewed release-scoped decisions in `catalog/feature-identity-resolutions/` to settle these cases."
+def primary(event, *, catalog_url=None):
+    text = f":raising_hand: Decision needed: {event['asset_slug']} release {event['release']}\n"
+    text += f"{len(event['cases'])} feature identity case(s) need maintainer review. The published data is unchanged by this review stop.\n"
+    for item in event["cases"][:5]:
+        matched = item["matching_geometry_feature_ids"] + item["matching_properties_feature_ids"]
+        text += f"\nSource key `{html.escape('/'.join(item['new_identity_key']), quote=False)}`; existing matching IDs `{', '.join(matched)}`."
+        if event["schema"] == wire.REVIEW_SCHEMA:
+            text += f" <{wire.review_url(event, catalog_url, item)}|Compare this case>"
+    text += "\n\nRecord reviewed release-scoped decisions in `catalog/feature-identity-resolutions/` to settle these cases."
     if event["schema"] == wire.REVIEW_SCHEMA:
         text += f"\n<{wire.review_url(event, catalog_url, event['cases'][0])}|Open captured review ({len(event['cases'])} cases)> · SkyTruth sign-in required."
     url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{event['execution']}?project={wire.PROJECT}"
@@ -187,7 +183,7 @@ def reconcile(store, key, slack, identity):
             generation = save(store, key, value, generation)
         require(value["replies"][fingerprint]["ts"] is not None, "unconfirmed decision reply; repair its receipt before retrying")
     if value["parent"]["owner"] == "bot":
-        payload = primary(event, resolved=set(current) == wanted, catalog_url=value.get("catalog_url"))
+        payload = primary(event, catalog_url=value.get("catalog_url"))
         fingerprint = wire.digest(payload)
         from services.monitoring_slack import executions
         shared, _ = executions.load(store, executions.source(event), identity)

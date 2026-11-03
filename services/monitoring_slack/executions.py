@@ -74,7 +74,9 @@ def render(value):
     body += f"\n*Execution:* `{ctx['execution']}`\n*Owner:* jonaraphael (triage and identity decisions)."
     for key in sorted(value["reviews"] | value["decisions"]):
         if key in value["decisions"]:
-            body += "\n\n" + value["decisions"][key]["text"]
+            decision = value["decisions"][key]
+            status = "Decision recorded" if decision["resolved"] else "Decision needed"
+            body += f"\n\n*Review status:* {status}\n*Original request:*\n" + decision["text"]
         else:
             review = value["reviews"][key]
             body += f"\n\nIdentity review requested for `{review['asset_slug']}` release `{review['release']}`; detailed case evidence is pending."
