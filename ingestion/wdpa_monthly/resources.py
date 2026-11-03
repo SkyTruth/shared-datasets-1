@@ -170,11 +170,16 @@ def release_file_cache(path):
 
 
 def _release_deleted_file_cache(path):
-    """Include unlinked native temporary files held by this process tree."""
+    """Advise scoped unlinked files exposed by our inspectable process tree.
+
+    Descendant /proc visibility can change during native execution and exit.
+    Our own process and pinned scratch-inode operations remain mandatory.
+    """
     if sys.platform != "linux":
         return
     root = Path(path).resolve()
-    pending, visited = [os.getpid()], set()
+    own_pid = os.getpid()
+    pending, visited = [own_pid], set()
     while pending:
         pid = pending.pop()
         if pid in visited:
@@ -189,9 +194,10 @@ def _release_deleted_file_cache(path):
                     # A thread can exit while its child list is being sampled.
                     continue
             descriptors = list((process / "fd").iterdir())
-        except (FileNotFoundError, ProcessLookupError):
-            # A descendant can exit between samples; /proc itself is required.
-            if pid == os.getpid():
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            # Descendants can exit or lose /proc visibility between samples.
+            # This process's own /proc access is still required.
+            if pid == own_pid:
                 raise
             continue
         for entry in descriptors:
@@ -204,8 +210,11 @@ def _release_deleted_file_cache(path):
                 descriptor = os.open(
                     entry, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
                 )
-            except (FileNotFoundError, ProcessLookupError):
-                # The child can close a temporary file while it is sampled.
+            except (FileNotFoundError, ProcessLookupError, PermissionError) as error:
+                # FD closure can race any thread; permission changes are
+                # tolerated only for descendant process metadata.
+                if isinstance(error, PermissionError) and pid == own_pid:
+                    raise
                 continue
             try:
                 # Pin the inode, then recheck scope against descriptor reuse.
@@ -301,7 +310,7 @@ class PhaseProfiler:
             record = {
                 "event": "wdpa_phase_resources",
                 "phase": name,
-                "state": state,
+                "state": "failed" if sampling_errors else state,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
                 "phase_memory_peak_bytes": peak_memory or None,
                 "memory_breakdown_at_sampled_peak": peak_breakdown,

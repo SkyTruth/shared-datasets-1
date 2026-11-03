@@ -4,6 +4,7 @@ from contextlib import closing, contextmanager
 import errno
 import json
 import os
+from pathlib import Path
 import sqlite3
 import sys
 from unittest import mock
@@ -616,3 +617,148 @@ def test_source_scope_preserves_strict_rejections(
             with pytest.raises((RuntimeError, model.ReleaseFeatureModelError), match=expected):
                 allocate(root, incoming[:1], baseline, scoped)
         assert not list(root.glob("*.ndjson.gz"))
+
+
+@pytest.fixture
+def proc_cache_view(monkeypatch, tmp_path):
+    """A kernel boundary with one inaccessible child and one readable sibling."""
+    root = tmp_path / "scratch"
+    root.mkdir()
+    path = root / "native.tmp"
+    path.write_bytes(b"unlinked native bytes")
+    descriptor = os.open(path, os.O_RDONLY)
+    path.unlink()
+    state = {"pid": 200, "stage": "fd", "error": PermissionError,
+             "self_fd": False, "target": str(path) + " (deleted)",
+             "pinned_target": str(path) + " (deleted)", "advised": []}
+    real_iterdir, real_read_text = Path.iterdir, Path.read_text
+    real_readlink, real_open = os.readlink, os.open
+
+    def denied(pid, stage, source):
+        if pid == state["pid"] and stage == state["stage"]:
+            code = {FileNotFoundError: errno.ENOENT, ProcessLookupError: errno.ESRCH}.get(state["error"], errno.EACCES)
+            raise state["error"](code, "kernel process entry unavailable", str(source))
+
+    def directory(source):
+        parts = source.parts
+        if len(parts) == 4 and parts[1] == "proc":
+            pid, kind = int(parts[2]), parts[3]
+            denied(pid, kind, source)
+            if kind == "task":
+                return iter([source / str(pid)])
+            if kind == "fd":
+                return iter([source / "7"] if pid != 100 or state["self_fd"] else [])
+        return real_iterdir(source)
+
+    def children(source, *args, **kwargs):
+        if str(source).startswith("/proc/") and source.name == "children":
+            pid = int(source.parts[2])
+            denied(pid, "children", source)
+            return "200 300" if pid == 100 else ""
+        return real_read_text(source, *args, **kwargs)
+
+    def link(source, *args, **kwargs):
+        name = str(source)
+        if name.startswith("/proc/self/fd/"):
+            return state["pinned_target"]
+        if name.startswith("/proc/"):
+            denied(int(Path(name).parts[2]), "readlink", source)
+            return state["target"]
+        return real_readlink(source, *args, **kwargs)
+
+    def open_descriptor(source, flags, *args, **kwargs):
+        name = str(source)
+        if name.startswith("/proc/"):
+            denied(int(Path(name).parts[2]), "open", source)
+            return os.dup(descriptor)
+        return real_open(source, flags, *args, **kwargs)
+
+    monkeypatch.setattr(resources.sys, "platform", "linux")
+    monkeypatch.setattr(os, "getpid", lambda: 100)
+    monkeypatch.setattr(Path, "iterdir", directory)
+    monkeypatch.setattr(Path, "read_text", children)
+    monkeypatch.setattr(os, "readlink", link)
+    monkeypatch.setattr(os, "open", open_descriptor)
+    monkeypatch.setattr(os, "posix_fadvise", lambda fd, *_: state["advised"].append(os.pread(fd, 64, 0)), raising=False)
+    monkeypatch.setattr(os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    try:
+        yield root, state
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize("stage", ["task", "children", "fd", "readlink", "open"])
+def test_proc_cache_allows_unreadable_descendant(proc_cache_view, stage):
+    root, state = proc_cache_view
+    state["stage"] = stage
+    resources.release_file_cache(root)
+    assert state["advised"] == [b"unlinked native bytes"]
+
+
+@pytest.mark.parametrize("stage", ["task", "children", "fd", "readlink", "open"])
+def test_proc_cache_keeps_self_access_strict(proc_cache_view, stage):
+    root, state = proc_cache_view
+    state.update(pid=100, stage=stage, self_fd=True)
+    with pytest.raises(PermissionError, match="kernel process entry"):
+        resources.release_file_cache(root)
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_proc_cache_allows_self_descriptor_close_race(proc_cache_view, error):
+    root, state = proc_cache_view
+    state.update(pid=100, stage="readlink", self_fd=True, error=error)
+    resources.release_file_cache(root)
+    assert state["advised"] == [b"unlinked native bytes", b"unlinked native bytes"]
+
+
+@pytest.mark.parametrize("target", ["target", "pinned_target"])
+def test_proc_cache_never_advises_outside_scope_or_reused_descriptor(proc_cache_view, tmp_path, target):
+    root, state = proc_cache_view
+    state.update(pid=-1)
+    state[target] = str(tmp_path / "outside.bin") + " (deleted)"
+    resources.release_file_cache(root)
+    assert state["advised"] == []
+
+
+@pytest.mark.parametrize("producer_fails", [False, True])
+def test_background_sampler_failure_records_failed_phase(monkeypatch, tmp_path, caplog, producer_fails):
+    import logging
+    import threading
+
+    seen = threading.Event()
+    calls = 0
+    def advice(_):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            seen.set()
+            raise PermissionError("owned scratch advice denied")
+    monkeypatch.setattr(resources, "cgroup_memory", lambda: (5 * 1024**3, 6 * 1024**3))
+    monkeypatch.setattr(resources, "cgroup_memory_stat", lambda: {})
+    monkeypatch.setattr(resources, "release_file_cache", advice)
+    profiler = resources.PhaseProfiler(tmp_path, interval=0.001)
+    expected = ValueError if producer_fails else RuntimeError
+    message = "producer failed" if producer_fails else "resource sampler failed"
+    with caplog.at_level(logging.INFO, logger=resources.LOGGER.name):
+        with pytest.raises(expected, match=message) as failure:
+            with profiler.phase("pmtiles"):
+                assert seen.wait(3), "background sampler did not run"
+                if producer_fails:
+                    raise ValueError("producer failed")
+    if not producer_fails:
+        assert isinstance(failure.value.__cause__, PermissionError)
+    records = [json.loads(row.message) for row in caplog.records]
+    result = next(row for row in records if row.get("event") == "wdpa_phase_resources")
+    assert result["state"] == "failed"
+    assert result["cgroup_memory_peak_bytes"] == 6 * 1024**3
+    assert profiler.records[-1] == result
+
+
+
+def test_proc_cache_keeps_pinned_inode_advice_errors_visible(proc_cache_view, monkeypatch):
+    root, _state = proc_cache_view
+    def denied(*_):
+        raise PermissionError("owned inode cache advice denied")
+    monkeypatch.setattr(os, "posix_fadvise", denied)
+    with pytest.raises(PermissionError, match="owned inode"):
+        resources.release_file_cache(root)
