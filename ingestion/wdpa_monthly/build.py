@@ -140,7 +140,7 @@ def build_month(client, month, root, *, retained_analysis=None):
         directory = root / name
         try:
             if name == "discovery":
-                replay(source, inputs, directory, run_date, sample=False, discover_only=True)
+                discovery = replay(source, inputs, directory, run_date, sample=False, discover_only=True)
             else:
                 results.append({**replay(source, inputs, directory, run_date, sample=sampled), **identity})
         except (IdentityDecisionRequired, subprocess.CalledProcessError) as blocked:
@@ -182,7 +182,7 @@ def build_month(client, month, root, *, retained_analysis=None):
     sample, report = results
     report["memory_peak_bytes"] = cgroup_memory()[1]
     report["resource_warnings"] = gate.memory_warnings(report)
-    report["phases"] = profiler.records + sample["phases"] + report["phases"]
+    report["phases"] = profiler.records + discovery["phases"] + sample["phases"] + report["phases"]
     report["scratch_peak_bytes"] = max(phase["scratch_peak_bytes"] for phase in report["phases"])
     report["elapsed_seconds"] = time.monotonic() - started
     errors = gate.check_compatibility({"compatibility_sample": sample,
