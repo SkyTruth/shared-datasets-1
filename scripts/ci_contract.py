@@ -112,11 +112,6 @@ NARROW_PATHS = {
     # No other import/subprocess/workflow caller; translation test classification
     # adds native/images.
     "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
-    # Importers: wdpa_input_memory_probe, test_wdpa_disk_processing (native corpus)
-    # and test_wdpa_translation_inputs. WDPA Dockerfile COPY; the input-memory
-    # probe is exercised by production_image_contracts.
-    # Replay artifacts/reports feed WDPA validation, never API/browser fixtures.
-    "scripts/local_wdpa_sample.py": ("geospatial-integration", "production-images"),
     # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
     # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
     # or other subprocess caller. WDPA test classification adds native/images;
