@@ -69,9 +69,11 @@ class TranslationInputTests(unittest.TestCase):
             patch.object(wdpa, "native_versions", return_value={}),
             patch.object(wdpa.storage, "Client"),
             patch.object(wdpa.GcsPublisher, "from_runtime", return_value=publisher),
-            patch.object(wdpa, "download_file"),
+            patch.object(wdpa, "download_file", side_effect=lambda url, path: path.write_bytes(b"frozen source")),
             patch.object(wdpa, "prepare_source_datasets", return_value=["fixture"]),
             patch.object(wdpa, "discover_source_layers", return_value=([], "REALM", ())),
+            patch.object(wdpa, "discover_assets", return_value={"state": "READY", "assets": {
+                asset.slug: {} for asset in wdpa.ASSETS}}),
             patch.object(wdpa.release_feature_model, "load_identity_resolution_decisions", return_value=[]),
             patch.object(wdpa.translations, "prepare_memory", return_value=nullcontext(memory)) as prepare,
             patch.object(wdpa, "build_asset_outputs", side_effect=build),

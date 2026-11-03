@@ -905,7 +905,10 @@ def run() -> list[dict[str, Any]]:
                          "producer": sha256_file(Path(__file__)), "identity_state": gate.state.get("identity")},
                         discover_identity)
                 ], workdir / "analysis")
-                publication_readiness.require_ready(discovery)
+                # Keep the owning identity error type so the existing failure
+                # handler persists its publication hold before propagating it.
+                keyed_identity.require(discovery["state"] == "READY",
+                    "publication identity discovery did not complete: " + json.dumps(discovery, sort_keys=True))
                 reservation = identity_state.reserve(gate,
                     (feature["properties"] for feature in feature_metadata.iter_geojson_features(extract.geojson)), workdir)
                 translation_source, translation_inputs = translation_input(publisher, workdir, gate=gate)
