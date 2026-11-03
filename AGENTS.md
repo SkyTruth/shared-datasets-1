@@ -146,6 +146,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Operational alert routing and notification configuration | [alert routing](docs/alert-routing.md) |
 | Slack incident recovery, setup, and reconciliation | [Slack incidents](docs/slack-incidents.md) |
 | Complete validation before pushing | [CI preflight](docs/ci-preflight.md) |
+| Complete decision discovery before expensive builds or CI | [publication readiness](docs/publication-readiness.md) |
 | Concurrent agent ownership, prerequisites, and final integration | [agent integration](docs/agent-integration.md) |
 | Dataset README templates | [templates/](templates/) |
 | Artifact builds and catalog generation commands | [scripts/README.md](scripts/README.md) |
@@ -302,6 +303,26 @@ Infrastructure and security:
 
 Git and history:
 
+- Before expensive artifact builds, full preflight, CI pushes, or merge/recovery
+  cycles for **any dataset publication flow**, follow
+  `docs/publication-readiness.md`. This includes manual intake, existing-asset
+  refreshes, scheduled ingestion, preview data and publication recovery, for
+  vector, table, raster and array data. Declare the complete asset/partition
+  scope, gather independently discoverable blockers and semantic choices in one
+  batch, and retain source/baseline/version-bound analysis. Use the shared
+  `scripts/publication_readiness.py` command or the producer's shared discovery
+  adapter; do not use a deployment or a CI rerun to discover the next question.
+  A sample, partial scan, missing input or failed evidence capture is not a
+  complete decision inventory. Resolve `NEEDS_DECISION`, `BLOCKED` and
+  `INCOMPLETE` before starting expensive validation for that publication.
+- For publication-code changes without a pending real release, exercise complete
+  synthetic batches and the changed runtime/serialization boundaries first;
+  do not download every production dataset just to validate source changes.
+  Run `uv run python scripts/publication_runtime_check.py` before full preflight.
+  Finish focused positive/negative checks before freezing the final head, then
+  run required full preflight and push that revision once. Read-only evidence
+  updates do not need new commits or GHA runs. Existing production ownership,
+  required checks and protected publication authority remain in force.
 - Treat the Git index and commit history as user-owned state.
 - `.github/CODEOWNERS` routes all repository changes to `@jonaraphael` as the
   sole owner. This is only enforceable when GitHub branch protection or rulesets

@@ -425,6 +425,14 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 self.features = {}
             def add(self, feature, ordinal):
                 self.features[ordinal] = feature
+            def finish_input(self):
+                self.path.write_text(json.dumps(self.features))
+            @classmethod
+            def open(cls, path, *, layer_name, read_only=False):
+                store = cls.__new__(cls)
+                store.path = path
+                store.features = {int(key): value for key, value in json.loads(path.read_text()).items()}
+                return store
             def prepare_fields(self):
                 pass
             def projection_sql(self):

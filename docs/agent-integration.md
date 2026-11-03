@@ -14,7 +14,11 @@ an explicit handoff; do not invent a second owner or an indefinite automatic wai
 
 ## Final boundary
 
-1. During editing, run focused checks for the changed behavior and its negative
+1. Before publication builds or validation cycles, complete the decision
+   inventory for every declared asset/partition using
+   [publication readiness](publication-readiness.md). Batch the human choices,
+   preserve reusable analysis, and check runtime/report boundaries cheaply.
+   During editing, run focused checks for the changed behavior and its negative
    controls. Verify tools and external prerequisites with cheap read-only probes.
    Keep full preflight for the final boundary. An explicitly requested early
    checkpoint remains provisional and cannot replace final validation.

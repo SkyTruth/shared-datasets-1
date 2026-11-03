@@ -147,6 +147,15 @@ def test_calendar_rollover_needs_no_override(scheduled, monkeypatch):
     assert scheduled.build.call_args.args[1] == dt.date(2026, 12, 1)
 
 
+def test_explicit_analysis_reference_reaches_builder_without_selecting_publication(scheduled, monkeypatch):
+    reference = {**scheduled.reference, "uri": scheduled.reference["uri"].replace(
+        "build-bundle.json", "wdpa-marine/analysis-reference.json")}
+    monkeypatch.setenv("WDPA_ANALYSIS_REFERENCE", json.dumps(reference))
+    automatic.run()
+    assert scheduled.build.call_args.kwargs == {"retained_analysis": reference}
+    assert scheduled.promote.call_args.args[2] == scheduled.reference
+
+
 def test_completed_month_checks_in_without_rebuilding(scheduled):
     scheduled.publisher.load_successful_run_record.return_value = ({'status': 'success'}, {})
     records = automatic.run()
@@ -202,7 +211,7 @@ def test_replay_passes_month_to_real_cli_and_reads_serialized_report(monkeypatch
     assert producer.replay(tmp_path / 'source.zip', tmp_path / 'inputs', directory, expected['run_date'], sample=False) == expected
 
 
-@pytest.mark.parametrize('defect', [None, 'compatibility', 'counts', 'memory', 'scratch'])
+@pytest.mark.parametrize('defect', [None, 'compatibility', 'counts', 'memory', 'scratch', 'discovery-scratch'])
 def test_builder_requires_full_validation_before_committing_descriptor(monkeypatch, tmp_path, defect):
     evidence = accepted_evidence()
     report = copy.deepcopy(evidence['build'])
@@ -223,7 +232,11 @@ def test_builder_requires_full_validation_before_committing_descriptor(monkeypat
     monkeypatch.setattr(producer, 'freeze_inputs', lambda *args: None)
     monkeypatch.setattr(wdpa, 'native_versions', lambda: {})
     monkeypatch.setattr(wdpa, 'download_file', lambda *args: None)
-    monkeypatch.setattr(producer, 'replay', lambda *args, **kwargs: sample if kwargs['sample'] else report)
+    def replay(*args, **kwargs):
+        if kwargs.get('discover_only'):
+            return {'phases': [{'scratch_peak_bytes': (81 if defect == 'discovery-scratch' else 10) * 1024**3}]}
+        return sample if kwargs['sample'] else report
+    monkeypatch.setattr(producer, 'replay', replay)
     from contextlib import nullcontext
     profile = SimpleNamespace(records=[{'scratch_peak_bytes': (81 if defect == 'scratch' else 10) * 1024**3}], phase=lambda _: nullcontext())
     monkeypatch.setattr(producer, 'PhaseProfiler', lambda *args, **kwargs: profile)

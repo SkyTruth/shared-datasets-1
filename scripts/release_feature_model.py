@@ -809,6 +809,13 @@ def load_identity_resolution_decisions(
     repo_root: Path = Path("."),
 ) -> tuple[dict[str, Any], ...]:
     path = repo_root / "catalog" / "feature-identity-resolutions" / f"{asset_slug}.json"
+    return read_identity_resolution_decisions(path, asset_slug=asset_slug, release=release)
+
+
+def read_identity_resolution_decisions(
+    path: Path, *, asset_slug: str, release: str,
+) -> tuple[dict[str, Any], ...]:
+    """Read the standard decision document, selecting only this release's decisions."""
     payload = load_identity_resolution_file(path)
     if payload is None:
         return ()

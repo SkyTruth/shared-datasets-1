@@ -219,13 +219,17 @@ override conflict, or repair a disagreement by resetting publication state.
    resolution file. Identify the rule and its revision in the rationale or PR;
    do not invent unsupported schema fields. Preserve old release history.
 5. **Validate and integrate.** Follow the existing legality, identity/allocation,
-   complete preflight and exact-head review/merge contracts. Changed inputs or
+   [complete publication discovery](../publication-readiness.md), complete
+   preflight and exact-head review/merge contracts. Discover all affected assets
+   before starting expensive validation; retain normalized input and present one
+   complete decision inventory. Changed inputs or
    match sets require re-evaluation; stale decisions are rejected, not silently
    generalized. Read [CI preflight](../ci-preflight.md).
 6. **Verify the actual release.** Run the complete build and acceptance path.
    A compatibility sample is a useful early check, not coverage of all cases.
-   This thread's sample approvals were followed by 114 additional full-marine
-   cases; full terrestrial processing can reveal more. A zero-exit review stop
+   The historical November sample approvals were followed by 114 additional
+   full-marine cases and later full-terrestrial cases; new runs therefore perform
+   complete discovery across both realms first. A zero-exit review stop
    or signed runtime success is not publication acceptance. Verify actual
    receipts, indexes and the owning runbook's activation conditions.
    Fractional replays scope curation to keys present in their exact source

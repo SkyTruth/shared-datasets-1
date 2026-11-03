@@ -7,12 +7,29 @@ baseline and publication owner remain the authority across executions.
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
+from contextlib import contextmanager
+import tempfile
 from pathlib import Path
 
 from scripts import release_feature_model as model
+
+
+def baseline_digest(baseline, *, match_properties=True):
+    """Bind retained matches to the complete baseline and matching policy."""
+    digest = hashlib.sha256()
+    digest.update(model.canonical_json({
+        "contract": baseline.contract_id, "next": baseline.next_feature_id,
+        "release": baseline.release,
+        "snapshot": asdict(baseline.snapshot) if baseline.snapshot else None,
+        "match_properties": match_properties,
+    }).encode())
+    for record in baseline.records:
+        digest.update(model.canonical_json(dict(record)).encode() + b"\n")
+    return digest.hexdigest()
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -21,7 +38,8 @@ def connect(path: Path) -> sqlite3.Connection:
     db.execute("PRAGMA cache_size=-65536")
     db.execute("PRAGMA temp_store=FILE")
     db.execute("PRAGMA mmap_size=0")
-    # A killed build discards this entire scratch database; it never resumes it.
+    # Only complete, checksummed analysis snapshots may be reopened. A killed
+    # preparation has no manifest and must never be reused.
     db.execute("PRAGMA journal_mode=OFF")
     db.execute("PRAGMA synchronous=OFF")
     return db
@@ -213,6 +231,7 @@ class DiskIdentityPlan:
         self._resolved = False
         self.db = connect(path)
         self.db.executescript("""
+            CREATE TABLE analysis(binding TEXT NOT NULL, corroborated INTEGER NOT NULL);
             CREATE TABLE planned(ordinal INTEGER PRIMARY KEY, identity_key TEXT NOT NULL UNIQUE,
                 geometry_hash TEXT NOT NULL, properties_hash TEXT NOT NULL, feature_id TEXT UNIQUE);
             CREATE TABLE duplicates(identity_key TEXT NOT NULL, ordinal INTEGER NOT NULL);
@@ -221,9 +240,19 @@ class DiskIdentityPlan:
                 payload TEXT NOT NULL, resolved INTEGER NOT NULL DEFAULT 0);
         """)
 
+    @classmethod
+    def open(cls, path: Path):
+        """Open a hash-verified retained plan; callers own the artifact binding."""
+        plan = cls.__new__(cls)
+        plan.db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)
+        plan._resolved = plan.db.execute(
+            "SELECT count(*) FROM planned WHERE feature_id IS NOT NULL"
+        ).fetchone()[0] > 0
+        return plan
+
     def add(self, ordinal, feature, *, source_fields, excluded_properties=()):
-        if self._resolved:
-            raise RuntimeError("completed identity allocation is immutable")
+        if self._resolved or self.db.execute("SELECT count(*) FROM analysis").fetchone()[0]:
+            raise RuntimeError("analyzed identity input is immutable")
         geometry_hash, properties_hash = model.content_hashes(
             geometry=feature.get("geometry"),
             properties=feature.get("properties") or {},
@@ -257,30 +286,30 @@ class DiskIdentityPlan:
         )
         return True
 
-    def resolve(
-        self, *, baseline, asset_slug, release, decisions=(), match_properties=True
-    ):
-        if self._resolved:
-            raise RuntimeError("identity allocation has already completed")
-        from ingestion.common.feature_metadata import (
-            raise_unresolved_identity_ambiguities,
-        )
+    @contextmanager
+    def baseline_records(self, baseline):
+        if isinstance(baseline.records, DiskIdentityRecords):
+            yield baseline.records
+            return
+        directory = Path(self.db.execute("PRAGMA database_list").fetchone()[2]).parent
+        with tempfile.TemporaryDirectory(prefix="baseline-", dir=directory) as temporary:
+            records = DiskIdentityRecords(Path(temporary) / "records.sqlite")
+            try:
+                for record in baseline.records:
+                    records.add(record)
+                yield records.seal()
+            finally:
+                records.close()
 
-        owned_records = None
-        records = baseline.records
-        if not isinstance(records, DiskIdentityRecords):
-            # Existing local/test callers construct tuple baselines. Index them
-            # at this boundary; all planning below uses the same disk queries.
-            owned_records = DiskIdentityRecords(
-                Path(self.db.execute("PRAGMA database_list").fetchone()[2]).with_suffix(
-                    ".baseline.sqlite"
-                )
-            )
-            for record in records:
-                owned_records.add(record)
-            records = owned_records.seal()
-        try:
-            previous = records.mapping()
+    def discover(self, *, baseline, match_properties=True):
+        """Match the entire input without allocating IDs or sending notifications."""
+        binding = baseline_digest(baseline, match_properties=match_properties)
+        retained = self.db.execute("SELECT binding FROM analysis").fetchone()
+        if retained:
+            if retained[0] != binding:
+                raise model.ReleaseFeatureModelError("retained identity analysis baseline or policy changed")
+            return DiskAmbiguities(self.db)
+        with self.baseline_records(baseline) as records:
             corroborated = 0
             for ordinal, key, geometry_hash, properties_hash, _ in self.db.execute(
                 "SELECT * FROM planned ORDER BY ordinal"
@@ -307,7 +336,20 @@ class DiskIdentityPlan:
                         "INSERT INTO ambiguities(ordinal,identity_key,payload) VALUES (?,?,?)",
                         (ordinal, key, model.canonical_json(asdict(ambiguity))),
                     )
+            self.db.execute("INSERT INTO analysis VALUES (?,?)", (binding, corroborated))
+            self.db.commit()
+        return DiskAmbiguities(self.db)
+
+    def review(self, *, baseline, release, decisions=(), match_properties=True):
+        """Validate exact decisions against complete matches, without allocation."""
+        if self._resolved:
+            raise RuntimeError("identity allocation has already completed")
+        self.discover(baseline=baseline, match_properties=match_properties)
+        self.db.execute("UPDATE ambiguities SET resolved=0")
+        with self.baseline_records(baseline) as records:
+            previous = records.mapping()
             resolutions = []
+            reuse_targets = set()
             for decision in decisions:
                 key = model.normalize_identity_key(
                     decision.get("new_identity_key"), label="new_identity_key"
@@ -331,6 +373,11 @@ class DiskIdentityPlan:
                     previous_feature_ids=previous,
                 )[0]
                 if resolution.reuse_feature_id:
+                    if resolution.reuse_feature_id in reuse_targets:
+                        raise model.ReleaseFeatureModelError(
+                            "multiple identity decisions cannot reuse the same previous feature ID"
+                        )
+                    reuse_targets.add(resolution.reuse_feature_id)
                     holder = records.db.execute(
                         "SELECT identity_key FROM records WHERE feature_id=?",
                         (resolution.reuse_feature_id,),
@@ -351,11 +398,21 @@ class DiskIdentityPlan:
                     "UPDATE ambiguities SET resolved=1 WHERE identity_key=?",
                     (key_text(key),),
                 )
-            raise_unresolved_identity_ambiguities(
-                asset_slug=asset_slug,
-                release=release,
-                ambiguities=DiskAmbiguities(self.db, unresolved=True),
-            )
+            self.db.commit()
+            return resolutions, DiskAmbiguities(self.db, unresolved=True)
+
+    def resolve(self, *, baseline, asset_slug, release, decisions=(), match_properties=True):
+        from ingestion.common.feature_metadata import raise_unresolved_identity_ambiguities
+
+        resolutions, unresolved = self.review(
+            baseline=baseline, release=release, decisions=decisions,
+            match_properties=match_properties,
+        )
+        raise_unresolved_identity_ambiguities(
+            asset_slug=asset_slug, release=release, ambiguities=unresolved,
+        )
+        with self.baseline_records(baseline) as records:
+            previous = records.mapping()
             overrides = model.resolved_feature_id_overrides(resolutions)
             force_new = set(model.resolved_force_new_identity_keys(resolutions))
             next_sequence = baseline.next_feature_id
@@ -383,12 +440,9 @@ class DiskIdentityPlan:
             self._resolved = True
             return next_sequence, model.build_identity_decisions(
                 ambiguities_detected=len(DiskAmbiguities(self.db)),
-                key_corroborated=corroborated,
+                key_corroborated=self.db.execute("SELECT corroborated FROM analysis").fetchone()[0],
                 resolutions=resolutions,
             )
-        finally:
-            if owned_records is not None:
-                owned_records.close()
 
     def record(self, ordinal):
         row = self.db.execute(

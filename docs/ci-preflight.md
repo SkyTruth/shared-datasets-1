@@ -27,6 +27,15 @@ the [protected Terraform skill](../.claude/skills/protected-terraform-apply/SKIL
 
 ## Validation boundary
 
+Before full preflight for dataset publication work, finish the complete
+[publication decision inventory](publication-readiness.md) and its focused
+runtime checks. Code-only changes use complete synthetic batches instead of
+downloading live datasets. Local preflight runs the bounded, credential-free
+`scripts/publication_runtime_check.py` before Docker builds. The existing
+`geospatial-changes` hosted job runs the same probe before validation fanout;
+no additional workflow or scheduled run is required. This probe verifies the
+shared complete-batch/persistence/allocation boundary, not real-source readiness.
+
 For concurrent work, follow [agent integration](agent-integration.md). Finish
 known overlapping prerequisites and any required main synchronization before
 committing the final head and starting this command.

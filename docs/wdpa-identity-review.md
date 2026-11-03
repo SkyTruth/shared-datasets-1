@@ -6,6 +6,14 @@ evidence does not assign IDs, approve a decision, or authorize publication.
 Reviewed decisions still belong in
 `catalog/feature-identity-resolutions/{asset-slug}.json`.
 
+New automatic runs first complete identity discovery across both realms, before
+the compatibility sample or artifact generation. Every independent realm is
+analyzed before the batch stops; each pending realm retains its review evidence.
+The shared [publication readiness](publication-readiness.md) contract describes
+the reusable normalized analysis and generation-pinned scratch references.
+Existing retained sample/complete bundles remain readable with their original
+scope labels and do not establish full-release completeness.
+
 ## Capture and verification
 
 The normalized producer copies escalated incoming records while its geometry

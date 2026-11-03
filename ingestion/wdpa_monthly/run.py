@@ -24,7 +24,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, vector_pipeline
+from ingestion.common import feature_metadata, vector_pipeline, publication_readiness
 from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecords
 from ingestion.common.process_stream import feature_stream, pipe_commands
 from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
@@ -793,49 +793,18 @@ def assert_identity_decisions_allowed(
         )
 
 
-def build_asset_outputs(
-    *,
-    source: str,
-    source_layers: list[SourceLayer],
-    source_fields: tuple[FieldSpec, ...],
-    asset: AssetSpec,
-    where: str,
-    workdir: Path,
-    run_date: dt.date,
-    cleanup_after_gpkg: tuple[Path, ...] = (),
-    baseline: release_feature_model.GeneratedIdentityBaseline,
-    translation_memory: TranslationMemory,
-    identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
-    profiler: PhaseProfiler | None = None,
-    on_identity_review: Callable[[DiskIdentityPlan, NormalizedGeometryStore], None] | None = None,
-) -> AssetOutputs:
-    profiler = profiler or PhaseProfiler(workdir)
+def prepare_asset_input(*, source, source_layers, asset, where, workdir, profiler):
+    """Normalize a complete asset once, before allocation or artifact generation."""
     with profiler.phase(f"{asset.slug}:source-count"):
         expected_rows = expected_feature_count(source, source_layers, where)
         if expected_rows <= 0:
             raise RuntimeError(f"{asset.slug} filter produced no rows")
     gpkg = workdir / f"{asset.slug}.filtered.gpkg"
     normalized = workdir / f"{asset.slug}.normalized.gpkg"
-    plan_path = workdir / f"{asset.slug}.identity.sqlite"
-    fgb = workdir / f"{asset.slug}.fgb"
-    pmtiles = workdir / f"{asset.slug}.pmtiles"
-    metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
-    schema = workdir / f"{asset.slug}.schema.json"
-    manifest = workdir / f"{asset.slug}.manifest.json"
-
     with profiler.phase(f"{asset.slug}:filter"):
-        build_filtered_gpkg(
-            source=source,
-            source_layers=source_layers,
-            asset=asset,
-            where=where,
-            output=gpkg,
-        )
-        for path in cleanup_after_gpkg:
-            remove_if_exists(path)
-
+        build_filtered_gpkg(source=source, source_layers=source_layers, asset=asset, where=where, output=gpkg)
     with contextlib.ExitStack() as stack:
-        plan = DiskIdentityPlan(plan_path)
+        plan = DiskIdentityPlan(workdir / "identity.sqlite")
         stack.callback(plan.close)
         store = NormalizedGeometryStore(normalized, layer_name=asset.tile_layer)
         stack.callback(store.close)
@@ -864,6 +833,90 @@ def build_asset_outputs(
                     f"{asset.slug} normalized {received} of {expected_rows} source rows"
                 )
             remove_if_exists(gpkg)
+        store.finish_input()
+        plan.db.commit()
+    log = workdir / f"{asset.slug}-normalization.log"
+    if log.exists() and not log.stat().st_size:
+        log.unlink()
+    return {"expected_rows": expected_rows}
+
+
+def discover_assets(*, assets, source, source_layers, split_field, workdir, run_date,
+                    baselines, decisions, binding, profiler, sample=None, analysis_dir=None):
+    """Collect both realms before any output is built; retain complete normalized input."""
+    targets = []
+    for asset in assets:
+        where = sampled_where_clause(asset_where_clause(asset, split_field), sample)
+        def prepare(directory, asset=asset, where=where):
+            return prepare_asset_input(source=source, source_layers=source_layers, asset=asset,
+                where=where, workdir=directory, profiler=profiler)
+        baseline = baselines[asset.slug]
+        targets.append(publication_readiness.Target(asset.slug, run_date.isoformat(),
+            {**binding, "where": where, "native_versions": profiler.versions,
+             "producer": sha256_file(Path(__file__)),
+             "baseline": vars(baseline.snapshot) if baseline.snapshot else None,
+             "baseline_next": baseline.next_feature_id},
+            prepare, baseline=baseline, decisions=tuple(decisions[asset.slug])))
+    def capture(target, plan, retained, result):
+        from ingestion.wdpa_monthly import identity_review
+        asset = next(a for a in assets if a.slug == target.asset_slug)
+        with contextlib.closing(NormalizedGeometryStore.open(
+            retained / f"{asset.slug}.normalized.gpkg", layer_name=asset.tile_layer, read_only=True)) as store:
+            # Capture reads the native input but must not change the retained spool.
+            identity_review.capture(plan, store, target.baseline, asset_slug=asset.slug,
+                release=target.release, directory=workdir)
+    return publication_readiness.discover_batch(targets, analysis_dir or workdir / "analysis", on_pending=capture)
+
+
+def build_asset_outputs(
+    *,
+    source: str,
+    source_layers: list[SourceLayer],
+    source_fields: tuple[FieldSpec, ...],
+    asset: AssetSpec,
+    where: str,
+    workdir: Path,
+    run_date: dt.date,
+    cleanup_after_gpkg: tuple[Path, ...] = (),
+    baseline: release_feature_model.GeneratedIdentityBaseline,
+    translation_memory: TranslationMemory,
+    identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
+    profiler: PhaseProfiler | None = None,
+    prepared: Mapping[str, Any] | None = None,
+    on_identity_review: Callable[[DiskIdentityPlan, NormalizedGeometryStore], None] | None = None,
+) -> AssetOutputs:
+    profiler = profiler or PhaseProfiler(workdir)
+    normalized = workdir / f"{asset.slug}.normalized.gpkg"
+    plan_path = workdir / f"{asset.slug}.identity.sqlite"
+    fgb = workdir / f"{asset.slug}.fgb"
+    pmtiles = workdir / f"{asset.slug}.pmtiles"
+    metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
+    schema = workdir / f"{asset.slug}.schema.json"
+    manifest = workdir / f"{asset.slug}.manifest.json"
+    if prepared is None:
+        payload = prepare_asset_input(source=source, source_layers=source_layers, asset=asset,
+            where=where, workdir=workdir, profiler=profiler)
+        (workdir / "identity.sqlite").rename(plan_path)
+    else:
+        retained = Path(prepared["analysis"])
+        saved = json.loads((retained / "analysis.json").read_text())
+        publication_readiness.verify_retained(retained, saved["binding"])
+        if saved["binding"]["inputs"]["where"] != where:
+            raise RuntimeError("retained asset selection changed")
+        payload = saved["payload"]
+        for name in (normalized.name, normalized.with_suffix(".schema.geojsonseq").name):
+            shutil.copyfile(retained / name, workdir / name)
+        shutil.copyfile(retained / "identity.sqlite", plan_path)
+    expected_rows = payload["expected_rows"]
+    for path in cleanup_after_gpkg:
+        remove_if_exists(path)
+    with contextlib.ExitStack() as stack:
+        plan = DiskIdentityPlan.open(plan_path)
+        stack.callback(plan.close)
+        if len(plan) + plan.db.execute("SELECT count(*) FROM duplicates").fetchone()[0] != expected_rows:
+            raise RuntimeError("retained normalized source count differs from expected rows")
+        store = NormalizedGeometryStore.open(normalized, layer_name=asset.tile_layer)
+        stack.callback(store.close)
         with profiler.phase(f"{asset.slug}:allocate"):
             try:
                 next_feature_id, identity_decisions = plan.resolve(
@@ -1249,12 +1302,18 @@ def run() -> list[dict[str, Any]]:
                 records.append(record)
             return records
         with profiler.phase("source-prepare"):
+            source_sha256 = sha256_file(source_zip)
             source_datasets = prepare_source_datasets(source_zip, workdir)
             source = source_datasets[0]
             source_layers, split_field, source_fields = discover_source_layers(
                 source_datasets
             )
             assert_sample_field_available(source_layers, sample_spec)
+        discovery = discover_assets(assets=publish_specs, source=source, source_layers=source_layers,
+            split_field=split_field, workdir=workdir, run_date=run_date, baselines=baselines_by_slug,
+            decisions=decisions_by_slug, binding={"source_sha256": source_sha256},
+            profiler=profiler, sample=sample_spec)
+        publication_readiness.require_ready(discovery, notify=True)
         with profiler.phase("translation-index"):
             translation_memory = stack.enter_context(
                 translations.prepare_memory(publisher, ASSETS, workdir)
@@ -1297,6 +1356,7 @@ def run() -> list[dict[str, Any]]:
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
                 baseline=baselines_by_slug[asset.slug],
+                prepared=discovery["assets"][asset.slug],
                 translation_memory=translation_memory,
                 identity_resolution_decisions=decisions_by_slug[asset.slug],
                 profiler=profiler,
