@@ -234,6 +234,13 @@ Dataset metadata and local files:
   [SkyTruth's feature identity process](docs/standards/feature-identity-resolution.md).
   It separates implemented automatic rules, exact accepted decisions and
   human-reviewed heuristics. A similar precedent does not approve a new case.
+- Preserve the original Slack **Decision needed** request when recording an
+  identity decision. Keep its request text, case summaries, context and source
+  or review links intact. Put the accepted action, decision maker, rationale
+  and reviewed PR in a reply to that same thread, without a channel broadcast.
+  A status marker may be added only while retaining the original content;
+  never replace the request body with a **Decision recorded** summary. This
+  also applies when decision and failure reports share an execution parent.
 - Asset `status` must be one of `active`, `deprecated`, `superseded`, or
   `retired`. These are consumer-guidance states, not deletion states. Deprecated,
   superseded, and retired assets remain readable and citable, keep their README,
