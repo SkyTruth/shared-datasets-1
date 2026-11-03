@@ -4,6 +4,13 @@ Use `uv run` for repo Python tools. Procedures live in the [skill catalog](../AG
 
 ## CI validation
 
+`publication_readiness.py --plan PLAN.json` discovers every asset in a complete
+publication batch, retains verified analysis, and reports READY, NEEDS_DECISION,
+BLOCKED or INCOMPLETE. Use it before artifact builds and CI for all dataset
+formats; [contract and examples](../docs/publication-readiness.md).
+`publication_runtime_check.py` runs the bounded, credential-free runtime probes
+used before local Docker builds and hosted validation fanout.
+
 `ci_preflight.py` owns local container execution and host Docker credential
 isolation alongside the shared plan/run-suite/verify entrypoints. See
 [complete CI preflight](../docs/ci-preflight.md) for the required commands and

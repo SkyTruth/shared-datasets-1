@@ -531,6 +531,7 @@ def preflight(args: argparse.Namespace) -> int:
     root, base, original_head = isolated_merge(source, args.base, args.head, work / "repo")
     plan = make_plan(root, base, "HEAD", original_head=original_head)
     write_json(work / "plan.json", plan)
+    subprocess.run([sys.executable, "scripts/publication_runtime_check.py"], cwd=root, check=True, timeout=40)
     if shutil.which("docker") is None:
         raise ValueError("Docker is required for the pinned Linux preflight toolchain")
     runtime = local_runtime()

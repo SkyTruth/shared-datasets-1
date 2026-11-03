@@ -24,6 +24,13 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 
 ## Rules
 
+- Follow `docs/publication-readiness.md` for every dataset job before expensive
+  builds, CI, or publication recovery. Discover all assets/partitions before
+  stopping for decisions; retain exact source/baseline/version-bound analysis.
+  Do not use another deployment or canary to uncover the next semantic question.
+  Use tiny complete-path runtime fixtures before full preflight; a sample alone
+  cannot establish complete release readiness. Preserve the existing owner of
+  any active production execution.
 - Use Terraform for GCP assets: APIs, Artifact Registry, service accounts, IAM, Cloud Run Jobs, Cloud Scheduler jobs, and monitoring.
 - Load `.claude/skills/protected-terraform-apply/SKILL.md` before any
   production Terraform apply discussion. Production infrastructure mutations go

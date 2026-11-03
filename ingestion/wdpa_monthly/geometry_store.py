@@ -102,6 +102,30 @@ class NormalizedGeometryStore:
             self.layer.CommitTransaction()
             self.layer.StartTransaction()
 
+    def finish_input(self):
+        """Persist normalization before retaining it for a later decision pass."""
+        self.layer.CommitTransaction()
+        self.ds.FlushCache()
+        self.witness.close()
+
+    @classmethod
+    def open(cls, path: Path, *, layer_name: str, read_only=False):
+        from osgeo import gdal, ogr
+
+        store = cls.__new__(cls)
+        store.ogr, store.gdal = ogr, gdal
+        store.path, store.layer_name = path, layer_name
+        store.ds = ogr.Open(str(path), update=not read_only)
+        if store.ds is None:
+            raise RuntimeError("retained normalized geometry cannot be opened")
+        store.layer = store.ds.GetLayerByName(layer_name)
+        store.witness_path = path.with_suffix(".schema.geojsonseq")
+        store.witness = store.witness_path.open("r" if read_only else "a", encoding="utf-8")
+        store.field_names = ()
+        if not read_only:
+            store.layer.StartTransaction()
+        return store
+
     @staticmethod
     def _source_feature(row):
         geometry = row.GetGeometryRef()

@@ -55,6 +55,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12.12'
+      - name: Check publication runtime before validation fanout
+        run: python scripts/publication_runtime_check.py
       - name: Select validation for the tested merge tree
         id: plan
         env:

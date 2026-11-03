@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import json
 from pathlib import Path
 import tempfile
 
@@ -53,7 +54,10 @@ def run():
         root = Path(directory)
         try:
             with tempfile.TemporaryDirectory(prefix="build-", dir=root) as build_directory:
-                reference = build.build_month(client, month, Path(build_directory) / "outputs")
+                options = {}
+                if os.environ.get("WDPA_ANALYSIS_REFERENCE"):
+                    options["retained_analysis"] = json.loads(os.environ["WDPA_ANALYSIS_REFERENCE"])
+                reference = build.build_month(client, month, Path(build_directory) / "outputs", **options)
         except wdpa.SourceNotAvailableError as exc:
             return check_in(publisher, month, attempt, str(exc))
         # Only this execution's complete validated descriptor can reach publication.

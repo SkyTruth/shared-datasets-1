@@ -40,6 +40,7 @@ NATIVE_TESTS = (
     "tests/test_mpatlas_monthly.py",
 )
 CONTRACT_FILES = (
+    "scripts/publication_runtime_check.py", "scripts/publication_readiness.py",
     "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",

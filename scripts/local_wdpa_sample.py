@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common.identity_index import DiskIdentityRecords
-from ingestion.common import feature_metadata
+from ingestion.common import feature_metadata, publication_readiness
 from ingestion.common.process_stream import feature_stream
 from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
@@ -322,6 +322,9 @@ def main():
     )
     parser.add_argument("--supplement", type=Path)
     parser.add_argument("--run-date", required=True)
+    parser.add_argument("--discover-only", action="store_true", help="Complete decision discovery for both realms; no artifacts or staging")
+    parser.add_argument("--restore-analysis", type=Path, help="Pinned analysis-reference JSON from a previous execution")
+    parser.add_argument("--analysis-dir", type=Path, help="Retain and reuse verified normalization across invocations")
     parser.add_argument("--stage-build", action="store_true", help="Retain a complete cloud build in immutable noncanonical staging")
     parser.add_argument(
         "--asset", choices=[a.slug for a in wdpa.ASSETS] + ["all"], default="all",
@@ -335,6 +338,8 @@ def main():
         help="Compare the retained old path on a sample; not resource acceptance evidence",
     )
     args = parser.parse_args()
+    if args.discover_only and (args.stage_build or args.fraction != 1 or args.asset != "all" or args.compare_legacy):
+        parser.error("discovery requires complete inputs for both realms without staging or legacy comparison")
     if args.stage_build and (args.fraction != 1 or args.genesis or args.compare_legacy or args.asset != "all"):
         parser.error("staging requires a complete non-genesis build of both realms")
     if not 0 < args.fraction <= 1:
@@ -418,6 +423,35 @@ def main():
                     )
                     if isinstance(baselines[asset.slug].records, DiskIdentityRecords):
                         stack.callback(baselines[asset.slug].records.close)
+            sample = None if args.fraction == 1 else wdpa.SampleSpec(args.fraction, args.seed)
+            wdpa.assert_sample_field_available(layers, sample)
+            decisions_by_slug = {}
+            for asset in selected_assets:
+                where = wdpa.sampled_where_clause(wdpa.asset_where_clause(asset, split), sample)
+                decisions_by_slug[asset.slug] = scope_identity_decisions(
+                    model.load_identity_resolution_decisions(asset_slug=asset.slug, release=args.run_date),
+                    layers=layers, where=where, sample=sample)
+            if args.restore_analysis:
+                if args.analysis_dir is None:
+                    parser.error("--restore-analysis requires --analysis-dir")
+                from google.cloud import storage
+                from ingestion.wdpa_monthly.artifact_bundle import check_reference
+                client = storage.Client(project=wdpa.DEFAULT_PROJECT_ID)
+                def download(ref, path):
+                    name = check_reference(ref)
+                    client.bucket(wdpa.DEFAULT_BUCKET).blob(name, generation=ref["generation"]).download_to_filename(
+                        str(path), if_generation_match=ref["generation"], checksum="crc32c")
+                publication_readiness.restore_retained(json.loads(args.restore_analysis.read_text()), args.analysis_dir, download)
+            discovery = wdpa.discover_assets(assets=selected_assets, source=sources[0], source_layers=layers,
+                split_field=split, workdir=args.workdir, run_date=run_date, baselines=baselines,
+                decisions=decisions_by_slug, binding={"source_sha256": report["source_sha256"],
+                    "baseline_snapshot_sha256": report["baseline_snapshot_sha256"]},
+                profiler=profiler, sample=sample, analysis_dir=args.analysis_dir)
+            report["readiness"] = discovery
+            publication_readiness.require_ready(discovery)
+            if args.discover_only:
+                report["state"] = "discovered"
+                return
             with profiler.phase("translation-index"):
                 if args.translation_sources:
                     memory = build_frozen_translation_memory(
@@ -429,24 +463,13 @@ def main():
                     memory = TranslationMemory(local_memory, supplement=args.supplement)
                 stack.callback(memory.close)
                 report["translation_memory_sha256"] = wdpa.sha256_file(memory.database)
-            sample = (
-                None
-                if args.fraction == 1
-                else wdpa.SampleSpec(args.fraction, args.seed)
-            )
-            wdpa.assert_sample_field_available(layers, sample)
             for asset in selected_assets:
                 where = wdpa.sampled_where_clause(
                     wdpa.asset_where_clause(asset, split), sample
                 )
                 with profiler.phase(f"{asset.slug}:independent-source-counts"):
                     source_counts = source_count_summary(layers, where, args.workdir)
-                decisions = model.load_identity_resolution_decisions(
-                    asset_slug=asset.slug, release=args.run_date
-                )
-                decisions = scope_identity_decisions(
-                    decisions, layers=layers, where=where, sample=sample
-                )
+                decisions = decisions_by_slug[asset.slug]
                 output = wdpa.build_asset_outputs(
                     source=sources[0],
                     source_layers=layers,
@@ -456,6 +479,7 @@ def main():
                     workdir=args.workdir,
                     run_date=run_date,
                     baseline=baselines[asset.slug],
+                    prepared=discovery["assets"][asset.slug],
                     translation_memory=memory,
                     identity_resolution_decisions=decisions,
                     cleanup_after_gpkg=(args.workdir / "source-zips", source_copy)
@@ -524,6 +548,7 @@ def main():
         # failures still leave a failed report and a nonzero process exit.
         report["state"] = "blocked"
         report["blocked_record"] = blocked.blocked_record()
+        report["blocked_records"] = [item.blocked_record() for item in getattr(blocked, "blocked_assets", [blocked])]
     finally:
         report["elapsed_seconds"] = time.monotonic() - started
         report["phases"] = profiler.records

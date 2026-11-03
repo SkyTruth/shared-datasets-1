@@ -391,6 +391,8 @@ def test_successful_replay_modes_persist_per_realm_compatibility(
     monkeypatch.setattr(wdpa, "discover_source_layers", lambda paths: (
         [wdpa.SourceLayer("fixture", fields, "GEOMETRY", paths[0])], "MARINE", fields))
     monkeypatch.setattr(wdpa, "assert_sample_field_available", lambda *_: None)
+    monkeypatch.setattr(wdpa, "discover_assets", lambda **kwargs: {"state": "READY", "assets": {
+        asset.slug: {} for asset in kwargs["assets"]}})
     rows = [feature("a", SITE_ID=1, ISO3="IND"), feature("b", 2, SITE_ID=2, ISO3="FRA")]
     monkeypatch.setattr(replay, "source_count_features", lambda *_: (r["properties"] for r in rows))
     snapshot = model.GeneratedIdentitySnapshot("gs://fixture/manifest.json", 1, "a" * 64)
@@ -477,6 +479,38 @@ def test_successful_replay_modes_persist_per_realm_compatibility(
                 assert objects.data[name][1] and not (work / Path(name).name).exists()
     else:
         assert not objects.data
+
+
+def test_complete_discovery_cli_normalizes_both_realms_and_reuses_spools(tmp_path, monkeypatch):
+    pytest.importorskip("osgeo")
+    from scripts import local_wdpa_sample as cli
+    from ingestion.wdpa_monthly.geometry_store import NormalizedGeometryStore
+    source = tmp_path / "source.geojson"
+    source.write_text(json.dumps({"type": "FeatureCollection", "features": [
+        feature("marine", 1, SITE_ID=1, MARINE="1", ISO3="IND"),
+        feature("land", 2, SITE_ID=2, MARINE="0", ISO3="FRA"),
+    ]}))
+    memory = tmp_path / "unused.sqlite"
+    memory.write_bytes(b"discovery does not open translation memory")
+    analysis = tmp_path / "retained"
+    monkeypatch.setattr(cli.wdpa, "build_asset_outputs", lambda **_: pytest.fail("must discover before building"))
+    for attempt in range(2):
+        output = tmp_path / f"attempt-{attempt}"
+        monkeypatch.setattr(sys, "argv", ["local_wdpa_sample.py", "--source", str(source),
+            "--genesis", "--translation-memory", str(memory), "--run-date", "2026-04-01",
+            "--discover-only", "--analysis-dir", str(analysis), "--workdir", str(output)])
+        cli.main()
+        report = json.loads((output / "benchmark.json").read_text())
+        assert report["state"] == "discovered"
+        for asset in cli.wdpa.ASSETS:
+            result = report["readiness"]["assets"][asset.slug]
+            assert result["state"] == "READY" and result["reused"] == bool(attempt)
+            assert result["payload"]["expected_rows"] == 1
+            spool = Path(result["analysis"]) / f"{asset.slug}.normalized.gpkg"
+            before = cli.wdpa.sha256_file(spool)
+            with closing(NormalizedGeometryStore.open(spool, layer_name=asset.tile_layer, read_only=True)) as store:
+                assert store.source_feature(1)["properties"]["SITE_PID"] in {"marine", "land"}
+            assert cli.wdpa.sha256_file(spool) == before
 
 
 def test_normalized_store_matches_old_export_semantically(tmp_path):

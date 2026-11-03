@@ -135,6 +135,13 @@ If no existing path safely supports the authorized recovery, describe the specif
 
 ## Repair And Validate The Failed Boundary
 
+Before another expensive validation or recovery cycle for any dataset publisher,
+follow `docs/publication-readiness.md`: inspect the complete declared batch,
+collect all independently discoverable decisions, and retain input-bound
+analysis. A known decision/prerequisite failure needs resolution before CI;
+another deployment is not a discovery tool. Code-only fixes use complete tiny
+fixtures and the actual persistence/report boundary before full preflight.
+
 Reproduce the original failure before accepting a fix.
 
 Exercise the real entrypoint through its output, persistence, package, or runtime boundary. Do not mock away the boundary that failed.

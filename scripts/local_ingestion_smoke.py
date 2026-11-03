@@ -8,6 +8,7 @@ import datetime as dt
 import json
 from pathlib import Path
 import sys
+import subprocess
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,6 +40,21 @@ def main():
         "native_versions": profiler.versions,
     }
     try:
+        with profiler.phase("publication:complete-discovery"):
+            source = args.workdir / "decision-source.geojson"
+            source.write_text(json.dumps({"type": "FeatureCollection", "features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [x, 1]},
+                 "properties": {"SITE_PID": str(x), "SITE_ID": x, "MARINE": realm, "ISO3": "IND"}}
+                for x, realm in ((1, "1"), (2, "0"))
+            ]}))
+            memory = args.workdir / "unused-memory.sqlite"
+            memory.write_bytes(b"Discovery must not open translation memory")
+            subprocess.run([sys.executable, "scripts/local_wdpa_sample.py", "--source", str(source),
+                "--genesis", "--translation-memory", str(memory), "--run-date", "2026-04-01",
+                "--discover-only", "--workdir", str(args.workdir / "discovery")], check=True, timeout=60)
+            discovery = json.loads((args.workdir / "discovery/benchmark.json").read_text())
+            if discovery["state"] != "discovered" or discovery["readiness"]["state"] != "READY":
+                raise RuntimeError("Complete native publication discovery failed")
         with profiler.phase("sea-ice:synthetic-source"):
             source = args.workdir / "source.tif"
             sea_ice.run_command(

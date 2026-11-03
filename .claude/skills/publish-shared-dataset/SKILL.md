@@ -31,6 +31,16 @@ No script-source reading is required to use these tools.
 
 ## Route 1: First upload
 
+For every route, complete `docs/publication-readiness.md` before expensive
+artifact builds or CI. Declare all affected assets/partitions and batch identity,
+schema, format, access, license, translation and exception decisions together.
+Use the shared discovery command for full normalized vector/table inputs;
+raster/array inputs require an explicit feature-identity non-applicability reason
+and still carry source pins and unresolved contract blockers. Retain verified
+analysis and apply exact decisions without repeating normalization. A sample or
+an incomplete inventory cannot pass. For code-only work, use complete synthetic
+batches and focused boundary probes before the final required preflight.
+
 Use for a new or under-specified asset. Read [first-upload.md](references/first-upload.md).
 Discover the source and select an existing category/subcategory from
 `catalog/categories.yaml`; classify the dataset itself, not its first consumer.

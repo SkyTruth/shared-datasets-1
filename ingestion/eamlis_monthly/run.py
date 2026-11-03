@@ -18,7 +18,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
-from ingestion.common import feature_metadata
+from ingestion.common import feature_metadata, publication_readiness
 from ingestion.common import source_fingerprint as fingerprints
 from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
 from ingestion.common import vector_pipeline
@@ -886,6 +886,26 @@ def run() -> list[dict[str, Any]]:
                     page_size=page_size,
                 )
                 gate.assess(extract.row_count, selection=selection, previous_selection=previous_selection)
+                def discover_identity(directory):
+                    features = list(feature_metadata.iter_geojson_features(extract.geojson))
+                    if len(features) != extract.row_count:
+                        raise RuntimeError("complete EAMLIS extract count changed before identity reservation")
+                    if gate.state.get("identity") is not None:
+                        keys = keyed_identity.classify_release(row["properties"] for row in features)
+                        strategy = keyed_identity.CONTRACT
+                    else:
+                        keys = [feature_metadata.source_field_feature_id("OBJECTID", row["properties"].get("OBJECTID")) for row in features]
+                        if len(set(keys)) != len(keys):
+                            raise RuntimeError("duplicate EAMLIS source IDs")
+                        strategy = "source_field"
+                    return {"rows": len(features), "identity_strategy": strategy}
+                discovery = publication_readiness.discover_batch([
+                    publication_readiness.Target(ASSET.slug, run_date.isoformat(),
+                        {"source_sha256": sha256_file(extract.geojson), "expected_rows": extract.row_count,
+                         "producer": sha256_file(Path(__file__)), "identity_state": gate.state.get("identity")},
+                        discover_identity)
+                ], workdir / "analysis")
+                publication_readiness.require_ready(discovery)
                 reservation = identity_state.reserve(gate,
                     (feature["properties"] for feature in feature_metadata.iter_geojson_features(extract.geojson)), workdir)
                 translation_source, translation_inputs = translation_input(publisher, workdir, gate=gate)

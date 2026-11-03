@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import json
 import logging
@@ -373,58 +374,52 @@ def write_generated_id_release(
     Raises if any ambiguity is left unresolved by `identity_resolution_decisions`.
     """
 
-    identity_baseline = baseline.records
+    from contextlib import closing
+    import shutil
+    import tempfile
+    from ingestion.common import publication_readiness
+    from ingestion.common.identity_index import DiskIdentityPlan
+
     planned = _plan_generated_identities(
-        open_features(),
-        asset_slug=asset_slug,
-        source_fields=source_fields,
+        open_features(), asset_slug=asset_slug, source_fields=source_fields,
         identity_excluded_properties=identity_excluded_properties,
     )
-    scan = release_feature_model.find_identity_ambiguities(
-        (
-            {
-                "geometry_hash": row.geometry_hash,
-                "properties_hash": row.properties_hash,
-                "identity_key": row.identity_key,
-            }
-            for row in planned
-        ),
-        previous_records=identity_baseline,
-        match_properties=identity_ambiguity_match_properties,
-    )
-    previous_feature_ids = release_feature_model.previous_feature_id_mapping(identity_baseline)
-    try:
-        resolutions = release_feature_model.validate_identity_resolutions(
-            release=release,
-            ambiguities=scan.ambiguities,
-            decisions=identity_resolution_decisions or (),
-            previous_feature_ids=previous_feature_ids,
-        )
-        # Both checks read only the decisions, the baseline and the planned key
-        # set, so an action its state forbids fails here by rule rather than
-        # surfacing later as a feature_id override conflict or a duplicate ID.
-        collisions = release_feature_model.check_reuse_target_collisions(
-            resolutions,
-            release_identity_keys=[row.identity_key for row in planned],
-            previous_feature_ids=previous_feature_ids,
-        )
-        if collisions:
-            raise release_feature_model.ReleaseFeatureModelError("; ".join(collisions))
-    except release_feature_model.ReleaseFeatureModelError as exc:
-        raise RuntimeError(str(exc)) from exc
-    unresolved = release_feature_model.unresolved_identity_ambiguities(scan.ambiguities, resolutions)
-    if unresolved:
-        raise_unresolved_identity_ambiguities(
-            asset_slug=asset_slug,
-            release=release,
-            ambiguities=unresolved,
-        )
-    allocation = assign_generated_feature_ids(
-        (row.identity_key for row in planned),
-        baseline=baseline,
-        feature_id_overrides=release_feature_model.resolved_feature_id_overrides(resolutions),
-        force_new_identity_keys=release_feature_model.resolved_force_new_identity_keys(resolutions),
-    )
+    digest = hashlib.sha256()
+    for row in planned:
+        digest.update(canonical_json(asdict(row)).encode() + b"\n")
+    def prepare(directory):
+        with closing(DiskIdentityPlan(directory / "identity.sqlite")) as plan:
+            for row in planned:
+                plan.db.execute("INSERT INTO planned VALUES (?,?,?,?,NULL)",
+                    (row.ordinal, canonical_json(list(row.identity_key)), row.geometry_hash, row.properties_hash))
+                for ordinal in row.duplicate_source_row_numbers:
+                    plan.db.execute("INSERT INTO duplicates VALUES (?,?)", (canonical_json(list(row.identity_key)), ordinal))
+            plan.db.commit()
+        return {"rows": len(planned)}
+    decisions = tuple(identity_resolution_decisions or ())
+    directory = enriched_features_path.parent / "analysis"
+    report = publication_readiness.discover_batch([
+        publication_readiness.Target(asset_slug, release,
+            {"planned_sha256": digest.hexdigest(), "source_fields": list(source_fields),
+             "excluded_properties": list(identity_excluded_properties),
+             "baseline": asdict(baseline.snapshot) if baseline.snapshot else None,
+             "baseline_next": baseline.next_feature_id},
+            prepare, baseline=baseline, decisions=decisions,
+            match_properties=identity_ambiguity_match_properties)
+    ], directory)
+    publication_readiness.require_ready(report, notify=True)
+    # The immutable analysis remains reusable after decisions; only this copy allocates.
+    with tempfile.TemporaryDirectory(prefix="allocation-", dir=directory) as temp:
+        path = Path(temp) / "identity.sqlite"
+        shutil.copyfile(Path(report["assets"][asset_slug]["analysis"]) / "identity.sqlite", path)
+        with closing(DiskIdentityPlan.open(path)) as plan:
+            next_feature_id, identity_decisions = plan.resolve(baseline=baseline,
+                asset_slug=asset_slug, release=release, decisions=decisions,
+                match_properties=identity_ambiguity_match_properties)
+            allocation = release_feature_model.GeneratedFeatureAllocation({
+                tuple(json.loads(key)): value for key, value in plan.db.execute(
+                    "SELECT identity_key,feature_id FROM planned ORDER BY ordinal")
+            }, next_feature_id)
 
     schema = SchemaAccumulator()
 
@@ -478,11 +473,7 @@ def write_generated_id_release(
         feature_count=written,
         schema_payload=schema.payload(asset_slug=asset_slug, release=release),
         next_generated_feature_id=allocation.next_feature_id,
-        identity_decisions=release_feature_model.build_identity_decisions(
-            ambiguities_detected=len(scan.ambiguities),
-            key_corroborated=scan.key_corroborated_count,
-            resolutions=resolutions,
-        ),
+        identity_decisions=identity_decisions,
     )
 
 
@@ -543,12 +534,12 @@ class IdentityDecisionRequired(RuntimeError):
         }
 
 
-def raise_unresolved_identity_ambiguities(
+def identity_decision_required(
     *,
     asset_slug: str,
     release: str,
     ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
-) -> None:
+) -> IdentityDecisionRequired | None:
     if not ambiguities:
         return
     # One log line per ambiguity: a single entry holding all evidence can
@@ -577,7 +568,7 @@ def raise_unresolved_identity_ambiguities(
         )
     )
     notify_identity_ambiguities(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
-    raise IdentityDecisionRequired(
+    return IdentityDecisionRequired(
         f"{asset_slug} release {release} is waiting on {total} maintainer identity decision(s); "
         "nothing was published: "
         + json.dumps(visible, sort_keys=True)
@@ -586,6 +577,12 @@ def raise_unresolved_identity_ambiguities(
         release=release,
         ambiguity_count=total,
     )
+
+
+def raise_unresolved_identity_ambiguities(*, asset_slug, release, ambiguities):
+    error = identity_decision_required(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
+    if error is not None:
+        raise error
 
 
 def sidecar_record(

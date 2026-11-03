@@ -147,6 +147,15 @@ def test_calendar_rollover_needs_no_override(scheduled, monkeypatch):
     assert scheduled.build.call_args.args[1] == dt.date(2026, 12, 1)
 
 
+def test_explicit_analysis_reference_reaches_builder_without_selecting_publication(scheduled, monkeypatch):
+    reference = {**scheduled.reference, "uri": scheduled.reference["uri"].replace(
+        "build-bundle.json", "wdpa-marine/analysis-reference.json")}
+    monkeypatch.setenv("WDPA_ANALYSIS_REFERENCE", json.dumps(reference))
+    automatic.run()
+    assert scheduled.build.call_args.kwargs == {"retained_analysis": reference}
+    assert scheduled.promote.call_args.args[2] == scheduled.reference
+
+
 def test_completed_month_checks_in_without_rebuilding(scheduled):
     scheduled.publisher.load_successful_run_record.return_value = ({'status': 'success'}, {})
     records = automatic.run()

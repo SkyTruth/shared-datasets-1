@@ -791,7 +791,7 @@ def test_monthly_parent_stages_review_and_preserves_pause_without_publication(
     compatibility = mock.Mock()
     monkeypatch.setattr(build.gate, "check_compatibility", compatibility)
 
-    def replay(source, inputs, directory, release, *, sample):
+    def replay(source, inputs, directory, release, *, sample, discover_only=False):
         if directory.name != phase:
             return {"state": "succeeded"}
         directory.mkdir()

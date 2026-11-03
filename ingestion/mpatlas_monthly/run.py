@@ -16,7 +16,7 @@ from typing import Any, Iterable, Mapping
 from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints
+from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints, publication_readiness
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
@@ -149,7 +149,17 @@ def prepare_source(source: Path, output: Path) -> dict[str, int]:
 def prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
     """Repair/promote geometry before hashing, so hashes describe stored shapes."""
     normalized = workdir / "source.geojsonl"
-    counts = prepare_source(source, normalized)
+    def prepare(directory):
+        return prepare_source(source, directory / "source.geojsonl")
+    discovery = publication_readiness.discover_batch([
+        publication_readiness.Target(ASSET.slug, run_date.isoformat(),
+            {"source_sha256": sha256_file(source), "producer": sha256_file(Path(__file__)),
+             "identity_strategy": "source_field", "source_fields": ["zone_id"]}, prepare)
+    ], workdir / "analysis")
+    publication_readiness.require_ready(discovery)
+    analyzed = discovery["assets"][ASSET.slug]
+    counts = analyzed["payload"]
+    shutil.copyfile(Path(analyzed["analysis"]) / "source.geojsonl", normalized)
     # Geometry conversion must not coerce timestamps or reinterpret JSON text.
     # Only the identity crosses GDAL; source attributes are reattached verbatim.
     properties_by_id = {fm.source_field_feature_id("zone_id", f["properties"]["zone_id"]): f["properties"]

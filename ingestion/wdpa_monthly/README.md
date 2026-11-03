@@ -18,7 +18,8 @@ produce skipped check-ins without another source download. An unavailable source
 also records a skip and is retried at the next scheduled invocation.
 
 The worker freezes committed identity and translation generations, downloads the
-source once, runs the deterministic compatibility sample and complete build, and
+source once, completes retained identity discovery across both realms, then runs
+the deterministic compatibility sample and complete build, and
 stages both validated realm bundles before committing an immutable descriptor.
 Publication revalidates the descriptor, staged hashes and live predecessor states
 before writing through `OwnedGeneratedPublisher`. Unchanged normalized content
