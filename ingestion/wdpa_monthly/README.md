@@ -113,10 +113,10 @@ WDPA uses the shared worker and Scheduler failure alerts. Successful publication
 and meaningful skips update per-asset release indexes, which supply the catalog's
 Last check-in. Deployment verification follows pending deployment records.
 
-The former five-minute observer schedule is paused, its health alarm is disabled,
-and the catalog no longer polls its status feed. Dormant infrastructure is
-retained for the existing update-only protected deployment paths. Do not resume
-the observer during routine deployment. See [alert routing](../../docs/alert-routing.md#wdpa-execution-driven-monitoring)
+The former five-minute observer job, scheduler and service account are retired
+and removed; its temporary retirement authority has been revoked. Do not recreate
+the observer or renew that grant. Deployment completion uses the existing
+protected workflow. See [alert routing](../../docs/alert-routing.md#wdpa-execution-driven-monitoring)
 for rollout order and verification.
 
 ## Limits
@@ -126,11 +126,17 @@ DISK at `/work`. `TMPDIR=/work/tmp` and
 `SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` keep native/SQLite scratch there.
 Cloud executions reject a missing or memory-backed mount before downloads.
 Tippecanoe uses at most four threads; SQLite caches are capped at 64 MiB and
-sorting uses disk. The dormant observer has no ephemeral disk and uses 1 CPU / 512 MiB,
-120 seconds and zero retries.
+sorting uses disk.
 
 Processing reports emit `wdpa_phase_started`/`wdpa_phase_resources` with elapsed
 time, kernel lifetime memory peak including file cache, process RSS, scratch peak,
 artifact sizes and native tool versions. Scratch covers all `/work`, including
-open unlinked files. Missing peak telemetry fails measurement. Acceptance limits
+open unlinked files. Advisory cache cleanup includes readable descendant file
+descriptors within the tracked scratch/input trees. A child's kernel process
+entries can disappear or become inaccessible during execution and exit; those
+entries are skipped. Required self-process directories, linked scratch/input-file access, advice on
+pinned inodes and cgroup telemetry still fail closed. The cache-pass count records advisory
+passes rather than guaranteed reclaimed bytes; measured cgroup peaks remain
+authoritative. A required sampler error records the phase as failed even if the
+native command completed. Missing peak telemetry fails measurement. Acceptance limits
 and recovery belong to the [operations runbook](../../docs/wdpa-monthly-runbook.md).
