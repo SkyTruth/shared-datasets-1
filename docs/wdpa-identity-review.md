@@ -63,13 +63,25 @@ Keep the exact bundle reference with the decision PR so later retries or a new
 baseline cannot replace its review context. Any eventual cleanup must identify
 individual objects and generations through the existing reviewed delete path.
 
-Limits are checked before accepting or staging evidence: at most 1,024 escalated
+Limits are checked before accepting or staging evidence: at most 2,048 escalated
 cases, 10,000 previous records, 64 MiB of bundle/capture JSON, 256 MiB of compressed
 baseline metadata, and a 16 GiB canonical FGB download. Reads and indexing stream
 to disk. Normal releases incur no new canonical FGB download; that download
 happens only after an identity pause. Offline HTML is capped at 128 MiB and
 exported footprint GeoJSON at 64 MiB. Exceeding a limit requires an explicit
 follow-up design; it never produces a sampled or incomplete review bundle.
+
+The case capacity covers the 1,323-case full-terrestrial November review that
+exceeded the former 1,024-case limit. Its read-only reconstruction, including
+2,451 verified previous footprints and complete field comparisons, occupies
+about 18.5 MB. The larger count remains subordinate to every byte and
+previous-record bound above; a large geometry or excessive match set still
+fails rather than truncating evidence. Capture, persisted bundle validation,
+create-only staging and offline rendering use the same case bound. This change
+does not approve any case or alter identity matching, allocation or publication.
+Existing catalog-reader byte limits remain unchanged; larger valid bundles use
+the offline report. A reader running the older validator rejects a bundle above
+its previous case cap until its normal reviewed image rollout.
 
 ## Review from the alert
 

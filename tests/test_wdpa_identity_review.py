@@ -73,9 +73,9 @@ def feature(key, x, **properties):
     }
 
 
-def fixture(root, *, native=False, compared_values=()):
+def fixture(root, *, native=False, compared_values=(), asset_slug="wdpa-marine"):
     root.mkdir(exist_ok=True)
-    slug, previous_release, release = "wdpa-marine", "2026-10-01", "2026-11-01"
+    slug, previous_release, release = asset_slug, "2026-10-01", "2026-11-01"
     previous = [
         feature("old-a", 1, NAME="Reserve A", NULL=None, FLAG=True),
         feature("old-b", 1, NAME="Reserve B"),
@@ -561,6 +561,97 @@ def test_limits_and_sample_scope_are_explicit(example, tmp_path, monkeypatch):
     monkeypatch.setattr(review, "MAX_JSON_BYTES", 10)
     with pytest.raises(p.PublicationError, match="byte limit"):
         review.read_json(report)
+
+
+@pytest.mark.parametrize("case_count,accepted", [(1323, True), (2049, False)])
+def test_full_release_review_capacity(tmp_path, monkeypatch, case_count, accepted):
+    fx = fixture(tmp_path / "inputs", asset_slug="wdpa-terrestrial")
+    slug = "wdpa-terrestrial"
+    incoming = [
+        feature(f"large-{index}", 1, NAME=f"Incoming case {index:04}")
+        for index in range(case_count)
+    ]
+    replay = tmp_path / "large-replay"
+    replay.mkdir()
+    shutil.copyfile(fx.replay / "benchmark.json", replay / "benchmark.json")
+
+    def native_boundary(path, records):
+        for feature_id, record in records.items():
+            record["geometry"] = fx.previous[int(feature_id) - 1]["geometry"]
+
+    monkeypatch.setattr(review, "previous_geometries", native_boundary)
+    with closing(DiskIdentityRecords(tmp_path / "large-baseline.sqlite")) as records:
+        for row in fx.records:
+            records.add(row)
+        baseline = model.GeneratedIdentityBaseline(
+            records.seal(),
+            4,
+            "2026-10-01",
+            model.GeneratedIdentitySnapshot(**fx.captured["baseline_snapshot"]),
+            contract_id=wdpa.CONTRACT_ID,
+        )
+        with closing(DiskIdentityPlan(tmp_path / "large-plan.sqlite")) as plan:
+            for ordinal, row in enumerate(incoming, 1):
+                plan.add(ordinal, row, source_fields=("SITE_PID",))
+            with mock.patch.object(decision_events, "publish", return_value=False):
+                with pytest.raises(metadata.IdentityDecisionRequired) as caught:
+                    plan.resolve(
+                        baseline=baseline, asset_slug=slug, release="2026-11-01"
+                    )
+            store = SimpleNamespace(
+                source_feature=lambda ordinal: incoming[ordinal - 1]
+            )
+            if not accepted:
+                with pytest.raises(p.PublicationError, match="case limit"):
+                    review.capture(
+                        plan,
+                        store,
+                        baseline,
+                        asset_slug=slug,
+                        release="2026-11-01",
+                        directory=replay,
+                    )
+                assert not review.capture_path(replay, slug).exists()
+                return
+            review.capture(
+                plan,
+                store,
+                baseline,
+                asset_slug=slug,
+                release="2026-11-01",
+                directory=replay,
+            )
+
+    path = review.complete(
+        fx.storage,
+        inputs=fx.inputs,
+        replay_directory=replay,
+        directory=tmp_path / "complete-large",
+        blocked=caught.value,
+        source=fx.source,
+        source_url="https://source.example/month.zip",
+        producer=fx.producer,
+    )
+    bundle = review.read_json(path)
+    assert review.validate_bundle(bundle) == bundle
+    assert len(bundle["capture"]["cases"]) == case_count
+    assert {
+        item["incoming"]["properties"]["SITE_PID"]
+        for item in bundle["capture"]["cases"]
+    } == {row["properties"]["SITE_PID"] for row in incoming}
+    staged = BuildStager(fx.storage, fx.producer["execution"]).upload(
+        "wdpa-terrestrial/identity-review.json", path
+    )
+    assert staged["sha256"] == wdpa.sha256_file(path)
+    raw, generation = fx.storage.objects[
+        "_scratch/wdpa-builds/wdpa-monthly-abcde/wdpa-terrestrial/identity-review.json"
+    ]
+    assert generation == staged["generation"]
+    assert json.loads(raw)["capture"]["cases"] == bundle["capture"]["cases"]
+    document = review.render_report(
+        review.read_json(path), tmp_path / "large-report"
+    ).read_text()
+    assert all(row["properties"]["NAME"] in document for row in incoming)
 
 
 def test_single_properties_match_keeps_its_old_footprint(example, tmp_path):

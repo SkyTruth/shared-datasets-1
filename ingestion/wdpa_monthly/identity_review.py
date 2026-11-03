@@ -23,7 +23,7 @@ from scripts import release_feature_model as model
 
 CAPTURE_SCHEMA = "wdpa-identity-review-capture-v1"
 BUNDLE_SCHEMA = "wdpa-identity-review-v1"
-MAX_CASES = 1024
+MAX_CASES = 2048
 MAX_PREVIOUS_RECORDS = 10_000
 MAX_JSON_BYTES = 64 * 1024**2
 MAX_REPORT_BYTES = 128 * 1024**2
