@@ -177,6 +177,14 @@ Use a stable incident identity and retain the original message identity.
 
 After verified recovery, update the original message to its resolved green state. Do not create a new recovery parent or an automatic recovery reply.
 
+Feature identity review requests follow their separate decision-reply contract:
+preserve the original **Decision needed** post, including its case summaries,
+context and source/review links. Record the accepted action, decision maker,
+rationale and reviewed PR in the same thread's reply. A status marker may be
+added without removing that original content; never replace the request body
+with a **Decision recorded** summary. Apply this rule to execution-correlated
+parents as well. Verify content preservation when changing reconciliation.
+
 Any warranted thread reply must explicitly disable channel broadcast.
 
 Keep synthetic rehearsal notifications out of the production alert channel. Use isolated tests or private evidence for rehearsal and negative controls.
