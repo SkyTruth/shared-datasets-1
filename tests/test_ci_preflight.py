@@ -102,6 +102,7 @@ def test_proven_path_selects_only_its_consumer_suites(path, suites):
 @pytest.mark.parametrize("path", [
     "scripts/catalog_csv.py", "scripts/release_feature_model.py", "scripts/catalog_site.py",
     "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
+    "scripts/local_wdpa_sample.py",
     "scripts/ci_contract.py", "scripts/new-runtime.py",
 ])
 def test_unlisted_shared_and_fixture_scripts_remain_broad(path):

@@ -461,6 +461,8 @@ def test_normalized_store_matches_old_export_semantically(tmp_path):
             return {row["properties"]["feature_id"]: row for row in rows}
 
     assert contents(tmp_path / "old.fgb") == contents(tmp_path / "new.fgb")
+    from test_wdpa_identity_review import native_review_pipeline
+    native_review_pipeline(tmp_path / "identity-review")
 
 
 @pytest.mark.parametrize(

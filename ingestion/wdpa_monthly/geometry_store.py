@@ -102,6 +102,18 @@ class NormalizedGeometryStore:
             self.layer.CommitTransaction()
             self.layer.StartTransaction()
 
+    @staticmethod
+    def _source_feature(row):
+        geometry = row.GetGeometryRef()
+        return {"properties": json.loads(row.GetField("_sd_properties")),
+                "geometry": json.loads(geometry.ExportToJson()) if geometry is not None else None}
+
+    def source_feature(self, ordinal):
+        row = self.layer.GetFeature(ordinal)
+        if row is None:
+            raise RuntimeError(f"normalized source ordinal {ordinal} is missing")
+        return self._source_feature(row)
+
     def prepare_fields(self):
         self.layer.CommitTransaction()
         self.witness.close()
@@ -135,13 +147,8 @@ class NormalizedGeometryStore:
             for row in self.layer:
                 ordinal = row.GetField("_sd_ordinal")
                 allocation = plan.record(ordinal)
-                properties = json.loads(row.GetField("_sd_properties"))
-                geometry = row.GetGeometryRef()
-                geometry_json = (
-                    json.loads(geometry.ExportToJson())
-                    if geometry is not None
-                    else None
-                )
+                source = self._source_feature(row)
+                properties, geometry_json = source["properties"], source["geometry"]
                 hashes = model.content_hashes(
                     geometry=geometry_json, properties=properties
                 )

@@ -46,6 +46,13 @@ publication. FGB and canonical metadata retain `feature_id`, `geometry_hash` and
 `properties_hash`; PMTiles carry geometry and `feature_id`. Scratch SQLite stores
 are disposable and never replace durable publication state.
 
+When automatic ingestion pauses for identity review, it retains a bounded,
+generation-pinned bundle of incoming/previous attributes and canonical
+footprints under its existing build scratch prefix. The offline report command
+shows field changes, prior key ownership and eligible reuse targets. See
+[identity review evidence](../../docs/wdpa-identity-review.md) for the contract,
+limits, retention and read-only review procedure.
+
 ### Translation runtime
 
 Each bundle includes a translation-source CSV and `es`, `fr`, `id`, `pt`, `pt_br`
