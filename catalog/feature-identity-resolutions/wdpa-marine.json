@@ -23,6 +23,2467 @@
       "rationale": "SITE_PID 555729583 already owns feature_id 15378 in the October baseline (Bonden, Sweden; Natura 2000 SCI). The maintainer explicitly reviewed the November ambiguity and approved preserving continuity for that existing key while its source geometry and properties change. The newly matching geometry belongs to distinct existing Bonden designations: feature_id 11347 (Birds Directive) and 15093 (Habitats Directive). Keep 15378 for its existing key; reusing either matched ID would merge distinct records, while assigning a new ID would deliberately abandon the existing identity.",
       "release": "2026-11-01",
       "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "12853"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:60f0a429efa92d616b0380fb891b5d74e33e605087aa8011c9db552d8e603a37"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:ebb2f9c5b6d28f55137937ba9cb3300097663d01ab9719c558a66833333d3a6a",
+      "new_identity_key": [
+        "46"
+      ],
+      "new_properties_hash": "sha256:bfbe8d88f763f419f08a4f916b99f4803c6e0cfe391db7f8b27e3583532f6882",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "127",
+      "rationale": "SITE_PID 46 already owns feature_id 127. Its November name (Reserva Biol\u00f3gica Do Atol Das Rocas), designation (Biological Reserve), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11467",
+        "15127"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:cc9569077413c62e3ee3a95ec06da40d5fd873699f85520e13269287298a9073",
+        "sha256:e2fa3449086eccb42d6db6bdfc925d7b39fb8a9694b442e7b08294f9a8a88f09"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cb45201e4bc22b189bf92d407e9f308e35ea4c25cd5ee496abfcf34e430f2da3",
+      "new_identity_key": [
+        "172550"
+      ],
+      "new_properties_hash": "sha256:6a2b149643de76e640143dbb7307d269cabcb305f6f638c2746ec17193ac5edd",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "3843",
+      "rationale": "SITE_PID 172550 already owns feature_id 3843. Its November name (U\u017eava), designation (Nature Reserve), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11345",
+        "15241"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:79a32aada58ae1ba9047e5d174f9862878bed6962c619e6e6cc0f59af33cac78",
+        "sha256:a8938ba7b59275d69ad3e0ad15c53494a888673fea41343ea6f742ad7ddd0e27"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cbb0ea45729f50023e403fb045ad9c01a75f4e94b6e0e917373d61e53654fd09",
+      "new_identity_key": [
+        "555728959"
+      ],
+      "new_properties_hash": "sha256:8d83615152b5f3dd4095fd55750d3249bb2c1d9feee6f7474499a39a058cb28a",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15326",
+      "rationale": "SITE_PID 555728959 already owns feature_id 15326. Its November name (Vitgrund-Norrsk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8145"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:79b8557f9b6fe7a8eaa83d0b6241ea3a174824d359c3a20a86214b10df3c7e4a"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:bddbde214a550654727511bf21b33a5ba55bede17c9e96f79179b353218aee11",
+      "new_identity_key": [
+        "555728993"
+      ],
+      "new_properties_hash": "sha256:317f21428f632249356f81a370fb01f3d5fcd262c79924f6fe4b6716e421a4f6",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15330",
+      "rationale": "SITE_PID 555728993 already owns feature_id 15330. Its November name (\u00d6r\u00f6 Sankor), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8308"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:68406cdae7474f7d346c419ea803ebeb23d14c50bea013a8e5b25c3e627c6a26"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cc4e3d6f788a7ba01593cda7579ce8e029508f4499712c62ef36711c9c9cc758",
+      "new_identity_key": [
+        "555729075"
+      ],
+      "new_properties_hash": "sha256:8238117c3d1fa0f8c4e7e0891a7e39d2fe074eae5e8cf65594e586c09da12a5d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15335",
+      "rationale": "SITE_PID 555729075 already owns feature_id 15335. Its November name (Stora Hepokari), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8273"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:5120ac3a0b98da6e1a3d4dfcf809192d921be13dc81129bfb6aa89576a5b8911"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:65489a901d74ca1fc81f6ff28f9c0983d774b410a962b326fb0b90ba54af46a6",
+      "new_identity_key": [
+        "555729093"
+      ],
+      "new_properties_hash": "sha256:6135df951b33b0b1dffbfffb000cd72005407e1935ebae2012febecf0ac00c58",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15337",
+      "rationale": "SITE_PID 555729093 already owns feature_id 15337. Its November name (Stor-R\u00e4bben), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8143"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:ec0e6aa77d769314e265f234d210de7ee19e1fff81f95e4772dbecc6e6d7f97e"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f289866c98525d46754619b82e0c8c16f0c6bacee640c905b722e3f29dfefda1",
+      "new_identity_key": [
+        "555729109"
+      ],
+      "new_properties_hash": "sha256:ab932583410bedc36c8da0902be4cfc83127d78cf07dd087ab9adaa9e44cd2c3",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15340",
+      "rationale": "SITE_PID 555729109 already owns feature_id 15340. Its November name (Nabbelund), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11351",
+        "15136"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3e51882ae15d8eb70eb82dd589ede5d3381f8b7db7bc2d79a79251446526e47b",
+        "sha256:cad3f05bcc2abe983af5aa388a393efd53e92423cc04167e794140d61111aca2"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b816e6f7b54164fce0d73e3c2c6b522ba4ec963a02c169df7cf0c2d401be50f9",
+      "new_identity_key": [
+        "555729130"
+      ],
+      "new_properties_hash": "sha256:3bb3b7ccf363f7df36ee807e34f4a4f9dcae973a04f1fe7fb711d3435b053d2a",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15344",
+      "rationale": "SITE_PID 555729130 already owns feature_id 15344. Its November name (Haparanda sk\u00e4rg\u00e5rd), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8314"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:dedacac63bf4d25412b36ff683925c6e6b8946107c075f9b59b1d81771918e35"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:a74a0377f6b68dfdcc2134380104fc425bd229919448771efca4a6b311e50dca",
+      "new_identity_key": [
+        "555729174"
+      ],
+      "new_properties_hash": "sha256:d3154149207f80dabd0e152da87739ad547cbc9cda5b88199d610d2db2cdeb09",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15346",
+      "rationale": "SITE_PID 555729174 already owns feature_id 15346. Its November name (Stora Hamnsk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8276"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:1bb57a3fb70139c89244370c0754b740d26e78f5b52bec3f12b39954187d8222"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:a5e2fb12d97dd30fc359587dc4363e48d62c6b8108fb70e0893a563860a27cbf",
+      "new_identity_key": [
+        "555729204"
+      ],
+      "new_properties_hash": "sha256:20e5a34593ecd03d5926894d594a0912b394e88b4d60391a2442de88433eec44",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15351",
+      "rationale": "SITE_PID 555729204 already owns feature_id 15351. Its November name (Trutsk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11347",
+        "15093"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3585706db1d804017ad9b710edbb95e93322af030374e90f136d45e558a8c7b3",
+        "sha256:c5f533e5ab67dabb14dafd6ddc7d908a9b07ffa756f80dc53f702bc49528f326"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:484ac4f1a9f775f2d42563b88d8d9af5242bfb366ed9f791d1334fa59f84d810",
+      "new_identity_key": [
+        "555729224"
+      ],
+      "new_properties_hash": "sha256:56ef956517c6873f9fdd77a9faea7d0b77175f216f57761a936dffd23e1d7e26",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15352",
+      "rationale": "SITE_PID 555729224 already owns feature_id 15352. Its November name (Bonden), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11345",
+        "15241"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:79a32aada58ae1ba9047e5d174f9862878bed6962c619e6e6cc0f59af33cac78",
+        "sha256:a8938ba7b59275d69ad3e0ad15c53494a888673fea41343ea6f742ad7ddd0e27"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cbb0ea45729f50023e403fb045ad9c01a75f4e94b6e0e917373d61e53654fd09",
+      "new_identity_key": [
+        "555729228"
+      ],
+      "new_properties_hash": "sha256:e1b0c0655a675f36faf77347ba8ec136cbe3016a745bb37c7afe1576d9e5f4bd",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15353",
+      "rationale": "SITE_PID 555729228 already owns feature_id 15353. Its November name (Vitgrund-Norrsk\u00e4r), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8181"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:436b7c7a2a3b8031d2268d9b17e2150697e8ce801c0d20bb21ae7b845d341081"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9315168c00dec83bb8fea5e217f4bb630c2734a02f12e988e6a19e66d6ec526f",
+      "new_identity_key": [
+        "555729291"
+      ],
+      "new_properties_hash": "sha256:a4c3c859a5b5f5924021dfe946f3ead954b98c1d842b22aa679a474a809b5431",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15357",
+      "rationale": "SITE_PID 555729291 already owns feature_id 15357. Its November name (Bl\u00f6t\u00f6-Kid\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8081"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:cfd653a71d65015f9481c72eaad5fc9c9e52bbf49fef8dd45eb7dd4693de71ee"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:8d3cf031a6e69b5d4a91543f884be96b106e0cf8e5641b8881e057cee01a1739",
+      "new_identity_key": [
+        "555729310"
+      ],
+      "new_properties_hash": "sha256:693e8e4c13323f8a0cc96a9de5cb113a2a47c551247e36bc1528786fdd116f08",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15360",
+      "rationale": "SITE_PID 555729310 already owns feature_id 15360. Its November name (Villinge Boskaps\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8073"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:5785c8984db0933c2674ae640a95cd038bfa1e4e4683b1ea0923422ac7845498"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:857a57d32b6766ddb9a3bafa9e9250db8a3757e75f38efc62535528afd95ec6a",
+      "new_identity_key": [
+        "555729406"
+      ],
+      "new_properties_hash": "sha256:dffbf70af1960c993b831d635d0a78590176b7a1786da74a23fb10ae0d0bea2c",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15365",
+      "rationale": "SITE_PID 555729406 already owns feature_id 15365. Its November name (K\u00e4ringboda), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8137"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:2a2037594f5c4437efb7be42b6d43d36c3b4333d94d5ce118aee5e79a352d3e3"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9e615ff2bfba87ac14a9effd0bf75f88d0cb0b6b8e0208ac2a68098ef1b8922e",
+      "new_identity_key": [
+        "555729559"
+      ],
+      "new_properties_hash": "sha256:0c8ef606710ed6b512f3fa1d0793da02ed4b2c8011ef70b12b4fa402149780ad",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15376",
+      "rationale": "SITE_PID 555729559 already owns feature_id 15376. Its November name (Trollskogen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8113"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:111925e55a30f93a86fc8d4e10251677191a63c461791b30724df84214f3e7e6"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6f8fa3734b133e18fb02a38160f844d886bb0be4490acd1e4c6827146a349a73",
+      "new_identity_key": [
+        "555729671"
+      ],
+      "new_properties_hash": "sha256:4c6a65e30bcdedf6662eb0af655a9aea980db70e3f6c1f54a1ef38d823cca280",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15386",
+      "rationale": "SITE_PID 555729671 already owns feature_id 15386. Its November name (Id\u00f6n), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8315"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:5b336094bf995fc396a84ab816849eaab90c4b4a74574252482cc892f65b551c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:dbc77697307dd5a247592ece96952b2ad25e4c4535a2216a967c23fc5a869039",
+      "new_identity_key": [
+        "555729715"
+      ],
+      "new_properties_hash": "sha256:d32ab6e3c40a895867db28b2888ef6f50648d16a388bcf9e8e981c94289a6ceb",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15389",
+      "rationale": "SITE_PID 555729715 already owns feature_id 15389. Its November name (Tantamanni), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11289",
+        "15189"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:5c94ce8b402e6c53eafe8dd92fc51e00c1880d8fd198a61fc41a28fd6211d0e7",
+        "sha256:e8e140f355b6990fe150d4d4fe81fcfa2acdd4c8d20946d1c6bb2e6652153803"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:79b6790d807d0c58e23975f85f6be635a62d36e7472b81e89e7aad20f830652a",
+      "new_identity_key": [
+        "555729716"
+      ],
+      "new_properties_hash": "sha256:dccfcd8d36c64c3afadb498d686a992fa548060c6e095792deb9882e3d10612c",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15390",
+      "rationale": "SITE_PID 555729716 already owns feature_id 15390. Its November name (Beijershamn och Svansholmarna), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8173"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:8490896f5ed5bf4957cde0af0a72a1386d1d7c27375113cdb094b371b14b245c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:7a3a9173ad1b496748cfe90da61418dd5b4503d768a1018eda0109ec89890dd2",
+      "new_identity_key": [
+        "555729735"
+      ],
+      "new_properties_hash": "sha256:30fc6d3d96b4a5e30909d23e93e3d486432b52a3110fa90ad1f0185e368509b4",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15392",
+      "rationale": "SITE_PID 555729735 already owns feature_id 15392. Its November name (Bock\u00f6n-Mj\u00f6\u00f6n), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11274",
+        "15172"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:265da2af00aa5a92c4bca9881a11aa82eb05b6ea72357c2337cce17da1363819",
+        "sha256:927c982888cb6a66cd15956ab7dc81ef40be9546a3a6f6973e2ebb60b8665af7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cd891333c860ea8c9460da5773e47a0c3fcbf51fe855e6cb725feb58a3cf71ff",
+      "new_identity_key": [
+        "555729834"
+      ],
+      "new_properties_hash": "sha256:68c6efa32ff089b0b4163ee59671161b0c305d41f08b9c00cc6298f2d4ae7efd",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15402",
+      "rationale": "SITE_PID 555729834 already owns feature_id 15402. Its November name (Svenska H\u00f6garna), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8316"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0c8662e0fbce0dd5ffd518d620aecad9268009705a4946b60810369e40e9e4b3"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:a9ebe9810475d71f8ff94d0b1317cc2072b4d0512c904457d2b5e4169717d6f8",
+      "new_identity_key": [
+        "555729940"
+      ],
+      "new_properties_hash": "sha256:13a9896f9936add875917bec0611aba7b9d70c14d46d58893c87c08c377abc2d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15415",
+      "rationale": "SITE_PID 555729940 already owns feature_id 15415. Its November name (Tervaletto), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8154"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:36e83fcd90ac187939269ea795d526fea9d0b718939a14d4937353764597f6d8"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:5fb052d077d281243b6b9e932ad7e6343570a84512890109ab88dd46816f7490",
+      "new_identity_key": [
+        "555729969"
+      ],
+      "new_properties_hash": "sha256:ae2eec806bfc4b06976cc88963741f1949dd4fda4ffdd372838e6b1ee04c176e",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15416",
+      "rationale": "SITE_PID 555729969 already owns feature_id 15416. Its November name (Strandskogen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8295"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:c9eb48fa446011ae0a6c948fdaec3e3ca50e9a8c7eb4d83a496530884d1dfda5"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:eac52061a86cf27b32563cb236cd1d53720c4cac6d2b8fb086993afcd8df61ee",
+      "new_identity_key": [
+        "555730077"
+      ],
+      "new_properties_hash": "sha256:42d5f2e6cb3fa27aea9dd542ffd30e78c0ee481b05399eaf9f7469f9960f46fe",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15426",
+      "rationale": "SITE_PID 555730077 already owns feature_id 15426. Its November name (Patta Peken), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8127"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:836ac2e78af6fb51cdb074e5db8e30d15f1015589946090e68c2d21e9509457b"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:a3e1b2398449aea4520f69cff7d6db6c23623b8aae0f17c3985df7e59bbab622",
+      "new_identity_key": [
+        "555730175"
+      ],
+      "new_properties_hash": "sha256:a8dbc71fda4a4b27c6f38dd81b30566a1380a49778f3c2a4807af1b4f57a32c9",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15432",
+      "rationale": "SITE_PID 555730175 already owns feature_id 15432. Its November name (Uggleholmarna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8247"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:6bed905dd01dd2902dce1edaf4b15efc408e826d3cc6af9c627c50e3cb5807e9"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:49b8350dd1d95bb15676ba3c03c3d89330b385ec1619a6ec583ff281138fe925",
+      "new_identity_key": [
+        "555730204"
+      ],
+      "new_properties_hash": "sha256:954b47295c3dd21359a9f06e7e64d0835d828cacbf85e56b6f0d3cb9adc01a46",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15434",
+      "rationale": "SITE_PID 555730204 already owns feature_id 15434. Its November name (Oxsand), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8747"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:96421cf81acf928c49e96cfb38c648e61d1eed8106800f3d2d81280d11cf2918"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:0a33b854ec51a069b5e1d9a17552cba93cfd89e100b98e43787bf8b4488ee7a3",
+      "new_identity_key": [
+        "555730206"
+      ],
+      "new_properties_hash": "sha256:759f2b252b726849bdd26b9cc7ebde5cb6d52955ee46ef5e50cc7c7264d50b2b",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15435",
+      "rationale": "SITE_PID 555730206 already owns feature_id 15435. Its November name (Sj\u00e4lgrynnorna), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11336",
+        "15234"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:925d6538904b8d8dea10999a77a08d9f741a9be6bff7a28026aa8ed1dd237aa3",
+        "sha256:b79d9b2367699841331905ba0550fa195f48f44c7c23d4b048745fe767122105"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:30660a6c3419e1795ba97873f713e7979f759e39742291047d8f80e26da6c482",
+      "new_identity_key": [
+        "555730221"
+      ],
+      "new_properties_hash": "sha256:5ee898cba426a1fc3257e956ae117aad8c994d61922b1975743730a59f1f2670",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15437",
+      "rationale": "SITE_PID 555730221 already owns feature_id 15437. Its November name (Harksk\u00e4rsfj\u00e4rden), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11336",
+        "15234"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:925d6538904b8d8dea10999a77a08d9f741a9be6bff7a28026aa8ed1dd237aa3",
+        "sha256:b79d9b2367699841331905ba0550fa195f48f44c7c23d4b048745fe767122105"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:30660a6c3419e1795ba97873f713e7979f759e39742291047d8f80e26da6c482",
+      "new_identity_key": [
+        "555730246"
+      ],
+      "new_properties_hash": "sha256:8a5baf87957023fae8f68852753bd8579bf533114998cff858000470956854b1",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15440",
+      "rationale": "SITE_PID 555730246 already owns feature_id 15440. Its November name (Harksk\u00e4rsfj\u00e4rden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8255"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:e45b3b1cf9340c61e7e5c12da2e9ffcf21a4feb75fb602b4ffb72ff4a40b3a91"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:55ed56973319d4ea447fe5cd5db35b83c1d54f3df15c6ef9f5c57229f5c354ea",
+      "new_identity_key": [
+        "555730278"
+      ],
+      "new_properties_hash": "sha256:8f6b1606b8b9e05697667876ea6326b687195abaa37841d5ff367cbc0240b878",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15442",
+      "rationale": "SITE_PID 555730278 already owns feature_id 15442. Its November name (Indals\u00e4lvens delta), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8129"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:6f56acf5ef33257e82f5102a84e94919ec0be6db86d72567d49449feaff1bbc8"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f815e9b6de09ad98538d2448f5702f91658a1065bdf089b42f637040a39d5c9f",
+      "new_identity_key": [
+        "555730318"
+      ],
+      "new_properties_hash": "sha256:4c562607afc3af9ef098c0da00abae24d5280e507ead3ab47d51f43c6680b22b",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15447",
+      "rationale": "SITE_PID 555730318 already owns feature_id 15447. Its November name (S\u00f6dra Lunda), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8286"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:db08ddad42ebd186997ec6dbc8ceead8d0d218c91e77991838c0977aa62a900d"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:fdfb0c02208f92279a44ff405f1b447a533fa924d4e7537490384dc008830782",
+      "new_identity_key": [
+        "555730355"
+      ],
+      "new_properties_hash": "sha256:f8923715c4fde903d69fd3f6ab745b8a91826ba2218fc2fd4b7e89366aaae7b7",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15451",
+      "rationale": "SITE_PID 555730355 already owns feature_id 15451. Its November name (B\u00e5t\u00f6fj\u00e4rden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8772"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:b10452c033573e4d66bff535408817d2887d12ef684b55c7cad9975cdd8c752b"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6f726653bfe4a97522bc9b4e84943c31718a466388a43c2e0acf66c03711a4ac",
+      "new_identity_key": [
+        "555730366"
+      ],
+      "new_properties_hash": "sha256:bd894e34ba1aef6227911574ebfc5cce6371db1164073cf6ff6c50ebe5463933",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15454",
+      "rationale": "SITE_PID 555730366 already owns feature_id 15454. Its November name (B\u00e5tafjorden), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8318"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:ec16248de0a0ad0d48b8cc1f67a8c8c9ad03c6fd11f058daa6721e77984008cf"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:8dda12a3398271c5532c492ebb7e76b1828d0832de80587fa5eb23eb3c113ca8",
+      "new_identity_key": [
+        "555730443"
+      ],
+      "new_properties_hash": "sha256:4bf1376102aa51db348d4129045cfcfc914d652931b7177815d1ba149cd51c16",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15457",
+      "rationale": "SITE_PID 555730443 already owns feature_id 15457. Its November name (\u00c4im\u00e4), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8764"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:48f1d982f5358ff4fb1a976b39bb2cc437b4485f0dae30eb6eda56bee962653c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:221ca022955aa5757bd45ec1bd315603223cdebfac290b7a0d404782d6061b81",
+      "new_identity_key": [
+        "555730532"
+      ],
+      "new_properties_hash": "sha256:8c252f5b6aa079ffb9c98331ca4148df1cfe9f4a858c61fa4aed111d6f43d139",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15467",
+      "rationale": "SITE_PID 555730532 already owns feature_id 15467. Its November name (Gruarna), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8300"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:f3905c0967e5c4c6213d9ee19ab74a14b4ab02cda740ea5be2e365d964c60fcb"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:77484344de59aded25af4274591f9f9eecbc451584ae2f4b3bc96afd8ecfd52c",
+      "new_identity_key": [
+        "555730560"
+      ],
+      "new_properties_hash": "sha256:0a6f453d570f857776958183bf8dd6601e976717f8d37d8b5b95a025399b3723",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15472",
+      "rationale": "SITE_PID 555730560 already owns feature_id 15472. Its November name (Storgrundet), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8111"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:a4f53993f3be1d8f20a1af88cdc0cac96fbb82c468f0198e9d47e90247e35537"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:72bfac0698bb421e33ae0402fc5a83bbce2a47db9497c8e960b124bda3ddfd90",
+      "new_identity_key": [
+        "555730595"
+      ],
+      "new_properties_hash": "sha256:6bd822ae4ffbdb894dbda9580619c02280a141e4c3affe065f244ff8c06f7309",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15476",
+      "rationale": "SITE_PID 555730595 already owns feature_id 15476. Its November name (Grillsk\u00e4ret), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8285"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:8634fc7faea2470a2b87dbafc0a8c924035e36751d9a9b3cf4fb3b5a8e59bea9"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:dfd07e244c877b665191fd5be3fde3b58c3a0a6d42b489a33fb9f9f55c2af564",
+      "new_identity_key": [
+        "555730627"
+      ],
+      "new_properties_hash": "sha256:99183018022614e9fa6ae3792eaf482af9928ef7c31b203ed9047f5a78045463",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15482",
+      "rationale": "SITE_PID 555730627 already owns feature_id 15482. Its November name (Skags-Furuholmen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8290"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:144d2ac26ca8e86ef5fcc689999600aa1859520cb0954a1668dc09123a8e1c8d"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:1750cc0371df99099b0a9d951a51e580cc35e62db1e0719133e52b4454dbe879",
+      "new_identity_key": [
+        "555730666"
+      ],
+      "new_properties_hash": "sha256:33f8ca9a67e79ac22a885db7554b178af4810e147c41e7a0f982773f60c587c0",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15486",
+      "rationale": "SITE_PID 555730666 already owns feature_id 15486. Its November name (Haparanda Sandsk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11300",
+        "15197"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:1994b1a29373c96070888ee184fa329729e64477cfb0a270fa925c173d342f1e",
+        "sha256:23f717444a7aa0a735d38759630deb0d57fb544c314c87b010421341924f2f50"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:98ecd91027a7009e1bea1a642796008a6e8725814cc4ee6eb7a88b788b1bec2b",
+      "new_identity_key": [
+        "555730728"
+      ],
+      "new_properties_hash": "sha256:d9c238ba3933586965ebc9578ca382ded9d1b5bcc9fd037de8dfcb2181b9a434",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15492",
+      "rationale": "SITE_PID 555730728 already owns feature_id 15492. Its November name (Fur\u00f6n), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8101"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:13b5fda3daefc86283c1eef93a252afbb7267dc169c0e7b8e1438ec426abfd43"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:addd49f9136b4bfcdac36782b0b5ccf51c805c54dd1c2ad8baddcfd1d0a775ed",
+      "new_identity_key": [
+        "555730765"
+      ],
+      "new_properties_hash": "sha256:b2cc9a49f7bdb12d88b2928c8b40632607fc1c7e0663840f216b0dd8da5d1093",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15496",
+      "rationale": "SITE_PID 555730765 already owns feature_id 15496. Its November name (St\u00e5ngberget), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8266"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:bc95c1c526eb1043aa4c91649e4246be2cb61a368aa0d0926969e90c9fb0d164"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:278df7a45756a30e760ac6a04d6eb8fc1d9b52f832f6eff88130285d5d55e4a5",
+      "new_identity_key": [
+        "555730812"
+      ],
+      "new_properties_hash": "sha256:41dbd6bcdff8e2f16991c2460a6f78926b1ef5b179ce19ab5273b8a4d9670344",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15501",
+      "rationale": "SITE_PID 555730812 already owns feature_id 15501. Its November name (Br\u00f6nsn\u00e4sviken), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11289",
+        "15189"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:5c94ce8b402e6c53eafe8dd92fc51e00c1880d8fd198a61fc41a28fd6211d0e7",
+        "sha256:e8e140f355b6990fe150d4d4fe81fcfa2acdd4c8d20946d1c6bb2e6652153803"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:79b6790d807d0c58e23975f85f6be635a62d36e7472b81e89e7aad20f830652a",
+      "new_identity_key": [
+        "555730829"
+      ],
+      "new_properties_hash": "sha256:2052e7d94a1cbb1e55d68b86fe11ea6f431915fe7c45ea1a1713ab0a6998f9b2",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15504",
+      "rationale": "SITE_PID 555730829 already owns feature_id 15504. Its November name (Beijershamn och Svansholmarna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11306",
+        "15204"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:6d69ba302da15700956103670016b8e5f75aece7de32731e0604f8df24096cd0",
+        "sha256:74f7dad6296a3eb2a63006cd9e6e7ce861ce7e274dacc86637d8c70e53bd34c8"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6bef4e913fd153f3bd16507e76c08d77457c080cde8291c88c5f130fb7ecfd04",
+      "new_identity_key": [
+        "555730871"
+      ],
+      "new_properties_hash": "sha256:2c9536525610227fe052252217557911e62def83faf79a800182ca90e21bba4e",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15509",
+      "rationale": "SITE_PID 555730871 already owns feature_id 15509. Its November name (N\u00e4srevet), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8254"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:85c5eb2991df69dcbdc6f56c16f67872fbe79e7a27f9e173f55f9ed18511d048"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:58c71a88fb0ac31412ac14dfc69bf7e4ca45ec70763a57c72a89bd3d14b6d48b",
+      "new_identity_key": [
+        "555730916"
+      ],
+      "new_properties_hash": "sha256:1af9550f31a84d87995a88bb685dc8316bc3aacb2571a44edd1e5c8c98619ad9",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15514",
+      "rationale": "SITE_PID 555730916 already owns feature_id 15514. Its November name (Gr\u00f6nviksmyran), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8199"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:2b657ca81decf09aab67232a74aaf156f237baec50b0ae338fca270a518d89a8"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:3ae1986ec100d4af36a326c93eab5bb571535e5a93bd089540ce82b16df71f5e",
+      "new_identity_key": [
+        "555730954"
+      ],
+      "new_properties_hash": "sha256:12fbbcdbff0a6ddd7ff55a190b7f1f92f25460cf271a7f4a05602a6fec04503b",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15516",
+      "rationale": "SITE_PID 555730954 already owns feature_id 15516. Its November name (Ystads sandskog), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8757"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:fe632bb775b93530bbc0cd264d67f650b7c5b334c9bcc258286aed6ec9767f38"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:2a3f8c7882444b06a13a9a7c8af0504747d28bcd339711554fcc69bea2b3aeab",
+      "new_identity_key": [
+        "555731123"
+      ],
+      "new_properties_hash": "sha256:5e8ce1527a78e046a9729aeb8fb293325691b6107d8990533c0fec6d2cf2aa51",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15528",
+      "rationale": "SITE_PID 555731123 already owns feature_id 15528. Its November name (Gr\u00e4s\u00f6r m fl \u00f6ar), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8275"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:774153855b28d3d715360289bfb54da78d1e5160c9d14456b7f1d76622a94bf3"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:ef5f7281eea2131cce12f1ad7f63010ba8edaba2a7b2187e95a6defb0b3c1711",
+      "new_identity_key": [
+        "555731125"
+      ],
+      "new_properties_hash": "sha256:2781448c78042b02b390bb35f896d97db6e46d0c642d772e9b771896916b5ce8",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15529",
+      "rationale": "SITE_PID 555731125 already owns feature_id 15529. Its November name (Bj\u00f6rn), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11351",
+        "15136"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3e51882ae15d8eb70eb82dd589ede5d3381f8b7db7bc2d79a79251446526e47b",
+        "sha256:cad3f05bcc2abe983af5aa388a393efd53e92423cc04167e794140d61111aca2"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b816e6f7b54164fce0d73e3c2c6b522ba4ec963a02c169df7cf0c2d401be50f9",
+      "new_identity_key": [
+        "555731179"
+      ],
+      "new_properties_hash": "sha256:c55a09db392907d4ddab4e5fbb36f786f8745494dd1f1bf1d5dacf4c787018d9",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15534",
+      "rationale": "SITE_PID 555731179 already owns feature_id 15534. Its November name (Haparanda sk\u00e4rg\u00e5rd), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11282",
+        "15180"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3ebb0d1073cdfe1031b20c53be7daf4a292582562a09a993a800a2aaae2ba506",
+        "sha256:fa9f2030512eda8a1dd36941f33a7c8c80bc44eb567d3527b3502a3dc28c342c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b39ced888b09daf9770c761ba4701f38407144c2e8ec679fd6e152a44b7f0b43",
+      "new_identity_key": [
+        "555731216"
+      ],
+      "new_properties_hash": "sha256:e73e861f8f061253822ad59821595e11b62cb3cb86e583cb350fcb0327d9e786",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15539",
+      "rationale": "SITE_PID 555731216 already owns feature_id 15539. Its November name (R\u00e5g\u00f6), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8269"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:a86e548a0537fd9fd4f21d6ac27da090f99b4281cd73b9409e28a1fefd4396d8"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6103cf91c2cab5723ca8288b1b5c7ebf69f9392f1c84293c4eacc382c15224cf",
+      "new_identity_key": [
+        "555731238"
+      ],
+      "new_properties_hash": "sha256:2f9a117e68c92b497f4f4e4e3060f69e4c5f69194e5f0af96f2fbc60f546dbea",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15541",
+      "rationale": "SITE_PID 555731238 already owns feature_id 15541. Its November name (Skall\u00f6n), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8310"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:df95ac76e4bb720e18fff94e5d45744252df1e050a2e91f1126765a2c51515ab"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:4527f3eb940beb005c8cf514b0167bcf0d8f48f8c46fa288bcaff80664d7a207",
+      "new_identity_key": [
+        "555731272"
+      ],
+      "new_properties_hash": "sha256:2ea40a57bb6a3e28b8bc1991f25c2729eb57c3a859dd5e91b45e36711167575c",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15545",
+      "rationale": "SITE_PID 555731272 already owns feature_id 15545. Its November name (Ensk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8288"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:e1922a922c1d308618ebaceafd06e36cfc3542b1bda9d7c2ce6f3eb40cc52e16"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:78c188a255cd0b9f014ad40fae1867258ac82e0e1f824f947c8dae9672b78b55",
+      "new_identity_key": [
+        "555731280"
+      ],
+      "new_properties_hash": "sha256:905ae247d5b764186da1cfaa6161504b24e248febb4a8db16308167e30153c2e",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15546",
+      "rationale": "SITE_PID 555731280 already owns feature_id 15546. Its November name (Massan), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8743"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:b6b603e42070e9f2670f20157e70403d4fdabd3095945ddda0488fac34fba3fc"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:ab846342421a1b43f501cd5e36681eaac9e28ce5563d698ba85520dee7d60adf",
+      "new_identity_key": [
+        "555731299"
+      ],
+      "new_properties_hash": "sha256:271d76c644a5f4e4392e383f4124a6a32a3347695119ebfb4ff5b2bd16d49a40",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15549",
+      "rationale": "SITE_PID 555731299 already owns feature_id 15549. Its November name (V\u00e4sterb\u00e5dan, L\u00e5gagrundet), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8098"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:41c0c9a41afefade4b420730e657a5280ce276fcf8e8d855f1396629aae34dc7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:3b8508a4ca236cdc6d85c65d513d40dac85c717b5086ccf754357807eb4d603f",
+      "new_identity_key": [
+        "555731313"
+      ],
+      "new_properties_hash": "sha256:e19adc592ab7b215ace4d136c449ba4c313d6fab625e25529ed0e08c080a5eeb",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15551",
+      "rationale": "SITE_PID 555731313 already owns feature_id 15551. Its November name (R\u00f6rvik), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8311"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:13dd8e34a233599d6c54270a248443bbd4a1c70d2adf60fdccac72313cbe9734"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:7a02cf6f5d0b1debd0ebc10502267365fe37ee419fac5ba37b52cdafe2bea8e4",
+      "new_identity_key": [
+        "555731314"
+      ],
+      "new_properties_hash": "sha256:a6423e2af7c449edb61eb2a958b24b63c749cc4cca23450d38f1268cee783954",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15552",
+      "rationale": "SITE_PID 555731314 already owns feature_id 15552. Its November name (Huitori), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11275",
+        "15174"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:465b114f88272539eaaf44220a8c164482c7a4dcad0868cef4d8c17a70ae4d01",
+        "sha256:b21407b677125dc3afba2f10ea5d6811ac08bf2d93a77a2add7422de038579a4"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:7383c0680397a488abbea2d77bf77c2f7d5a53f8b28a8ad9107a503ac6f51c4b",
+      "new_identity_key": [
+        "555731327"
+      ],
+      "new_properties_hash": "sha256:835d4d78c0e597835f72e525286ba3ecada843b9299498584beff1219b5fe1e3",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15553",
+      "rationale": "SITE_PID 555731327 already owns feature_id 15553. Its November name (Bj\u00f6rns sk\u00e4rg\u00e5rd), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11301",
+        "15198"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0803660f4f4c6673c3f8ceaec6eb44c9434a52f212fedd67f207118b69caee1a",
+        "sha256:57c328d4fd285430a6701ea1b2b2dd4f9b47c596ab6daa98e1cfd57db2ca38fe"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f05e85ef1e450d22e443635f17b99f58823d53b989a97a4ded82beb25618aebb",
+      "new_identity_key": [
+        "555731335"
+      ],
+      "new_properties_hash": "sha256:48bff88a82b1892bd5be19a5de47bffb4620a962fc14e99922a56f30474505ec",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15554",
+      "rationale": "SITE_PID 555731335 already owns feature_id 15554. Its November name (H\u00f6gby hamn), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11325",
+        "15224"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3047b497bd33c327afab69dfc815b9e09e2bfa95c5ec4328904e2f5ec2341c34",
+        "sha256:bfdd94d9813faffd413ecadfd737b57c2d8919c365132057476773b55aef9436"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:ea438717f749d70166e70faa48a874065c233072b2b36f493f0cc55711340866",
+      "new_identity_key": [
+        "555731380"
+      ],
+      "new_properties_hash": "sha256:b6acffbb7f6b2c1a74ca1a28e0a3c9a11c31c7d7dc89df14c32cc29084d93963",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15556",
+      "rationale": "SITE_PID 555731380 already owns feature_id 15556. Its November name (Morups t\u00e5nge), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8094"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:a61f0d6f8e6c45fb9f14a5b135193b250e15b36977d6f94ee694ea6fa07fbf4e"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9eb0f6f0001872acd95bb2acc3444545db7b8d74d6b87fa63770b1e5fdcf9148",
+      "new_identity_key": [
+        "555731420"
+      ],
+      "new_properties_hash": "sha256:2fba5dcb3ebea912ebde16422b08dcc13a0058f88d2a6d3e5b33f6bc9f83ba44",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15560",
+      "rationale": "SITE_PID 555731420 already owns feature_id 15560. Its November name (Fiskarudden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8184"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:1ad8152e417befbc2b125fb883574f11ef3606d7c3a56be91b5a990de7dcce11"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:33e60cc973dd894b95c48f41bc73091ed3bd47c641ca7f96b017ef00a3c051f9",
+      "new_identity_key": [
+        "555731433"
+      ],
+      "new_properties_hash": "sha256:02e6d05a6e68dbc3437d1ff4f2ce00ae0d5a6fda9a7be9c2cef74ee18d63eb17",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15561",
+      "rationale": "SITE_PID 555731433 already owns feature_id 15561. Its November name (G\u00e5sfeten), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8238"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:fdedc6ebf3a68a3bc81d18851bb554f373a4c9fa1d7a7ce7156d3c6316be9041"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:5c70676c1c165b688e9a3c073e89d60b47195f6d9b05879b34925ea22042e971",
+      "new_identity_key": [
+        "555731474"
+      ],
+      "new_properties_hash": "sha256:cc3cdf99439d3cf6e8da8b5d838e2553e5b081556b26e3785417bebfbdef398f",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15564",
+      "rationale": "SITE_PID 555731474 already owns feature_id 15564. Its November name (Sotesk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8284"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:d7bae27391da8c8c9efe34fa9abcd19bdd8c0905ab1f5c368d55662fb352f506"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:fec513632465a5cc90a5ea0358ffbcaf59a57366d6b73e7c97d40655f469ee79",
+      "new_identity_key": [
+        "555731479"
+      ],
+      "new_properties_hash": "sha256:ff0344f928d26a2ac93e620fea5844a0425f73d8907678f2fdc2a41b4f293cc1",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15566",
+      "rationale": "SITE_PID 555731479 already owns feature_id 15566. Its November name (Torne-Fur\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8278"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:41112fc53bc18f05df042f5ef00d61406164fbed68a5879a12dd18cf14b2ab14"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:06eca2d749de468e08c1a25915018d23e11b15aad629cda36469ad029aa3f29b",
+      "new_identity_key": [
+        "555731589"
+      ],
+      "new_properties_hash": "sha256:ac30e77c7ff6aaa1c6444a603883221ccefb2d73f9c6de87d67c1eeacab7f3ed",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15579",
+      "rationale": "SITE_PID 555731589 already owns feature_id 15579. Its November name (Liksk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8103"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:1c1a03c452272a442622492bd2af9b7be2b0d149f7d00b7cfe08be94edb806c9"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:eff45bc177fb7c484f8aeeb7f276b37f20fcdac825d3f015a38f67bea73a0666",
+      "new_identity_key": [
+        "555731600"
+      ],
+      "new_properties_hash": "sha256:2fbee9e36e9d092f5088b0ca51186bdc7878f2801e5bca0383d42e23c2195edb",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15581",
+      "rationale": "SITE_PID 555731600 already owns feature_id 15581. Its November name (H\u00e5lln\u00e4skusten), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8077"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:301e2a9bfdc923da6284c6d8998b559960f22b7a4a621aff19b11d48df7b5986"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:5407fefb411326b6bd5ebbd4b1c3dea9a62b20cebc762815b7e296584b280dae",
+      "new_identity_key": [
+        "555731626"
+      ],
+      "new_properties_hash": "sha256:469438659792371cfdc2d87ee814533461ab7835da0fd31958a32d6b56838017",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15583",
+      "rationale": "SITE_PID 555731626 already owns feature_id 15583. Its November name (Bullersk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11274",
+        "15172"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:265da2af00aa5a92c4bca9881a11aa82eb05b6ea72357c2337cce17da1363819",
+        "sha256:927c982888cb6a66cd15956ab7dc81ef40be9546a3a6f6973e2ebb60b8665af7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:cd891333c860ea8c9460da5773e47a0c3fcbf51fe855e6cb725feb58a3cf71ff",
+      "new_identity_key": [
+        "555731639"
+      ],
+      "new_properties_hash": "sha256:d34f2f4ca7b896c85e34b750b31e5170e8197b9aaeab7b2afc3365c4706ed4ce",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15586",
+      "rationale": "SITE_PID 555731639 already owns feature_id 15586. Its November name (Svenska H\u00f6garna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11342",
+        "15239"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:2b7050427936051fd30eae6701b0ca6aa6ac8dba8d1ecebfab25039a72a98f0d",
+        "sha256:fbb15e47bd5620c0d2a36df4b6a0463910dd1620bc8d3d9a04345eedfdb01d74"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:bab787bdb99fced4052eb3844c1d59dd2d4da67efb993cc02fa0e07ae5c7f28a",
+      "new_identity_key": [
+        "555731648"
+      ],
+      "new_properties_hash": "sha256:3bc4b8b5dbac8f30e6006609840af616f3157ae64a578d07e3bae23d1f08753a",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15587",
+      "rationale": "SITE_PID 555731648 already owns feature_id 15587. Its November name (Testebo\u00e5ns delta), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11303",
+        "15199"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:4942efad6dc86981add2c90bf78da0837fcda5789870784c27d69eb6f2df6b7d",
+        "sha256:a779edad1fc265af5b7b692c4ed588a29a1b5d199fe00f289a84fbcf23df2201"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:59718afaec684810424e7c91fcf487e492093a7f63316484ff5b63fe1d211dde",
+      "new_identity_key": [
+        "555731660"
+      ],
+      "new_properties_hash": "sha256:7304dcdbbb484a2f3ca98aee914945db33a0c544db5ebd770d37da778e150af9",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15588",
+      "rationale": "SITE_PID 555731660 already owns feature_id 15588. Its November name (\u00c5kerby-Runstens sj\u00f6marker), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11335",
+        "15235"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:88c4e0e0cba77c67f1188cf216d2863b7fd78d1eef731aec7c07aabf078df69c",
+        "sha256:9d1b2eb0dacb40c9b0b38e2c30612129a656ecdec57a740bc406c270413d1cc0"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:e7bb8e6229cc687ef814dc255a1a456297f65a0f3d67af774b34d19a436b84b3",
+      "new_identity_key": [
+        "555731670"
+      ],
+      "new_properties_hash": "sha256:c4966e368eaf601c0d55d6e0a60ddccaadaaec9a86303dfa70602c9b53b5c9ba",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15589",
+      "rationale": "SITE_PID 555731670 already owns feature_id 15589. Its November name (Orarna), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11325",
+        "15224"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3047b497bd33c327afab69dfc815b9e09e2bfa95c5ec4328904e2f5ec2341c34",
+        "sha256:bfdd94d9813faffd413ecadfd737b57c2d8919c365132057476773b55aef9436"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:ea438717f749d70166e70faa48a874065c233072b2b36f493f0cc55711340866",
+      "new_identity_key": [
+        "555731679"
+      ],
+      "new_properties_hash": "sha256:7aa68b0dcd241d9e6e529fb622435afae730e8f3f2e8bde367ea2e9a468705c1",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15592",
+      "rationale": "SITE_PID 555731679 already owns feature_id 15592. Its November name (Morups t\u00e5nge), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11310",
+        "15206"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:b38d0c55ebac85b47bcbe0b311d3b12dfdfa40559530f792c3a235ea7d4f1c9a",
+        "sha256:f2fb10468182ecba9162d17f44ea72e1777b273b7d6b51884d686d9af5630d2d"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b7d9a78722338db4d30ec2ddcdf20ef9c88b8fed37295bb088ed8a24c39d6427",
+      "new_identity_key": [
+        "555731737"
+      ],
+      "new_properties_hash": "sha256:dea88a791585105aebd335ae010fcad4ae24cb9fccf76cae905c72e8387550ce",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15595",
+      "rationale": "SITE_PID 555731737 already owns feature_id 15595. Its November name (Ugnen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8096"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:489d516b950790392f8ef11cff2c0b15a5c96e7821221dde0dff91573beab81c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:700920113676c0f5d37dda2fd3cc819b080334935834846b361b532ecb923916",
+      "new_identity_key": [
+        "555731748"
+      ],
+      "new_properties_hash": "sha256:942a8b422db37b2a6ea2339c065dcf98e8a3be0aa8522246adf0cb8fd4cfd058",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15598",
+      "rationale": "SITE_PID 555731748 already owns feature_id 15598. Its November name (Kalvsk\u00e4ret), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8293"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0cdd6a5c023ae75460148a863ab5a61cf603038b60e17fecf5436f153bc36b56"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:2bb08edcf74d276d739057e429bf4ec07b6636307054a8a527289c950f2ec0d4",
+      "new_identity_key": [
+        "555731765"
+      ],
+      "new_properties_hash": "sha256:d179ace3f3c64b9a8e399d092e7e9312389abfe74485653ba17793684e71ad29",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15601",
+      "rationale": "SITE_PID 555731765 already owns feature_id 15601. Its November name (H\u00e4stholmen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11311",
+        "15203"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3a7d77322f3f5ec18c4a5413232e2109be12c95b7dcf29d9fe75807c0ec31a54",
+        "sha256:416de0d369488afae87cac3fc42283c5cd0b68479470a62c4eb98facc2e920dc"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6e35f9c96bcaff6d098a008f3dfa5650a20af84ab67dbbc5091054a4bb92c1ef",
+      "new_identity_key": [
+        "555731776"
+      ],
+      "new_properties_hash": "sha256:ec736b1209c62c3a7cb1ca199c9e8cb93ba39a3d70a3559a7cb2bc0b9ea57a12",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15604",
+      "rationale": "SITE_PID 555731776 already owns feature_id 15604. Its November name (Hummelbosholm), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11311",
+        "15203"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3a7d77322f3f5ec18c4a5413232e2109be12c95b7dcf29d9fe75807c0ec31a54",
+        "sha256:416de0d369488afae87cac3fc42283c5cd0b68479470a62c4eb98facc2e920dc"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6e35f9c96bcaff6d098a008f3dfa5650a20af84ab67dbbc5091054a4bb92c1ef",
+      "new_identity_key": [
+        "555731797"
+      ],
+      "new_properties_hash": "sha256:ab9af95520624404f595107798cc11c72220eaa7aa0da2663d5bf40f694e18f8",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15605",
+      "rationale": "SITE_PID 555731797 already owns feature_id 15605. Its November name (Hummelbosholm), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8244"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:27b21e928136294a18369f98491f3f3c094b5281377967d0a302608cd6e8bb71"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f2816772d50515e722f1bedec7a2623ad2299fdcb8fcbc5419d2e99c05fa69b7",
+      "new_identity_key": [
+        "555731820"
+      ],
+      "new_properties_hash": "sha256:37d2d9d23c440dfdbf9095d5faf014c8e53675b8fa334ae2bea93a482ab0077d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15608",
+      "rationale": "SITE_PID 555731820 already owns feature_id 15608. Its November name (Gnarps Masugn), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11342",
+        "15239"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:2b7050427936051fd30eae6701b0ca6aa6ac8dba8d1ecebfab25039a72a98f0d",
+        "sha256:fbb15e47bd5620c0d2a36df4b6a0463910dd1620bc8d3d9a04345eedfdb01d74"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:bab787bdb99fced4052eb3844c1d59dd2d4da67efb993cc02fa0e07ae5c7f28a",
+      "new_identity_key": [
+        "555731835"
+      ],
+      "new_properties_hash": "sha256:b18396f53a7fe8656aaaa187d846b1ccdfdc82705a93ca830c67a345ccbdbea3",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15610",
+      "rationale": "SITE_PID 555731835 already owns feature_id 15610. Its November name (Testebo\u00e5ns delta), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8309"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:76146eddddbe8749f514c8c6919a5ff757909803dc2fdf8431d8cca65435fb45"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:af09de276c120852715b1e63ffeaa919d00dfbcb97cb7b08f08b306dc941d387",
+      "new_identity_key": [
+        "555731876"
+      ],
+      "new_properties_hash": "sha256:54ecb9af7032afb5446443095cbd07537e8560120e377f52108f3eeee2cc9868",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15616",
+      "rationale": "SITE_PID 555731876 already owns feature_id 15616. Its November name (Austi), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8144"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:b7543b26225a8373d6af7f96b317febd44e13cafbb6254ee247d5837a031f254"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:2f35018757c0cf94ecc6e2bb451e56079ee2d6f0dcc7a56aa578379f033678f3",
+      "new_identity_key": [
+        "555731884"
+      ],
+      "new_properties_hash": "sha256:0e71c15cd2e6c9e8e8721c9ce0447a62ae7957523d7505f749d5250e15816f3d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15619",
+      "rationale": "SITE_PID 555731884 already owns feature_id 15619. Its November name (Hors\u00f6-V\u00e4rsn\u00e4s), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8085"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:ba12305bacaf5a47248e5ed2e3d24108781e74142fe9d5932b00aff82b9175b0"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:2219a0ccf1b9d56bc009c99c2d1648d96098d63d3097f7b9a23ecfd3fbf4e535",
+      "new_identity_key": [
+        "555731957"
+      ],
+      "new_properties_hash": "sha256:3df0bf3a4c6c5624458d8939d892eafc60b4f33fb8a996b4d565e6107885ebe5",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15625",
+      "rationale": "SITE_PID 555731957 already owns feature_id 15625. Its November name (R\u00e5n\u00f6 \u00c4ngsholme), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8283"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:939e8b367ffb670c63ecc7a7e6088337ce02e97943565300414d1191bb3724da"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:5dd8b83225efc8948bc34dd8ea0dcd5a8cff1d3f1fe0992f57340b051c9ba58e",
+      "new_identity_key": [
+        "555732035"
+      ],
+      "new_properties_hash": "sha256:613d9c44611bdd87a800c908bf86c228d55c861b7a37764e8028a7feec13e01e",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15636",
+      "rationale": "SITE_PID 555732035 already owns feature_id 15636. Its November name (Hals\u00f6ren), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8302"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:e250e47965a9ace2148c974236bbe4d7295cb876b67f4981062c083cd09d8452"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:341d6319668ae01c7445dbac86e2c2cfdcdf2cdeb395e7ccf750c5d8e0c0b979",
+      "new_identity_key": [
+        "555732158"
+      ],
+      "new_properties_hash": "sha256:31ad372ff8f7b7228e145a3df0a63fcc260582d0c06cbaee4f71ac2243fbdf36",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15648",
+      "rationale": "SITE_PID 555732158 already owns feature_id 15648. Its November name (Vuonoviken), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8291"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:8aaf8bdce6ccd51e0561b00c8ad7f0f5fa2d31abeaed497c6c92c0ded6d23d14"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b09b0b498f0eef823bda85cb07a66ef9880c8ab8b0a9fd2b33a8ec5498442103",
+      "new_identity_key": [
+        "555732260"
+      ],
+      "new_properties_hash": "sha256:c0230c5422fc12cdcdfcffd4cbc6ef5c2497449667d7f782d34bf8b1c60ba953",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15662",
+      "rationale": "SITE_PID 555732260 already owns feature_id 15662. Its November name (Sik\u00f6ren), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8227"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0b611bfb59b9483d539c27d79c18510a2a178b8cdb967eceb473a1c6a62f83d2"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:3d28d56f2fd45340fbda0b08f459c7290badd62be01829e6ba23682e5e659dc3",
+      "new_identity_key": [
+        "555732267"
+      ],
+      "new_properties_hash": "sha256:baae487263a2dfd79ae63490a952b59f39149727a319259ab0169890d16c950b",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15664",
+      "rationale": "SITE_PID 555732267 already owns feature_id 15664. Its November name (M\u00e5sesk\u00e4r), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8304"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:c5adeaafc985eb12a78fffdc62c4178335649565bb2336a74fc206ca5919631c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f49efde95ee4f5d0e063b3b4527c533eca12f05f284c539b225c9c372a1e247e",
+      "new_identity_key": [
+        "555732307"
+      ],
+      "new_properties_hash": "sha256:203ccf69d3c5dcc67ef499c9467cbf343a7b7e7d5550c3292ddcb0a633858c43",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15669",
+      "rationale": "SITE_PID 555732307 already owns feature_id 15669. Its November name (Svensbyfj\u00e4rden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8155"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:d9b3342b7a32497cc64c7b6d19945b0f5e0d317fd4ce4ea3429af8045e0128c2"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:657fb7052797bdfb35f213246a01324630e029b71a13eb25fd8ccdadb8931fb3",
+      "new_identity_key": [
+        "555732310"
+      ],
+      "new_properties_hash": "sha256:3fcb8c1d2ea6e59ae6c5bccf2219d034a923f75ebcdf845bbf3f59b20dd0ef26",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15670",
+      "rationale": "SITE_PID 555732310 already owns feature_id 15670. Its November name (Strandtorp), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8159"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:25754ca1b7b88e21e6c2a788b0f36f6d401272788503b24d6850126b792896e7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:897627ecc4a47d3b57a7d60605c5b6b9d42082b4b6d2d3b18f8269f9f8a92ed3",
+      "new_identity_key": [
+        "555732393"
+      ],
+      "new_properties_hash": "sha256:7ad19705c75e8b8dc1486256178029eab966ac04e704f72eab8939906094fb84",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15679",
+      "rationale": "SITE_PID 555732393 already owns feature_id 15679. Its November name (Sandviken), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8236"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:948a51bfbc1425e31830468256da9e621138ad9480a16636e91ddd1a364f6220"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6c00df480434ffd9a89187e47fe0b0662cef9c9f89a6cb5f2a3ae7dc07732e9b",
+      "new_identity_key": [
+        "555732440"
+      ],
+      "new_properties_hash": "sha256:92fdeca27adf040055aeb42f607fea029c6fd93fbf87df8fed58a27a362ea1cc",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15685",
+      "rationale": "SITE_PID 555732440 already owns feature_id 15685. Its November name (Pater Noster-sk\u00e4rg\u00e5rden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11300",
+        "15197"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:1994b1a29373c96070888ee184fa329729e64477cfb0a270fa925c173d342f1e",
+        "sha256:23f717444a7aa0a735d38759630deb0d57fb544c314c87b010421341924f2f50"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:98ecd91027a7009e1bea1a642796008a6e8725814cc4ee6eb7a88b788b1bec2b",
+      "new_identity_key": [
+        "555732485"
+      ],
+      "new_properties_hash": "sha256:a14897dfa01f2545850f2ace4f5a7f730d126acae3675f959ae1b4cc718b28ee",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15689",
+      "rationale": "SITE_PID 555732485 already owns feature_id 15689. Its November name (Fur\u00f6n), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11301",
+        "15198"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0803660f4f4c6673c3f8ceaec6eb44c9434a52f212fedd67f207118b69caee1a",
+        "sha256:57c328d4fd285430a6701ea1b2b2dd4f9b47c596ab6daa98e1cfd57db2ca38fe"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f05e85ef1e450d22e443635f17b99f58823d53b989a97a4ded82beb25618aebb",
+      "new_identity_key": [
+        "555732506"
+      ],
+      "new_properties_hash": "sha256:846644c46fbdb7190f1fecd78da276ddbee617e50b5f2f66bb4e1c9bc42c532f",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15692",
+      "rationale": "SITE_PID 555732506 already owns feature_id 15692. Its November name (H\u00f6gby hamn), designation (Natura 2000 SPA), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8211"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:afca2b0b0e6925896c7d453725ee6afc9eaa216862dd021e26ba8a57ebd7dcc1"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:8e0cfc5aa492ba33f458ae0db47a4cf6f73480ea3ac0c3e13a6b78c67645c82f",
+      "new_identity_key": [
+        "555732511"
+      ],
+      "new_properties_hash": "sha256:0dfe73b17adc1cd7ea22fc976e49204b385cacd48cfaec933fc57315628cc91d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15693",
+      "rationale": "SITE_PID 555732511 already owns feature_id 15693. Its November name (V\u00e4stra Getter\u00f6n), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8317"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:8c37cb4bbed111864dd26d01802dcd80de45134843801c918277b2aaad8013dc"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:61b29a2d4e11956d2d6eb8e69e984d19072e4b25d0f052ae41bd07ffc85db385",
+      "new_identity_key": [
+        "555732530"
+      ],
+      "new_properties_hash": "sha256:160f3445ad3e8b388cef507a0f1e0943f4d441f9dbe707131efe006cc1711a3d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15696",
+      "rationale": "SITE_PID 555732530 already owns feature_id 15696. Its November name (T\u00f6yr\u00e4), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8240"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:9bddade9e92dbd67c819ef11766fc111f45eab6514577f03ae5f35fd2fc419c5"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:dbb4153026fd06d98c7b2e30ee96124e751995e09d7cb5ea66356a985851d6eb",
+      "new_identity_key": [
+        "555732549"
+      ],
+      "new_properties_hash": "sha256:ff955f640aa6d1899a5223a3e6150255701723b7bb9ed0deca0458fb89ef47df",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15697",
+      "rationale": "SITE_PID 555732549 already owns feature_id 15697. Its November name (H\u00f6lick), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8287"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:74dcb16ac16447d66131e5ac3e13236056856adf8245ff1a143473e68a1672fd"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:665439b082a5fc50216468acb8f9734ccbf0ecf07b43ac4af8132fbfafe87387",
+      "new_identity_key": [
+        "555732623"
+      ],
+      "new_properties_hash": "sha256:9d4def2a2d122b90d24770dbd01d2468ac359e6f1895f5530a2d80df98b9f4d2",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15707",
+      "rationale": "SITE_PID 555732623 already owns feature_id 15707. Its November name (Harufj\u00e4rden), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11335",
+        "15235"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:88c4e0e0cba77c67f1188cf216d2863b7fd78d1eef731aec7c07aabf078df69c",
+        "sha256:9d1b2eb0dacb40c9b0b38e2c30612129a656ecdec57a740bc406c270413d1cc0"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:e7bb8e6229cc687ef814dc255a1a456297f65a0f3d67af774b34d19a436b84b3",
+      "new_identity_key": [
+        "555732628"
+      ],
+      "new_properties_hash": "sha256:f14690de1872d16ca4afb8f56d43cdded8f7a7814bef037839ca3a97270922a9",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15708",
+      "rationale": "SITE_PID 555732628 already owns feature_id 15708. Its November name (Orarna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11275",
+        "15174"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:465b114f88272539eaaf44220a8c164482c7a4dcad0868cef4d8c17a70ae4d01",
+        "sha256:b21407b677125dc3afba2f10ea5d6811ac08bf2d93a77a2add7422de038579a4"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:7383c0680397a488abbea2d77bf77c2f7d5a53f8b28a8ad9107a503ac6f51c4b",
+      "new_identity_key": [
+        "555732646"
+      ],
+      "new_properties_hash": "sha256:c2eabbaa5df426cfabc53b68a5fac2ec937aab711d38515434da4e4392575267",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15711",
+      "rationale": "SITE_PID 555732646 already owns feature_id 15711. Its November name (Bj\u00f6rns sk\u00e4rg\u00e5rd), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8312"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:714181ae81ebe7c786835a41465ba4d18e71e14c66c031cfbfa4e6b33eb70286"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9bbe064481c9ba43099a748dda8bd16d4ae5d945daf7fe63fb334448d337b890",
+      "new_identity_key": [
+        "555732690"
+      ],
+      "new_properties_hash": "sha256:55dce276b7df2a159199be09a7bb53d1b1a0c914123c166354a60bf1b49a60dd",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15716",
+      "rationale": "SITE_PID 555732690 already owns feature_id 15716. Its November name (Kataja), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8167"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:9388bdf14ff2b82a84411e54e9d4deabf21ffb0e17907847022dbc2f5a8c0c00"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:7a5ae6891a755caa10e1c428ae8e3c14d8a518d9f1fa4fd28aba735e64432265",
+      "new_identity_key": [
+        "555732748"
+      ],
+      "new_properties_hash": "sha256:0bb030c2e39ceba74df9d772565127974e40818f8d5b9783b32a7b98e44e02f6",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15720",
+      "rationale": "SITE_PID 555732748 already owns feature_id 15720. Its November name (J\u00e4rk\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8289"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:9a7d4db2f7f72bb227bcf186253b5cc9cae608c820ef31fe77a6bb5678da1567"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:c43cb51e51ce48d085d44e3a687c560dab4823da3c29e84296ef7972feed1e9c",
+      "new_identity_key": [
+        "555732784"
+      ],
+      "new_properties_hash": "sha256:528799f3a518240ac17749e2eb794f3df2dc061d91ff438c6b01c1d2d074accc",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15724",
+      "rationale": "SITE_PID 555732784 already owns feature_id 15724. Its November name (Furuholmen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8116"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:48c2c40c94ed4919186417a77c7db0d103d463a5ef5499faee9f396718bf2f92"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:6b341a4ae123afa33f180f06277f86d03f5c31274cadfc252300649b9af52a2b",
+      "new_identity_key": [
+        "555732929"
+      ],
+      "new_properties_hash": "sha256:8918420271bee5f149254e7c0e117b62c3ddb8376ff1eee1f9f3a84cc36a188d",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15733",
+      "rationale": "SITE_PID 555732929 already owns feature_id 15733. Its November name (L\u00e5ngsands\u00f6rarna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8274"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:0b8e5e39557a9ae1278b809325e9bead1caa9f3d74a2e3d9ea58dd3f961dbf1f"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:1b26efa707cbdb5bc53ba38c973cf28e622acf83e0a5fbb92004ca2e38086322",
+      "new_identity_key": [
+        "555732946"
+      ],
+      "new_properties_hash": "sha256:4a6fe94b6fac4689735e2cbf59d967d07787a4106ecb7d130f2eb8d5e6e7a4f2",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15734",
+      "rationale": "SITE_PID 555732946 already owns feature_id 15734. Its November name (Eriks\u00f6ren-Svartholmen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8183"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:69fa7195853152b09b7be0c2be81a121a912694e0a97a3973da9a83500a1bdd7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:e31b81e710273fb94c9404210e6a7ba848bfa0c9a6c4fa4e0df277d7dbd31543",
+      "new_identity_key": [
+        "555732984"
+      ],
+      "new_properties_hash": "sha256:4f98810c50160cd2d01bfe9862407baf72f233f4d9c4fd77a5c6f052571ce913",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15739",
+      "rationale": "SITE_PID 555732984 already owns feature_id 15739. Its November name (Iv\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8294"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:4bdb83d280eb0b40e158bfc3ca4e2a0041a9d4c801ba266547338a7416b6a278"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9149fd2ad62feb067a4053f39d6f34fd2b71d0e126f86b5d5362d44e61dc655b",
+      "new_identity_key": [
+        "555733026"
+      ],
+      "new_properties_hash": "sha256:dc1ee8495312ae735ce75a8237d119404072b67ef110e62424c98e4cf2bef1bb",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15742",
+      "rationale": "SITE_PID 555733026 already owns feature_id 15742. Its November name (Kalix yttre sk\u00e4rg\u00e5rd), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8277"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:a359a86b3212fc990e8bf19884f62b08b05603afd478044bc1f1bc1c49135c3a"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:2e886e5f4ae6fc4d85795301e55123287f1aef658e4481bcedf1be1d88809e19",
+      "new_identity_key": [
+        "555733036"
+      ],
+      "new_properties_hash": "sha256:4936f58ca876da055879c6b51b6479bee092d82e2c6dce35b4cb501bce6ad261",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15744",
+      "rationale": "SITE_PID 555733036 already owns feature_id 15744. Its November name (Granholmen), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8297"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:460ea2f139a5e124124aec8572e4010cad89c65df991a7f5f938c4cc0d94d0d7"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:62057741a192f94c16327cc04540509538d62beef27e0a4c7f5067e5295348f9",
+      "new_identity_key": [
+        "555733104"
+      ],
+      "new_properties_hash": "sha256:500bb4cdfd2feda407c508731459531f95aa09c88d9ddb83a5e73cc1f833ae12",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15750",
+      "rationale": "SITE_PID 555733104 already owns feature_id 15750. Its November name (Holster\u00f6rarna), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8307"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:f3a77a9bc954916c07bd0e0d7f3038901cc33695b3a2eccf326d8e30f528f53e"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:461b6cddb196ba45ef93f86e8362b55ad85e4ef52e6a4f6517d7af47067878c1",
+      "new_identity_key": [
+        "555733281"
+      ],
+      "new_properties_hash": "sha256:bd55391d2a0c767079e8741dca3aa6235ee145907810cea42b962cbd18746ca1",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15764",
+      "rationale": "SITE_PID 555733281 already owns feature_id 15764. Its November name (Sarvenkataja), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11282",
+        "15180"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:3ebb0d1073cdfe1031b20c53be7daf4a292582562a09a993a800a2aaae2ba506",
+        "sha256:fa9f2030512eda8a1dd36941f33a7c8c80bc44eb567d3527b3502a3dc28c342c"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b39ced888b09daf9770c761ba4701f38407144c2e8ec679fd6e152a44b7f0b43",
+      "new_identity_key": [
+        "555733344"
+      ],
+      "new_properties_hash": "sha256:9f9c44ba42e12cc108e1c80dca6a066086715702ae8fa906ebb172546ef1b290",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15769",
+      "rationale": "SITE_PID 555733344 already owns feature_id 15769. Its November name (R\u00e5g\u00f6), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8305"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:bceb1c1baea2d1f7dbbb92321e8f516ceca7f98f253facd6216d1e6556698c56"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:f6ceca435c120714a5fa936319a53c7a43474e0fb881df2f1192ea35ef767bfe",
+      "new_identity_key": [
+        "555733358"
+      ],
+      "new_properties_hash": "sha256:9e306f9ba44bf711473cb3992bc5ee5cbf0f23f3a6f81e59bb4b7ca6c8abfb22",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15770",
+      "rationale": "SITE_PID 555733358 already owns feature_id 15770. Its November name (Riekkola), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "8131"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:4fca100a5959fafa609896bdfa918bbf8f2d1bbac6d0832ad80ab86a4e3053e2"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b3afe8afe259003e25ff3c5ba9ec85469a111ea66d09f151d722e4f5673237a8",
+      "new_identity_key": [
+        "555733390"
+      ],
+      "new_properties_hash": "sha256:e594c9b4551f4d3032e3233e6b46c6e74cbb2114e7ab34de56d5fee062d028e5",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15773",
+      "rationale": "SITE_PID 555733390 already owns feature_id 15773. Its November name (Halltorp), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "keep_previous_key_mapping",
+      "matching_geometry_feature_ids": [
+        "11303",
+        "15199"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:4942efad6dc86981add2c90bf78da0837fcda5789870784c27d69eb6f2df6b7d",
+        "sha256:a779edad1fc265af5b7b692c4ed588a29a1b5d199fe00f289a84fbcf23df2201"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:59718afaec684810424e7c91fcf487e492093a7f63316484ff5b63fe1d211dde",
+      "new_identity_key": [
+        "555733443"
+      ],
+      "new_properties_hash": "sha256:de30158ead9993ccc482efb6e187bdd2b8ccdfc637ee63a05d5e2b223dccab99",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": "15776",
+      "rationale": "SITE_PID 555733443 already owns feature_id 15776. Its November name (\u00c5kerby-Runstens sj\u00f6marker), designation (Natura 2000 SCI), country, status and designation year are unchanged, while the geometry now matches other existing records. All matching source records remain in November. Keeping its own ID preserves the existing record without merging identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "assign_new_feature_id",
+      "matching_geometry_feature_ids": [
+        "845"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:6a03bbf4e726d0d73bdd513b37a06d2894141ab4409d932d90123b687d69cdae"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:0fbd0b018dfacc73061684f6cc487b736c04c797fbe3b798bbc2d3f524ff73dd",
+      "new_identity_key": [
+        "555778676"
+      ],
+      "new_properties_hash": "sha256:11db1e7ff76386b3d511e14bf35d2621874415e6e2acecebd40d55fab12877ca",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": null,
+      "rationale": "New SITE_PID 555778676 is a 2025 Special Protection Areas designation for Il-G\u017cejjer ta' San Pawl (Selmunett), absent from the complete October marine baseline. Its matching previous source records remain in November under different designations. A fresh feature_id preserves the new designation as a separate record instead of merging it with those existing identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "assign_new_feature_id",
+      "matching_geometry_feature_ids": [
+        "15343",
+        "8086"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:58b6623e05427c4e47f2d479ffc1dcdb18fd5530512c11cb6c8ea8cee13d9f1f",
+        "sha256:6d171f826cf16c3b6e3a0ae51f07e1ee2ccd6b42526bf6b61c7d6141aee90033"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:9f6a167a4e65f1d5b3381375fd7b3ea32f72211d6c064bbaa24e35e8a79796e0",
+      "new_identity_key": [
+        "555778782"
+      ],
+      "new_properties_hash": "sha256:a99657030b106792f48eda2741d1f93b3fd788bd3d5dbe08ac524764196aa199",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": null,
+      "rationale": "New SITE_PID 555778782 is a 2025 Natura 2000 SPA designation for Svenska Bj\u00f6rn, absent from the complete October marine baseline. Its matching previous source records remain in November under different designations. A fresh feature_id preserves the new designation as a separate record instead of merging it with those existing identities.",
+      "release": "2026-11-01",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "17642"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:2b241156fc70ba96ad1f383adb3bb61da95e7d33c6af9d5d3f8b0d11036e6428"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b2690384cd810bb1cc2c266abc4d2caa217dd1e17b292f424bf59ebcd432970b",
+      "new_identity_key": [
+        "556323574"
+      ],
+      "new_properties_hash": "sha256:b69b01ffac8baab8134355bfcf1266a0073de9e225ade8924d1bf3f559762c74",
+      "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/370",
+      "previous_feature_id_for_key": null,
+      "rationale": "New November SITE_PID 556323574 replaces absent October SITE_PID 555886532 for Reserva De Desenvolvimento Sustent\u00e1vel Da Foz Do Rio Aracatia\u00e7u. The old source key is absent from every November DBF, the new key is absent from the complete October marine baseline, and name, Sustainable Development Reserve designation, 2025 designation year and stored geometry agree. Reusing feature_id 17642 preserves continuity for the same reserve under its replacement source identifier.",
+      "release": "2026-11-01",
+      "reuse_feature_id": "17642",
+      "reviewer": "jonaraphael"
     }
   ],
   "schema_version": 1

@@ -1,6 +1,6 @@
 # Approved November marine identity decisions — 114 exact cases
 
-Maintainer `jonaraphael` explicitly selected **Approve all 114 recommendations (Recommended)** for this exact batch. Reviewed curation, protected deployment and actual publication verification remain required before schedule resume.
+Maintainer `jonaraphael` explicitly selected **Approve all 114 recommendations (Recommended)** for this exact batch. The [release-scoped curation](../../catalog/feature-identity-resolutions/wdpa-marine.json) binds the full captured case hashes to this exact approval and real [PR #370](https://github.com/SkyTruth/shared-datasets-1/pull/370). Protected deployment and actual publication verification remain required before schedule resume.
 Proposal SHA-256: `6d38b2078c28bbd6027bd3ea792f2bd014d03a1b9578aa77fee256191a805d5a`.
 
 
