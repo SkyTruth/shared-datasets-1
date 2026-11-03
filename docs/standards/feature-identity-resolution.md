@@ -234,7 +234,12 @@ override conflict, or repair a disagreement by resetting publication state.
 7. **Reconcile the original review.** The existing protected notification path
    records the decision in the original Slack thread, names its decision maker,
    explains the rationale and links the reviewed PR. Large batches can summarize
-   examples and link the complete record. Settle only review messages correlated
+   examples and link the complete record. Preserve the original **Decision needed**
+   request text, case summaries, context and source/review links. The decision
+   belongs in the thread reply; do not replace the original request body with a
+   **Decision recorded** summary. A status marker may be added only while
+   retaining that original content, including when the request shares an
+   execution parent with failure reports. Settle only review messages correlated
    to the same execution, asset and release after all captured cases are covered.
    Partial decisions stay open. Avoid duplicates and replacement parents.
 
