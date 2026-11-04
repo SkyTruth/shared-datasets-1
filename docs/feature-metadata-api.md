@@ -327,15 +327,31 @@ The hook reads generation-pinned localized sidecars from the committed manifest.
 Their `fallback_fields` retain current source values, which are streamed into
 `gs://{bucket}/_scratch/translation-debt/{asset}/{release}/{locale}.csv` with
 `feature_id,field,locale,source_value_hash,source_value`. Only unresolved values
-are exported; these files are noncanonical maintenance evidence. Public notices
-include a copyable prompt with the full worklist references and up to 25 complete
-CSV sample rows, bounded by Slack's message limit. The prompt requests the
-existing seven-column translation CSV, preserves IDs and source hashes, and
-marks generated values `machine_placeholder` with `awaiting human review` notes.
-Proper names use known official target-language forms or remain unchanged.
-Oversized rows and rows containing a code fence stay in the full export; source
-values are never truncated. Internal/private notices show counts and GCS
-references only.
+are exported. These files are noncanonical maintenance evidence. The informational
+notice confirms publication and summarizes overall current coverage, source-text
+fallback percentage, and the number of maintained languages. Coverage is weighted
+by eligible feature-field-language entries. Its change in percentage points is
+relative to the immediately preceding published release in the asset's release
+index, using that manifest's recorded generation and the same language set.
+Missing or unreadable history, absent coverage, or changed languages produce an
+explicit unavailable comparison. This compares each release's overall coverage,
+whose underlying records and fields can change between releases.
+One outlier line names the lowest-covered language when it is at least five
+percentage points below the median of the other languages with eligible values.
+The notice calls the stored `stale` coverage category “outdated translations”.
+Public assets include up to two short excerpts from actual unresolved source
+text, labeled with the field and language. URL-only values are skipped, and long
+excerpts end with an ellipsis. The gap files retain complete values. These
+excerpts cover the combined unresolved worklist, whose rows do not distinguish
+outdated from missing translations. Internal/private notices omit excerpts.
+When the prior release has compatible feature identities, its generation-pinned
+canonical sidecar and schema identify new records and new columns with gaps.
+The notice counts distinct affected records and columns across languages. Counts
+can overlap, and fully translated additions are excluded. This describes where
+gaps occur, rather than inferring additions from the net change in dataset size.
+Unavailable history or incompatible identities omit that comparison.
+The notice gives one request to hand to Codex to refresh translations and prepare a review PR. A single
+authenticated link opens the release manifest's coverage details.
 
 A create-only `{asset-root}/runs/{release}.translation-notice.json` claim prevents
 repeat attempts, including concurrent jobs and reviewed edits. Its status starts
@@ -367,3 +383,7 @@ from the original proposal is not authority to overwrite a newer release or
 restore pre-reset feature IDs. Verify the finalized coverage and notice marker
 after the protected publication finishes; neither code merge nor fixture tests
 establishes that the production backfill has happened.
+
+For maintenance, follow the [translation maintenance workflow](../.claude/skills/update-feature-metadata-translations/SKILL.md).
+The release's `translation-notice.json` record supplies the worklist URIs and
+generations.

@@ -54,6 +54,7 @@ COPY ingestion/eamlis_monthly ./ingestion/eamlis_monthly
 COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
 COPY catalog/ingestion-quality.json ./catalog/ingestion-quality.json
 COPY scripts/catalog_csv.py ./scripts/catalog_csv.py
+COPY scripts/compare_releases.py ./scripts/compare_releases.py
 COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
 COPY scripts/feature_metadata_translation_reuse.py ./scripts/feature_metadata_translation_reuse.py
 COPY scripts/translation_local_io.py ./scripts/translation_local_io.py
@@ -61,5 +62,6 @@ COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
+RUN python -c "from ingestion.common import translation_notices"
 
 CMD ["python", "-m", "ingestion.eamlis_monthly.run"]
