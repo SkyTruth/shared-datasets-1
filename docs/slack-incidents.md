@@ -123,6 +123,14 @@ matching terminal record cannot resolve a deployment incident.
 
 Audit/workflow startup incidents use successful completion of the same trusted
 workflow. Other job incidents require the same exact job within that workflow.
+Historical `deployment-verification.yml` completion-job incidents also accept a
+newer signed WDPA runtime recovery when the exact original job successfully
+attested a signed failed WDPA execution. The resolver verifies every retained
+failure, the failed deployment revisions and their ancestry to the latest
+`verified` WDPA deployment. It retains the original incident ID, scope, parent,
+failure history and delivery claims in the signed ledger. Verification errors,
+failed attestation and mixed unresolved failures retain their alerts. The normal
+notification workflow performs this reconciliation using existing evidence.
 Publication apply/reset incidents retain the original PR and phase; manual reset
 recovery derives its PR only from the complete same-attempt apply job identity.
 Publisher authorization and immutable plan rechecks remain owned by the existing
@@ -490,6 +498,9 @@ covers the failed revision. Runtime targets, including dataset usage, require
 it never posts a replacement or reply. Unsupported failures remain unresolved.
 This action does not enable incident management or reinterpret retained incident
 records from other protocol versions.
+The same signed WDPA recovery proof also covers historical completion jobs that
+reported an attested worker failure. Managed incident parents use the normal
+notification workflow so closure is retained in their signed ledger.
 
 
 ## Feature identity decision replies
