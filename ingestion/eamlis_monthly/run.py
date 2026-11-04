@@ -462,20 +462,31 @@ def output_layer_summary(path: Path) -> dict[str, Any]:
     return parse_ogrinfo_summary(text)
 
 
+def stage_inputs(source, release_date, identity_reservation):
+    return {"asset_slug": ASSET.slug, "release": release_date.isoformat(), "source": source.layer_url,
+        "where": source.where, "fields": source.fields, "expected_rows": source.stats.feature_count,
+        "reservation": identity_reservation.reference if identity_reservation is not None else None}
+
+
 def build_asset_output(
-    *,
-    source: SourceState,
-    extract: SourceExtract,
-    workdir: Path,
-    release_date: dt.date,
-    previous_records: Sequence[Mapping[str, Any]] | None = None,
-    identity_reservation: identity_state.Reservation | None = None,
-) -> AssetOutput:
-    fgb = workdir / f"{ASSET.slug}.fgb"
-    pmtiles = workdir / f"{ASSET.slug}.pmtiles"
+    *, source, extract, workdir, release_date, previous_records=None, identity_reservation=None,
+):
+    from ingestion.common.stage_checkpoints import cached_build, native_tools
+    inputs = {**stage_inputs(source, release_date, identity_reservation),
+        "tools": native_tools(("ogr2ogr", "ogrinfo", "tippecanoe-decode", "pmtiles"))}
+    return cached_build("eamlis-artifacts", inputs, workdir,
+        lambda directory: _build_asset_output(source=source, extract=extract, workdir=directory,
+            release_date=release_date, previous_records=previous_records, identity_reservation=identity_reservation),
+        files={"source": extract.geojson}, result_type=AssetOutput if identity_reservation is None else KeyedAssetOutput,
+        extra={} if identity_reservation is None else {"reservation": identity_reservation},
+        code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
+            "ingestion/common/feature_metadata.py", "ingestion/common/runtime.py",
+            "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py", "scripts/vector_asset.py"))
+
+
+def _prepare_metadata(source, extract, workdir, release_date, identity_reservation):
     metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
     schema = workdir / f"{ASSET.slug}.schema.json"
-    manifest = workdir / f"{ASSET.slug}.manifest.json"
     enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
     if identity_reservation is None:
         enriched_features, sidecar_records = feature_metadata.enrich_features_with_source_field_ids(
@@ -495,6 +506,24 @@ def build_asset_output(
         records=sidecar_records,
     )
     feature_metadata.write_schema(schema_payload, schema)
+    return enriched_geojsonseq, metadata, schema, schema_payload, tuple(sidecar_records)
+
+
+def _build_asset_output(
+    *, source: SourceState, extract: SourceExtract, workdir: Path, release_date: dt.date,
+    previous_records: Sequence[Mapping[str, Any]] | None = None,
+    identity_reservation: identity_state.Reservation | None = None,
+) -> AssetOutput:
+    from ingestion.common.stage_checkpoints import cached_build
+    enriched_geojsonseq, metadata, schema, schema_payload, sidecar_records = cached_build(
+        "eamlis-metadata", stage_inputs(source, release_date, identity_reservation), workdir,
+        lambda directory: _prepare_metadata(source, extract, directory, release_date, identity_reservation),
+        files={"source": extract.geojson}, result_type=None,
+        code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
+            "ingestion/common/feature_metadata.py", "scripts/release_feature_model.py"))
+    fgb = workdir / f"{ASSET.slug}.fgb"
+    pmtiles = workdir / f"{ASSET.slug}.pmtiles"
+    manifest = workdir / f"{ASSET.slug}.manifest.json"
 
     convert_geojson_to_fgb(enriched_geojsonseq, fgb)
     summary = output_layer_summary(fgb)

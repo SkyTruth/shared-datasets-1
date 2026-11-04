@@ -172,17 +172,73 @@ publication claims, reviewed curation and protected deployment rules still apply
 The scheduled builder also accepts an explicit `WDPA_ANALYSIS_REFERENCE` JSON
 object containing the logged descriptor URI, generation, size and SHA256. It
 restores only pinned scratch objects and rejects a different release, source,
-baseline, producer or native toolchain before normalization. This selects cached
-analysis only; it cannot select publication bytes or bypass the current
-complete build, compatibility or publication gates. Do not persist an old
-release's reference in the job template or launch a second production execution;
-use only the existing authorized execution/recovery path.
+baseline, producer or native toolchain before normalization. The current
+execution verifies reusable stages, validates a complete bundle, and follows
+the existing publication claim and compatibility gates. Supply the reference
+only to the authorized recovery execution for that release.
 If a bounded review renderer fails, verified normalized analysis is still staged
 with `discovery_state: INCOMPLETE`; it can be reused after repairing that boundary
 but cannot pass readiness or authorize publication.
 Retained normalized geometry consumes disk/storage; existing resource budgets
 still fail rather than truncating a batch. Keep useful local evidence and remote
 references in the PR; cleanup requires the existing exact-path review process.
+
+## Check the build plan and resume completed stages
+
+After discovery returns READY, validate the complete stage graph before starting
+the first builder. Scheduled producers validate their own prerequisites.
+Manual intake and preview use the same local command for vector, table, raster,
+and array outputs.
+
+```bash
+uv run python scripts/publication_checkpoint.py --plan "$WORK_DIR/stage-plan.json" --check-only
+uv run python scripts/publication_checkpoint.py --plan "$WORK_DIR/stage-plan.json"
+```
+
+The plan declares `schema_version: 1`, `asset_slug`, `release`, `source_sha256`,
+`readiness_report`, and a nonempty `stages` array. Each stage declares a unique
+`name`, an `inputs` mapping, repo-relative producer `code` files, a `command`
+argument array, validation `checks` as argument arrays, and expected `outputs`
+relative to its private output directory. List tools invoked inside a wrapper
+script in `tools`. Use `{output_dir}` and `{input:ROLE}` to refer to paths.
+An input is `{"path": "/path/to/file-or-tree", "sha256": "..."}` or a declared
+output of another stage, such as `{"stage": "normalize", "output": "rows.csv"}`.
+At least one command consumes the readiness-bound original or normalized source
+through `{input:source}`. Put only local build and validation commands in this
+plan. Publication uses its existing reviewed plan or owned transaction.
+
+`--check-only` verifies the graph, executables, producer files, source pins and
+complete READY report without invoking builders. Execution checks the pins
+again, runs validation before committing a stage, and prints each completed
+manifest path. An interrupted stage leaves its earlier completed stages usable.
+Changed inputs or implementation select a new key. Damaged files or a damaged
+manifest stop execution with the affected checkpoint path available for review.
+
+Set `SHARED_DATASETS_CHECKPOINT_DIR` to a persistent, private workspace when
+resuming across processes. The default is `_scratch/publication-checkpoints`
+under the standard workspace root. Keep that directory with the frozen inputs.
+Cloud Run scratch persists for the life of its execution. WDPA exports completed
+stages through its existing create-only scratch stager when a replay returns a
+failure, and includes them in the generation-pinned analysis reference described
+above. Reference shape, versions and object pins are checked before downloading
+checkpoint files. A process termination that prevents the export can only use
+evidence already retained outside that execution.
+
+WDPA checks both realm counts and the frozen translation headers before full
+normalization. The sample and full replays open one read-only SQLite translation
+index for the same source generations and field/locale contract. Metadata streams
+properties and allocated IDs from the verified spool, and joins the typed
+attributes for FGB and tile generation. WDPA checkpoints metadata, FGB and
+PMTiles individually. EAMLIS checkpoints metadata and validated artifacts with
+its current reservation reference. MPAtlas and sea ice checkpoint normalized
+inputs and validated artifacts. The concierge preserves completed file and Zarr
+tree outputs and rechecks them before validation and review.
+
+`scripts/benchmark_publication_stages.py --work-dir DIR` measures complete
+metadata processing and the two index opens on a bounded synthetic fixture.
+Use the same pinned native image and fixture for both revisions, selecting the
+baseline checkout with `PUBLICATION_BENCHMARK_REPO`. The report includes timings,
+sidecar digests and the number of distinct indexes opened.
 
 ## Cheap checks and CI budget
 

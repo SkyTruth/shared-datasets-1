@@ -760,6 +760,9 @@ def assert_identity_decisions_allowed(
         )
         for index, decision in enumerate(decisions, start=1):
             action = str(decision.get("action") or "").strip()
+            if action not in release_feature_model.IDENTITY_RESOLUTION_ACTIONS:
+                problems.append(f"{asset.slug} decision {index}: unsupported identity action {action!r}")
+                continue
             identity_key = release_feature_model.normalize_identity_key(
                 decision.get("new_identity_key"), label="new_identity_key"
             )
@@ -793,12 +796,13 @@ def assert_identity_decisions_allowed(
         )
 
 
-def prepare_asset_input(*, source, source_layers, asset, where, workdir, profiler):
+def prepare_asset_input(*, source, source_layers, asset, where, workdir, profiler, expected_rows=None):
     """Normalize a complete asset once, before allocation or artifact generation."""
-    with profiler.phase(f"{asset.slug}:source-count"):
-        expected_rows = expected_feature_count(source, source_layers, where)
-        if expected_rows <= 0:
-            raise RuntimeError(f"{asset.slug} filter produced no rows")
+    if expected_rows is None:
+        with profiler.phase(f"{asset.slug}:source-count"):
+            expected_rows = expected_feature_count(source, source_layers, where)
+    if expected_rows <= 0:
+        raise RuntimeError(f"{asset.slug} filter produced no rows")
     gpkg = workdir / f"{asset.slug}.filtered.gpkg"
     normalized = workdir / f"{asset.slug}.normalized.gpkg"
     with profiler.phase(f"{asset.slug}:filter"):
@@ -844,28 +848,48 @@ def prepare_asset_input(*, source, source_layers, asset, where, workdir, profile
 def discover_assets(*, assets, source, source_layers, split_field, workdir, run_date,
                     baselines, decisions, binding, profiler, sample=None, analysis_dir=None):
     """Collect both realms before any output is built; retain complete normalized input."""
+    assets = tuple(assets)
+    directory = analysis_dir or workdir / "analysis"
+    directory.mkdir(parents=True, exist_ok=True)
+    scope = [asset.slug for asset in assets]
+    report = {"schema": publication_readiness.SCHEMA, "expected_assets": scope,
+        "assets": {}, "state": "INCOMPLETE"}
+    publication_readiness.write_json(directory / "readiness.json", report)
     targets = []
+    problems = []
     for asset in assets:
         where = sampled_where_clause(asset_where_clause(asset, split_field), sample)
-        def prepare(directory, asset=asset, where=where):
+        try:
+            with profiler.phase(f"{asset.slug}:source-count"):
+                expected_rows = expected_feature_count(source, source_layers, where)
+                if expected_rows <= 0:
+                    raise RuntimeError("filter produced no rows")
+        except (ValueError, RuntimeError, OSError) as exc:
+            problems.append(f"{asset.slug}: {exc}")
+            continue
+        def prepare(directory, asset=asset, where=where, expected_rows=expected_rows):
             return prepare_asset_input(source=source, source_layers=source_layers, asset=asset,
-                where=where, workdir=directory, profiler=profiler)
+                where=where, workdir=directory, profiler=profiler, expected_rows=expected_rows)
         baseline = baselines[asset.slug]
         targets.append(publication_readiness.Target(asset.slug, run_date.isoformat(),
-            {**binding, "where": where, "native_versions": profiler.versions,
+            {**binding, "where": where, "expected_rows": expected_rows, "native_versions": profiler.versions,
              "producer": sha256_file(Path(__file__)),
              "baseline": vars(baseline.snapshot) if baseline.snapshot else None,
              "baseline_next": baseline.next_feature_id},
             prepare, baseline=baseline, decisions=tuple(decisions[asset.slug])))
+    if problems:
+        report["error"] = "; ".join(problems)
+        publication_readiness.write_json(directory / "readiness.json", report)
+        return report
     def capture(target, plan, retained, result):
         from ingestion.wdpa_monthly import identity_review
         asset = next(a for a in assets if a.slug == target.asset_slug)
         with contextlib.closing(NormalizedGeometryStore.open(
-            retained / f"{asset.slug}.normalized.gpkg", layer_name=asset.tile_layer, read_only=True)) as store:
+            retained / f"{asset.slug}.normalized.gpkg", layer_name=asset.tile_layer)) as store:
             # Capture reads the native input but must not change the retained spool.
             identity_review.capture(plan, store, target.baseline, asset_slug=asset.slug,
                 release=target.release, directory=workdir)
-    return publication_readiness.discover_batch(targets, analysis_dir or workdir / "analysis", on_pending=capture)
+    return publication_readiness.discover_batch(targets, directory, on_pending=capture)
 
 
 def build_asset_outputs(
@@ -904,7 +928,8 @@ def build_asset_outputs(
         if saved["binding"]["inputs"]["where"] != where:
             raise RuntimeError("retained asset selection changed")
         payload = saved["payload"]
-        for name in (normalized.name, normalized.with_suffix(".schema.geojsonseq").name):
+        for name in (normalized.name, normalized.with_suffix(".schema.geojsonseq").name,
+                     normalized.with_suffix(".sha256").name):
             shutil.copyfile(retained / name, workdir / name)
         shutil.copyfile(retained / "identity.sqlite", plan_path)
     expected_rows = payload["expected_rows"]
@@ -930,51 +955,26 @@ def build_asset_outputs(
                     on_identity_review(plan, store)
                 raise
         with profiler.phase(f"{asset.slug}:metadata"):
-            store.prepare_fields()
-            accumulator = feature_metadata.SchemaAccumulator()
-            validation_index = DiskIdentityRecords(
-                workdir / f"{asset.slug}.validation.sqlite"
-            )
-            try:
-
-                def sidecars():
-                    for record in store.sidecar_records(
-                        plan=plan,
-                        asset_slug=asset.slug,
-                        release=run_date.isoformat(),
-                        provenance={
-                            "source": source,
-                            "where": where,
-                            "identity_strategy": "generated_sequence_source_fields",
-                        },
-                    ):
-                        accumulator.observe(record)
-                        yield record
-
-                count = feature_metadata.write_sidecar(
-                    sidecars(), metadata, identity_index=validation_index
-                )
-                if count != len(plan):
-                    raise RuntimeError(
-                        "metadata count differs from completed allocation"
-                    )
-                validation_index.seal().validate_baseline(next_feature_id)
-            finally:
-                validation_index.close()
-                remove_if_exists(validation_index.path)
-            schema_payload = accumulator.payload(
-                asset_slug=asset.slug, release=run_date.isoformat()
-            )
-            feature_metadata.write_schema(schema_payload, schema)
+            from ingestion.wdpa_monthly import metadata as metadata_stage
+            directory, payload = metadata_stage.prepare(normalized, plan_path, layer=asset.tile_layer,
+                slug=asset.slug, release=run_date.isoformat(), source=source, where=where,
+                next_feature_id=next_feature_id, decisions=identity_resolution_decisions, versions=profiler.versions)
+            shutil.copyfile(directory / metadata.name, metadata)
+            shutil.copyfile(directory / schema.name, schema)
+            schema_payload = payload["schema_payload"]
+            store.field_names = tuple(payload["field_names"])
+            store.attributes_path = directory / "attributes.gpkg"
             sql = store.projection_sql()
             store.close()
         with profiler.phase(f"{asset.slug}:flatgeobuf"):
-            run_command(
+            from ingestion.common.stage_checkpoints import cached_file, native_tools
+            def make_fgb(path):
+                run_command(
                 [
                     "ogr2ogr",
                     "-f",
                     "FlatGeobuf",
-                    str(fgb),
+                    str(path),
                     str(normalized),
                     "-sql",
                     sql,
@@ -985,14 +985,26 @@ def build_asset_outputs(
                     "-lco",
                     "SPATIAL_INDEX=YES",
                 ]
-            )
+                )
+            def validate_fgb(path):
+                if feature_count(str(path)) != len(plan):
+                    raise RuntimeError("FlatGeobuf stage changed the complete source row count")
+            stage_inputs = {"asset_slug": asset.slug, "release": run_date.isoformat(),
+                "native_versions": profiler.versions, "sql": sql,
+                "tools": native_tools(("ogr2ogr", "ogrinfo"))}
+            stage_code = ("ingestion/wdpa_monthly/run.py", "ingestion/common/feature_metadata.py",
+                "ingestion/wdpa_monthly/Dockerfile", "ingestion/common/runtime.py",
+                "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py")
+            cached_file("wdpa-flatgeobuf", stage_inputs, fgb, make_fgb, validate_fgb,
+                files={"normalized": normalized}, code=stage_code)
         with profiler.phase(f"{asset.slug}:pmtiles"):
-            build_streamed_pmtiles(
-                normalized,
-                f'SELECT "feature_id", "_sd_geometry" FROM "{asset.tile_layer}" ORDER BY "_sd_ordinal"',
-                asset,
-                pmtiles,
-            )
+            cached_file("wdpa-pmtiles", {**stage_inputs, "title": asset.title,
+                "tile_sql": store.tile_sql(), "minzoom": PMTILES_MINZOOM, "maxzoom": PMTILES_MAXZOOM,
+                "tile_tools": native_tools(("tippecanoe", "tippecanoe-decode", "pmtiles"))}, pmtiles,
+                lambda path: build_streamed_pmtiles(normalized, store.tile_sql(), asset, path),
+                lambda path: feature_metadata.validate_release_vector_contract(
+                    fgb_path=fgb, pmtiles_path=path, decode_zoom=PMTILES_MINZOOM),
+                files={"normalized": normalized, "fgb": fgb}, code=(*stage_code, "scripts/vector_asset.py"))
         expected_output_rows = len(plan)
     remove_if_exists(normalized)
     remove_if_exists(plan_path)

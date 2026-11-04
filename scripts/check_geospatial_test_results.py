@@ -38,6 +38,10 @@ REQUIRED_TESTS = (
         "test_complete_discovery_cli_normalizes_both_realms_and_reuses_spools",
     ),
     (
+        "tests.test_wdpa_disk_processing",
+        "test_metadata_checkpoint_reuses_stage_and_rejects_changed_spool",
+    ),
+    (
         "tests.test_mpatlas_monthly",
         "test_mixed_geometry_bundle_has_source_ids_valid_tiles_and_stored_hashes",
     ),

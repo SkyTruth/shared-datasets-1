@@ -147,6 +147,16 @@ def prepare_source(source: Path, output: Path) -> dict[str, int]:
 
 
 def prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
+    from ingestion.common.stage_checkpoints import cached_build, native_tools
+    return cached_build("mpatlas-normalized", {"asset_slug": ASSET.slug, "release": run_date.isoformat(),
+        "tools": native_tools(("ogr2ogr",))}, workdir,
+        lambda directory: _prepare_metadata(source, directory, run_date),
+        files={"source": source}, result_type=None,
+        code=("ingestion/mpatlas_monthly/run.py", "ingestion/common/feature_metadata.py",
+            "ingestion/common/publication_readiness.py", "scripts/release_feature_model.py"))
+
+
+def _prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
     """Repair/promote geometry before hashing, so hashes describe stored shapes."""
     normalized = workdir / "source.geojsonl"
     def prepare(directory):
@@ -189,6 +199,18 @@ def prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
 
 
 def build_outputs(enriched: Path, records: list[dict[str, Any]], workdir: Path, run_date: dt.date) -> Outputs:
+    from ingestion.common.stage_checkpoints import cached_build, digest, native_tools
+    inputs = {"asset_slug": ASSET.slug, "release": run_date.isoformat(), "records_sha256": digest(records),
+        "tools": native_tools(("ogr2ogr", "ogrinfo", "tippecanoe", "tippecanoe-decode", "pmtiles"))}
+    return cached_build("mpatlas-artifacts", inputs, workdir,
+        lambda directory: _build_outputs(enriched, records, directory, run_date),
+        files={"source": enriched}, result_type=Outputs,
+        code=("ingestion/mpatlas_monthly/run.py", "ingestion/common/feature_metadata.py",
+            "ingestion/common/runtime.py", "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py",
+            "scripts/vector_asset.py"))
+
+
+def _build_outputs(enriched: Path, records: list[dict[str, Any]], workdir: Path, run_date: dt.date) -> Outputs:
     paths = {role: workdir / (ASSET.slug + suffix) for role, suffix in fm.ROLE_SUFFIXES.items()}
     fm.write_sidecar(records, paths["metadata"])
     schema = fm.schema_from_records(asset_slug=ASSET.slug, release=run_date.isoformat(), records=records)

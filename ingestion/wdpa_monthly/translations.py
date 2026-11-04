@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ingestion.common import publication as p
 from scripts import catalog_csv
-from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
+from scripts.feature_metadata_translation_reuse import open_memory
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "catalog/shared-datasets-catalog.csv"
 LOCALES, FIELDS = catalog_csv.translation_config("wdpa-marine", CATALOG_PATH)
@@ -85,17 +85,15 @@ def download_inputs(publisher, assets, workdir: Path):
 @contextmanager
 def prepare_memory(publisher, assets, workdir: Path):
     sources, supplement = download_inputs(publisher, assets, workdir)
-    database = workdir / "translation-memory.sqlite"
-    build_memory(database=database, sources=sources, fields=FIELDS, locales=LOCALES, source_key_fields=("SITE_PID",))
-    # Rebuilds consume only the verified reusable SQLite index from here.
-    for source in sources:
-        for key in ("canonical_sidecar", "translation_source"):
-            Path(source[key]).unlink()
     supplement_path = None
     if supplement is not None:
         supplement_path = workdir / "translation-inputs" / "approved-supplement.ndjson"
         download_source(publisher.bucket, supplement, supplement_path, compress=False)
-    memory = TranslationMemory(database, supplement=supplement_path)
+    memory = open_memory(sources=sources, fields=FIELDS, locales=LOCALES,
+        source_key_fields=("SITE_PID",), supplement=supplement_path)
+    for source in sources:
+        for key in ("canonical_sidecar", "translation_source"):
+            Path(source[key]).unlink()
     try:
         yield memory
     finally:

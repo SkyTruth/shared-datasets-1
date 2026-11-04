@@ -40,6 +40,7 @@ NATIVE_TESTS = (
     "tests/test_mpatlas_monthly.py",
 )
 CONTRACT_FILES = (
+    "ingestion/common/stage_checkpoints.py",
     "scripts/publication_runtime_check.py", "scripts/publication_readiness.py",
     "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
@@ -234,6 +235,8 @@ def select_production_images(paths: list[str] | None) -> list[str]:
     })
     selected = set()
     for path in paths:
+        if path in CONTRACT_FILES:
+            return list(BUILD_TARGETS)
         if classify_change(path)[0] == "documentation":
             continue
         if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:

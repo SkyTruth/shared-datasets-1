@@ -21,7 +21,7 @@ from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
 from ingestion.wdpa_monthly import identity_review
 from scripts import release_feature_model as model
-from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
+from scripts.feature_metadata_translation_reuse import TranslationMemory
 from scripts.wdpa_processing_gate import source_digest
 
 
@@ -172,7 +172,7 @@ def scope_identity_decisions(decisions, *, layers, where, sample):
     return [row for key, row in keyed if key in selected]
 
 
-def build_frozen_translation_memory(config_path, workdir):
+def frozen_translation_inputs(config_path, *, verify_hashes):
     config = json.loads(config_path.read_text())
     if config.get("schema_version") != 1 or {
         s["asset_slug"] for s in config["sources"]
@@ -184,16 +184,12 @@ def build_frozen_translation_memory(config_path, workdir):
         if Path(relative).is_absolute() or ".." in Path(relative).parts:
             raise RuntimeError("frozen translation input paths must be relative")
         source = (root / relative).resolve()
-        if not source.is_relative_to(root) or wdpa.sha256_file(source) != expected_hash:
+        if (not source.is_relative_to(root) or not source.is_file()
+                or (verify_hashes and wdpa.sha256_file(source) != expected_hash)):
             raise RuntimeError(
                 "frozen translation input path/hash differs from its snapshot"
             )
-        target = workdir / "translation-inputs" / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        if wdpa.sha256_file(target) != expected_hash:
-            raise RuntimeError("translation input changed during scratch copy")
-        copies[relative] = target
+        copies[relative] = source
     sources = [
         {
             **source,
@@ -204,19 +200,20 @@ def build_frozen_translation_memory(config_path, workdir):
         }
         for source in config["sources"]
     ]
-    database = workdir / "translation-memory.sqlite"
-    build_memory(
-        database=database,
+    supplement = copies[config["supplement"]] if config.get("supplement") else None
+    return sources, supplement
+
+
+def build_frozen_translation_memory(config_path, workdir):
+    from scripts.feature_metadata_translation_reuse import open_memory
+    sources, supplement = frozen_translation_inputs(config_path, verify_hashes=True)
+    return open_memory(
         sources=sources,
         fields=translations.FIELDS,
         locales=translations.LOCALES,
         source_key_fields=("SITE_PID",),
+        supplement=supplement,
     )
-    for source in sources:
-        for key in ("canonical_sidecar", "translation_source"):
-            Path(source[key]).unlink()
-    supplement = copies[config["supplement"]] if config.get("supplement") else None
-    return TranslationMemory(database, supplement=supplement)
 
 
 def legacy_sample(
@@ -412,6 +409,14 @@ def main():
                 shutil.copyfile(args.source, source_copy)
                 sources = wdpa.prepare_source_datasets(source_copy, args.workdir)
                 layers, split, fields = wdpa.discover_source_layers(sources)
+                if args.translation_sources:
+                    from scripts.feature_metadata_translation_reuse import preflight_index
+                    missing = sorted({"SITE_PID", *translations.FIELDS} - {field.name for field in fields})
+                    if missing:
+                        raise RuntimeError("WDPA source is missing required identity or translation fields: " + ", ".join(missing))
+                    bundles, _ = frozen_translation_inputs(args.translation_sources, verify_hashes=False)
+                    preflight_index(sources=bundles, fields=translations.FIELDS,
+                        locales=translations.LOCALES, source_key_fields=("SITE_PID",))
                 baselines = {}
                 for asset in selected_assets:
                     baselines[asset.slug] = (
@@ -436,12 +441,32 @@ def main():
                     parser.error("--restore-analysis requires --analysis-dir")
                 from google.cloud import storage
                 from ingestion.wdpa_monthly.artifact_bundle import check_reference
+                from ingestion.common.stage_checkpoints import StageStore
                 client = storage.Client(project=wdpa.DEFAULT_PROJECT_ID)
                 def download(ref, path):
                     name = check_reference(ref)
                     client.bucket(wdpa.DEFAULT_BUCKET).blob(name, generation=ref["generation"]).download_to_filename(
                         str(path), if_generation_match=ref["generation"], checksum="crc32c")
-                publication_readiness.restore_retained(json.loads(args.restore_analysis.read_text()), args.analysis_dir, download)
+                reference = json.loads(args.restore_analysis.read_text())
+                checkpoints = StageStore()
+                for item in reference["assets"].values():
+                    binding = item["binding"]
+                    inputs = binding["inputs"]
+                    if (binding["release"] != args.run_date or inputs["source_sha256"] != report["source_sha256"]
+                            or inputs["baseline_snapshot_sha256"] != report["baseline_snapshot_sha256"]
+                            or inputs["native_versions"] != profiler.versions
+                            or inputs["producer"] != wdpa.sha256_file(Path(wdpa.__file__))):
+                        raise RuntimeError("retained WDPA analysis does not match current frozen inputs or producer")
+                    for ref in item["files"].values():
+                        check_reference(ref)
+                if "checkpoints" in reference:
+                    checkpoints.validate_reference(reference["checkpoints"], check_reference)
+                publication_readiness.restore_retained(reference, args.analysis_dir, download)
+                if "checkpoints" in reference:
+                    checkpoints.restore(reference["checkpoints"], download, validate_object=check_reference)
+            wdpa.assert_identity_decisions_allowed(selected_assets,
+                previous_records_by_slug={slug: baseline.records for slug, baseline in baselines.items()},
+                decisions_by_slug=decisions_by_slug, run_date=run_date)
             discovery = wdpa.discover_assets(assets=selected_assets, source=sources[0], source_layers=layers,
                 split_field=split, workdir=args.workdir, run_date=run_date, baselines=baselines,
                 decisions=decisions_by_slug, binding={"source_sha256": report["source_sha256"],

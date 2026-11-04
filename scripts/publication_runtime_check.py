@@ -17,6 +17,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common import publication_readiness as readiness
 from ingestion.common.identity_index import DiskIdentityPlan
+from ingestion.common.stage_checkpoints import StageStore
 from scripts import release_feature_model as model
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 
@@ -90,6 +91,27 @@ def check(directory):
                 release=target.release, decisions=target.decisions)
             if next_id != 3 or plan.record(1)["feature_id"] != "2":
                 raise RuntimeError("complete allocation diverged from retained discovery")
+    cache = StageStore(directory / "checkpoints")
+    calls = []
+    def emit(output):
+        calls.append(output)
+        (output / "table.csv").write_text("feature_id\n1\n")
+        return {"rows": 1}
+    code = ("scripts/publication_runtime_check.py",)
+    binding = {"asset": "probe-a", "release": "2026-02-01"}
+    completed, payload = cache.run("validated-table", binding, emit, code=code)
+    resumed, result = cache.run("validated-table", binding, emit, code=code)
+    if resumed != completed or result != payload or len(calls) != 1:
+        raise RuntimeError("a completed publication stage was executed again")
+    (completed / "table.csv").write_text("changed")
+    try:
+        cache.run("validated-table", binding, emit, code=code)
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError("corrupt publication checkpoint was accepted")
+    if len(calls) != 1:
+        raise RuntimeError("corrupt publication checkpoint triggered another build")
     return {"state": "READY", "assets": 2, "preparations": len(preparations)}
 
 

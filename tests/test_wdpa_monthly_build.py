@@ -5,6 +5,7 @@ import json
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
+from contextlib import nullcontext
 
 import pytest
 
@@ -12,6 +13,90 @@ from ingestion.common import publication as p
 from ingestion.wdpa_monthly import automatic, build as producer, run as wdpa
 from scripts import wdpa_processing_gate as gate
 from test_wdpa_processing_gate import accepted_evidence
+
+
+def test_bad_second_realm_stops_before_first_normalization(monkeypatch, tmp_path):
+    counts = Mock(side_effect=[42, 0])
+    normalize = Mock(side_effect=AssertionError("invalid batch must fail before normalization"))
+    monkeypatch.setattr(wdpa, "expected_feature_count", counts)
+    monkeypatch.setattr(wdpa, "prepare_asset_input", normalize)
+    baseline = wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test")
+    report = wdpa.discover_assets(assets=wdpa.ASSETS, source="fixture", source_layers=[],
+        split_field="REALM", workdir=tmp_path, run_date=dt.date(2026, 11, 1),
+        baselines={asset.slug: baseline for asset in wdpa.ASSETS},
+        decisions={asset.slug: [] for asset in wdpa.ASSETS}, binding={},
+        profiler=SimpleNamespace(phase=lambda _: nullcontext(), versions={}))
+    assert counts.call_count == 2
+    assert report["state"] == "INCOMPLETE"
+    assert report["expected_assets"] == [asset.slug for asset in wdpa.ASSETS]
+    assert wdpa.ASSETS[1].slug in report["error"]
+    normalize.assert_not_called()
+
+
+def test_wrong_recovery_object_fails_before_freezing_inputs(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", "wdpa-monthly-fixture")
+    monkeypatch.setattr(producer, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(producer, "cgroup_limits", lambda: (4, 8 * 1024**3))
+    monkeypatch.setattr(producer, "cgroup_memory", lambda: (1, 1))
+    monkeypatch.setattr(wdpa, "native_versions", lambda: {})
+    monkeypatch.setattr(producer, "PhaseProfiler", lambda *_a, **_k: SimpleNamespace(
+        versions={}, phase=lambda _: nullcontext()))
+    freeze = Mock(side_effect=AssertionError("wrong descriptor must fail before expensive input reads"))
+    monkeypatch.setattr(producer, "freeze_inputs", freeze)
+    client = Mock()
+    reference = {"uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-monthly-old/wdpa-marine/data.bin",
+        "generation": 1, "size": 1, "sha256": "a" * 64}
+    with pytest.raises(p.PublicationError, match="bounded recovery descriptor"):
+        producer.build_month(client, dt.date(2026, 11, 1), tmp_path / "build", retained_analysis=reference)
+    freeze.assert_not_called()
+    client.bucket.assert_not_called()
+
+
+def test_failed_complete_replay_exports_completed_stage(monkeypatch, tmp_path, capsys):
+    from ingestion.common import publication_readiness as readiness
+    from ingestion.common.stage_checkpoints import StageStore
+    from ingestion.wdpa_monthly.artifact_bundle import check_reference
+    from test_wdpa_artifact_bundle import Objects
+
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", "wdpa-monthly-fixture")
+    monkeypatch.setenv("WDPA_BUILD_IMAGE", "fixture")
+    monkeypatch.setenv("WDPA_BUILD_IMAGE_CONFIG_DIGEST", "sha256:" + "a" * 64)
+    monkeypatch.setattr(producer, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(producer, "cgroup_limits", lambda: (4, 8 * 1024**3))
+    monkeypatch.setattr(producer, "cgroup_memory", lambda: (1, 1))
+    monkeypatch.setattr(wdpa, "native_versions", lambda: {})
+    monkeypatch.setattr(producer, "PhaseProfiler", lambda *_a, **_k: SimpleNamespace(
+        versions={}, phase=lambda _: nullcontext()))
+    monkeypatch.setattr(producer, "freeze_inputs", lambda _, path: path.mkdir())
+    monkeypatch.setattr(wdpa, "download_file", lambda _, path: path.write_bytes(b"source"))
+    code = ("ingestion/wdpa_monthly/metadata.py",)
+    def replay(source, inputs, directory, run_date, *, sample, discover_only=False):
+        def completed(path):
+            (path / "data").write_bytes(b"complete stage bytes")
+            return {"rows": 1}
+        if discover_only:
+            return readiness.discover_batch([readiness.Target(asset.slug, run_date, {}, completed)
+                for asset in wdpa.ASSETS], directory.parent / "analysis")
+        if sample:
+            return {"state": "succeeded"}
+        StageStore(directory.parent / "checkpoints").run("wdpa-metadata", {"release": run_date}, completed, code=code)
+        raise subprocess.CalledProcessError(1, ["late-tiling-failure"])
+    monkeypatch.setattr(producer, "replay", replay)
+    store = Objects()
+    with pytest.raises(subprocess.CalledProcessError, match="late-tiling-failure"):
+        producer.build_month(store, dt.date(2026, 11, 1), tmp_path / "build")
+    event = json.loads(capsys.readouterr().out.strip())
+    descriptor = json.loads(store.data[check_reference(event["reference"])][1])
+    assert event["event"] == "publication_analysis_retained"
+    assert set(descriptor["assets"]) == {asset.slug for asset in wdpa.ASSETS}
+    def download(ref, path):
+        store.blob(check_reference(ref), generation=ref["generation"]).download_to_filename(
+            path, if_generation_match=ref["generation"], checksum="crc32c")
+    restored = StageStore(tmp_path / "retry")
+    restored.restore(descriptor["checkpoints"], download, validate_object=check_reference)
+    _, payload = restored.run("wdpa-metadata", {"release": "2026-11-01"},
+        lambda _: pytest.fail("retained stage must be reused"), code=code)
+    assert payload == {"rows": 1}
 
 
 @pytest.mark.parametrize('blocked', [True, False])
@@ -46,8 +131,9 @@ sys.argv = ['local_wdpa_sample.py', *sys.argv[3:]]
 cli.main()
 '''
     run_process = subprocess.run
-    def command(argv, *, check):
-        return run_process([argv[0], '-c', harness, 'blocked' if blocked else 'failed', str(ambiguity_count), *argv[2:]], check=check)
+    def command(argv, *, check, env):
+        assert env["SHARED_DATASETS_CHECKPOINT_DIR"] == str(tmp_path / "checkpoints")
+        return run_process([argv[0], '-c', harness, 'blocked' if blocked else 'failed', str(ambiguity_count), *argv[2:]], check=check, env=env)
     monkeypatch.setattr(producer.subprocess, 'run', command)
     expected_error = IdentityDecisionRequired if blocked else subprocess.CalledProcessError
     with pytest.raises(expected_error) as caught:
@@ -74,7 +160,7 @@ def test_replay_rejects_invalid_serialized_blocked_outcome(monkeypatch, tmp_path
         release='2026-11-01', ambiguity_count=2).blocked_record()
     record.update(change)
     directory = tmp_path / 'replay'
-    def command(argv, *, check):
+    def command(argv, *, check, env):
         directory.mkdir()
         (directory / 'benchmark.json').write_text(json.dumps({
             'state': 'blocked', 'blocked_record': record,
@@ -201,7 +287,7 @@ def test_invalid_state_or_override_cannot_bypass_automatic_boundary(scheduled, m
 def test_replay_passes_month_to_real_cli_and_reads_serialized_report(monkeypatch, tmp_path):
     directory = tmp_path / 'output'
     expected = {'state': 'succeeded', 'run_date': '2026-11-01'}
-    def command(argv, *, check):
+    def command(argv, *, check, env):
         assert check and argv[1] == 'scripts/local_wdpa_sample.py'
         assert argv[argv.index('--run-date') + 1] == expected['run_date']
         assert '--stage-build' in argv and '--genesis' not in argv
