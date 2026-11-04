@@ -465,6 +465,21 @@ class DiskIdentityPlan:
             ],
         }
 
+    def records(self):
+        """Stream allocated rows and duplicate provenance in two ordered queries."""
+        duplicates = iter(self.db.execute("SELECT p.ordinal,d.ordinal FROM duplicates d JOIN planned p "
+            "ON p.identity_key=d.identity_key ORDER BY p.ordinal,d.ordinal"))
+        current = next(duplicates, None)
+        for ordinal, key, geometry, properties, feature_id in self.db.execute("SELECT * FROM planned ORDER BY ordinal"):
+            if feature_id is None:
+                raise RuntimeError("source ordinal has no completed identity allocation")
+            collapsed = []
+            while current is not None and current[0] == ordinal:
+                collapsed.append(current[1])
+                current = next(duplicates, None)
+            yield ordinal, {"identity_key": tuple(json.loads(key)), "geometry_hash": geometry,
+                "properties_hash": properties, "feature_id": feature_id, "duplicate_source_row_numbers": collapsed}
+
     def __len__(self):
         return self.db.execute("SELECT count(*) FROM planned").fetchone()[0]
 

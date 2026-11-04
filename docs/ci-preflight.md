@@ -135,6 +135,15 @@ The suite exercises the deployment loader on the actual CI Docker daemon before
 admitting each retained image. Deployment consumes these tested bytes without
 rebuilding.
 
+The committed `.github/ingestion-rollout-holds.json` lists scheduled job
+targets whose automatic production deployment is held. The plan reads the
+list from its exact tested tree. Held jobs still run selected validation and
+retain tested images. Their automatic deploy jobs and the canaries inside those
+jobs are skipped. Update the list through review. To stage a later rollout,
+use the existing protected per-job deployment workflow with the approved main
+revision, successful CI attempt and unexpired exact image. Clearing a hold
+alone leaves deployment selection unchanged for that comparison.
+
 Hosted native ingestion and dataset-usage image builds restore per-recipe GitHub
 Actions build caches. Catalog-viewer and monitoring-slack use the same Buildx
 `--load` path without remote cache import or export: their small Python dependency

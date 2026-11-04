@@ -364,6 +364,7 @@ def test_successful_replay_modes_persist_per_realm_compatibility(
     from scripts import local_wdpa_sample as replay
     from test_wdpa_artifact_bundle import Objects
     from test_wdpa_monthly import fake_asset_outputs
+    from test_feature_metadata_translation_reuse import record, row as translation_row, source_bundle
 
     wdpa = replay.wdpa
     source = tmp_path / "source.zip"
@@ -372,7 +373,18 @@ def test_successful_replay_modes_persist_per_realm_compatibility(
     inputs.mkdir()
     (inputs / "pins.json").write_text("{}")
     translations = inputs / "translation-sources.json"
-    translations.write_text("{}")
+    config = {"schema_version": 1, "sources": [], "files": {}, "supplement": None}
+    for asset in wdpa.ASSETS:
+        historical = record("1", "a", "Fixture", slug=asset.slug, release="2026-03-01")
+        translation = translation_row("1", "Fixture", "Translated fixture")
+        source_config = source_bundle(inputs / asset.slug, [historical], [translation])
+        for key in ("canonical_sidecar", "translation_source"):
+            path = Path(source_config[key])
+            name = path.relative_to(inputs).as_posix()
+            source_config[key] = name
+            config["files"][name] = wdpa.sha256_file(path)
+        config["sources"].append(source_config)
+    translations.write_text(json.dumps(config))
     work = tmp_path / "replay"
     argv = ["local_wdpa_sample.py", "--source", str(source), "--baselines", str(inputs),
             "--translation-sources", str(translations), "--workdir", str(work),
@@ -386,7 +398,8 @@ def test_successful_replay_modes_persist_per_realm_compatibility(
     monkeypatch.setattr(resources, "cgroup_memory", lambda: (100, 123))
     monkeypatch.setattr(resources, "cgroup_memory_stat", lambda: {})
     monkeypatch.setattr(wdpa, "native_versions", lambda: {})
-    fields = tuple(wdpa.FieldSpec(name, "String") for name in ("SITE_PID", "SITE_ID", "ISO3"))
+    fields = tuple(wdpa.FieldSpec(name, "String")
+        for name in dict.fromkeys(("SITE_PID", "SITE_ID", "ISO3", *wdpa.translations.FIELDS)))
     monkeypatch.setattr(wdpa, "prepare_source_datasets", lambda path, _: [str(path)])
     monkeypatch.setattr(wdpa, "discover_source_layers", lambda paths: (
         [wdpa.SourceLayer("fixture", fields, "GEOMETRY", paths[0])], "MARINE", fields))
@@ -508,7 +521,7 @@ def test_complete_discovery_cli_normalizes_both_realms_and_reuses_spools(tmp_pat
             assert result["payload"]["expected_rows"] == 1
             spool = Path(result["analysis"]) / f"{asset.slug}.normalized.gpkg"
             before = cli.wdpa.sha256_file(spool)
-            with closing(NormalizedGeometryStore.open(spool, layer_name=asset.tile_layer, read_only=True)) as store:
+            with closing(NormalizedGeometryStore.open(spool, layer_name=asset.tile_layer)) as store:
                 assert store.source_feature(1)["properties"]["SITE_PID"] in {"marine", "land"}
             assert cli.wdpa.sha256_file(spool) == before
 
@@ -626,6 +639,38 @@ def test_normalized_store_matches_old_export_semantically(tmp_path):
     assert contents(tmp_path / "old.fgb") == contents(tmp_path / "new.fgb")
     from test_wdpa_identity_review import native_review_pipeline
     native_review_pipeline(tmp_path / "identity-review")
+
+
+def test_metadata_checkpoint_reuses_stage_and_rejects_changed_spool(tmp_path, monkeypatch):
+    pytest.importorskip("osgeo")
+    from ingestion.wdpa_monthly import metadata as stage
+    from ingestion.wdpa_monthly.geometry_store import NormalizedGeometryStore
+    directory = tmp_path / "input"
+    directory.mkdir()
+    normalized, identity = directory / "spool.gpkg", directory / "identity.sqlite"
+    with closing(DiskIdentityPlan(identity)) as plan, closing(
+            NormalizedGeometryStore(normalized, layer_name="fixture")) as store:
+        for ordinal in (1, 2):
+            row = feature(str(ordinal), ordinal)
+            plan.add(ordinal, row, source_fields=("SITE_PID",))
+            store.add(row, ordinal)
+        store.finish_input()
+        plan.resolve(baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
+            asset_slug="example", release="2026-11-01")
+    kwargs = dict(layer="fixture", slug="example", release="2026-11-01", source="frozen-source",
+        where="1=1", next_feature_id=3, decisions=[], versions={"gdal": "3.6.2"})
+    first, payload = stage.prepare(normalized, identity, **kwargs)
+    other, _ = stage.prepare(normalized, identity, **{**kwargs, "source": "other-source"})
+    assert other != first
+    def expensive(*_a, **_k):
+        pytest.fail("completed metadata stage must not execute again")
+    monkeypatch.setattr(NormalizedGeometryStore, "sidecar_records", expensive)
+    second, repeated = stage.prepare(normalized, identity, **kwargs)
+    assert first == second and repeated == payload
+    with normalized.open("ab") as stream:
+        stream.write(b"changed spool")
+    with pytest.raises(RuntimeError, match="spool content changed"):
+        stage.prepare(normalized, identity, **kwargs)
 
 
 @pytest.mark.parametrize(

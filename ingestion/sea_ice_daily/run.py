@@ -500,24 +500,29 @@ def layer_fields(path: Path) -> tuple[str, ...]:
 
 
 def build_outputs(
-    *,
-    source_tif: Path,
-    source_date: dt.date,
-    workdir: Path,
-    baseline: feature_metadata.release_feature_model.GeneratedIdentityBaseline,
-    identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
-) -> AssetOutputs:
+    *, source_tif, source_date, workdir, baseline, identity_resolution_decisions=(),
+):
+    from ingestion.common.stage_checkpoints import cached_build, digest, native_tools
+    from ingestion.common.identity_index import baseline_digest
+    inputs = {"asset_slug": ASSET.slug, "release": source_date.isoformat(),
+        "baseline": baseline_digest(baseline), "decisions_sha256": digest(list(identity_resolution_decisions)),
+        "tools": native_tools(("gdalinfo", "gdal_calc.py", "gdal_polygonize.py", "ogr2ogr", "ogrinfo",
+            "tippecanoe", "tippecanoe-decode", "pmtiles"))}
+    return cached_build("sea-ice-artifacts", inputs, workdir,
+        lambda directory: _build_outputs(source_tif=source_tif, source_date=source_date, workdir=directory,
+            baseline=baseline, identity_resolution_decisions=identity_resolution_decisions),
+        files={"source": source_tif}, result_type=AssetOutputs,
+        code=("ingestion/sea_ice_daily/run.py", "ingestion/common/feature_metadata.py",
+            "ingestion/common/identity_index.py", "ingestion/common/runtime.py",
+            "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py", "scripts/vector_asset.py"))
+
+
+def _normalize_source(source_tif, source_date, workdir):
     mask_tif = workdir / "ice-mask.tif"
     raw_gpkg = workdir / "ice-polygons.gpkg"
     filtered_gpkg = workdir / "ice-filtered.gpkg"
-    fgb = workdir / f"{ASSET.slug}.fgb"
     normalized_fgb = workdir / f"{ASSET.slug}.normalized.fgb"
     geojsonseq = workdir / f"{ASSET.slug}.geojsonseq"
-    enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
-    pmtiles = workdir / f"{ASSET.slug}.pmtiles"
-    metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
-    schema = workdir / f"{ASSET.slug}.schema.json"
-    manifest = workdir / f"{ASSET.slug}.manifest.json"
 
     build_ice_mask_raster(source_tif, mask_tif)
     polygonize_ice_mask(mask_tif, raw_gpkg)
@@ -540,6 +545,26 @@ def build_outputs(
         )
 
     convert_fgb_to_geojsonseq(normalized_fgb, geojsonseq)
+    return geojsonseq
+
+
+def _build_outputs(
+    *, source_tif: Path, source_date: dt.date, workdir: Path,
+    baseline: feature_metadata.release_feature_model.GeneratedIdentityBaseline,
+    identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
+) -> AssetOutputs:
+    from ingestion.common.stage_checkpoints import cached_build, native_tools
+    geojsonseq = cached_build("sea-ice-normalized", {"asset_slug": ASSET.slug,
+        "release": source_date.isoformat(),
+        "tools": native_tools(("gdal_calc.py", "gdal_polygonize.py", "ogr2ogr", "ogrinfo"))},
+        workdir, lambda directory: _normalize_source(source_tif, source_date, directory),
+        files={"source": source_tif}, result_type=None, code=("ingestion/sea_ice_daily/run.py",))
+    fgb = workdir / f"{ASSET.slug}.fgb"
+    enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
+    pmtiles = workdir / f"{ASSET.slug}.pmtiles"
+    metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
+    schema = workdir / f"{ASSET.slug}.schema.json"
+    manifest = workdir / f"{ASSET.slug}.manifest.json"
     release_outputs = feature_metadata.write_generated_id_release(
         open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
         asset_slug=ASSET.slug,
@@ -576,7 +601,6 @@ def build_outputs(
         pmtiles_path=pmtiles,
         decode_zoom=PMTILES_MINZOOM,
     )
-    remove_if_exists(normalized_fgb)
     remove_if_exists(geojsonseq)
     remove_if_exists(enriched_geojsonseq)
 
@@ -689,6 +713,7 @@ def run() -> dict[str, Any]:
         "ogr2ogr",
         "ogrinfo",
         "tippecanoe",
+        "tippecanoe-decode",
         "pmtiles",
     ):
         require_binary(binary)

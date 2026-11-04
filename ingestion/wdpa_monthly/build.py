@@ -11,6 +11,7 @@ import time
 
 from ingestion.common import publication as p
 from ingestion.common import decision_events, publication_readiness
+from ingestion.common.stage_checkpoints import StageStore
 from ingestion.common.feature_metadata import IdentityDecisionRequired
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.wdpa_monthly import run as wdpa, translations, identity_review
@@ -69,7 +70,8 @@ def replay(source, inputs, directory, run_date, *, sample, discover_only=False):
     command += ["--discover-only"] if discover_only else (["--fraction", "0.001", "--seed", "7919", "--compare-legacy"] if sample else ["--stage-build"])
     if discover_only or not sample:
         command += ["--analysis-dir", str(inputs.parent / "analysis")]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, env={**os.environ,
+        "SHARED_DATASETS_CHECKPOINT_DIR": str(inputs.parent / "checkpoints")})
     report = json.loads((directory / "benchmark.json").read_text())
     if report["state"] == "blocked":
         blocked = report["blocked_record"]
@@ -110,31 +112,50 @@ def build_month(client, month, root, *, retained_analysis=None):
     profiler = PhaseProfiler(root, versions=wdpa.native_versions(), scratch_root=Path("/work"))
     started = time.monotonic()
     inputs, source = root / "inputs", root / "source.zip"
+    checkpoints = StageStore(root / "checkpoints")
+    restored = None
+    def download(ref, path):
+        name = check_reference(ref)
+        client.bucket(wdpa.DEFAULT_BUCKET).blob(name, generation=ref["generation"]).download_to_filename(
+            str(path), if_generation_match=ref["generation"], checksum="crc32c")
+        p.require(path.stat().st_size == ref["size"] and wdpa.sha256_file(path) == ref["sha256"],
+                  "retained build object differs from its pinned reference")
+    if retained_analysis is not None:
+        descriptor_name = check_reference(retained_analysis)
+        p.require(descriptor_name.endswith("/analysis-reference.json") and retained_analysis["size"] <= 8 * 1024 * 1024,
+            "retained WDPA analysis must reference a bounded recovery descriptor")
+        descriptor = root / "restored-analysis-reference.json"
+        download(retained_analysis, descriptor)
+        restored = json.loads(descriptor.read_text())
+        p.require(restored["schema"] == publication_readiness.SCHEMA, "unsupported retained WDPA analysis")
+        for item in restored["assets"].values():
+            binding = item["binding"]
+            p.require(binding["release"] == run_date
+                and binding["engine"] == publication_readiness.engine_digest()
+                and binding["inputs"]["native_versions"] == profiler.versions
+                and binding["inputs"]["producer"] == wdpa.sha256_file(Path(wdpa.__file__)),
+                "requested retained analysis does not match the release or producer")
+            for ref in item["files"].values():
+                check_reference(ref)
+        if "checkpoints" in restored:
+            checkpoints.validate_reference(restored["checkpoints"], check_reference)
     with profiler.phase("freeze-inputs"):
         freeze_inputs(client, inputs)
         wdpa.download_file(wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE),
             gate.monthly_date(run_date)), source)
     identity = {"cloud_execution": os.environ["CLOUD_RUN_EXECUTION"],
         "cloud_image": os.environ["WDPA_BUILD_IMAGE"], "image_digest": os.environ["WDPA_BUILD_IMAGE_CONFIG_DIGEST"]}
-    if retained_analysis is not None:
-        def download(ref, path):
-            name = check_reference(ref)
-            client.bucket(wdpa.DEFAULT_BUCKET).blob(name, generation=ref["generation"]).download_to_filename(
-                str(path), if_generation_match=ref["generation"], checksum="crc32c")
-            p.require(path.stat().st_size == ref["size"] and wdpa.sha256_file(path) == ref["sha256"],
-                      "retained analysis object differs from its pinned reference")
-        descriptor = root / "restored-analysis-reference.json"
-        download(retained_analysis, descriptor)
-        reference = json.loads(descriptor.read_text())
-        for item in reference["assets"].values():
+    if restored is not None:
+        source_sha = wdpa.sha256_file(source)
+        baseline_sha = wdpa.sha256_file(inputs / "pins.json")
+        for item in restored["assets"].values():
             binding = item["binding"]
-            p.require(binding["release"] == run_date
-                and binding["inputs"]["source_sha256"] == wdpa.sha256_file(source)
-                and binding["inputs"]["baseline_snapshot_sha256"] == wdpa.sha256_file(inputs / "pins.json")
-                and binding["inputs"]["native_versions"] == profiler.versions
-                and binding["inputs"]["producer"] == wdpa.sha256_file(Path(wdpa.__file__)),
-                "requested retained analysis does not match the current frozen inputs or producer")
-        publication_readiness.restore_retained(reference, root / "analysis", download)
+            p.require(binding["inputs"]["source_sha256"] == source_sha
+                and binding["inputs"]["baseline_snapshot_sha256"] == baseline_sha,
+                "requested retained analysis does not match the current frozen inputs")
+        publication_readiness.restore_retained(restored, root / "analysis", download)
+        if "checkpoints" in restored:
+            checkpoints.restore(restored["checkpoints"], download, validate_object=check_reference)
     results = []
     for name, sampled in (("discovery", False), ("sample", True), ("complete", False)):
         directory = root / name
@@ -144,20 +165,18 @@ def build_month(client, month, root, *, retained_analysis=None):
             else:
                 results.append({**replay(source, inputs, directory, run_date, sample=sampled), **identity})
         except (IdentityDecisionRequired, subprocess.CalledProcessError) as blocked:
-            if name == "discovery":
-                report_path = root / "analysis/readiness.json"
-                if report_path.exists():
-                    retained_report = json.loads(report_path.read_text())
-                    retained = publication_readiness.stage_retained(retained_report,
-                        BuildStager(client, identity["cloud_execution"]).upload)
-                    if retained["assets"]:
-                        # Retain complete normalized work even if a bounded review
-                        # renderer failed; the incomplete batch still fails closed.
-                        descriptor = root / "analysis-reference.json"
-                        descriptor.write_bytes(p.canonical(retained))
-                        reference = BuildStager(client, identity["cloud_execution"]).upload(
-                            "wdpa-marine/analysis-reference.json", descriptor)
-                        print(json.dumps({"event": "publication_analysis_retained", "reference": reference}), flush=True)
+            report_path = root / "analysis/readiness.json"
+            if report_path.exists():
+                stager = BuildStager(client, identity["cloud_execution"])
+                retained_report = json.loads(report_path.read_text())
+                retained = publication_readiness.stage_retained(retained_report, stager.upload)
+                retained["checkpoints"] = checkpoints.export(
+                    lambda name, path: stager.upload("wdpa-marine/checkpoint-" + name, path))
+                if retained["assets"] or retained["checkpoints"]["stages"]:
+                    descriptor = root / "analysis-reference.json"
+                    descriptor.write_bytes(p.canonical(retained))
+                    reference = stager.upload("wdpa-marine/analysis-reference.json", descriptor)
+                    print(json.dumps({"event": "publication_analysis_retained", "reference": reference}), flush=True)
             if not isinstance(blocked, IdentityDecisionRequired):
                 raise
             # Discovery collects the complete batch, so finish every realm's

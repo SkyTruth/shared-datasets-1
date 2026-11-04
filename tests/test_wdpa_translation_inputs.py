@@ -12,7 +12,7 @@ from unittest import mock
 
 from ingestion.common import publication as publication
 from ingestion.wdpa_monthly import translations
-from scripts.feature_metadata_translation_reuse import build_memory
+from scripts.feature_metadata_translation_reuse import open_memory
 from scripts.feature_metadata_localization import source_value_hash
 from test_feature_metadata_translation_reuse import record, row, source_bundle
 from test_publication import publication_temp_directory
@@ -134,7 +134,7 @@ class TranslationInputTests(unittest.TestCase):
             def download(bucket, version, destination, *, compress):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(gzip.compress(contents[version.path]) if compress else contents[version.path])
-            with patch.object(translations, "download_source", side_effect=download), patch.object(translations, "build_memory", wraps=build_memory) as build:
+            with patch.object(translations, "download_source", side_effect=download), patch.object(translations, "open_memory", wraps=open_memory) as build:
                 with translations.prepare_memory(publisher, [SimpleNamespace(slug=slug, root="root")], root / "work") as memory:
                     direct = memory.direct(slug, '["site-a"]')
                     self.assertEqual(len(direct), 6)

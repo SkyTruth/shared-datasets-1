@@ -28,6 +28,8 @@ DEPLOYMENTS = (
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
+INGESTION_DEPLOYMENTS = frozenset({"mpatlas", "eamlis", "wdpa", "sea_ice"})
+INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 NATIVE_TESTS = (
     "tests/test_feature_metadata_localization.py",
@@ -40,6 +42,7 @@ NATIVE_TESTS = (
     "tests/test_mpatlas_monthly.py",
 )
 CONTRACT_FILES = (
+    "ingestion/common/stage_checkpoints.py",
     "scripts/publication_runtime_check.py", "scripts/publication_readiness.py",
     "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
@@ -234,6 +237,8 @@ def select_production_images(paths: list[str] | None) -> list[str]:
     })
     selected = set()
     for path in paths:
+        if path in CONTRACT_FILES:
+            return list(BUILD_TARGETS)
         if classify_change(path)[0] == "documentation":
             continue
         if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
@@ -293,11 +298,16 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
-def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str, str] | None = None) -> list[str]:
+def select_deployments(
+    paths: list[str] | None,
+    *,
+    catalog_snapshots: tuple[str, str] | None = None,
+    ingestion_holds: tuple[str, ...] = (),
+) -> list[str]:
     """Explicit release dependencies; unknown changes broaden tests, not mutations."""
     selected = set()
     iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
-    ingestion = {"mpatlas", "eamlis", "sea_ice", "wdpa"}
+    ingestion = INGESTION_DEPLOYMENTS
     for path in paths or []:
         if classify_change(path)[0] == "documentation":
             continue
@@ -401,6 +411,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.add("ingestion_iam")
         if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
             selected.add("artifact_registry_iam")
+    selected.difference_update(ingestion_holds)
     return [target for target in DEPLOYMENTS if target in selected]
 
 

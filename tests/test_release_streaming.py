@@ -427,16 +427,21 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 self.features[ordinal] = feature
             def finish_input(self):
                 self.path.write_text(json.dumps(self.features))
+                self.path.with_suffix(".sha256").write_text(wdpa.sha256_file(self.path))
+                self.path.with_suffix(".schema.geojsonseq").write_text("fixture schema\n")
             @classmethod
             def open(cls, path, *, layer_name, read_only=False):
                 store = cls.__new__(cls)
                 store.path = path
                 store.features = {int(key): value for key, value in json.loads(path.read_text()).items()}
                 return store
-            def prepare_fields(self):
-                pass
+            def prepare_fields(self, attributes_path):
+                attributes_path.write_bytes(b"fixture attributes")
+                self.field_names = tuple(field.name for field in source_fields)
             def projection_sql(self):
                 return "SELECT geometry fixture"
+            def tile_sql(self):
+                return self.projection_sql()
             def close(self):
                 pass
             def sidecar_records(self, *, plan, asset_slug, release, provenance):
@@ -472,6 +477,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             mock.patch.object(wdpa, "build_filtered_gpkg", fake_build_filtered_gpkg),
             mock.patch.object(wdpa, "feature_stream", side_effect=lambda *a, **kw: __import__("contextlib").nullcontext(source_features())),
             mock.patch.object(wdpa, "NormalizedGeometryStore", FixtureGeometryStore),
+            mock.patch("ingestion.wdpa_monthly.metadata.NormalizedGeometryStore", FixtureGeometryStore),
             mock.patch.object(wdpa, "remove_if_exists", fake_remove_if_exists),
             mock.patch.object(wdpa, "build_streamed_pmtiles", fake_build_pmtiles),
             mock.patch.object(wdpa, "run_command", fake_export),
@@ -555,6 +561,7 @@ class SeaIceSequenceBuilderTests(unittest.TestCase):
             feature = {'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': [0, 0]}, 'properties': {'DN': 3, 'ice_date': '2026-08-01'}}
             Path(output).write_text(json.dumps(feature)+'\n')
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as patches:
+            (Path(tmp) / "source.tif").write_bytes(b"frozen raster fixture")
             for name in ('build_ice_mask_raster', 'polygonize_ice_mask', 'filter_ice_polygons', 'convert_gpkg_to_fgb', 'convert_geojsonseq_to_fgb', 'build_pmtiles'):
                 patches.enter_context(mock.patch.object(sea_ice, name, touch_output))
             patches.enter_context(mock.patch.object(sea_ice, 'convert_fgb_to_geojsonseq', source_stream))

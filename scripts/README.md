@@ -10,6 +10,10 @@ BLOCKED or INCOMPLETE. Use it before artifact builds and CI for all dataset
 formats; [contract and examples](../docs/publication-readiness.md).
 `publication_runtime_check.py` runs the bounded, credential-free runtime probes
 used before local Docker builds and hosted validation fanout.
+`publication_checkpoint.py --plan PLAN.json --check-only` checks a complete
+artifact build graph before execution. Run the same command without
+`--check-only` to produce or resume verified stages for any dataset format.
+See the [stage plan contract](../docs/publication-readiness.md#check-the-build-plan-and-resume-completed-stages).
 
 `ci_preflight.py` owns local container execution and host Docker credential
 isolation alongside the shared plan/run-suite/verify entrypoints. See

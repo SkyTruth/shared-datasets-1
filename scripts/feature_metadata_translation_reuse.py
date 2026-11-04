@@ -136,11 +136,77 @@ def validate_sidecar(path: Path, slug: str, release: str) -> int:
     return result.feature_count
 
 
-def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: Sequence[str], locales: Sequence[str], source_key_fields: Sequence[str]) -> dict[str, Any]:
+def preflight_index(*, sources, fields, locales, source_key_fields):
     fields = tuple(fields)
     locales = tuple(localization.parse_locale_arguments(locales))
-    require(bool(fields) and len(set(fields)) == len(fields) and bool(locales) and bool(source_key_fields), "explicit unique fields, locales, and source identity fields are required")
-    require(len({source["asset_slug"] for source in sources}) == len(sources) and bool(sources), "use one verified source bundle per asset")
+    require(bool(fields) and len(set(fields)) == len(fields) and bool(locales) and bool(source_key_fields),
+        "explicit unique fields, locales, and source identity fields are required")
+    require(bool(sources) and len({source.get("asset_slug") for source in sources}) == len(sources),
+        "use one verified source bundle per asset")
+    problems = []
+    # Validate every bundle's declaration/header/first record before scanning
+    # either realm's complete canonical metadata or constructing any index.
+    for index, source in enumerate(sources):
+        missing = {"asset_slug", "release", "canonical_sidecar", "translation_source"} - source.keys()
+        if missing:
+            problems.append(f"source {index}: missing {sorted(missing)}")
+            continue
+        try:
+            stream = model.read_metadata_sidecar(Path(source["canonical_sidecar"]))
+            try:
+                first = next(stream, None)
+            finally:
+                stream.close()
+            if first is not None:
+                result = model.validate_sidecar_records([first], expected_asset_slug=source["asset_slug"],
+                    expected_release=source["release"])
+                require(result.valid, "; ".join(result.errors))
+                source_key(first["properties"], source_key_fields)
+            stream = localization.iter_translation_source(Path(source["translation_source"]))
+            try:
+                next(stream, None)
+            finally:
+                stream.close()
+        except (ValueError, RuntimeError, OSError) as exc:
+            problems.append(f"{source['asset_slug']}: {exc}")
+    require(not problems, "translation index preflight failed: " + "; ".join(problems))
+    return fields, locales
+
+
+def index_checkpoint(*, sources, fields, locales, source_key_fields):
+    from ingestion.common.stage_checkpoints import StageStore
+    fields, locales = preflight_index(sources=sources, fields=fields, locales=locales,
+        source_key_fields=source_key_fields)
+    inputs = {"sources": [{k: v for k, v in source.items() if k not in {
+        "canonical_sidecar", "translation_source"}} for source in sources],
+        "fields": list(fields), "locales": list(locales), "source_key_fields": list(source_key_fields)}
+    files = {f"{index}/{key}": Path(source[key]) for index, source in enumerate(sources)
+        for key in ("canonical_sidecar", "translation_source")}
+    def prepare(directory):
+        return _build_memory(database=directory / "memory.sqlite", sources=sources, fields=fields,
+            locales=locales, source_key_fields=source_key_fields)
+    return StageStore().run("translation-index", inputs, prepare, files=files, code=(
+        "scripts/feature_metadata_translation_reuse.py", "scripts/feature_metadata_localization.py",
+        "scripts/release_feature_model.py", "scripts/translation_local_io.py"))
+
+
+def open_memory(*, sources, fields, locales, source_key_fields, supplement=None):
+    directory, _ = index_checkpoint(sources=sources, fields=fields, locales=locales, source_key_fields=source_key_fields)
+    return TranslationMemory(directory / "memory.sqlite", supplement=supplement)
+
+
+def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: Sequence[str], locales: Sequence[str], source_key_fields: Sequence[str]) -> dict[str, Any]:
+    import shutil
+    inputs = [Path(source[key]) for source in sources for key in ("canonical_sidecar", "translation_source")]
+    with local_io.candidate_output(database, protected=inputs, expected=local_io.snapshots(inputs)) as candidate:
+        directory, report = index_checkpoint(sources=sources, fields=fields, locales=locales, source_key_fields=source_key_fields)
+        shutil.copyfile(directory / "memory.sqlite", candidate)
+    return report
+
+
+def _build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: Sequence[str], locales: Sequence[str], source_key_fields: Sequence[str]) -> dict[str, Any]:
+    fields = tuple(fields)
+    locales = tuple(locales)
     config = {"schema_version": 1, "fields": fields, "locales": locales, "source_key_fields": tuple(source_key_fields)}
     slots = {(field, locale): i for i, (field, locale) in enumerate((f, loc) for f in fields for loc in locales)}
     inputs = [Path(source[key]) for source in sources for key in ("canonical_sidecar", "translation_source")]

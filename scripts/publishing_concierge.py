@@ -873,7 +873,12 @@ def commands_for_translation_artifacts(state: dict[str, Any]) -> list[str]:
 
 
 def commands_for_build_artifacts(state: dict[str, Any]) -> list[str]:
-    commands = list(plan_from_state(state).get("suggested_commands") or [])
+    commands = [
+        'uv run python scripts/publication_checkpoint.py --plan "$WORK_DIR/stage-plan.json" --check-only',
+        'uv run python scripts/publication_checkpoint.py --plan "$WORK_DIR/stage-plan.json"',
+        "Use the following builder commands when declaring the stage plan.",
+    ]
+    commands.extend(plan_from_state(state).get("suggested_commands") or [])
     commands.extend(commands_for_translation_artifacts(state))
     return commands
 
@@ -1201,6 +1206,17 @@ def validate_build_artifacts(state: dict[str, Any], evidence: dict[str, Any]) ->
     artifacts = evidence.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         raise WorkflowError("evidence.artifacts must be a non-empty list")
+    from ingestion.common.stage_checkpoints import artifact_checkpoint
+    from ingestion.common.publication_sources import input_digest
+    checkpoint_context = {"plan": plan, "source_sha256": input_digest(Path(state["source"])),
+        "readiness": {slug: {"analysis_sha256": value["analysis_sha256"], "review_inputs": value["review_inputs"]}
+            for slug, value in json.loads(Path(recorded["readiness_report"]).read_text())["assets"].items()}}
+    checkpoint = evidence.get("stage_checkpoint")
+    if checkpoint:
+        try:
+            artifact_checkpoint(artifacts, checkpoint_context, manifest=checkpoint)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise WorkflowError(str(exc)) from exc
     seen_formats: set[str] = set()
     normalized = []
     for index, artifact in enumerate(artifacts):
@@ -1241,10 +1257,17 @@ def validate_build_artifacts(state: dict[str, Any], evidence: dict[str, Any]) ->
     missing = sorted(required_artifact_formats(state) - seen_formats)
     if missing:
         raise WorkflowError(f"missing required artifact format(s): {', '.join(missing)}")
-    return {"artifacts": normalized, "notes": str(evidence.get("notes", "")).strip()}
+    try:
+        checkpoint = checkpoint or artifact_checkpoint(normalized, checkpoint_context)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise WorkflowError(str(exc)) from exc
+    return {"artifacts": normalized, "stage_checkpoint": checkpoint, "notes": str(evidence.get("notes", "")).strip()}
 
 
 def validate_validate_artifacts(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    recorded_build = step_record(state, "build-artifacts").get("evidence", {})
+    if recorded_build.get("stage_checkpoint"):
+        validate_build_artifacts(state, recorded_build)
     commands = require_string_list(evidence, "commands_run")
     summary = require_non_empty_string(evidence, "validation_summary")
     all_passed = require_bool(evidence, "all_passed", expected=True)
@@ -1390,6 +1413,9 @@ def validate_preview_upload_metadata(index: int, role: str, content_type: str, c
 
 
 def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    recorded_build = step_record(state, "build-artifacts").get("evidence", {})
+    if recorded_build.get("stage_checkpoint"):
+        validate_build_artifacts(state, recorded_build)
     objects = evidence.get("uploaded_objects")
     if not isinstance(objects, list) or not objects:
         raise WorkflowError("evidence.uploaded_objects must be a non-empty list")
@@ -2443,7 +2469,11 @@ def validate_state_for_pr(state: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"{step.step_id} is incomplete")
     if step_completed(state, "decision-readiness"):
         try:
-            validate_decision_readiness(state, step_record(state, "decision-readiness").get("evidence", {}))
+            recorded_build = step_record(state, "build-artifacts").get("evidence", {})
+            if recorded_build.get("stage_checkpoint"):
+                validate_build_artifacts(state, recorded_build)
+            else:
+                validate_decision_readiness(state, step_record(state, "decision-readiness").get("evidence", {}))
         except (WorkflowError, ValueError, OSError) as exc:
             errors.append(str(exc))
     publish_plan = None

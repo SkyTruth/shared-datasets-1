@@ -315,6 +315,12 @@ Git and history:
   A sample, partial scan, missing input or failed evidence capture is not a
   complete decision inventory. Resolve `NEEDS_DECISION`, `BLOCKED` and
   `INCOMPLETE` before starting expensive validation for that publication.
+- Check the full build plan's tools, source pins, stage dependencies and
+  contracts before starting its first expensive stage. Use the producer's
+  preflight or `scripts/publication_checkpoint.py --check-only --plan ...`.
+  Preserve verified completed stages when a later stage fails. Treat a corrupt
+  checkpoint as a validation failure and investigate the affected boundary
+  before restarting a build.
 - For publication-code changes without a pending real release, exercise complete
   synthetic batches and the changed runtime/serialization boundaries first;
   do not download every production dataset just to validate source changes.
