@@ -69,6 +69,7 @@ COPY ingestion/wdpa_monthly ./ingestion/wdpa_monthly
 COPY ingestion/sea_ice_daily ./ingestion/sea_ice_daily
 COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
 COPY scripts/catalog_csv.py ./scripts/catalog_csv.py
+COPY scripts/compare_releases.py ./scripts/compare_releases.py
 COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
 COPY scripts/feature_metadata_translation_reuse.py ./scripts/feature_metadata_translation_reuse.py
 COPY scripts/translation_local_io.py ./scripts/translation_local_io.py
@@ -76,6 +77,7 @@ COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
+RUN python -c "from ingestion.common import translation_notices"
 COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
 COPY scripts/local_wdpa_sample.py ./scripts/local_wdpa_sample.py
 COPY scripts/local_ingestion_smoke.py ./scripts/local_ingestion_smoke.py
