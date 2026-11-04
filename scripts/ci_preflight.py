@@ -30,7 +30,8 @@ from scripts.deployment_revision import DeploymentError
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    documentation_only, select_deployments, select_production_images, select_suites, verify_results, write_json,
+    INGESTION_DEPLOYMENTS, INGESTION_ROLLOUT_HOLDS, documentation_only, select_deployments,
+    select_production_images, select_suites, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -219,6 +220,17 @@ def require_complete_history(root: Path) -> None:
         raise ValueError("full checkout history is required; fetch --unshallow before preflight")
 
 
+def ingestion_rollout_holds(root: Path, revision: str) -> tuple[str, ...]:
+    if not git(root, "ls-tree", "--name-only", revision, "--", INGESTION_ROLLOUT_HOLDS):
+        return ()
+    holds = json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True))
+    if (not isinstance(holds, list)
+            or any(not isinstance(target, str) or target not in INGESTION_DEPLOYMENTS for target in holds)
+            or len(set(holds)) != len(holds)):
+        raise ValueError("ingestion rollout holds must be a list of distinct scheduled deployment targets")
+    return tuple(holds)
+
+
 def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None) -> dict:
     require_complete_history(root)
     tested_sha = git(root, "rev-parse", "HEAD")
@@ -248,7 +260,8 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "suites": suites,
         "selection_reason": reason, "changed_paths": paths,
-        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots),
+        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots,
+            ingestion_holds=ingestion_rollout_holds(root, tested_sha)),
     }
 
 

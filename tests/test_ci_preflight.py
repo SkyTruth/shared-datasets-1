@@ -470,6 +470,50 @@ def fixture_repo(tmp_path):
     return root, run
 
 
+def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
+    source, git = fixture_repo(tmp_path)
+    holds = source / preflight.INGESTION_ROLLOUT_HOLDS
+    holds.write_text(json.dumps(sorted(preflight.INGESTION_DEPLOYMENTS)))
+    git("add", ".")
+    git("commit", "-m", "hold rollouts")
+    base = git("rev-parse", "HEAD")
+    runtime = source / "ingestion/common/publication.py"
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_text("shared runtime edit\n")
+    git("add", ".")
+    git("commit", "-m", "change shared ingestion")
+    runtime_head = git("rev-parse", "HEAD")
+    holds.write_text("[]\n")  # The plan reads the committed tree.
+
+    output, github_output = tmp_path / "plan.json", tmp_path / "github-output"
+    subprocess.run([
+        preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan",
+        "--base", base, "--output", str(output), "--github-output", str(github_output),
+    ], cwd=source, check=True)
+    plan = json.loads(output.read_text())
+    emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    assert plan["deployments"] == []
+    assert {emitted[target] for target in preflight.INGESTION_DEPLOYMENTS} == {"false"}
+    assert {"lint", "tests", "production-images", "geospatial-integration"} <= set(plan["suites"])
+    assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(json.loads(emitted["production-image-targets"]))
+
+    git("add", ".")
+    git("commit", "-m", "clear holds")
+    assert preflight.make_plan(source, runtime_head, "HEAD")["deployments"] == []
+    assert set(preflight.make_plan(source, base, "HEAD")["deployments"]) == preflight.INGESTION_DEPLOYMENTS
+
+
+@pytest.mark.parametrize("invalid", [{}, ["wdpa", "wdpa"], ["catalog_viewer"], [7]])
+def test_invalid_ingestion_rollout_hold_fails_plan(tmp_path, invalid):
+    source, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    (source / preflight.INGESTION_ROLLOUT_HOLDS).write_text(json.dumps(invalid))
+    git("add", ".")
+    git("commit", "-m", "invalid hold")
+    with pytest.raises(ValueError, match="distinct scheduled deployment targets"):
+        preflight.make_plan(source, base, "HEAD")
+
+
 def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path):
     source, git = fixture_repo(tmp_path)
     base = git("rev-parse", "HEAD")
