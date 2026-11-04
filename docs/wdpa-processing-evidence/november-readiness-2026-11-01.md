@@ -988,23 +988,29 @@ Slack reads verified green **Closed by Monitoring** state and no thread replies:
 | `47c69` | `0.oeku8bmqups0` | `1793693023.693619` | [41756749452/1](https://github.com/SkyTruth/shared-datasets-1/actions/runs/41756749452/attempts/1) |
 | `d7k4g` | `0.oel0h5pa5szu` | `1793709430.211649` | [41756753174/1](https://github.com/SkyTruth/shared-datasets-1/actions/runs/41756753174/attempts/1) |
 
-The four separate failed completion-check CI parents remain open. The existing
+At initial activation, the four separate failed completion-check CI parents
+remained open. The existing
 legacy resolver rejected their observer jobs with
 `every failed job must have a registered deployment recovery`, before any
 Slack update. Those verification jobs are classified as CI scopes rather than
-registered deployment targets; the guarded legacy path cannot resolve them
+registered deployment targets; the guarded legacy path could not resolve them
 from the newer successful WDPA deployment. Actual failed resolution attempts
 were `41756725199/1`, `41756728835/1`, `41756732689/1` and
 `41756738823/1`, corresponding to original completion attempts
 `41564783412/1`, `41582724615/1`, `41600796640/1` and
 `41639498652/1`. Direct Slack reads confirmed their original parents
 `1793672229.079189`, `1793683265.658249`, `1793693513.152389` and
-`1793710748.857879` remain open with no replies.
+`1793710748.857879` were open with no replies at that observation.
 
-This is a remaining notification-resolution contract gap, not a failed WDPA
-publication or schedule activation. Resolving those CI scopes needs a reviewed
-path that preserves their original incident identities and verified recovery
-evidence. No failed worker or observer was replayed to make it green, no guard
+The subsequent resolver repair verifies each exact observer job and its signed
+failed WDPA runtime outcome against a newer signed `verified` WDPA deployment.
+The normal notification workflow retains the original incident identities,
+parents, failure history and delivery claims while recording recovery in its
+signed ledger. Read-only verification of all four original attempts matched
+deployment `7521868392`, status `21298495740` and the existing successful
+completion check `41738263689/1`. The operational contract is documented in
+[Slack incidents](../slack-incidents.md).
+No failed worker or observer was replayed to make it green, no guard
 was bypassed, and no manual Slack message or replacement parent was sent.
 Earlier accepted-decision requests and confirmed replies remain separate from
 these failure parents.

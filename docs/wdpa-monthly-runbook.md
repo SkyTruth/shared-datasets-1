@@ -171,10 +171,12 @@ The installed worker has no persistent date or promotion-bundle pin.
 See [the final activation evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#verified-publication-and-live-activation)
 for exact receipts, generations and verification provenance.
 The four failed-worker Monitoring parents were quietly reconciled after
-authoritative closure. Four older completion-check CI parents remain open
-because the existing guarded legacy resolver does not cover observer-job
-scopes; the evidence records the exact rejected attempts and remaining
-notification contract gap.
+authoritative closure. At initial activation, four older completion-check CI
+parents stayed open because the resolver lacked recovery coverage for their
+observer-job scopes. The evidence retains the rejected attempts. Historical
+completion incidents now use the signed worker-failure and recovery checks
+documented in [Slack incidents](slack-incidents.md) to update their original
+parents and persist closure in the notification ledger.
 
 Keep machine evidence at `docs/wdpa-processing-evidence/`,
 `catalog/wdpa-processing-acceptance.json`, `catalog/wdpa-staged-validation.json`,

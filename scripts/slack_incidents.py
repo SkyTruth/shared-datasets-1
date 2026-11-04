@@ -200,21 +200,56 @@ def reported_runtime_failure(api, run, job):
     match = re.fullmatch(r"verify \(([1-9][0-9]*)\)", job["name"])
     if (alerts.WORKFLOW_PATHS[run["name"]] != "deployment-verification.yml" or match is None
             or not step_verified(job, "Attest verified execution outcome")):
-        return False
+        return None
     record = api.get(f"repos/{REPOSITORY}/deployments/{match[1]}")
     statuses = api.pages(f"repos/{REPOSITORY}/deployments/{match[1]}/statuses?per_page=100")
     exact = [item for item in statuses if item.get("log_url") == run_link({"run_id": run["id"], "attempt": run["run_attempt"]})
              and item.get("state") == "failure" and item.get("description") == "failed"]
     if len(exact) != 1:
-        return False
+        return None
     try:
         payload = deployments.verify_record(api, REPOSITORY, record, statuses=statuses)
         deployments.verify_receipt(api, REPOSITORY, record, exact[0])
     except (deployments.DeploymentError, subprocess.CalledProcessError):
-        return False  # Unverified external evidence retains the original failure alert.
-    return (record["id"] == int(match[1]) and payload["target"] == "wdpa-monthly"
-            and re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/wdpa-monthly-[a-z0-9]{5}\?project=shared-datasets-1",
-                             exact[0].get("environment_url", "")) is not None)
+        return None  # Unverified external evidence retains the original failure alert.
+    if (record["id"] != int(match[1]) or payload["target"] != "wdpa-monthly"
+            or re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/wdpa-monthly-[a-z0-9]{5}\?project=shared-datasets-1",
+                            exact[0].get("environment_url", "")) is None):
+        return None
+    return {"record": record, "status": exact[0]}
+
+
+def completion_failure(observation):
+    """Recognize an exact historical completion-job scope, not its cause."""
+    return (observation["kind"] == "job"
+            and re.fullmatch(r"verify \(([1-9][0-9]*)\)", observation["job_name"]) is not None
+            and observation["scope"] == scope_for_job(observation["job_name"], {}, "deployment-verification.yml")[0])
+
+
+def observer_failure_proofs(api, failures):
+    """Reverify the original jobs and their signed WDPA failed outcomes."""
+    if not failures or not all(completion_failure(item) for item in failures):
+        return None
+    proofs = []
+    for failure in failures:
+        run = api.get(f"repos/{REPOSITORY}/actions/runs/{failure['run_id']}")
+        if (run.get("id") != failure["run_id"] or run.get("run_attempt") != failure["attempt"]
+                or run.get("head_sha") != failure["sha"]
+                or alerts.WORKFLOW_PATHS.get(run.get("name")) != "deployment-verification.yml"):
+            return None
+        jobs = alerts.jobs_for_event(api, run)
+        if jobs is None:
+            return None
+        exact = [job for job in jobs if job["id"] == failure["job_id"]
+                 and job["name"] == failure["job_name"] and job["status"] == "completed"
+                 and job["conclusion"] == failure["conclusion"] and job["completed_at"] == failure["time"]]
+        if len(exact) != 1:
+            return None
+        proof = reported_runtime_failure(api, run, exact[0])
+        if not proof:
+            return None
+        proofs.append(proof)
+    return proofs
 
 
 def source_observations(api, event, targets):
@@ -428,6 +463,41 @@ def verify_saved_success(api, observation):
             "saved recovery differs from its exact signed receipt")
 
 
+def runtime_covers_failures(proofs, recovery, ancestor):
+    return all(ancestor(proof["record"]["sha"], recovery["sha"])
+               and instant(proof["status"]["created_at"]) < instant(recovery["time"])
+               for proof in proofs)
+
+
+def observer_runtime_recovery(api, failures, *, ancestor, success=terminal_success):
+    """Recover a proven worker report without treating observer errors as healthy."""
+    proofs = observer_failure_proofs(api, failures)
+    if proofs is None:
+        return None
+    recovery, _ = success(api, "deployment:wdpa-monthly")
+    if recovery and runtime_covers_failures(proofs, recovery, ancestor):
+        return recovery
+    return None
+
+
+def recover_state(api, state, *, ancestor, success):
+    if state["kind"] == "deployment":
+        evidence, validation = success(api, state["scope"], state["healthy"], state["terminal_validation"])
+        if evidence:
+            state = fold(state, evidence, state["identity"], ancestor=ancestor)
+            if state["healthy"] == evidence:
+                state["terminal_validation"] = validation
+    elif state["kind"] == "job" and state["incident"]["resolution"] is None:
+        evidence = observer_runtime_recovery(api, state["incident"]["failures"], ancestor=ancestor, success=success)
+        if evidence:
+            state = copy.deepcopy(state)
+            # Keep the signed failure history, scope, incident ID and outbox. The
+            # recovery retains its deployment kind and exact signed receipt.
+            evidence = {**evidence, "scope": state["scope"]}
+            state["incident"]["resolution"] = state["healthy"] = evidence
+    return state
+
+
 def new_state(observation, identity):
     return {"scope": observation["scope"], "kind": observation["kind"], "label": observation["label"],
             "identity": identity, "healthy": None, "terminal_validation": None, "incident": None, "deferred": []}
@@ -520,6 +590,11 @@ def validate_state(state, *, legacy=False, historical=False):
         validate_observation(incident["resolution"])
         require(incident["resolution"]["scope"] == state["scope"] and incident["resolution"]["conclusion"] == "success"
                 and state["healthy"] is not None and instant(state["healthy"]["time"]) >= instant(incident["resolution"]["time"]), "invalid incident recovery")
+    for recovery in (state["healthy"], incident["resolution"]):
+        if state["kind"] == "job" and recovery is not None and recovery["kind"] == "deployment":
+            require(all(completion_failure(item) for item in incident["failures"])
+                    and recovery["label"] == recovery["job_name"] == "wdpa-monthly"
+                    and recovery["proof"] is not None, "invalid completion-job runtime recovery")
     require(isinstance(incident["posts"], dict), "invalid Slack outbox")
     allowed = set(failure_posts(state))
     if incident["resolution"] is not None:
@@ -627,7 +702,7 @@ def render(state):
     if resolution:
         impact = "Historical consumer impact unknown; recovery verified for this incident scope."
         action = "Record any consumer impact; no replay is required for this recovered operation."
-        if state["kind"] == "deployment":
+        if resolution["kind"] == "deployment":
             mutation = "Signed terminal success verified for this deployment target; see the receipt below."
         elif state["kind"] == "publication":
             mutation = ("Publication completed; failed PR receipt repaired without replaying the mutation."
@@ -850,12 +925,20 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     # Recovery truth is independently rechecked even when the owner confirms
     # notification delivery bookkeeping from an interrupted writer.
     resolution = state["incident"]["resolution"]
-    if resolution and state["kind"] == "deployment":
-        verify_saved_success(ledger.api, resolution)
+    if resolution and resolution["kind"] == "deployment":
         healthy = state["healthy"]
+        failures = state["incident"]["failures"]
+        if state["kind"] == "job":
+            proofs = observer_failure_proofs(ledger.api, failures)
+            require(proofs is not None and runtime_covers_failures(proofs, resolution, deployments.git_ancestor),
+                    "checkpoint runtime recovery does not cover the original signed worker failures")
+            resolution = {**resolution, "scope": "deployment:wdpa-monthly"}
+            healthy = {**healthy, "scope": "deployment:wdpa-monthly"}
+            failures = [{"sha": proof["record"]["sha"]} for proof in proofs]
+        verify_saved_success(ledger.api, resolution)
         if healthy != resolution:
             verify_saved_success(ledger.api, healthy)
-        require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in state["incident"]["failures"])
+        require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in failures)
                 and deployments.git_ancestor(resolution["sha"], healthy["sha"]), "checkpoint recovery has incompatible revision ancestry")
     state = migrate_verified_state(state, payload["schema"])
     # Owner acceptance repairs notification bookkeeping, not validation reuse.
@@ -890,12 +973,8 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             continue
         states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
     for scope, state in list(states.items()):
-        if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
-            evidence, validation = success(ledger.api, scope, state["healthy"], state["terminal_validation"])
-            if evidence:
-                states[scope] = fold(state, evidence, identity, ancestor=ancestor)
-                if states[scope]["healthy"] == evidence:
-                    states[scope]["terminal_validation"] = validation
+        if scope not in blocked or admits_blocked_observations(state):
+            states[scope] = recover_state(ledger.api, state, ancestor=ancestor, success=success)
     prepared = []
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
@@ -989,12 +1068,7 @@ def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=
             state["deferred"].append(item)
         else:
             state = fold(state, item, identity, ancestor=ancestor)
-    if state["kind"] == "deployment":
-        evidence, validation = success(ledger.api, state["scope"], state["healthy"], state["terminal_validation"])
-        if evidence:
-            state = fold(state, evidence, identity, ancestor=ancestor)
-            if state["healthy"] == evidence:
-                state["terminal_validation"] = validation
+    state = recover_state(ledger.api, state, ancestor=ancestor, success=success)
     incident = state["incident"]
     for key in desired_posts(state):
         if key not in incident["posts"]:
