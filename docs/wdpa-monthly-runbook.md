@@ -28,6 +28,14 @@ and the protected production workflows.
    Write dated releases before `latest/`; unchanged content produces only skipped
    check-ins. Already committed realms retain their receipts and artifacts.
 
+Current source code also performs complete decision discovery for both realms
+before the compatibility sample or artifact build; see
+[publication readiness](publication-readiness.md). Independent PR #382 added
+this gate after the November `bschh` canary began. That successful execution used
+its previously tested `020bb` image; a new main revision does not authorize
+replacing it or starting another worker. Its main CI passed, and its automatic
+WDPA deployment deferred before mutation while the schedule was paused.
+
 The production worker remains 4 CPU / 8 GiB / 100 GiB DISK / zero retries / 24 hours.
 Validation requires kernel memory peak within 8 GiB and scratch below 80 GiB;
 6.4 GiB memory headroom is advisory. Samples never replace full-build validation.
@@ -84,6 +92,19 @@ claim is absent, the October committed state/counter is unchanged and both relea
 indexes remain valid. Then deploy the tested fixed worker with an explicit
 current-month canary date and use protected schedule control to resume.
 
+A feature identity review stop exits zero with `identity_decision_required` and
+requires reviewed release-scoped curation. A signed successful execution alone
+does not establish publication readiness. Inspect the actual canary receipts and
+both release indexes before schedule resume. After accepted curation reaches
+main, the protected identity decision reconciliation replies to the original
+Slack request with the choice, decision maker and rationale, then settles only
+review alerts correlated to that execution/asset/release. Preserve the original
+request, case summaries, context and source/review links; a status marker must
+retain that content, and the decision belongs in the same-thread reply.
+**Decision recorded** does not establish publication success or native
+Monitoring closure. See
+[decision alert routing](alert-routing.md#identity-decision-threads).
+
 Shared worker and Scheduler alerts report failures. Per-asset release indexes
 provide the latest check-in. Source unavailability is a skip, not a successful
 new release; inspect the reason if the source remains absent through day 10.
@@ -103,6 +124,57 @@ executor, generations, claims, reservations and checkpoints before retrying.
 Resume interrupted publication through its original owner. If that executor or
 evidence is unavailable, obtain reviewed recovery. Never delete state, rewind
 counters, change the date to bypass ownership or overwrite partial releases.
+
+November canary `wdpa-monthly-nzptt` failed in the compatibility sample because
+full-release curation included unsampled keys. Its signed failed terminal outcome
+and unchanged publication state are recorded in the
+[November evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#compatibility-sample-decision-scope-failure).
+The scoped replay repair is [PR #373](https://github.com/SkyTruth/shared-datasets-1/pull/373);
+its replacement canary `wdpa-monthly-7zscj` subsequently failed before publication
+when its cache sampler was denied access to a descendant process FD directory.
+The exact failed signed outcome and absent candidate receipts are recorded in the
+[resource-monitor failure evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#descendant-process-cache-sampling-failure).
+The resource-monitor repair [PR #375](https://github.com/SkyTruth/shared-datasets-1/pull/375)
+has merged. Its replacement `wdpa-monthly-47c69` passed full marine validation,
+then failed before publication while serializing the complete-build report.
+The [report failure evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#complete-build-report-serialization-failure)
+records its signed failed outcome and absent candidate receipts. The report-path
+repair [PR #376](https://github.com/SkyTruth/shared-datasets-1/pull/376) is merged;
+its protected replacement canary `wdpa-monthly-d7k4g` reached full terrestrial
+allocation, then failed when 1,323 new identity cases exceeded the 1,024-case
+review-capture cap. Its signed failed outcome and absent candidate receipts are
+recorded in the [terrestrial review evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#full-terrestrial-review-stop-and-capture-capacity).
+The prior 117 approvals did not cover these new cases. The maintainer has now
+explicitly accepted all 1,323 choices, including Naufrage continuity as ID
+`244070`; [PR #379](https://github.com/SkyTruth/shared-datasets-1/pull/379)
+has merged their release-scoped curation after all required checks passed.
+Main validation passed; the next protected deployment was dispatched as
+[41656494930/1](https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930).
+Its exact canary `wdpa-monthly-bschh` completed successfully at
+`2026-11-03T23:07:53.494159Z` and published both November realms.
+The bounded review-capacity repair
+[PR #377](https://github.com/SkyTruth/shared-datasets-1/pull/377) is merged;
+its main CI passed and automatic WDPA deployment deferred before mutation
+while the schedule was paused. That repair alone did not supply semantic decisions.
+
+Independent verification accepted signed deployment `7521868392`, terminal status
+`21298495740`, both actual canary receipts and their current release-index
+generations. Marine published 17,994 rows and terrestrial 481,023 rows for
+`2026-11-01`; no claims or active workers remained. The original repaired
+check-in intent and receipt were preserved.
+
+[Protected schedule control 41756494303/1](https://github.com/SkyTruth/shared-datasets-1/actions/runs/41756494303/attempts/1)
+then resumed only `wdpa-monthly` after all readiness checks passed. Live
+verification confirmed `ENABLED`, `0 9 1-10 * *`, UTC, with the next run at
+`2026-11-04T09:00:00Z` (November 4 at **4:00 a.m. America/New_York**).
+The installed worker has no persistent date or promotion-bundle pin.
+See [the final activation evidence](wdpa-processing-evidence/november-readiness-2026-11-01.md#verified-publication-and-live-activation)
+for exact receipts, generations and verification provenance.
+The four failed-worker Monitoring parents were quietly reconciled after
+authoritative closure. Four older completion-check CI parents remain open
+because the existing guarded legacy resolver does not cover observer-job
+scopes; the evidence records the exact rejected attempts and remaining
+notification contract gap.
 
 Keep machine evidence at `docs/wdpa-processing-evidence/`,
 `catalog/wdpa-processing-acceptance.json`, `catalog/wdpa-staged-validation.json`,
