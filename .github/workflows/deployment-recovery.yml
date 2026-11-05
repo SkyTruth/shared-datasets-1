@@ -60,7 +60,7 @@ jobs:
         if: steps.original.outputs.kind != 'sdk'
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
+          service_account: shared-datasets-recovery@shared-datasets-1.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
         if: steps.original.outputs.kind != 'sdk'
       - uses: hashicorp/setup-terraform@v3

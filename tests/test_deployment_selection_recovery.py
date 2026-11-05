@@ -41,6 +41,8 @@ def test_diverged_main_dependency_selects_its_consumer_in_prospective_plan(sourc
     original = git('rev-parse', 'HEAD')
     entry = source / 'ingestion/eamlis_monthly/run.py'
     entry.write_text(entry.read_text() + '\nfrom scripts import prospective_only\n')
+    recipe = source / ci.RECIPES['eamlis-monthly']
+    recipe.write_text(recipe.read_text() + '\nCOPY scripts/prospective_only.py /app/scripts/\n')
     workflow = source / '.github/workflows/catalog-viewer-deploy.yml'
     workflow.write_text(workflow.read_text() + '\n  probe:\n    runs-on: ubuntu-latest\n    steps:\n    - run: python scripts/prospective_only.py\n')
     git('add', '.')
@@ -258,3 +260,20 @@ d.main()
     receipt = json.loads(Path(values['receipt_path']).read_text())
     assert receipt['payload'] == json.loads((tmp_path / 'record.json').read_text())['payload']
     assert receipt['status']['description'] == 'deferred' and receipt['status']['state'] == 'pending'
+
+
+def test_pushed_images_cannot_bypass_the_new_signed_apply_claim():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ingestion-deploy.yml').read_text())['jobs']
+    apply = jobs['apply']
+    assert apply['needs'] == 'prepare'
+    assert apply['if'] == "needs.prepare.outputs.ready == 'true'"
+    assert apply['env']['IMAGE'] == '${{ needs.prepare.outputs.image }}'
+    steps = apply['steps']
+    claim = next(i for i, step in enumerate(steps) if step.get('id') == 'revision')
+    signed = next(i for i, step in enumerate(steps) if step.get('id') == 'claim-receipt')
+    mutate = next(i for i, step in enumerate(steps) if step.get('name') == 'Terraform apply')
+    assert claim < signed < mutate
+    assert '--artifact "$IMAGE"' in steps[claim]['run']
+    assert steps[signed]['with']['receipt-path'] == '${{ steps.revision.outputs.receipt_path }}'
+    assert steps[mutate]['if'] == "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'"
+    assert '--deferred' not in steps[claim]['run']

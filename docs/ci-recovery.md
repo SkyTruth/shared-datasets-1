@@ -44,11 +44,13 @@ original alert reconciled as distinct milestones.
 `deployment-recovery.yml` retains its trusted main working directory;
 `GIT_DIR` binds revision reads to `original-executor/`. Trusted retry/reconciler scripts
 inspect the original Terraform configuration or SDK bytes; executor scripts
-never replace recovery policy. Infrastructure plans use observer credentials,
+never replace recovery policy. Infrastructure plans use dedicated recovery credentials,
 refresh live resources with `-lock=false` and never apply or write state.
-The protected **GitHub workflow identity sync** must first install the observer's
+The protected **GitHub workflow identity sync** must first install the recovery identity's
 read-only planning metadata role and exact default-state read/workspace-list
-grant. This exposes state contents to the registered observer workflows; it
+grant. Only `deployment-recovery.yml` can assume this identity. State may contain the
+Terraform-managed Monitoring Slack channel auth token; observers retain no state
+read grant. The recovery identity
 grants no state writes, Secret Manager version access or deployment authority.
 Unsupported metadata reads fail closed and require reviewed recovery. Receipt
 verification requires pinned `gh`; a version failure identifies the installer.

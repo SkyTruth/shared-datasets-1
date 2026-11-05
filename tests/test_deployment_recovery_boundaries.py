@@ -27,7 +27,7 @@ def test_recovery_preserves_trusted_checkout_and_never_authenticates_as_deployer
                             'fetch-depth': 0, 'persist-credentials': False}
     auth = [s for s in steps if s.get('uses') == 'google-github-actions/auth@v2']
     assert len(auth) == 1
-    assert auth[0]['with']['service_account'] == 'shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com'
+    assert auth[0]['with']['service_account'] == 'shared-datasets-recovery@shared-datasets-1.iam.gserviceaccount.com'
     assert auth[0]['with']['workload_identity_provider'] == '${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}'
     assert steps.index(auth[0]) > next(i for i, s in enumerate(steps) if s.get('id') == 'original')
 
@@ -37,7 +37,7 @@ def test_recovery_grants_reuse_readonly_roles_and_only_the_exact_default_state()
             for kind, name, body in resources(load_terraform(path))}
     metadata = rows['google_project_iam_member.recovery_reader']
     state = rows['google_storage_bucket_iam_member.recovery_state_reader']
-    assert metadata['member'] == state['member'] == '${google_service_account.github_job["observer"].member}'
+    assert metadata['member'] == state['member'] == '${google_service_account.github_job["recovery"].member}'
     assert metadata['role'] == '${google_project_iam_custom_role.pr_plan_reader.name}'
     assert state['role'] == '${google_project_iam_custom_role.pr_plan_state_reader.name}'
     assert state['condition'][0]['expression'] == rows['google_storage_bucket_iam_member.pr_plan_state_reader']['condition'][0]['expression']
@@ -45,7 +45,8 @@ def test_recovery_grants_reuse_readonly_roles_and_only_the_exact_default_state()
     assert all(p.endswith(('.get', '.list', '.getIamPolicy', '.getAttestationRules', '.use'))
                for p in rows['google_project_iam_custom_role.pr_plan_reader']['permissions'])
     policy = json.loads((ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())
-    assert 'deployment-recovery.yml' in policy['observer']
+    assert policy['recovery'] == ['deployment-recovery.yml']
+    assert all('deployment-recovery.yml' not in workflows for identity, workflows in policy.items() if identity != 'recovery')
     assert 'deployment-recovery.yml' not in policy['terraform']
     registry = json.loads((ROOT / '.github/terraform-targets.json').read_text())
     assert {'google_project_iam_member.recovery_reader', 'google_storage_bucket_iam_member.recovery_state_reader',
@@ -134,7 +135,7 @@ def test_real_reconcile_step_runs_trusted_policy_with_separate_executor_data(tmp
                    'HARNESS': str(harness), 'PYTHON_BIN': sys.executable, 'VIRTUAL_ENV': str(tmp_path / '.venv-mismatch')}
     result = subprocess.run(['bash', '-euo', 'pipefail', '-c', wrapper + step], cwd=workspace, env=environment, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / 'result').read_text())['description'] == ('applied' if kind == 'terraform' else 'verified')
+    assert json.loads((tmp_path / 'result').read_text()) == ('applied' if kind == 'terraform' else 'verified')
 
 
 def test_schedule_runbook_uses_protected_control_for_every_registered_publisher():
@@ -143,3 +144,22 @@ def test_schedule_runbook_uses_protected_control_for_every_registered_publisher(
     assert 'gcloud scheduler jobs pause' not in text
     assert 'ingestion-schedule-control.yml' in text
     assert all(target in text for target in TARGETS)
+
+
+def test_secret_bearing_state_is_confined_to_the_recovery_leaf():
+    from test_workflow_identity_policy import allowed, claims
+
+    # Terraform sensitivity redacts output; it does not exclude this value from state.
+    assert 'auth_token = var.cron_alert_slack_auth_token' in (ROOT / 'terraform/envs/prod/monitoring.tf').read_text()
+    assert allowed('recovery', claims('deployment-recovery.yml'))
+    policy = json.loads((ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())
+    for filename in policy['observer']:
+        assert not allowed('recovery', claims(filename))
+    rows = load_terraform(ROOT / 'terraform/envs/prod/github_job_identities.tf')
+    for kind, name, body in resources(rows):
+        if name in {'recovery_reader', 'recovery_state_reader'}:
+            assert body['member'] == '${google_service_account.github_job["recovery"].member}'
+    locals_ = rows['locals'][0]
+    assert 'recovery' in locals_['github_job_permissions']
+    assert 'recovery' not in next(body['for_each'] for kind, name, body in resources(rows)
+                                  if name == 'github_job_reader')

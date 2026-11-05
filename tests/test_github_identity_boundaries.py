@@ -47,7 +47,7 @@ def auth_accounts(value, job):
 
 
 def declared_workflows():
-    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'runtime', 'heartbeat', 'reconciler', 'cleanup', 'bucket_reader', 'pr_plan')}
+    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'recovery', 'runtime', 'heartbeat', 'reconciler', 'cleanup', 'bucket_reader', 'pr_plan')}
     for path in (ROOT / '.github/workflows').glob('*.yml'):
         value = load_workflow(path)
         for job in value['jobs'].values():
@@ -184,7 +184,7 @@ def test_observer_permissions_and_grants_are_read_only_and_runtime_has_no_iam_ad
     values = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]
     values['github_workflow_identities'] = policy()
     permissions = evaluate(values, 'local.github_job_permissions', variables={'github_repository': REPO})
-    for identity in ('observer', 'heartbeat', 'reconciler'):
+    for identity in ('observer', 'recovery', 'heartbeat', 'reconciler'):
         assert all(permission.rsplit('.', 1)[1] in {'get', 'list'} for permission in permissions[identity])
     assert not any('setIamPolicy' in permission or 'secretmanager.versions.' in permission for row in permissions.values() for permission in row)
     assert {'run.jobs.run', 'run.executions.cancel', 'cloudscheduler.jobs.enable', 'compute.urlMaps.invalidateCache'} <= set(permissions['runtime'])

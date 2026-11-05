@@ -12,6 +12,7 @@ locals {
     "run.operations.get", "run.services.get", "secretmanager.secrets.get", "monitoring.alerts.get", "monitoring.timeSeries.list",
   ]
   github_job_permissions = {
+    recovery   = local.observer_permissions
     observer   = local.observer_permissions
     heartbeat  = local.observer_permissions
     reconciler = ["run.services.get", "monitoring.alerts.get"]
@@ -68,16 +69,16 @@ resource "google_storage_bucket_iam_member" "github_job_reader" {
   }
 }
 
-# Recovery plans use the existing read-only metadata and exact-state roles.
+# Only the dedicated recovery leaf may read potentially secret-bearing state.
 resource "google_project_iam_member" "recovery_reader" {
   project = var.project_id
   role    = google_project_iam_custom_role.pr_plan_reader.name
-  member  = google_service_account.github_job["observer"].member
+  member  = google_service_account.github_job["recovery"].member
 }
 resource "google_storage_bucket_iam_member" "recovery_state_reader" {
   bucket = var.bucket_name
   role   = google_project_iam_custom_role.pr_plan_state_reader.name
-  member = google_service_account.github_job["observer"].member
+  member = google_service_account.github_job["recovery"].member
   condition {
     title      = "exact_default_state_and_workspace_listing"
     expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || resource.name == 'projects/_/buckets/${var.bucket_name}/objects/000-system/terraform/state/prod/default.tfstate'"
