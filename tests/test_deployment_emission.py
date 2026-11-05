@@ -83,7 +83,7 @@ class EmissionTests(unittest.TestCase):
         path.unlink()  # No retained file or Actions artifact is required later.
         value = e.receipt(REPO, claim, phase)
         self.assertEqual(e.canonical(value), original)
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value))) as verifier:
+        with patch.object(e, "verified_output", return_value=json.dumps(verified(value))) as verifier:
             e.verify(self.api, REPO, claim, phase, original_signer=SIGNER)
         command = verifier.call_args.args[0]
         self.assertEqual(command[:3], ["gh", "attestation", "verify"])
@@ -130,13 +130,13 @@ class EmissionTests(unittest.TestCase):
         cert = result[0]["verificationResult"]["signature"]["certificate"]
         cert.update(sourceRepositoryRef="refs/pull/10/merge", buildTrigger="pull_request",
                     runInvocationURI=e.invocation(REPO, 99, 1), buildConfigURI="https://github.com/" + REPO + "/.github/workflows/ci.yml@refs/pull/10/merge")
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(result)), self.assertRaises(d.DeploymentError):
+        with patch.object(e, "verified_output", return_value=json.dumps(result)), self.assertRaises(d.DeploymentError):
             d.verify_record(self.api, REPO, claim)
         self.api.post.assert_not_called()
 
     def test_unsigned_or_bad_signature_never_satisfies_metadata_matching(self):
         failure = subprocess.CalledProcessError(1, ["gh", "attestation", "verify"])
-        with patch.object(e.subprocess, "check_output", side_effect=failure), self.assertRaises(subprocess.CalledProcessError):
+        with patch.object(e, "verified_output", side_effect=failure), self.assertRaises(subprocess.CalledProcessError):
             d.verify_record(self.api, REPO, record())
         value = e.receipt(REPO, record(), status())
         with self.assertRaises(e.EmissionError):
@@ -152,6 +152,7 @@ class EmissionTests(unittest.TestCase):
             "#!" + sys.executable + "\nimport hashlib, json, pathlib, sys\n"
             + f"responses={responses!r}\nlog=pathlib.Path({str(log)!r})\n"
             + "args=sys.argv[1:]\n"
+            + "if args == ['--version']: print('gh version 2.96.0 (2026-07-02)'); sys.exit(0)\n"
             + "assert args[:2] == ['attestation', 'verify'], args\n"
             + "count=len(log.read_text().splitlines()) if log.exists() else 0\n"
             + "with log.open('a') as output: output.write(json.dumps({'args':args,'digest':hashlib.sha256(pathlib.Path(args[2]).read_bytes()).hexdigest()})+'\\n')\n"
@@ -244,10 +245,10 @@ class EmissionTests(unittest.TestCase):
             self.emitter = run(19, 1, path, event)
             phase = status("verified", run_id=19, attempt=1)
             value = e.receipt(REPO, claim, phase)
-            with self.subTest(path=path), patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, self.emitter, path))):
+            with self.subTest(path=path), patch.object(e, "verified_output", return_value=json.dumps(verified(value, self.emitter, path))):
                 e.verify(self.api, REPO, claim, phase, original_signer=SIGNER)
             wrong = verified(value, self.emitter, SIGNER)
-            with patch.object(e.subprocess, "check_output", return_value=json.dumps(wrong)), self.assertRaises(e.EmissionError):
+            with patch.object(e, "verified_output", return_value=json.dumps(wrong)), self.assertRaises(e.EmissionError):
                 e.verify(self.api, REPO, claim, phase, original_signer=SIGNER)
         self.emitter = run(19, 1, ".github/workflows/unrelated.yml", "workflow_dispatch")
         with self.assertRaises(e.EmissionError):
@@ -260,7 +261,7 @@ class EmissionTests(unittest.TestCase):
         claim["environment"] = "production-" + target
         value = e.receipt(REPO, claim, status())
         signer = ".github/workflows/prod-terraform-target-apply.yml"
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=signer))):
+        with patch.object(e, "verified_output", return_value=json.dumps(verified(value, signer=signer))):
             d.verify_record(self.api, REPO, claim)
 
     def test_historical_and_shared_ingestion_receipts_bind_exact_immutable_leaf(self):
@@ -277,10 +278,10 @@ class EmissionTests(unittest.TestCase):
                 claim["payload"]["target"] = target
                 claim["environment"] = "production-" + target
                 value = e.receipt(REPO, claim, status())
-                with self.subTest(target=target, signer=signer), patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=signer))):
+                with self.subTest(target=target, signer=signer), patch.object(e, "verified_output", return_value=json.dumps(verified(value, signer=signer))):
                     d.verify_record(self.api, REPO, claim)
                 wrong = verified(value, signer=".github/workflows/arbitrary.yml")
-                with patch.object(e.subprocess, "check_output", return_value=json.dumps(wrong)), self.assertRaises(d.DeploymentError):
+                with patch.object(e, "verified_output", return_value=json.dumps(wrong)), self.assertRaises(d.DeploymentError):
                     d.verify_record(self.api, REPO, claim)
 
     def test_shared_leaf_requires_exact_reference_revision_and_attempt_evidence(self):
@@ -291,7 +292,7 @@ class EmissionTests(unittest.TestCase):
                            [dict(shared, ref="refs/heads/feature")], [dict(shared, ref=None)],
                            [dict(shared, path=shared["path"].replace("ingestion-deploy", "arbitrary"))], None):
             self.emitter = {**run(), "referenced_workflows": references}
-            with self.subTest(references=references), patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=d.INGESTION_SIGNER))), self.assertRaises(d.DeploymentError):
+            with self.subTest(references=references), patch.object(e, "verified_output", return_value=json.dumps(verified(value, signer=d.INGESTION_SIGNER))), self.assertRaises(d.DeploymentError):
                 d.verify_record(self.api, REPO, record())
         self.api.post.assert_not_called()
 
@@ -326,7 +327,7 @@ class EmissionTests(unittest.TestCase):
     def test_protected_signed_failure_can_prove_claim_ownership_without_unsigned_start(self):
         claim, failed = record(), status("failed", identifier=82)
         self.api.pages.side_effect = lambda path, field=None: [failed, status()] if "/statuses?" in path else [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(e.receipt(REPO, claim, failed)))):
+        with patch.object(e, "verified_output", return_value=json.dumps(verified(e.receipt(REPO, claim, failed)))):
             d.verify_record(self.api, REPO, claim)
         with self.assertRaisesRegex(d.DeploymentError, "incomplete or failed"):
             d.replay_decision([claim], SHA, lambda older, newer: True, lambda candidate: [failed])
@@ -346,11 +347,11 @@ class EmissionTests(unittest.TestCase):
         claim["created_at"] = "2024-05-01T00:00:00Z"
         value = e.receipt(REPO, claim, phase)
         signed = verified(value)
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(signed)):
+        with patch.object(e, "verified_output", return_value=json.dumps(signed)):
             d.verify_record(self.api, REPO, claim)
         copied = copy.deepcopy(claim)
         copied["id"] += 1
-        with patch.object(e.subprocess, "check_output", return_value=json.dumps(signed)), self.assertRaises(d.DeploymentError):
+        with patch.object(e, "verified_output", return_value=json.dumps(signed)), self.assertRaises(d.DeploymentError):
             d.verify_record(self.api, REPO, copied)
 
     def test_standalone_entrypoints_clear_pythonpath_and_fail_bad_crypto(self):
@@ -376,6 +377,7 @@ class EmissionTests(unittest.TestCase):
             "#!" + sys.executable + "\nimport json, pathlib, sys\n"
             + f"routes={routes!r}\nlog=pathlib.Path({str(log)!r})\n"
             + "args=sys.argv[1:]\nwith log.open('a') as output: output.write(json.dumps(args)+'\\n')\n"
+            + "if args == ['--version']: print('gh version 2.96.0 (2026-07-02)'); sys.exit(0)\n"
             + "if args[:2] == ['attestation', 'verify']:\n print('cryptographic verification failed', file=sys.stderr)\n sys.exit(7)\n"
             + "if args[0] != 'api': raise RuntimeError('unexpected command')\nprint(json.dumps(routes[args[-1]]))\n"
         )

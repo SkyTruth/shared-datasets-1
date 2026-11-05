@@ -134,7 +134,7 @@ def test_state_images_use_stored_immutable_digests_and_reject_mutable_tags():
 
 def test_manual_terraform_owners_are_selected_even_without_automatic_deployments():
     scopes = pr.scopes({'changed_paths': ['terraform/envs/prod/pr_plan_iam.tf'], 'deployments': []})
-    assert {s['name'] for s in scopes} == {'PR plan identity IAM bootstrap', 'PR plan identity provisioning'}
+    assert {s['name'] for s in scopes} == {'PR plan identity IAM bootstrap', 'PR plan identity provisioning', 'GitHub workflow identity sync'}
     assert all(not any('terraform_state_reader' in r for r in s['resources']) for s in scopes)
 
 

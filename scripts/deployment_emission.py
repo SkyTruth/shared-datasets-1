@@ -1,10 +1,8 @@
 """Verify durable run-bound receipts using GitHub's Sigstore attestations.
 
-Deployment API payloads, creators and log URLs are untrusted claims. A receipt
-binds their exact record/status IDs to a signature whose Fulcio certificate
-identifies the actual main workflow, revision and run attempt. Receipt bytes
-are reconstructed from the durable API record; ordinary Actions artifact
-retention does not participate in this protocol.
+Receipts bind untrusted API record/status claims to the actual main workflow,
+revision and run attempt through its Fulcio certificate. Bytes reconstruct from
+the durable API record independently of Actions artifact retention.
 """
 from __future__ import annotations
 
@@ -22,6 +20,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ingestion_targets import DEPLOY_TARGETS
 from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
+from scripts.install_deployment_verifier import VERSION
 
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
@@ -126,7 +125,12 @@ def verify_result(results, value, expected, *, batch=False):
 
 
 def verified_output(command, repository, digest):
-    """Retry the observed read-only service outage, never failed verification."""
+    hint = f"receipt verification requires gh {VERSION}; run python scripts/install_deployment_verifier.py"
+    try:
+        version = subprocess.run(["gh", "--version"], text=True, capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise EmissionError(hint) from error
+    require(version.startswith(f"gh version {VERSION} "), hint)
     outage = re.compile(
         r"Error: HTTP 503: trust-metadata-api service unavailable \(https://api\.github\.com/repos/"
         + re.escape(repository) + r"/attestations/sha256:" + digest + r"(?:\?[^\s)]*)?\)"
@@ -145,9 +149,6 @@ def verified_output(command, repository, digest):
 
 
 def verify(api, repository, record, status, *, original_signer, batch=False, verified_statements=None):
-    # Only the incident ledger shares verified multi-subject statements within
-    # one invocation. Live provenance and the exact subject policy still apply
-    # on every call; production receipt callers retain their uncached default.
     require(verified_statements is None or batch, "statement reuse requires batch receipt verification")
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
@@ -170,7 +171,7 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
             try:
                 verify_result(results, value, expected, batch=True)
             except EmissionError:
-                continue  # Another subject or policy needs its own verification.
+                continue
             return
     receipts = Path(os.environ["RUNNER_TEMP"]) / "deployment-receipts"
     receipts.mkdir(parents=True, exist_ok=True)
@@ -184,8 +185,6 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
             "--source-digest", expected["sourceRepositoryDigest"],
             "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json",
         ]
-        # Only a confirmed transient service outage retries this same read.
-        # A final nonzero exit is fatal; raw bundles never become evidence.
         results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
     verify_result(results, value, expected, batch=batch)
     if verified_statements is not None:

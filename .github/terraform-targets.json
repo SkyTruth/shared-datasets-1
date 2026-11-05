@@ -212,6 +212,8 @@
         "google_service_account_iam_member.github_job_wif[\"reconciler\"]", "google_project_iam_custom_role.operational_safety_reader",
         "google_project_iam_member.operational_safety_reader", "google_service_account_iam_member.feature_preview_loader_github_wif",
         "google_storage_bucket_iam_member.monitoring_slack_recovery", "google_storage_bucket_iam_member.github_readonly_object_viewer",
+        "google_project_iam_member.recovery_reader", "google_storage_bucket_iam_member.recovery_state_reader",
+        "google_project_iam_custom_role.pr_plan_reader", "google_project_iam_custom_role.pr_plan_state_reader",
         "google_service_account.github_job[\"cleanup\"]", "google_project_iam_custom_role.github_job[\"cleanup\"]",
         "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]"
       ],

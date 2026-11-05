@@ -68,6 +68,22 @@ resource "google_storage_bucket_iam_member" "github_job_reader" {
   }
 }
 
+# Recovery plans use the existing read-only metadata and exact-state roles.
+resource "google_project_iam_member" "recovery_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.pr_plan_reader.name
+  member  = google_service_account.github_job["observer"].member
+}
+resource "google_storage_bucket_iam_member" "recovery_state_reader" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.pr_plan_state_reader.name
+  member = google_service_account.github_job["observer"].member
+  condition {
+    title      = "exact_default_state_and_workspace_listing"
+    expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || resource.name == 'projects/_/buckets/${var.bucket_name}/objects/000-system/terraform/state/prod/default.tfstate'"
+  }
+}
+
 # Authoritative for this role: retire the old environment-wide subject grant.
 resource "google_service_account_iam_binding" "github_actions_terraform_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${var.github_actions_terraform_service_account_email}"
