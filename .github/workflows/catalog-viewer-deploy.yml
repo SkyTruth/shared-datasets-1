@@ -45,13 +45,15 @@ jobs:
     timeout-minutes: 20
     environment: shared-datasets-production
     steps:
-    - name: Check out trusted deployment verifier
+    - &trusted-checkout
+      name: Check out trusted deployment verifier
       uses: actions/checkout@v4
       with:
         ref: ${{ github.workflow_sha }}
         fetch-depth: 0
         persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
+    - &trusted-bootstrap
+      name: Authorize tested executor and retain trusted receipt policy
       uses: ./.github/actions/deployment-bootstrap
       with:
         workflow: catalog-viewer-deploy.yml
@@ -148,34 +150,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: shared-datasets-production
-    concurrency:
+    concurrency: &state-queue
       group: prod-terraform-state
       queue: max
       cancel-in-progress: false
     steps:
-    - name: Validate main ref
-      run: |
-        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
-    - name: Check out trusted deployment verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: catalog-viewer-deploy.yml
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Authenticate protected deployer
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - &deployer-auth
+      name: Authenticate protected deployer
       uses: ./.github/actions/deployment-auth
-    - name: Set up Terraform
+    - &terraform-setup
+      name: Set up Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
-    - name: Terraform init
+    - &terraform-init
+      name: Terraform init
       run: terraform -chdir=terraform/envs/prod init -input=false
     - name: Verify existing project IAM bootstrap authority
       run: python scripts/deployment_permissions.py --target iam-bootstrap
@@ -209,20 +200,10 @@ jobs:
     timeout-minutes: 10
     environment: shared-datasets-production
     steps:
-    - name: Check out trusted deployment verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: catalog-viewer-deploy.yml
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Authenticate protected observer
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - &observer-auth
+      name: Authenticate protected observer
       uses: ./.github/actions/deployment-auth
       with:
         service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
@@ -233,40 +214,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: shared-datasets-production
-    concurrency:
-      group: prod-terraform-state
-      queue: max
-      cancel-in-progress: false
+    concurrency: *state-queue
     steps:
-    - name: Validate main ref
-      run: |
-        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
-    - name: Check out trusted deployment verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: catalog-viewer-deploy.yml
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Authenticate protected deployer
-      uses: ./.github/actions/deployment-auth
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *deployer-auth
     - name: Require successful signed preparation
       env:
         APPLY_RESULT: ${{ needs.prepare.result }}
         CLAIM_SIGNED: ${{ needs.prepare.outputs.claim_signed }}
       run: test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
-    - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
-    - name: Terraform init
-      run: terraform -chdir=terraform/envs/prod init -input=false
+    - *terraform-setup
+    - *terraform-init
     - name: Terraform plan
       run: |
         image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
@@ -315,23 +274,9 @@ jobs:
     env:
       CATALOG_VIEWER_IMAGE: ${{ needs.prepare.outputs.image }}
     steps:
-    - name: Check out trusted deployment verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: catalog-viewer-deploy.yml
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Authenticate protected observer
-      uses: ./.github/actions/deployment-auth
-      with:
-        service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *observer-auth
     - name: Require successful signed apply
       env:
         APPLY_RESULT: ${{ needs.deploy.result }}

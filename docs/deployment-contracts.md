@@ -62,17 +62,16 @@ resulting suites and required `production_image_targets` unchanged to consumers.
 ## Serialization and protected execution
 
 Publisher wrappers hold `ingestion-<target>` across prepare/apply/verify; usage holds
-`deployment-dataset-usage` across bootstrap/rollout. CI's read-only `dataset-usage` gate
-derives the composed apply job name from CI, wrapper and executor YAML, then
-observes this attempt's attesting apply job;
-ingestion and cleanup IAM proceed while `dataset-usage-rollout` keeps the canary
-inside that target queue. Failed/deferred applies fail; skipped applies require
-signed no-op/supersession evidence. Only shared `apply` holds `prod-terraform-state`
-with `queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
+`deployment-dataset-usage` across bootstrap/rollout. CI's `dataset-usage` reusable
+caller owns the complete rollout. Ingestion and cleanup IAM depend on its native
+job result, so neither can overtake an unfinished usage rollout. A second usage
+revision cannot apply before the first finishes verifying its image. This also
+makes a failed canary block dependent IAM; there is no separate polling runner or
+nested-job-name protocol. Only shared `apply` holds `prod-terraform-state` with
+`queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
 Every queue bounds runners, including reusable leaves: state writers 30 minutes,
 preparation 20, follow-ups 5–20, preview 90, canonical promotion 120, catalog publishing 45.
-Canary verification allows 150 minutes for two 62.5-minute windows plus setup;
-the read-only apply gate allows four hours of queue contention (245-minute cap).
+Canary verification allows 150 minutes for two 62.5-minute windows plus setup.
 
 Every production Terraform writer uses that same literal job-level state queue,
 including reusable IAM syncs and CDN/viewer jobs. Do not put the matching group
@@ -105,8 +104,10 @@ Prepare pushes tested bytes outside the state queue and signs its claim under th
 lock. Bootstrap queues only for `sync_iam` or manual recovery; readiness stays outside.
 Deploy queues the guarded saved-plan apply; verification checks newest ready revision/
 tested digest and signs even after failure outside the queue. CDN invalidation/route
-polling likewise follows signed apply outside the queue. Both use bounded permission
-probes instead of blind IAM sleeps; specialized acceptance keeps separate executors.
+polling likewise follows signed apply outside the queue. Both reuse anchored trusted bootstrap steps and bounded permission
+probes instead of blind IAM sleeps; specialized acceptance keeps separate executors. CDN route checks run the trusted
+standard-library verifier with redirects disabled, bounded retries, and a canonical
+metadata sidecar selected from the latest or historical release index.
 
 [Preflight](ci-preflight.md#image-execution-and-hosted-evidence) owns once-per-CI installed
 probes with production limits and memory-backed `/tmp`; sea ice and local profiling share

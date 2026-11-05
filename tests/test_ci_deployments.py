@@ -197,7 +197,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
     jobs = workflow["jobs"]
     assert "production-images" in jobs["ci-ready"]["needs"]
     for target in DEPLOYMENTS:
-        job = jobs["dataset-usage-rollout" if target == "dataset_usage" else target.replace("_", "-")]
+        job = jobs[target.replace("_", "-")]
         assert "ci-ready" in job["needs"]
         assert "github.event_name == 'push'" in job["if"]
         assert "needs.ci-ready.result == 'success'" in job["if"]
@@ -289,7 +289,7 @@ def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path
 
 
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
-    "dataset-usage-rollout", "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
+    "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
 ]
 
 
@@ -434,7 +434,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
 
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
 def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
-    caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["dataset-usage-rollout" if target == "dataset-usage" else target]
+    caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][target]
     assert caller["with"]["sync_iam"] == "${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}"
     workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
     assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}

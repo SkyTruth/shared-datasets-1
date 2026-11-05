@@ -9,7 +9,8 @@ import tarfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from scripts.tested_image_bundle import dependency_graph, dependency_closure, repository_files
 
-ENTRYPOINTS = ("scripts/deployment_revision.py", "scripts/terraform_plan_allowlist.py", "scripts/install_deployment_verifier.py")
+ENTRYPOINTS = ("scripts/deployment_revision.py", "scripts/terraform_plan_allowlist.py", "scripts/install_deployment_verifier.py",
+               ".github/actions/deployment-bootstrap/verify_cdn.py")
 
 
 def snapshot(revision, destination, *, root=Path.cwd()):

@@ -104,9 +104,9 @@ def assert_protected_terraform_sync(
         {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
-    guard = job['steps'][0]["run"]
+    guard = steps["Validate main ref"]["run"]
     testcase.assertIn('"${GITHUB_REF}" != "refs/heads/main"', guard)
-    testcase.assertIn(f".github/workflows/{workflow_path.name}@refs/heads/main", guard)
+    testcase.assertIn(".github/workflows/$WORKFLOW_FILE@refs/heads/main", guard)
     testcase.assertIn(".github/workflows/ci.yml@refs/heads/main", guard)
     testcase.assertIn("exit 1", guard)
 
@@ -116,7 +116,7 @@ def assert_protected_terraform_sync(
     for resource in expected_targets | blocked_resources:
         result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(resource, ["update"])])
         testcase.assertEqual(result.returncode == 0, resource in expected_targets, result.stderr)
-    testcase.assertIn("Refusing automatic", enforce_run)
+    testcase.assertIn("Refusing", enforce_run)
     testcase.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod", steps["Terraform apply"]["run"])
     testcase.assertIn(" apply ", steps["Terraform apply"]["run"])
 
@@ -356,26 +356,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
 
         self.assertIn("python scripts/ingestion_targets.py image-vars", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
-        self.assertIn(
-            'check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"',
-            verify_run,
-        )
-        self.assertIn(
-            'check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"',
-            verify_run,
-        )
-        self.assertIn('check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"', verify_run)
-        self.assertIn('release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"', verify_run)
-        self.assertIn("candidate_releases.extend(release_index.get(\"releases\") or [])", verify_run)
-        self.assertIn(
-            "WDPA marine release index does not include a canonical metadata sidecar in any release",
-            verify_run,
-        )
-        self.assertIn('check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"', verify_run)
-        self.assertNotIn("latest release does not include a canonical metadata sidecar", verify_run)
-        self.assertIn("expected 200 without redirect", verify_run)
-        self.assertNotIn("curl -L", verify_run)
-        self.assertNotIn("--location", verify_run)
+        self.assertEqual(verify_run, 'python -I -S .github/actions/deployment-bootstrap/verify_cdn.py')
 
     def test_pmtiles_bootstrap_allows_only_in_place_shared_bucket_update(self):
         shared_bucket = "google_storage_bucket.shared_bucket"

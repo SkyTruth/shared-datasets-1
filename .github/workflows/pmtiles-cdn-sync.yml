@@ -43,24 +43,15 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
-      - name: Validate main ref
-        env:
-          WORKFLOW_FILE: pmtiles-cdn-sync.yml
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
-                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main" &&
-                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
-            echo "Execution must use this workflow or CI from main." >&2
-            exit 1
-          fi
-      - name: Check out trusted deployment verifier
+      - &trusted-checkout
+        name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Authorize tested executor and retain trusted receipt policy
+      - &trusted-bootstrap
+        name: Authorize tested executor and retain trusted receipt policy
         uses: ./.github/actions/deployment-bootstrap
         with:
           workflow: pmtiles-cdn-sync.yml
@@ -161,67 +152,37 @@ jobs:
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
-          import csv
           import json
-          import posixpath
           import sys
+          from pathlib import Path
+          from scripts.cdn_plan_readiness import catalog_folders
           from scripts.terraform_target_contracts import plan_scope
           plan = json.load(open(sys.argv[1]))
           allowed_exact, allowed_patterns = plan_scope("pmtiles-cdn-sync.yml", "runtime")
           managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
-          # Managed-folder deletes remove only the folder-level IAM anchor and
-          # never delete objects. A delete is legitimate only when the asset
-          # root has left the catalog, mirroring how the Terraform locals
-          # derive the managed-folder for_each set from catalog rows.
-          catalog_managed_folder_names = {"_catalog/"}
-          with open("catalog/shared-datasets-catalog.csv", newline="", encoding="utf-8") as handle:
-              for row in csv.DictReader(handle):
-                  canonical_path = (row.get("canonical_path") or "").strip()
-                  if not canonical_path.startswith("gs://"):
-                      continue
-                  object_name = canonical_path[len("gs://"):].partition("/")[2]
-                  folder = posixpath.dirname(posixpath.dirname(object_name))
-                  if folder:
-                      catalog_managed_folder_names.add(f"{folder}/")
+          catalog_managed_folder_names = catalog_folders(Path("catalog/shared-datasets-catalog.csv").read_text())
           def managed_folder_name(resource):
               index = resource.get("index")
               if isinstance(index, str) and index:
                   return index
-              address = resource.get("address", "")
-              _, opener, rest = address.partition('["')
-              if not opener:
-                  return ""
-              return rest.rsplit('"]', 1)[0]
+              return resource.get("address", "").partition('["')[2].rsplit('"]', 1)[0]
           blocked = []
           for resource in plan.get("resource_changes", []):
               actions = resource.get("change", {}).get("actions", [])
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
+              allowed = address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns)
               if address == "google_storage_bucket.shared_bucket" and "delete" in actions:
+                  allowed = False
+              if (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}[")) and "delete" in actions:
+                  # Folder-only deletion cannot delete objects. Keep active catalog anchors.
+                  folder = managed_folder_name(resource)
+                  allowed = actions == ["delete"] and address.startswith(f"{managed_folder_prefix}[") and bool(folder) and folder not in catalog_managed_folder_names
+              if not allowed:
                   blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              if (
-                  (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}["))
-                  and "delete" in actions
-              ):
-                  folder_name = managed_folder_name(resource)
-                  if (
-                      actions == ["delete"]
-                      and address.startswith(f"{managed_folder_prefix}[")
-                      and folder_name
-                      and folder_name not in catalog_managed_folder_names
-                  ):
-                      continue
-                  blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
-                  continue
-              blocked.append(f"{'/'.join(actions)} {address}")
           if blocked:
-              print("Refusing automatic PMTiles CDN sync because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
+              print("Refusing non-allowlisted PMTiles changes: " + ", ".join(blocked))
               raise SystemExit(1)
           PY
       - name: Verify permissions required by the saved CDN plan
@@ -241,19 +202,8 @@ jobs:
     timeout-minutes: 20
     environment: shared-datasets-production
     steps:
-      - name: Check out trusted deployment verifier
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Authorize tested executor and retain trusted receipt policy
-        uses: ./.github/actions/deployment-bootstrap
-        with:
-          workflow: pmtiles-cdn-sync.yml
-          executor-sha: ${{ inputs.executor_sha }}
-          source-run-id: ${{ inputs.source_run_id }}
-          source-run-attempt: ${{ inputs.source_run_attempt }}
+      - *trusted-checkout
+      - *trusted-bootstrap
       - name: Require successful signed apply
         env:
           APPLY_RESULT: ${{ needs.sync.result }}
@@ -277,94 +227,7 @@ jobs:
         with:
           service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - name: Verify catalog CDN routes
-        run: |
-          set -euo pipefail
-          check_catalog_url() {
-            local url="$1"
-            local expected_content_type="$2"
-            local headers
-            local status
-            local content_type
-            for attempt in {1..12}; do
-              headers="$(mktemp)"
-              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
-                status="curl-error"
-              fi
-              content_type="$(awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
-              if [[ "$status" == "200" && "$content_type" == *"$expected_content_type"* ]]; then
-                echo "$url returned $status with $content_type"
-                rm -f "$headers"
-                return 0
-              fi
-              echo "Attempt ${attempt}: $url returned $status with ${content_type:-missing content-type}; expected 200 and ${expected_content_type}"
-              cat "$headers"
-              rm -f "$headers"
-              sleep 10
-            done
-            echo "Catalog CDN route verification failed for $url" >&2
-            return 1
-          }
-          check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
-          public_metadata_path="$(
-            python3 <<'PY'
-          import json
-          import urllib.request
-          release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"
-          with urllib.request.urlopen(release_index_url, timeout=30) as response:
-              release_index = json.load(response)
-          def canonical_metadata_path(release):
-              for file_entry in release.get("files") or []:
-                  file_path = str(file_entry.get("path") or "")
-                  file_format = str(file_entry.get("format") or "").lower()
-                  file_role = str(file_entry.get("role") or "").lower()
-                  if (
-                      (file_format == "metadata" or file_role == "metadata")
-                      and file_path.startswith("gs://skytruth-shared-datasets-1/")
-                      and file_path.endswith(".metadata.ndjson.gz")
-                  ):
-                      return file_path.removeprefix("gs://skytruth-shared-datasets-1/")
-              return None
-          candidate_releases = []
-          latest_release = release_index.get("latest_release") or {}
-          if latest_release:
-              candidate_releases.append(latest_release)
-          candidate_releases.extend(release_index.get("releases") or [])
-          for release in candidate_releases:
-              metadata_path = canonical_metadata_path(release)
-              if metadata_path:
-                  print(metadata_path)
-                  break
-          else:
-              raise SystemExit("WDPA marine release index does not include a canonical metadata sidecar in any release")
-          PY
-          )"
-          check_public_artifact_url() {
-            local url="$1"
-            local headers
-            local status
-            local location
-            for attempt in {1..12}; do
-              headers="$(mktemp)"
-              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
-                status="curl-error"
-              fi
-              location="$(awk 'BEGIN { IGNORECASE = 1 } /^location:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
-              if [[ "$status" == "200" && -z "$location" ]]; then
-                echo "$url returned $status without redirect"
-                rm -f "$headers"
-                return 0
-              fi
-              echo "Attempt ${attempt}: $url returned $status with ${location:-no redirect header}; expected 200 without redirect"
-              cat "$headers"
-              rm -f "$headers"
-              sleep 10
-            done
-            echo "Public metadata artifact route verification failed for $url" >&2
-            return 1
-          }
-          check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"
+        run: python -I -S .github/actions/deployment-bootstrap/verify_cdn.py
       - name: Record terminal deployment outcome
         id: deployment-outcome
         env:

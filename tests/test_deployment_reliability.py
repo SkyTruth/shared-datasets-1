@@ -6,7 +6,6 @@ import io
 import os
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
 import urllib.error
 from unittest.mock import Mock
 
@@ -18,7 +17,6 @@ from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
 URL = 'https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions'
-APPLY = 'dataset-usage-rollout / deploy / Apply ingestion Terraform'
 
 
 def test_usage_two_runs_keep_target_ownership_until_exact_image_verification(tmp_path):
@@ -27,7 +25,7 @@ def test_usage_two_runs_keep_target_ownership_until_exact_image_verification(tmp
     shared = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')['jobs']
     # Schedule B at every A job boundary, including the apply/verify boundary.
     # A split caller releases the wrapper queue there and admits B's apply.
-    call = ci.get('dataset-usage-rollout', ci['dataset-usage'])
+    call = ci['dataset-usage']
     phases = ['apply'] if call.get('with', {}).get('stage') == 'apply' else ['apply', 'verify']
     assert wrapper['concurrency'] == {'group': 'deployment-dataset-usage', 'queue': 'max', 'cancel-in-progress': False}
     trace, live = [], ''
@@ -51,14 +49,13 @@ def test_usage_two_runs_keep_target_ownership_until_exact_image_verification(tmp
                                     capture_output=True, text=True)
             assert result.returncode == 0, (trace, result.stderr)
     assert trace == ['A.apply', 'A.verify', 'B.apply', 'B.verify']
-    # The IAM dependency is an early read-only signal, never the full canary.
-    gate = ci['dataset-usage']
-    assert gate['if'] == call['if'] and gate['needs'] == call['needs']
-    assert 'dataset-usage-rollout' not in gate['needs']
-    assert 'concurrency' not in gate and gate['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read'}
-    assert any('deployment_revision.py wait-applied' in step.get('run', '') for step in gate['steps'])
+    # Native dependencies wait for the queue-owning rollout, including its canary.
+    assert call['uses'] == './.github/workflows/dataset-usage-deploy.yml'
+    assert 'dataset-usage-rollout' not in ci
+    assert 'concurrency' not in call and 'runs-on' not in call
     for name in ('ingestion-iam', 'scratch-cleanup-iam'):
-        assert 'dataset-usage' in ci[name]['needs'] and 'dataset-usage-rollout' not in ci[name]['needs']
+        assert 'dataset-usage' in ci[name]['needs']
+        assert "needs.dataset-usage.result == 'success'" in ci[name]['if']
     # A foreign live image still fails: serialization must not weaken the guard.
     rejected = subprocess.run(['bash', '-euo', 'pipefail', '-c', guard], cwd=ROOT,
                               env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
@@ -79,49 +76,6 @@ def test_shared_rollout_has_no_split_verification_and_attests_apply_before_signa
     apply = document['jobs']['apply']['steps']
     assert apply[-1]['name'] == 'Attest applied deployment'
     assert apply[-1]['uses'] == './.github/actions/deployment-receipt'
-
-
-@pytest.mark.parametrize('conclusion', ['success', 'failure', 'cancelled', 'skipped', 'timed_out'])
-def test_apply_signal_uses_exact_current_attempt_job_and_preserves_skip_policy(monkeypatch, conclusion):
-    api = Mock()
-    api.pages.side_effect = [
-        [{'name': APPLY, 'status': 'in_progress', 'conclusion': None},
-         {'name': 'unrelated / Apply ingestion Terraform', 'status': 'completed', 'conclusion': 'success'}],
-        [{'name': APPLY, 'status': 'completed', 'conclusion': conclusion}],
-    ]
-    monkeypatch.setenv('GITHUB_RUN_ID', '13')
-    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
-    context = Mock(return_value='SkyTruth/shared-datasets-1')
-    monkeypatch.setattr(revision, 'verify_context', context)
-    replay = Mock(return_value={'proceed': 'false'})
-    monkeypatch.setattr(revision, 'check', replay)
-    pause = Mock()
-    args = SimpleNamespace(target='dataset-usage', workflow='dataset-usage-deploy.yml')
-    if conclusion in {'success', 'skipped'}:
-        revision.wait_applied(args, api, attempts=2, pause=pause)
-    else:
-        with pytest.raises(revision.DeploymentError, match='apply'):
-            revision.wait_applied(args, api, attempts=2, pause=pause)
-    pause.assert_called_once_with(10)
-    context.assert_called_once_with(args, api)
-    assert api.pages.call_args == (('repos/SkyTruth/shared-datasets-1/actions/runs/13/attempts/2/jobs?per_page=100',), {'field': 'jobs'})
-    assert replay.call_count == int(conclusion == 'skipped')
-    api.post.assert_not_called()
-
-
-@pytest.mark.parametrize('jobs', [[], [{'name': APPLY, 'status': 'in_progress'}],
-                                 [{'name': APPLY, 'status': 'completed', 'conclusion': 'skipped'}],
-                                 [{'name': APPLY, 'status': 'completed', 'conclusion': 'success'}] * 2])
-def test_apply_signal_refuses_missing_incomplete_unapproved_skip_or_ambiguous_jobs(monkeypatch, jobs):
-    monkeypatch.setenv('GITHUB_RUN_ID', '13')
-    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
-    monkeypatch.setattr(revision, 'verify_context', Mock(return_value='SkyTruth/shared-datasets-1'))
-    monkeypatch.setattr(revision, 'check', Mock(return_value={'proceed': 'true'}))
-    api = Mock()
-    api.pages.return_value = jobs
-    with pytest.raises(revision.DeploymentError, match='apply'):
-        revision.wait_applied(SimpleNamespace(target='dataset-usage'), api, attempts=1, pause=Mock())
-    api.post.assert_not_called()
 
 
 @pytest.mark.parametrize('error', [urllib.error.URLError('TLS handshake timeout'), TimeoutError('read timeout'),

@@ -25,9 +25,6 @@ runs:
         if [[ "$MODE" == receipt && -n "$RECEIPT" && -z "$SIGNER" ]]; then exit 0; fi
         echo "Require rehearsal with signer-workflow or receipt with receipt-path." >&2
         exit 1
-    - name: Install exact receipt verifier
-      shell: bash
-      run: python scripts/install_deployment_verifier.py
     - name: Prepare non-mutating rehearsal receipt
       id: rehearsal
       if: inputs.mode == 'rehearsal'
