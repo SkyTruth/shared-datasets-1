@@ -647,12 +647,14 @@ def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path,
 
 def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
-    assert workflow_triggers(workflow)["pull_request"] is None
+    trigger = workflow_triggers(workflow)["pull_request"]
+    assert set(trigger) == {"types"}
+    assert "ready_for_review" in trigger["types"]
     ready = workflow["jobs"]["ci-ready"]
     assert workflow["jobs"]["geospatial-changes"]["name"] == "geospatial-changes"
     assert ready["name"] == "ci-ready"
     assert ready["if"] == "always()"
-    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
+    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "owner-acceptance", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
     assert workflow["jobs"]["sdk-validation"]["strategy"]["matrix"]["node"] == ["22", "24"]
     assert not (ROOT / ".github/workflows/sdk-validation.yml").exists()
     assert not (ROOT / ".github/workflows/catalog-browser-smoke.yml").exists()

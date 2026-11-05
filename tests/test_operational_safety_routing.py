@@ -38,7 +38,7 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     assert workflow_triggers(workflow)["workflow_dispatch"] is None
     job = workflow["jobs"]["safety"]
     assert job["environment"] == "shared-datasets-production"
-    assert job["permissions"] == {"contents": "read", "actions": "write", "deployments": "read", "id-token": "write"}
+    assert job["permissions"] == {"contents": "read", "actions": "write", "deployments": "read", "attestations": "read", "id-token": "write"}
     assert job["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"] == "0"
     steps = workflow_steps_by_name(workflow, "safety")
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
