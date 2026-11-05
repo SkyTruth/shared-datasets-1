@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from contextlib import nullcontext
+from functools import lru_cache
 import json
 import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from threading import Barrier, Lock
 from unittest import mock
@@ -354,29 +356,51 @@ def test_image_suite_uses_verified_interpreter_without_installing_host_dependenc
     assert completed.returncode == 0, completed.stderr
 
 
-def fixture_repo(tmp_path):
-    root = tmp_path / "source"
-    root.mkdir()
+def fixture_git(root):
     executable = os.environ.get("CI_GIT", "git")
     environment = {**os.environ, "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@invalid.example", "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@invalid.example"}
 
     def run(*args):
         return subprocess.check_output([executable, "-C", str(root), "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args], env=environment, text=True).strip()
+    return run
 
-    run("init", "-b", "main")
-    # Use valid producer bytes: the selector now reads this prospective tree.
-    for name in (".github", "scripts", "terraform", "ingestion", "services", "catalog", "api", ".claude"):
-        shutil.copytree(ROOT / name, root / name,
-                        ignore=shutil.ignore_patterns(".terraform", "__pycache__", "node_modules"))
-    for filename in CONTRACT_FILES:
-        target = root / filename
-        if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes((ROOT / filename).read_bytes())
+
+@lru_cache(maxsize=4)
+def fixture_template(source, tree, overrides):
+    # One immutable object store per source tree; each case gets a private index,
+    # branch, working tree and new objects; cases only mutate their clones.
+    from scripts.tested_image_bundle import repository_files
+    work = Path(os.environ.get("SHARED_DATASETS_WORKDIR", Path(tempfile.gettempdir()) / "shared-datasets-1")) / "_scratch/ci-git-fixtures"
+    work.mkdir(parents=True, exist_ok=True)
+    root = Path(tempfile.mkdtemp(dir=work))
+    files = repository_files(tree, source)
+    files.update((name, raw) for name, raw, mode in overrides)
+    for filename, raw in files.items():
+        if raw is not None and (filename in CONTRACT_FILES or filename.startswith((".github/", "scripts/", "terraform/", "ingestion/", "services/", "catalog/", "api/", ".claude/"))):
+            path = root / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            shutil.copymode(source / filename, path)
     (root / preflight.INGESTION_ROLLOUT_HOLDS).write_text("{}\n")
-    run("add", ".")
-    run("commit", "-m", "initial")
-    return root, run
+    git = fixture_git(root)
+    git("init", "-b", "main")
+    git("add", ".")
+    git("commit", "-m", "initial")
+    return root
+
+
+def fixture_repo(tmp_path):
+    root = tmp_path / "source"
+    # Include local producer edits in focused checks as well as frozen commits.
+    changed = set(preflight.git(ROOT, "diff", "--name-only", "-z", "HEAD", raw=True).split("\0"))
+    changed.update(preflight.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", raw=True).split("\0"))
+    overrides = tuple((name, (ROOT / name).read_bytes() if (ROOT / name).is_file() else None,
+                       (ROOT / name).stat().st_mode if (ROOT / name).is_file() else None) for name in sorted(changed) if name)
+    template = fixture_template(ROOT, preflight.git(ROOT, "rev-parse", "HEAD^{tree}"), overrides)
+    subprocess.run([os.environ.get("CI_GIT", "git"), "-c", "core.hooksPath=/dev/null", "clone", "--shared", "--quiet", str(template), str(root)], check=True)
+    git = fixture_git(root)
+    git("remote", "remove", "origin")
+    return root, git
 
 
 def emit_plan(root, base, work):
