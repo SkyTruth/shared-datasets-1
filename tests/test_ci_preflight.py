@@ -69,7 +69,7 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     "ingestion/README.md", "ingestion/wdpa_monthly/README.md",
     "ingestion/common/nested/operations.md", "services/README.md",
     "services/catalog_viewer/README.md", "services/nested/docs/operations.md",
-    "api/python/README.md", "api/typescript/README.md", "api/nested/package/README.md",
+    "api/python/README.md", "api/nested/package/README.md",
     "scripts/nested/README.md", ".github/README.md", "terraform/modules/cloud_run_job/README.md",
     "web/README.md", "tests/browser/README.md", "api/python/notes.md",
 ])
@@ -146,6 +146,10 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
     (["services/monitoring_slack/run.py"], {"monitoring-slack"}),
     (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
     (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly"}),
+    (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer", "dataset-usage"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly", "monitoring-slack"}),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], set()),
     (["README.md"], set()),
 ])
 def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):
@@ -281,25 +285,14 @@ def test_complete_results_pass_with_only_expected_job_skips(suites):
     verify_results(validation, results_for(validation), jobs_for(validation))
 
 
-@pytest.mark.parametrize('verification', ['missing-proof', 'missing-verifier', 'rejected', 'accepted'])
-def test_reuse_wrapper_requires_main_producer_and_independent_original_source(verification):
-    validation = plan(ALWAYS | {'production-images'})
+@pytest.mark.parametrize('suite', ['browser', 'geospatial-integration', 'production-images'])
+def test_cross_run_reuse_cannot_substitute_for_fresh_validation(suite):
+    validation = plan(ALWAYS | {suite})
     results = results_for(validation)
-    for result in results:
-        result['source'] = {'run_id': '123', 'run_attempt': 1}
-    wrapper = next(result for result in results if result['suite'] == 'production-images')
-    del wrapper['production_images']
+    wrapper = next(result for result in results if result['suite'] == suite)
     wrapper['reused_from'] = {'pr_number': 42, 'run_id': 100, 'run_attempt': 1}
-    verifier = mock.Mock(side_effect=ValueError('original source rejected') if verification == 'rejected' else None)
-    proofs = {1: set(validation['suites'])}
-    options = {'source_proofs': None if verification == 'missing-proof' else proofs, 'run_id': '123', 'run_attempt': 1,
-               'reuse_verifier': None if verification == 'missing-verifier' else verifier}
-    if verification == 'accepted':
-        assert verify_results(validation, results, jobs_for(validation), **options)['production-images'] is wrapper
-        verifier.assert_called_once_with(wrapper)
-    else:
-        with pytest.raises(ValueError, match='verified source|original source rejected'):
-            verify_results(validation, results, jobs_for(validation), **options)
+    with pytest.raises(ValueError, match='cross-run validation reuse'):
+        verify_results(validation, results, jobs_for(validation))
 
 
 @pytest.mark.parametrize("defect", ["missing", "duplicate", "failure", "cancelled", "skipped", "no-commands", "failed-command", "wrong-tools"])
@@ -442,7 +435,7 @@ def test_image_host_entrypoints_require_only_standard_library(script):
 
 def test_image_suite_uses_verified_interpreter_without_installing_host_dependencies(tmp_path):
     commands = preflight.suite_commands("production-images", ROOT, plan(), tmp_path)
-    assert len(commands) == 1
+    assert len(commands) == len(BUILD_TARGETS)
     command, cwd = commands[0]
     assert command[:2] == [preflight.sys.executable, "-I"]
     # Exercise the actual command entrypoint with site packages disabled.
@@ -534,7 +527,6 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
     emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
     assert validation["suites"] == ["lint", "tests"]
     assert validation["deployments"] == []
-    assert json.loads(emitted["changed-paths"]) == validation["changed_paths"]
     assert json.loads(emitted["production-image-targets"]) == []
     assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]

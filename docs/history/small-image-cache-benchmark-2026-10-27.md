@@ -1,5 +1,7 @@
 # Small Python image cache investigation and benchmark
 
+> Historical evidence. Current behavior is documented in [CI preflight](../ci-preflight.md).
+
 Catalog-viewer and monitoring-slack now build without GitHub Actions remote
 cache import or export. They retain the same production recipes, Buildx
 `--load`, immutable-image checks, installed-code probes, TAR/config/rootfs proof,

@@ -1,23 +1,8 @@
 # CI and production execution contracts
 
-The baseline covers 1,683 distinct workflow runs and 1,688 run attempts between
-September 21 and October 5, 2026, including every unsuccessful attempt and job
-inspected, with its failure family and source URL. It preserves 77 failed
-attempts and three cancelled attempts;
-multiple failed jobs in one attempt are not additional failed attempts. The 27
-main-push failures whose PR provenance was checked followed successful final-head
-PR CI. The complete inventory also includes a 28th failed main-push run,
-TypeScript SDK validation run 37368847189, which never acquired a hosted runner.
-Coverage and release prerequisites must improve alongside agents' local
-validation; external capacity failures remain separately visible.
-
-The full inventories are retained in git history at commit
-[`3f28e4a69b4adb456fd9f036df96c0b291790bd5`](https://github.com/SkyTruth/shared-datasets-1/commit/3f28e4a69b4adb456fd9f036df96c0b291790bd5),
-with SHA-256 digests
-`e2a55aeec8107cfed2b920bea9a60bd5771e698ddd60775c3f4beb4ce0141f9e` for
-[`docs/ci-failure-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-failure-baseline.json)
-and `36e698e6fd5cd0bf2add760e26dd1c207fa7f84bf33fcd2efe05e3375c571576` for
-[`docs/ci-job-allocation-baseline.json`](https://github.com/SkyTruth/shared-datasets-1/blob/3f28e4a69b4adb456fd9f036df96c0b291790bd5/docs/ci-job-allocation-baseline.json).
+Current validation and rerun behavior is documented in [CI preflight](ci-preflight.md).
+The [historical failure-family mapping](history/ci-failure-guardrails.md) retains
+the original audit counts, run identities and diagnostic limits.
 
 ## Reviewed dataset publication
 
@@ -73,26 +58,15 @@ activated installation and finish its journal, but cannot continue creating rese
 objects under a changed executor. Never
 dispatch the newest executor to evade an existing transaction.
 
-## Rollout evidence
+## Validation and cancellation
 
-Keep existing required checks until the complete `ci-ready` contract is tested
-with positive and negative fixtures. Add it before removing redundant required
-checks. A queued or started canary remains verification pending until terminal
-runtime evidence confirms its outcome.
+The always-evaluated `ci-ready` gate requires every selected suite and both SDK
+runtime results. Missing, failed, cancelled, unexpectedly skipped or mismatched
+revision evidence fails the gate. Production-image selection covers every
+selected image-consuming deployment, including IaC-only edits. Local and PR
+checks use no production credentials.
 
-Seven days after rollout, compare preventable post-merge failures, recurring
-signatures and first-attempt outcomes using the attempt and target-job
-definitions in [the failure-family mapping](ci-failure-guardrails.md). Workflow
-consolidation changes the number of workflows per deployment, so report both
-workflow attempts and selected target deployment attempts. The retained baseline
-contains only unsuccessful job observations. The separate
-main-push allocation baseline supplies 755
-API-created jobs and 553 runner-allocated jobs across 67 observed main head SHAs;
-it excludes other event types and cascades. Broader allocation comparisons remain
-unavailable. Keep legitimate PR rejections, external outages, controlled probes,
-cancellations and asynchronous runtime failures separately visible.
-
-Superseded PR validation is cancelled per suite and PR number, with separate Node
-matrix entries. Main-push validation uses a distinct group per run and cannot be
-cancelled by a later PR or push. There is no workflow-wide cancellation: callable
-production jobs retain their existing non-cancelling queues and state locks.
+A newer PR run cancels the entire obsolete PR workflow graph, including selection,
+suites and gate. Main-push and manual runs have unique groups and are never
+cancelled by that policy. Protected production queues retain their existing
+non-cancelling mutation locks.

@@ -80,6 +80,11 @@ def transport(tmp_path):
             (images / "manifest.json").write_text(json.dumps(result["production_images"]))
             for image in result["production_images"]["images"].values():
                 (images / image["archive"]).write_bytes(b"fixture-image-bytes" * 1024)
+            # A failed concurrent target may leave a partial archive below its
+            # own output directory. Diagnostics must exclude those payloads too.
+            partial = output / "incomplete-target/images"
+            partial.mkdir(parents=True)
+            (partial / "partial.docker.tar").write_bytes(b"partial-image-bytes")
         if suite.startswith("sdk-node"):
             package = output / "package"
             package.mkdir()
@@ -199,64 +204,14 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
         uploads = []
         for step in steps:
             if step.get("with", {}).get("name", "").startswith("ci-image-"):
-                selected = step['if'].removeprefix("steps.reuse.outputs.reused != 'true' && ")
+                selected = step['if']
                 uploads.append(f"(!{selected} || steps.{step['id']}.outcome == 'success')")
-        condition += " && (steps.reuse.outputs.reused == 'true' || ( " + ' && '.join(uploads) + '))'
+        condition += " && " + " && ".join(uploads)
     assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"
     assert receipt["with"]["retention-days"] == 14
-    assert retained['with']['retention-days'] == ("${{ github.event_name == 'pull_request' && 30 || 14 }}" if suite in {'production-images', 'browser', 'geospatial-integration'} else 14)
-
-
-@pytest.mark.parametrize('suite', ['production-images', 'browser', 'geospatial-integration'])
-def test_reused_suite_uploads_original_reference_without_copying_payloads(tmp_path, suite):
-    steps = producer_steps(load_workflow(WORKFLOW), suite)
-    output = tmp_path / 'ci-results' / suite
-    output.mkdir(parents=True)
-    wrapper = {'suite': suite, 'reused_from': {'pr_number': 42, 'run_id': 100, 'run_attempt': 1}}
-    (output / 'result.json').write_text(json.dumps(wrapper))
-    for prefix in ('ci-result-', 'ci-gate-result-'):
-        step = next(step for step in steps if step.get('with', {}).get('name', '').startswith(prefix))
-        _, archive = package_upload(step, tmp_path, suite, 2, tmp_path)
-        with zipfile.ZipFile(archive) as bundle:
-            assert bundle.namelist() == ['result.json']
-            assert json.loads(bundle.read('result.json')) == wrapper
-
-
-def test_hosted_handoff_benchmark_is_read_only_and_separate_from_deployments():
-    workflow = load_workflow(WORKFLOW)
-    selection = workflow["jobs"]["geospatial-changes"]["outputs"]["image_handoff_benchmark"]
-    assert "github.event_name == 'pull_request'" in selection
-    for name in ("tested_image_authorization.py", "tested_image_bundle.py", "benchmark_image_handoff.py"):
-        assert name in selection
-    job = workflow["jobs"]["image-handoff-benchmark"]
-    assert job["permissions"] == {"contents": "read", "actions": "read"}
-    assert "environment" not in job and "secrets" not in job
-    assert job["needs"] == ["geospatial-changes", "production-images"]
-    assert "needs.production-images.result == 'success'" in job["if"]
-    assert not any("google-github-actions/" in step.get("uses", "") for step in job["steps"])
-    run = next(step for step in job["steps"] if "benchmark_image_handoff.py" in step.get("run", ""))
-    assert run["env"] == {"GH_TOKEN": "${{ github.token }}"}
-    assert "--run-id \"$GITHUB_RUN_ID\"" in run["run"]
-    assert "--attempt \"$GITHUB_RUN_ATTEMPT\"" in run["run"]
-    assert "--sha \"$GITHUB_SHA\"" in run["run"]
-    assert "image-handoff-benchmark" not in workflow["jobs"]["ci-ready"]["needs"]
-
-
-@pytest.mark.parametrize("level", [0, 1])
-def test_hosted_compression_comparison_uses_identical_tars_and_is_pr_only(level):
-    steps = producer_steps(load_workflow(WORKFLOW), "production-images")
-    prefix = "benchmark-image-mpatlas-level0-" if level == 0 else "ci-image-mpatlas-monthly-"
-    step = next(step for step in steps if step.get("with", {}).get("name", "").startswith(prefix))
-    if level == 0:
-        assert step["if"] == "needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'"
-    else:
-        assert step["if"] == "steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')"
-    assert step["with"]["path"] == "${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar"
-    assert step["with"]["compression-level"] == level
-    assert step["with"]["if-no-files-found"] == "error"
-    assert not step.get("continue-on-error")
+    assert retained['with']['retention-days'] == 14
 
 
 @pytest.mark.parametrize("defect", [

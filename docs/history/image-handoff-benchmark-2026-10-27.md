@@ -1,5 +1,7 @@
 # Per-image artifact handoff measurements
 
+> Historical evidence. Current behavior is documented in [CI preflight](../ci-preflight.md).
+
 ## Problem and invariant
 
 Main CI run [40456414884/1](https://github.com/SkyTruth/shared-datasets-1/actions/runs/40456414884)

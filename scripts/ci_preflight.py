@@ -8,7 +8,7 @@ authorization or uses production credentials.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_geospatial_test_results import check_results
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.deployment_revision import DeploymentError
-from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
+from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
     INGESTION_DEPLOYMENTS, INGESTION_ROLLOUT_HOLDS, documentation_only, select_deployments,
@@ -309,6 +309,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false", "-lockfile=readonly")
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
+        add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", "--target", "all")
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
         add("uv", "sync", "--locked", "--all-groups")
@@ -325,10 +326,6 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
         add("uv", "run", "--no-sync", "python", ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py", "--local-only", "--format", "markdown", "--fail-on-findings")
         add("uv", "run", "--no-sync", "python", "scripts/check_identity_resolutions.py", "--offline")
-        release_targets = {"mpatlas": "mpatlas", "eamlis": "eamlis", "wdpa": "wdpa", "sea_ice": "sea-ice", "ingestion_iam": "iam", "dataset_usage": "dataset-usage"}
-        selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
-        if selected_targets:
-            add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
         add("uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
@@ -359,8 +356,9 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         targets = select_production_images(plan.get("changed_paths"))
         if not targets:
             raise ValueError("production image suite selected without image targets")
-        add(sys.executable, "-I", "scripts/production_image_contracts.py",
-            *(argument for target in targets for argument in ("--target", target)), "--output", str(output))
+        for target in targets:
+            add(sys.executable, "-I", "scripts/production_image_contracts.py",
+                "--target", target, "--output", str(output / target))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -388,31 +386,6 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
             raise ValueError(f"{tool}: required {expected}, found {actual}")
         versions[tool] = actual
     return versions
-
-
-def reuse_suite(root: Path, plan: dict, suite: str, output: Path) -> bool:
-    """Record a verified original producer; never relabel its bytes as main's."""
-    if os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF") != "refs/heads/main":
-        return False
-    from scripts.ci_reuse import discover
-    from scripts.sdk_release_authorization import GitHub
-
-    validate_checkout(root, plan)
-    main_source = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-    source = discover(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root, suite, main_source=main_source)
-    if source is None:
-        return False
-    result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
-    result.update({
-        "schema_version": 1, "suite": suite, "status": "success", "tools": source.result["tools"],
-        "source": main_source,
-        "commands": [{"argv": ["ci_preflight.py", "reuse-suite", "--suite", suite], "exit_code": 0}],
-        "reused_from": source.reference,
-    })
-    validate_checkout(root, plan)
-    write_json(output / "result.json", result)
-    print(f"{suite}: verified original PR producer {source.reference}; no rebuild or artifact copy.")
-    return True
 
 
 def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
@@ -448,23 +421,39 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
         if suite == "production-images":
             result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
             result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
-        for index, (command, cwd) in enumerate(suite_commands(suite, root, plan, output)):
+        def execute(item):
+            index, (command, cwd) = item
             print(f"[{suite}] {' '.join(command)}", flush=True)
             log = output / f"command-{index:02d}.log"
             with log.open("w") as stream:
                 completed = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, check=False)
-            result["commands"].append({"argv": command, "exit_code": completed.returncode, "log": log.name})
-            if completed.returncode != 0:
-                print(log.read_text()[-12000:], file=sys.stderr)
-                raise ValueError(f"{suite}: command {index + 1} failed ({completed.returncode})")
+            return {"argv": command, "exit_code": completed.returncode, "log": log.name}
+
+        # Only independent image targets run concurrently. Policy/setup commands
+        # retain their serial, fail-fast ordering. Both paths keep one suite proof.
+        with ThreadPoolExecutor(max_workers=2) if suite == "production-images" else nullcontext() as executor:
+            commands = enumerate(suite_commands(suite, root, plan, output))
+            reports = executor.map(execute, commands) if executor else map(execute, commands)
+            for report in reports:
+                result["commands"].append(report)
+                if report["exit_code"] != 0:
+                    print((output / report["log"]).read_text()[-12000:], file=sys.stderr)
+                    raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
         if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
             if suite == "geospatial-integration":
                 check_results(output / "pytest.xml")
         if suite == "production-images":
-            manifest = json.loads((output / "images/manifest.json").read_text())
-            if set(validate_manifest(manifest, plan["tested_sha"])) != set(select_production_images(plan.get("changed_paths"))) & IMAGE_TARGETS:
-                raise ValueError("tested production-image set differs from validation selection")
+            manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
+            (output / "images").mkdir(exist_ok=True)
+            for target in select_production_images(plan.get("changed_paths")):
+                directory = output / target / "images"
+                images = validate_manifest(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
+                if set(images) != {target}:
+                    raise ValueError("tested production-image set differs from validation selection")
+                manifest["images"].update(images)
+                (directory / images[target]["archive"]).replace(output / "images" / images[target]["archive"])
+            write_json(output / "images/manifest.json", manifest)
             result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
@@ -637,11 +626,6 @@ def main() -> int:
     runner.add_argument("--plan", type=Path, required=True)
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
-    reuse = commands.add_parser("reuse-suite")
-    reuse.add_argument("--plan", type=Path, required=True)
-    reuse.add_argument("--suite", choices=SUITES, required=True)
-    reuse.add_argument("--output", type=Path, required=True)
-    reuse.add_argument("--github-output", type=Path, required=True)
     verifier = commands.add_parser("verify")
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
@@ -657,7 +641,6 @@ def main() -> int:
             write_json(args.output, plan)
             if args.github_output:
                 with args.github_output.open("a") as output:
-                    output.write("changed-paths=" + json.dumps(plan["changed_paths"]) + "\n")
                     output.write("production-image-targets=" + json.dumps(select_production_images(plan["changed_paths"])) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
@@ -669,11 +652,6 @@ def main() -> int:
         if args.command == "run-suite":
             plan = load_plan(args.plan)
             return 0 if run_suite(root, plan, args.suite, args.output)["status"] == "success" else 1
-        if args.command == "reuse-suite":
-            reused = reuse_suite(root, load_plan(args.plan), args.suite, args.output)
-            with args.github_output.open("a") as output:
-                output.write(f"reused={'true' if reused else 'false'}\n")
-            return 0
         if args.command == "verify":
             run_id = os.environ.get("GITHUB_RUN_ID")
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
@@ -691,15 +669,8 @@ def main() -> int:
                 proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
                 if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
                     raise ValueError("selected plan has no successful source selection job")
-            def verify_reuse(result):
-                from scripts.ci_reuse import verify_source
-                from scripts.sdk_release_authorization import GitHub
-
-                return verify_source(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root,
-                                     result["suite"], result["reused_from"], main_source=result["source"])
-
             chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id,
-                                    run_attempt=current_attempt, reuse_verifier=verify_reuse)
+                                    run_attempt=current_attempt)
             if args.output:
                 evidence = {**plan, "status": "success"}
                 if run_id:
@@ -708,9 +679,6 @@ def main() -> int:
                         "plan_artifact": f"ci-validation-plan-attempt{plan['source']['run_attempt']}",
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
                     })
-                reused = {suite: result["reused_from"] for suite, result in chosen.items() if "reused_from" in result}
-                if reused:
-                    evidence["reused_suites"] = reused
                 write_json(args.output, evidence)
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
