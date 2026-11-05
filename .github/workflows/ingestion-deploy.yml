@@ -263,6 +263,9 @@ jobs:
       deployment_id: ${{ steps.revision.outputs.deployment_id }}
       claim_signed: ${{ steps.claim-receipt.outcome }}
     steps:
+    - name: Validate main ref before state operations
+      run: |
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
     - name: Check out trusted verifier
       uses: actions/checkout@v4
       with:

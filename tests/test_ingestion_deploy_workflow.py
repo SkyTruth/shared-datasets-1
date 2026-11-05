@@ -239,6 +239,8 @@ def test_each_runner_rejects_foreign_caller_before_bootstrap(tmp_path, target, c
 
 
 def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollout():
+    from scripts.repo_guardrails import check_workflow_boundaries
+    assert check_workflow_boundaries(REPO_ROOT) == []
     workflow = shared_workflow()
     jobs = workflow['jobs']
     assert {target for target, config in target_table().items() if config['rollout_gate']} == {'wdpa-monthly', 'sea-ice-daily'}
