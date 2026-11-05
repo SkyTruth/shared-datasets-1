@@ -36,7 +36,8 @@ class ManualWorkflowTests(unittest.TestCase):
                 for key, source in (("EXECUTOR_SHA", "executor_sha"), ("SOURCE_RUN_ID", "source_run_id"), ("SOURCE_RUN_ATTEMPT", "source_run_attempt")):
                     self.assertIn("inputs." + source, env[key])
                 job = value["jobs"]["publish" if filename == "publish-typescript-sdk.yml" else "sync" if filename == "pmtiles-cdn-sync.yml" else "deploy"]
-                steps = job["steps"]
+                from scripts.deployment_receipt_contracts import expanded_steps
+                steps = list(expanded_steps(ROOT, job))
                 bootstrap = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") == "${{ github.workflow_sha }}")
                 candidate = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") in {"${{ inputs.executor_sha }}", "${{ env.EXECUTOR_SHA }}"})
                 proofs = [i for i, step in enumerate(steps) if "--bootstrap" in step.get("run", "") and "deployment_revision.py verify" in step["run"]]

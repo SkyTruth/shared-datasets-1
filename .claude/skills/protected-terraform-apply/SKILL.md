@@ -56,6 +56,9 @@ reviewed target scope changes, instead of copying allowlists into callers.
 
 `prod-terraform-target-apply.yml` runs trusted source and permission checks plus
 Monitoring image/credential preparation before entering `prod-terraform-state`.
+Both runners use `deployment-bootstrap` to restore the immutable verifier and
+target registries after candidate checkout; an older executor cannot select an
+older Terraform scope.
 Its `sync` job rechecks source/replay admission after acquiring that queue,
 initializes Terraform, validates the exact saved plan, signs the claim and applies
 that saved plan. Only this job owns the queue. IAM propagation waits follow in an
@@ -74,6 +77,9 @@ pure-delete scope and always-run authority revocation; see
 [Terraform reconciliation](../../../docs/terraform-reconciliation.md).
 
 Ingestion deployments use `ingestion-deploy.yml` and exact tested-image checks.
+Dataset-usage and viewer push images before acquiring the state queue. CDN cache
+invalidation and route verification run after releasing it. Viewer/CDN dependency
+probes retry actual missing IAM permissions; do not restore blind propagation sleeps.
 `pmtiles-cdn-sync.yml` owns the separately constrained managed-folder/bootstrap
 and CDN routing scopes. Neither path inherits a generic IAM mutation scope.
 

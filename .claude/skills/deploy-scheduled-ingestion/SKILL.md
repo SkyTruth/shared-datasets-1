@@ -61,6 +61,10 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
   overflow is still canceled: report it and dispatch the affected workflow
   again from reviewed `main` after capacity is available.
 - `scripts/ingestion_targets.py` owns the versioned target contract.
+  Its resolved fields also select smoke probes, image-config binding, canary
+  limits/terminal phase, release checks and scheduler resume. Update the registry
+  instead of adding target-name branches to the executor. The installed sea-ice
+  smoke uses `local_ingestion_smoke.py --sea-ice-only`, shared with local profiling.
   Ingestion entrypoints call `ingestion-deploy.yml`: prepare images before the
   state queue, keep plan/allowlist/permissions/signed claim/apply in its `apply`
   job, then verify canaries outside that queue. Each target entrypoint holds

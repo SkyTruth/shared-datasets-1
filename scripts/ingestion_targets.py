@@ -6,6 +6,11 @@ import os
 from pathlib import Path
 
 VERSION = 1
+DEFAULTS = {
+    "image_config_variable": "", "canary_attempts": 125, "canary_timeout_phase": "failed",
+    "canary_run_url": True, "validate_release": True, "resume_scheduler": False,
+    "synthetic_smoke": False, "import_probe": "pass",
+}
 TARGETS = {
     "wdpa-monthly": {
         "workflow": "wdpa-monthly-deploy.yml",
@@ -18,7 +23,13 @@ TARGETS = {
         "paused_gate": True,
         "asset_slug": "",
         "asset_root": "",
-        "selection": "wdpa"
+        "selection": "wdpa",
+        "image_config_variable": "wdpa_monthly_image_config_digest",
+        "canary_attempts": 20,
+        "canary_timeout_phase": "verification_pending",
+        "canary_run_url": False,
+        "validate_release": False,
+        "import_probe": 'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.automatic; import scripts.feature_metadata_localization, scripts.translation_local_io'
     },
     "mpatlas-monthly": {
         "workflow": "mpatlas-monthly-deploy.yml",
@@ -33,7 +44,7 @@ TARGETS = {
         "paused_gate": False,
         "asset_slug": "mpatlas-zone-assessments",
         "asset_root": "100-geographic-reference/130-protected-areas/mpatlas-zone-assessments",
-        "selection": "mpatlas"
+        "selection": "mpatlas",
     },
     "eamlis-monthly": {
         "workflow": "eamlis-monthly-deploy.yml",
@@ -45,7 +56,7 @@ TARGETS = {
         "paused_gate": True,
         "asset_slug": "eamlis-abandoned-mine-land-inventory",
         "asset_root": "300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory",
-        "selection": "eamlis"
+        "selection": "eamlis",
     },
     "sea-ice-daily": {
         "workflow": "sea-ice-daily-deploy.yml",
@@ -57,9 +68,12 @@ TARGETS = {
         "paused_gate": False,
         "asset_slug": "ims-sea-ice-extent",
         "asset_root": "200-imagery-derived/250-weather-climate/ims-sea-ice-extent",
-        "selection": "sea_ice"
+        "selection": "sea_ice",
+        "resume_scheduler": True,
+        "synthetic_smoke": True,
     }
 }
+TARGETS = {target: DEFAULTS | settings for target, settings in TARGETS.items()}
 
 
 def image_variables(target, image):

@@ -175,6 +175,10 @@ def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix='
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_WORKSPACE': str(REPO_ROOT),
         'GOOGLE_CLOUD_PROJECT': 'shared-datasets-1', 'REGION': 'us-central1',
         'CANARY_RUN_DATE': '', 'CANCEL_RUNNING_CANARY': 'false',
+        **{key.upper(): str(value).lower() if isinstance(value, bool) else str(value)
+           for key, value in target_table()[target].items() if key in {
+               'image_config_variable', 'canary_attempts', 'canary_timeout_phase', 'canary_run_url',
+           }},
         **(extra or {}),
     }
     return subprocess.run(['bash', '-e', '-c', prefix + script], cwd=REPO_ROOT, env=env, capture_output=True, text=True)
@@ -209,14 +213,21 @@ def test_unregistered_target_fails_before_image_or_authentication(tmp_path):
     assert not (tmp_path / 'outputs').exists()
 
 
-def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown_revision(tmp_path):
+@pytest.mark.parametrize('filename,job', [
+    ('ingestion-deploy.yml', 'prepare'), ('prod-terraform-target-apply.yml', 'prepare'),
+    ('prod-terraform-target-apply.yml', 'sync'), ('catalog-viewer-deploy.yml', 'prepare'),
+    ('catalog-viewer-deploy.yml', 'deploy'), ('pmtiles-cdn-sync.yml', 'sync'),
+    ('pmtiles-cdn-sync.yml', 'verify'),
+])
+def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown_revision(tmp_path, filename, job):
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO_ROOT, text=True).strip()
     candidate = tmp_path / 'candidate'
     (candidate / 'scripts').mkdir(parents=True)
     (candidate / 'scripts/deployment_revision.py').write_text('raise RuntimeError("older candidate verifier")\n')
     (candidate / '.github').mkdir()
     (candidate / '.github/terraform-targets.json').write_text('untrusted candidate registry')
-    script = shared_step('prepare', 'Restore immutable receipt verifier after candidate checkout')['run']
+    workflow = load_workflow(REPO_ROOT / '.github/workflows' / filename)
+    script = workflow_steps_by_name(workflow, job)['Restore immutable receipt verifier after candidate checkout']['run']
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
     assert result.returncode == 0, result.stderr
     for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
@@ -386,7 +397,7 @@ def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
              'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume sea-ice-daily scheduler', 'Record deployment outcome']
     assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
     resume = shared_step('verify', 'Resume sea-ice-daily scheduler')
-    assert resume['if'] == "inputs.target == 'sea-ice-daily' && inputs.resume_scheduler"
+    assert resume['if'] == "fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler"
     for published in (True, False):
         calls = tmp_path / 'calls'
         calls.write_text('')
@@ -397,6 +408,33 @@ gcloud() { echo "$*" >> "$CALLS"; }
         assert (result.returncode == 0) == published
         assert ('scheduler jobs resume' in calls.read_text()) == published
     assert 'COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions' in (REPO_ROOT / 'ingestion/sea_ice_daily/Dockerfile').read_text()
+
+
+def test_installed_synthetic_smoke_mounts_the_shared_entrypoint(tmp_path):
+    result = run_shell(tmp_path, shared_step('prepare', 'Smoke-test synthetic sea-ice build path in image')['run'],
+                       target='sea-ice-daily', extra={'IMAGE_TAG': 'verified:image', 'ARGS': str(tmp_path / 'args')},
+                       prefix='docker() { printf "%s\\n" "$@" > "$ARGS"; }\n')
+    assert result.returncode == 0, result.stderr
+    arguments = (tmp_path / 'args').read_text().splitlines()
+    mount = arguments[arguments.index('--mount') + 1]
+    assert mount == f'type=bind,src={REPO_ROOT}/scripts/local_ingestion_smoke.py,dst=/app/scripts/local_ingestion_smoke.py,readonly'
+    assert arguments[-6:] == ['verified:image', 'python', 'scripts/local_ingestion_smoke.py', '--sea-ice-only', '--workdir', '/tmp/ims-synthetic']
+
+
+@pytest.mark.parametrize('apply_result,claim', [('failure', 'success'), ('success', 'failure'), ('success', 'success')])
+def test_cdn_verification_admits_only_successful_signed_apply(tmp_path, apply_result, claim):
+    workflow = load_workflow(REPO_ROOT / '.github/workflows/pmtiles-cdn-sync.yml')
+    sync, verify = (workflow['jobs'][name] for name in ('sync', 'verify'))
+    assert 'concurrency' not in verify
+    assert verify['if'] == "${{ always() && needs.sync.outputs.deployment_id != '' }}"
+    assert not any('sleep ' in step.get('run', '') for step in sync['steps'])
+    steps = workflow_steps_by_name(workflow, 'verify')
+    assert list(steps).index('Require successful signed apply') < list(steps).index('Invalidate catalog CDN cache')
+    result = run_shell(tmp_path, steps['Require successful signed apply']['run'],
+                       extra={'APPLY_RESULT': apply_result, 'CLAIM_SIGNED': claim})
+    assert (result.returncode == 0) == (apply_result == claim == 'success')
+    assert steps['Record terminal deployment outcome']['if'] == '${{ always() }}'
+    assert 'always()' in steps['Attest terminal deployment outcome']['if']
 
 
 @pytest.mark.parametrize("target", TARGETS)
@@ -518,3 +556,17 @@ def test_usage_canary_releases_state_lock_and_records_failed_apply():
     assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy") == []
     verify["if"] = "success()"
     assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy")
+
+
+@pytest.mark.parametrize('prepared,proceed,cancelled,accepted', [
+    ('success', 'true', False, True), ('failure', 'true', False, False),
+    ('skipped', 'true', False, False), ('success', 'false', False, False),
+    ('success', 'true', True, False),
+])
+def test_usage_apply_explicitly_admits_prepared_image_after_skipped_bootstrap(prepared, proceed, cancelled, accepted):
+    from test_ci_deployments import condition_result
+    workflow = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')
+    assert workflow['jobs']['deploy']['needs'] == 'prepare'
+    assert condition_result(workflow['jobs']['deploy'], {
+        'needs.prepare.result': prepared, 'needs.prepare.outputs.proceed': proceed,
+    }, cancelled=cancelled) is accepted

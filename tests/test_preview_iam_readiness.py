@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-from workflow_helpers import load_workflow
+from workflow_helpers import load_workflow, expanded_steps
 
 from scripts import deployment_permissions as live
 
@@ -173,7 +173,7 @@ class PreviewIamReadinessTests(unittest.TestCase):
         self.assertEqual(wrapper["jobs"]["sync"]["with"]["readiness_target"], "preview-service-account-iam")
         self.assertEqual(wrapper["jobs"]["sync"]["needs"], "bootstrap")
         leaf = load_workflow(ROOT / ".github/workflows/prod-terraform-target-apply.yml")
-        steps = leaf["jobs"]["sync"]["steps"]
+        steps = list(expanded_steps(ROOT, leaf["jobs"]["sync"]))
         by_name = {step["name"]: index for index, step in enumerate(steps)}
         probe = by_name["Verify prerequisite deployment permissions"]
         self.assertIn('deployment_permissions.py --target "$READINESS_TARGET"', steps[probe]["run"])

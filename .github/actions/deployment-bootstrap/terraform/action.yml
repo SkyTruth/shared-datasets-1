@@ -1,0 +1,75 @@
+name: Trusted Terraform deployment bootstrap
+description: Authorize tested code, restore trusted registries, and admit the registered Terraform scope before mutation
+inputs:
+  workflow:
+    description: Registered caller filename
+    required: true
+  executor-sha:
+    description: Exact tested main revision
+    required: true
+  source-run-id:
+    description: Successful main CI run
+    required: true
+  source-run-attempt:
+    description: Exact successful CI attempt
+    required: true
+  tf-vars:
+    description: Recorded variables for state-only reconciliation
+    required: false
+    default: ''
+outputs:
+  proceed:
+    description: Registered deployment is admitted by replay checks
+    value: ${{ steps.replay.outputs.proceed }}
+runs:
+  using: composite
+  steps:
+  - name: Authorize tested executor and retain trusted receipt policy
+    uses: ./.github/actions/deployment-bootstrap
+    with:
+      workflow: ${{ inputs.workflow }}
+      executor-sha: ${{ inputs.executor-sha }}
+      source-run-id: ${{ inputs.source-run-id }}
+      source-run-attempt: ${{ inputs.source-run-attempt }}
+  - name: Validate Terraform auth configuration
+    run: |
+      set -euo pipefail
+
+      if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+        echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+        exit 1
+      fi
+      if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+        echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+        exit 1
+      fi
+    shell: bash
+  - name: Resolve registered Terraform target
+    env:
+      INPUT_TF_VARS: ${{ inputs.tf-vars }}
+    run: python scripts/terraform_target_contracts.py --sync-name "$SYNC_NAME" --workflow "$CALLER_WORKFLOW"
+    shell: bash
+  - name: Check prior deployment before replanning
+    id: replay
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source-run-attempt }}
+    run: |
+      target="terraform-$(printf '%s' "$SYNC_NAME" | sha256sum | cut -c1-16)"
+      python scripts/deployment_revision.py check --target "$target" --workflow "$CALLER_WORKFLOW" \
+        --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    shell: bash
+  - name: Authenticate to Google Cloud
+    if: ${{ steps.replay.outputs.proceed == 'true' }}
+    uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+      service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+  - name: Set up gcloud
+    if: ${{ steps.replay.outputs.proceed == 'true' }}
+    uses: google-github-actions/setup-gcloud@v2
+  - name: Verify prerequisite deployment permissions
+    if: ${{ steps.replay.outputs.proceed == 'true' }}
+    run: python scripts/deployment_permissions.py --target "$READINESS_TARGET"
+    shell: bash

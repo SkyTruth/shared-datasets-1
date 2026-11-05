@@ -1,149 +1,75 @@
+"""Viewer scopes and image handoff through the actual workflow shell."""
 from __future__ import annotations
 
-import re
-import unittest
+import json
+import os
 from pathlib import Path
+import subprocess
 
-from workflow_helpers import (
-    load_workflow,
-    python_literal_string_set,
-    terraform_targets,
-    workflow_steps_by_name,
-    workflow_triggers,
-)
+import pytest
 
+from workflow_helpers import load_workflow, terraform_targets, workflow_steps_by_name, workflow_triggers
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/catalog-viewer-deploy.yml"
-
-
-class CatalogViewerDeployWorkflowTests(unittest.TestCase):
-    def test_catalog_viewer_deploy_workflow_is_protected_and_digest_pinned(self):
-        workflow = load_workflow(DEPLOY_WORKFLOW)
-        trigger = workflow_triggers(workflow)
-        deploy = workflow["jobs"]["deploy"]
-        env = workflow["env"]
-        steps = workflow_steps_by_name(workflow, "deploy")
-        step_names = list(steps)
-        bootstrap_plan_run = steps["Terraform plan Secret Manager IAM bootstrap"]["run"]
-        bootstrap_enforce_run = steps["Enforce Secret Manager IAM bootstrap allowlist"]["run"]
-        plan_run = steps["Terraform plan"]["run"]
-        enforce_run = steps["Enforce catalog-viewer resource-change allowlist"]["run"]
-
-        self.assertEqual(workflow["name"], "Catalog / Viewer deploy")
-        self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
-        self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt", "sync_iam"})
-        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
-            self.assertTrue(trigger["workflow_dispatch"]["inputs"][name]["required"])
-            self.assertEqual(trigger["workflow_dispatch"]["inputs"][name]["type"], "string")
-        self.assertEqual(deploy["environment"], "shared-datasets-production")
-        self.assertEqual(
-            deploy["concurrency"],
-            {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
-        )
-        self.assertEqual(env["TF_REGISTRY_CLIENT_TIMEOUT"], "60")
-        self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
-
-        push_run = steps["Push tested catalog-viewer image"]["run"]
-        self.assertIn("CATALOG_VIEWER_IMAGE=${image_ref}", push_run)
-
-        self.assertEqual(
-            terraform_targets(bootstrap_plan_run),
-            {"google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"},
-        )
-        self.assertIn("-refresh=false", bootstrap_plan_run)
-        self.assertIn("wdpa_monthly_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
-        self.assertIn("sea_ice_daily_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
-        self.assertIn("eamlis_monthly_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
-        self.assertIn(
-            "catalog-viewer-secret-manager-iam-bootstrap.tfplan",
-            steps["Export Secret Manager IAM bootstrap plan JSON"]["run"],
-        )
-        self.assertEqual(
-            python_literal_string_set(bootstrap_enforce_run, "allowed_exact"),
-            {"google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"},
-        )
-        self.assertIn(
-            "terraform_retry.sh\" -chdir=terraform/envs/prod apply",
-            steps["Terraform apply Secret Manager IAM bootstrap"]["run"],
-        )
-        self.assertEqual(steps["Wait for Secret Manager IAM propagation"]["run"], "sleep 30")
-        self.assertLess(
-            step_names.index("Enforce Secret Manager IAM bootstrap allowlist"),
-            step_names.index("Terraform apply Secret Manager IAM bootstrap"),
-        )
-        self.assertLess(
-            step_names.index("Terraform apply Secret Manager IAM bootstrap"),
-            step_names.index("Wait for Secret Manager IAM propagation"),
-        )
-        self.assertLess(
-            step_names.index("Wait for Secret Manager IAM propagation"),
-            step_names.index("Terraform plan"),
-        )
-
-        self.assertEqual(
-            terraform_targets(plan_run),
-            {
-                "google_cloud_run_v2_service.catalog_viewer",
-                "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
-                "google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors",
-                "google_project_iam_custom_role.catalog_viewer_sign_blob",
-                "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
-                "google_service_account_iam_member.catalog_viewer_self_sign_blob",
-                "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
-                "google_storage_bucket.catalog_comparisons",
-                "google_storage_bucket_iam_member.catalog_comparisons_worker",
-                "module.catalog_viewer_service_account.google_service_account.this",
-            },
-        )
-        self.assertIn("-refresh=false", plan_run)
-        self.assertIn("catalog_viewer_image=${CATALOG_VIEWER_IMAGE}", plan_run)
-        self.assertIn("wdpa_monthly_image=unused-by-catalog-viewer-deploy", plan_run)
-        self.assertIn("sea_ice_daily_image=unused-by-catalog-viewer-deploy", plan_run)
-        self.assertIn("eamlis_monthly_image=unused-by-catalog-viewer-deploy", plan_run)
-        self.assertIn(
-            "terraform -chdir=terraform/envs/prod show -json",
-            steps["Export Terraform plan JSON"]["run"],
-        )
-        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
-        self.assertLess(
-            step_names.index("Enforce catalog-viewer resource-change allowlist"),
-            step_names.index("Terraform apply"),
-        )
-        self.assertGreaterEqual(
-            python_literal_string_set(enforce_run, "allowed_exact"),
-            {
-                "google_cloud_run_v2_service.catalog_viewer",
-                "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
-                "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
-                "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
-                "google_storage_bucket.catalog_comparisons",
-                "google_storage_bucket_iam_member.catalog_comparisons_worker",
-            },
-        )
-
-    def test_catalog_viewer_deploy_allowlist_patterns_match_real_terraform_addresses(self):
-        workflow = load_workflow(DEPLOY_WORKFLOW)
-        enforce_run = workflow_steps_by_name(workflow, "deploy")[
-            "Enforce catalog-viewer resource-change allowlist"
-        ]["run"]
-        patterns = [re.compile(pattern) for pattern in re.findall(r're\.compile\(r"([^"]+)"\)', enforce_run)]
-
-        self.assertTrue(
-            any(pattern.match("module.catalog_viewer_service_account.google_service_account.this") for pattern in patterns)
-        )
-        self.assertTrue(
-            any(
-                pattern.match(
-                    'google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors'
-                    '["user:jona@skytruth.org"]'
-                )
-                for pattern in patterns
-            )
-        )
-        self.assertFalse(any(pattern.match("google_storage_bucket_iam_member.unrelated") for pattern in patterns))
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / '.github/workflows/catalog-viewer-deploy.yml'
+BOOTSTRAP = {'google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager'}
+RESOURCES = {
+    'module.catalog_viewer_service_account.google_service_account.this',
+    'google_cloud_run_v2_service.catalog_viewer',
+    'google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker',
+    'google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors',
+    'google_project_iam_custom_role.catalog_viewer_sign_blob',
+    'google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer',
+    'google_service_account_iam_member.catalog_viewer_self_sign_blob',
+    'google_storage_bucket_iam_member.catalog_viewer_object_viewer',
+    'google_storage_bucket.catalog_comparisons',
+    'google_storage_bucket_iam_member.catalog_comparisons_worker',
+}
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_viewer_preserves_protected_scopes_and_transports_only_prepared_image():
+    workflow = load_workflow(WORKFLOW)
+    triggers = workflow_triggers(workflow)
+    assert set(triggers) == {'workflow_call', 'workflow_dispatch'}
+    for name in ('executor_sha', 'source_run_id', 'source_run_attempt'):
+        assert triggers['workflow_call']['inputs'][name]['required']
+        assert triggers['workflow_call']['inputs'][name]['type'] == triggers['workflow_dispatch']['inputs'][name]['type'] == 'string'
+        assert triggers['workflow_dispatch']['inputs'][name]['required']
+    prepare, deploy = (workflow['jobs'][name] for name in ('prepare', 'deploy'))
+    assert 'concurrency' not in prepare
+    assert deploy['environment'] == prepare['environment'] == 'shared-datasets-production'
+    assert deploy['concurrency'] == {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+    assert workflow['concurrency'] == {'group': 'deployment-catalog-viewer', 'queue': 'max', 'cancel-in-progress': False}
+    assert deploy['needs'] == 'prepare' and deploy['if'] == "needs.prepare.outputs.proceed == 'true'"
+    assert deploy['env'] == {'CATALOG_VIEWER_IMAGE': '${{ needs.prepare.outputs.image }}',
+                             'CATALOG_VIEWER_LOCAL_DIGEST': '${{ needs.prepare.outputs.config_digest }}'}
+    assert not any('docker ' in s.get('run', '') or 'sleep 30' in s.get('run', '') for s in deploy['steps'])
+    steps = workflow_steps_by_name(workflow, 'deploy')
+    assert terraform_targets(steps['Terraform plan Secret Manager IAM bootstrap']['run']) == BOOTSTRAP
+    assert terraform_targets(steps['Terraform plan']['run']) == RESOURCES
+    assert 'catalog_viewer_image=${CATALOG_VIEWER_IMAGE}' in steps['Terraform plan']['run']
+    assert all('-refresh=false' in steps[name]['run'] for name in ('Terraform plan', 'Terraform plan Secret Manager IAM bootstrap'))
+    names = list(steps)
+    ordered = ['Attest serialized deployment claim before mutation', 'Terraform apply Secret Manager IAM bootstrap',
+               'Verify catalog-viewer live dependencies', 'Terraform plan', 'Enforce catalog-viewer resource-change allowlist',
+               'Verify permissions required by the saved viewer plan', 'Terraform apply', 'Verify ready revision uses tested image']
+    assert [names.index(name) for name in ordered] == sorted(names.index(name) for name in ordered)
+
+
+@pytest.mark.parametrize('bootstrap', [True, False])
+@pytest.mark.parametrize('foreign', [True, False])
+@pytest.mark.parametrize('actions', [['create'], ['update'], ['delete'], ['no-op']])
+def test_actual_viewer_allowlists_preserve_exact_scope(tmp_path, bootstrap, foreign, actions):
+    steps = workflow_steps_by_name(load_workflow(WORKFLOW), 'deploy')
+    name = 'Enforce Secret Manager IAM bootstrap allowlist' if bootstrap else 'Enforce catalog-viewer resource-change allowlist'
+    plan = 'catalog-viewer-secret-manager-iam-bootstrap' if bootstrap else 'catalog-viewer'
+    for address in BOOTSTRAP if bootstrap else RESOURCES:
+        if address.endswith('.catalog_viewer_accessors'):
+            address += '["user:reviewer@example.org"]'
+        proposed = 'google_storage_bucket.unrelated' if foreign else address
+        (tmp_path / (plan + '.tfplan.json')).write_text(json.dumps({'resource_changes': [
+            {'address': proposed, 'change': {'actions': actions}},
+        ]}))
+        result = subprocess.run(['bash', '-e', '-c', steps[name]['run']], cwd=ROOT,
+                                env={**os.environ, 'RUNNER_TEMP': str(tmp_path)}, text=True, capture_output=True)
+        assert (result.returncode == 0) == (not foreign or actions == ['no-op']), result.stdout + result.stderr

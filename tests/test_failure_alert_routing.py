@@ -301,7 +301,9 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     assert not step.get("continue-on-error", False)
                     if path.name == "ingestion-deploy.yml":
                         assert step["name"] == "Execute ingestion canary"
-                        assert 'if [[ "$TARGET" != wdpa-monthly ]]' in run
+                        assert step['env']['CANARY_RUN_URL'] == '${{ fromJSON(needs.prepare.outputs.config).canary_run_url }}'
+                        from scripts.ingestion_targets import TARGETS
+                        assert {name for name, config in TARGETS.items() if not config['canary_run_url']} == {'wdpa-monthly'}
                         assert "Watch ingestion canary" in workflow_steps_by_name(workflow, "verify")
                     else:
                         assert "--wait" in run and "--async" not in run

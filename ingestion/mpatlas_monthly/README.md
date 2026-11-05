@@ -72,7 +72,7 @@ sidecars or translation-source contract.
 Entrypoint: `python -m ingestion.mpatlas_monthly.run`. Configuration:
 `GOOGLE_CLOUD_PROJECT`, `SHARED_DATASETS_BUCKET`, optional execution-only
 `RUN_DATE`, and optional `SHARED_DATASETS_WORKDIR` for temporary files. The
-production job uses 4 CPUs, 16 GiB RAM, a one-hour timeout and no task retries.
+production job uses 6 CPUs, 8 GiB RAM, a one-hour timeout and no task retries.
 The one-hour limit leaves over six times the observed 8.6-minute maximum across
 MPAtlas, EAMLIS and sea-ice executions (October–November 2026), while bounding
 stalled executions. WDPA retains its separate multi-hour processing limit.
