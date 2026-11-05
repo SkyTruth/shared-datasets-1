@@ -19,8 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 REPOSITORY = "SkyTruth/shared-datasets-1"
 WORKFLOW = ".github/workflows/operational-safety-check.yml"
 JOB = "Check for operational work"
+HEALTH_SCOPE = "health:operational-safety-check"
 from scripts.ingestion_targets import TARGETS
-from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds
+from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
 
 ROOT = Path(__file__).resolve().parents[1]
 with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
@@ -186,11 +187,20 @@ def verification_due(api, sources, pending, *, now):
     latest = max(checks, key=lambda item: item["id"], default=None)
     if not latest or latest["conclusion"] != "success":
         return True
+    # A cheap live hint wakes the protected observer; it never authorizes a
+    # terminal status or replaces exact-image and signed-receipt verification.
+    statuses = [api.pages(f"repos/{REPOSITORY}/deployments/{identifier}/statuses?per_page=100")[0] for identifier in pending]
+    for status in statuses:
+        match = re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/(wdpa-monthly-[a-z0-9]{5})\?project=shared-datasets-1", status["environment_url"])
+        require(match, "pending deployment lacks exact execution identity")
+        execution = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "describe", match[1],
+            "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
+        if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
+            return True
     checked = datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))
-    if now - checked >= timedelta(hours=6):
+    if now - checked >= timedelta(hours=3):
         return True
-    return any(datetime.fromisoformat(api.pages(f"repos/{REPOSITORY}/deployments/{identifier}/statuses?per_page=100")[0]["created_at"].replace("Z", "+00:00")) > checked
-               for identifier in pending)
+    return any(datetime.fromisoformat(status["created_at"].replace("Z", "+00:00")) > checked for status in statuses)
 
 
 def reconciliation_stalled(api, run):
@@ -236,7 +246,7 @@ def freshness(client, *, now, scheduler, pauses=None):
     from scripts import collect_release_indexes as indexes
 
     pauses = json.loads((ROOT / ".github/scheduler-pauses.json").read_text()) if pauses is None else pauses
-    rollout_holds(pauses, targets=CRON_ASSETS)
+    validate_suspensions(pauses, targets=CRON_ASSETS)
     require(set(pauses) <= set(CRON_ASSETS), "unknown Scheduler pause")
     rows = CATALOG
     require({slug for slugs in CRON_ASSETS.values() for slug in slugs} ==
@@ -303,7 +313,7 @@ def policy_warnings(now):
     warnings, problems = [], []
     for filename in (INGESTION_ROLLOUT_HOLDS, ".github/scheduler-pauses.json"):
         entries = json.loads((ROOT / filename).read_text())
-        rollout_holds(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else {config["selection"] for config in TARGETS.values()}))
+        validate_suspensions(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else {config["selection"] for config in TARGETS.values()}))
         for target, entry in entries.items():
             remaining = datetime.fromisoformat(entry["expires_at"].replace("Z", "+00:00")) - now
             if remaining <= timedelta(hours=75):  # Three-hour sampling still warns >=72 hours ahead.
@@ -327,7 +337,9 @@ def previous_health(api, run):
         job, = [row for row in jobs if row["name"] == JOB]
         require(any(step["name"] == "Retain safety health report" and step.get("status") == "completed" and step["conclusion"] == "success" for step in job["steps"]), "health report upload did not succeed")
         report = artifact_payload(api, {**producer, "cache_job_started_at": job["started_at"], "cache_job_completed_at": job["completed_at"]}, selected[0])
-        require(set(report) == {"problems", "warnings", "notified_at"} and all(isinstance(report[key], list) and all(isinstance(item, str) for item in report[key]) for key in ("problems", "warnings")), "invalid safety health report")
+        require(set(report) in ({"problems", "warnings", "notified_at"}, {"scope", "problems", "warnings", "notified_at"})
+                and report.get("scope", HEALTH_SCOPE) == HEALTH_SCOPE
+                and all(isinstance(report[key], list) and all(isinstance(item, str) for item in report[key]) for key in ("problems", "warnings")), "invalid safety health report")
         return report
     return {"problems": [], "warnings": [], "notified_at": None}
 
@@ -336,19 +348,18 @@ def report_health(api, run, directory, problems, warnings, now):
     from scripts.incident_verification_cache import canonical
     from scripts.slack_notify import notify
     previous = previous_health(api, run)
-    report = {"problems": sorted(set(problems)), "warnings": sorted(set(warnings)), "notified_at": previous["notified_at"]}
+    report = {"scope": HEALTH_SCOPE, "problems": sorted(set(problems)), "warnings": sorted(set(warnings)), "notified_at": previous["notified_at"]}
     findings = report["problems"] + report["warnings"]
     due = findings and (any(report[key] != previous[key] for key in ("problems", "warnings")) or not report["notified_at"] or
                         now - datetime.fromisoformat(report["notified_at"]) >= timedelta(days=1))
     if due:
         notify(title="Operational safety findings", body="\n".join(findings) + f"\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
-               status="error" if problems else "warning", strict=True)
+               status="error" if problems else "warning", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
         report["notified_at"] = now.isoformat()
     (directory / "health").mkdir(exist_ok=True)
     (directory / "health/cache.json").write_bytes(canonical(report))
-    for warning in warnings:
-        print("::warning::" + warning)
-    require(not problems, "; ".join(problems))
+    for finding in findings:
+        print("::warning::" + finding)
 
 
 def main():
@@ -366,30 +377,35 @@ def main():
     args.work_dir.mkdir(parents=True, exist_ok=True)
     api = incidents.GitHub()
     run = context(api)
-    client = catalog.get_client()
     if args.health:
         now = datetime.now(timezone.utc)
         def scheduler(job):
             return json.loads(subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", job,
                 "--location=us-central1", "--project=shared-datasets-1", "--format=json"], text=True))
-        warnings, problems = policy_warnings(now)
-        problems += freshness(client, now=now, scheduler=scheduler)
-        result = json.loads((args.work_dir / "result.json").read_text())
-        if os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED") != "true":
-            sources, _, _, _ = source_inventory(api, run, (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-            for source in {item["path"]: item for item in sources}.values():
-                if source.get("event") == "workflow_dispatch" and source.get("conclusion") in incidents.alerts.FAILED_CONCLUSIONS:
-                    event = {"repository": {"full_name": REPOSITORY}, "workflow_run": source}
-                    jobs = incidents.alerts.jobs_for_event(api, source)
-                    if jobs is not None and incidents.alerts.alert_for_run(event, jobs=jobs):
-                        problems.append(f"Failed dispatched run: https://github.com/{REPOSITORY}/actions/runs/{source['id']}")
-        if result["reconcile"] and reconciliation_stalled(api, run):
-            problems.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
-        for claim in json.loads((args.work_dir / "claims.json").read_text()):
-            if now - incidents.instant(claim["since"]) >= timedelta(hours=24):
-                problems.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
+        warnings, problems = [], []
+        try:
+            warnings, problems = policy_warnings(now)
+            problems += freshness(catalog.get_client(), now=now, scheduler=scheduler)
+            result = json.loads((args.work_dir / "result.json").read_text())
+            if os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED") != "true":
+                sources, _, _, _ = source_inventory(api, run, (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                for source in {item["path"]: item for item in sources}.values():
+                    if source.get("conclusion") in incidents.alerts.FAILED_CONCLUSIONS:
+                        event = {"repository": {"full_name": REPOSITORY}, "workflow_run": source}
+                        jobs = incidents.alerts.jobs_for_event(api, source)
+                        if jobs is not None and incidents.alerts.alert_for_run(event, jobs=jobs):
+                            problems.append(f"Failed unattended run: https://github.com/{REPOSITORY}/actions/runs/{source['id']}")
+            if result["reconcile"] and reconciliation_stalled(api, run):
+                problems.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
+            for claim in json.loads((args.work_dir / "claims.json").read_text()):
+                if now - incidents.instant(claim["since"]) >= timedelta(hours=24):
+                    problems.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
+        except Exception as error:  # External health reads fail into the same scoped, deduplicated report.
+            # CalledProcessError includes argv but not volatile command output.
+            problems.append(f"Health check incomplete: {type(error).__name__}: {error}")
         report_health(api, run, args.work_dir, problems, warnings, now)
         return
+    client = catalog.get_client()
     if os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED") == "true":
         identity = incidents.Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
                                    os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")).identity()

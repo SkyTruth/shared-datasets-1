@@ -60,8 +60,9 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
 
 def safety_health_only(run, jobs):
     return run["name"] in WORKFLOW_NAMES["operational-safety-check.yml"] and any(
-        step.get("name") == "Check freshness and stalled operations" and step.get("conclusion") == "failure"
-        for job in jobs for step in job.get("steps", []))
+        any(step.get("name") == "Check freshness and stalled operations" and step.get("conclusion") == "failure" for step in job.get("steps", []))
+        and any(step.get("name") == "Retain safety health report" and step.get("conclusion") == "success" for step in job.get("steps", []))
+        for job in jobs)
 
 
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
