@@ -12,7 +12,7 @@ import pytest
 
 from scripts.ci_contract import ALWAYS, expected_tools, verify_results
 from scripts.tested_image_bundle import TARGETS as IMAGE_TARGETS
-from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS
 from scripts.deployment_receipt_contracts import expanded_steps
 from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow

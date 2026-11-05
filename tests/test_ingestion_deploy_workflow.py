@@ -236,13 +236,14 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
     candidate = tmp_path / 'candidate'
     (candidate / 'scripts').mkdir(parents=True)
     (candidate / 'scripts/deployment_revision.py').write_text('raise RuntimeError("older candidate verifier")\n')
+    (candidate / 'scripts/terraform_plan_allowlist.py').write_text('raise RuntimeError("older candidate plan guard")\n')
     (candidate / '.github').mkdir()
     (candidate / '.github/terraform-targets.json').write_text('untrusted candidate registry')
     workflow = load_workflow(REPO_ROOT / '.github/workflows' / filename)
     script = workflow_steps_by_name(workflow, job)['Restore immutable receipt verifier after candidate checkout']['run']
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
     assert result.returncode == 0, result.stderr
-    for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'terraform_target_contracts.py', 'ci_toolchain.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
+    for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'terraform_plan_allowlist.py', 'terraform_target_contracts.py', 'ci_toolchain.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
         expected = subprocess.check_output(['git', 'show', f'{revision}:scripts/{filename}'], cwd=REPO_ROOT)
         assert (candidate / 'scripts' / filename).read_bytes() == expected
     expected = subprocess.check_output(['git', 'show', f'{revision}:.github/actions/deployment-receipt/action.yml'], cwd=REPO_ROOT)
@@ -251,6 +252,8 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
     assert (candidate / '.github/terraform-targets.json').read_bytes() == expected
     subprocess.run([sys.executable, str(candidate / 'scripts/deployment_revision.py'), '--help'],
                    check=True, capture_output=True, text=True)
+    help_text = subprocess.check_output([sys.executable, '-S', str(candidate / 'scripts/terraform_plan_allowlist.py'), '--help'], text=True)
+    assert '--registered-scope' in help_text
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': '0' * 40})
     assert result.returncode != 0
 
