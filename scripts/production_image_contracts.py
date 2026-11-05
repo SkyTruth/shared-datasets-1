@@ -7,6 +7,7 @@ here instead of after release. CI and isolated agent preflight run this command.
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.tested_image_bundle import BUILD_TARGETS, TARGETS, load_image, pack_image
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
@@ -91,7 +92,7 @@ def verify_viewer_image(image):
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
     try:
-        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
+        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", *resource_limits("catalog-viewer"), "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -100,40 +101,83 @@ def verify_viewer_image(image):
         subprocess.run(["docker", "rm", "--force", name], check=False)
 
 
+@lru_cache(maxsize=None)
+def resource_limits(target):
+    """Read the declared job/service limits; reject nonliteral configured values."""
+    package = target.replace("-", "_")
+    text = (ROOT / f"terraform/envs/prod/{package}.tf").read_text()
+    if target in {"catalog-viewer", "monitoring-slack"}:
+        block = re.search(rf'^resource "google_cloud_run_v2_service" "{package}" {{(.*?)^}}', text, re.S | re.M)[1]
+        limits = re.search(r'limits\s*=\s*{([^}]+)}', block, re.S)
+        if limits is None and re.search(r'\bresources\s*{', block):
+            raise ValueError(f"{target}: configured production limits must be literal")
+        # Cloud Run service defaults when Terraform omits resources entirely.
+        block = limits[1] if limits else 'cpu = "1"\nmemory = "512Mi"'
+    else:
+        block = re.search(rf'^module "{package}_job" {{(.*?)^}}', text, re.S | re.M)[1]
+    values = {}
+    for key in ("cpu", "memory"):
+        match = re.search(rf'^\s*{key}\s*=\s*"([0-9]+(?:\.[0-9]+)?(?:Mi|Gi)?)"\s*$', block, re.M)
+        if match is None:
+            raise ValueError(f"{target}: production {key} limit must be a literal")
+        values[key] = match[1]
+    return ["--cpus", values["cpu"], "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
+
+
+FIXTURE_BUILD = r'''import datetime as dt, json, pathlib
+from scripts import release_feature_model as model
+work = pathlib.Path("/tmp/installed-fixture")
+work.mkdir()
+day = dt.date(2026, 5, 2)
+if target == "mpatlas-monthly":
+    from ingestion.mpatlas_monthly import run as job
+    source = work / "source.geojson"
+    source.write_text(json.dumps(fixture))
+    enriched, records, _ = job.prepare_metadata(source, work, day)
+    output = job.build_outputs(enriched, records, work, day)
+else:
+    from ingestion.eamlis_monthly import run as job, identity, identity_state
+    source = work / "source.geojson"
+    source.write_text(json.dumps(fixture["geojson"]))
+    state = fixture["source"]
+    state["stats"] = job.SourceStats(**state["stats"])
+    state["fields"] = tuple(state["fields"])
+    ledger = identity.Ledger.genesis().reserve(identity.classify_release(
+        row["properties"] for row in fixture["geojson"]["features"]))
+    output = job.build_asset_output(source=job.SourceState(**state),
+        extract=job.SourceExtract(source, 3, 0), workdir=work, release_date=day,
+        identity_reservation=identity_state.Reservation(ledger, {"path": "fixture"}, 1, None))
+assert output.row_count == 3
+validation = model.validate_sidecar_records(model.read_metadata_sidecar(output.metadata),
+    expected_asset_slug=job.ASSET.slug, expected_release=day.isoformat())
+assert validation.valid and validation.feature_count == 3
+assert output.pmtiles.read_bytes()[:7] == b"PMTiles"
+'''
+
+
 def commands(target, executor, *, image_id=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
+    build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
+             f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
+    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", *resource_limits(target)]
     if target == "monitoring-slack":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "services/monitoring_slack/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()],
-        ]
+        return [build, run + ["--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()]]
     if target == "catalog-viewer":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "services/catalog_viewer/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run, comparison_store; assert callable(run.main) and callable(comparison_store.restore_comparison)"],
-            [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image],
-        ]
+        return [build, [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image]]
     if target == "dataset-usage":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "ingestion/dataset_usage/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", tested_image, "--print-policy-hash"],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", "--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()],
-        ]
-    package = target.replace("-", "_")
-    build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", tested_image]
-    checks = [
-        run + ["python", "-c", f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"],
-        run + ["python", "-c", INTERPRETER_PROBE],
-        run + ["python", "-c", NATIVE_VERSION_PROBE],
-    ]
-    if target == "wdpa-monthly":
-        checks += [run + ["python", "-c", "import ingestion.wdpa_monthly.build, ingestion.wdpa_monthly.automatic"]]
-        checks += [run + ["python", "scripts/wdpa_input_memory_probe.py", "--help"], run + ["python", "scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
-    if target == "eamlis-monthly":
-        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import source_quality; assert 0 <= source_quality.policy() < 100"]]
-        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import identity, identity_installation, identity_translations; import json; assert identity.Ledger.parse(json.loads(identity.encoded(identity.Ledger.genesis()))).next_feature_id == 1"]]
+        return [build, run + [tested_image, "--print-policy-hash"],
+                run + ["--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()]]
+    run += [tested_image, "python"]
+    checks = [run + ["-c", INTERPRETER_PROBE], run + ["-c", NATIVE_VERSION_PROBE]]
+    if target in {"eamlis-monthly", "mpatlas-monthly"}:
+        fixture = (ROOT / f"tests/fixtures/production_images/{target}.json").read_text()
+        checks.append(run + ["-c", f"target={target!r}\nfixture=__import__('json').loads({fixture!r})\n" + FIXTURE_BUILD])
+    elif target == "wdpa-monthly":
+        checks += [run + ["scripts/wdpa_input_memory_probe.py", "--help"],
+                   run + ["scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
+    else:
+        checks.append(run + ["-c", f"import ingestion.{target.replace('-', '_')}.run"])
     return [build, *checks]
 
 
@@ -143,7 +187,7 @@ def cached_build(command, target):
         return command
     # These small Python recipes rebuild cheaply; remote cache reads have stalled.
     if target in {"catalog-viewer", "monitoring-slack"}:
-        return ["docker", "buildx", "build", "--load", *command[2:]]
+        return command
     cache = f"type=gha,version=2,scope=production-{target}"
     return ["docker", "buildx", "build", "--load", "--cache-from", cache,
             "--cache-to", cache + ",mode=max,ignore-error=true", *command[2:]]
@@ -169,7 +213,7 @@ def main():
         print(f"[{target}] testing immutable image {image_id}", flush=True)
         for command in commands(target, executor, image_id=image_id)[1:]:
             subprocess.run(command, check=True)
-        if args.output and target in TARGETS:
+        if args.output:
             retained[target] = pack_image(target, executor, image_id, args.output / "images")
             # Exercise the deployment loader on this CI daemon before admitting
             # the handoff. Docker's exporter/store representation can differ

@@ -6,7 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts.production_image_contracts import INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, cached_build, commands, main, resolve_image, verify_viewer_image
+from scripts.production_image_contracts import FIXTURE_BUILD, INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, cached_build, commands, main, resolve_image, resource_limits, verify_viewer_image
+from scripts.tested_image_bundle import BUILD_TARGETS, ROOT
 
 IMAGE_ID = 'sha256:' + 'a' * 64
 
@@ -86,7 +87,6 @@ def test_viewer_recipe_and_default_entrypoint_health_are_selected():
     selected = commands('catalog-viewer', 'a' * 40)
     assert selected[0][selected[0].index('-f') + 1] == 'services/catalog_viewer/Dockerfile'
     assert '--viewer-image' in selected[-1]
-    assert '--network' in selected[1] and 'none' in selected[1]
 
 
 @pytest.mark.parametrize('failed_command', ['run', 'exec'])
@@ -234,7 +234,7 @@ def test_build_cache_policy_preserves_actual_recipe_and_target_scopes(monkeypatc
         assert actual == original
         return
     if target in {'catalog-viewer', 'monitoring-slack'}:
-        assert actual == ['docker', 'buildx', 'build', '--load', *original[2:]]
+        assert actual == original
         return
     cache = f'type=gha,version=2,scope=production-{target}'
     assert actual == ['docker', 'buildx', 'build', '--load', '--cache-from', cache,
@@ -283,3 +283,30 @@ def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypa
     with pytest.raises(subprocess.CalledProcessError):
         main()
     assert not (tmp_path / 'images/manifest.json').exists()
+
+
+@pytest.mark.parametrize('target,cpu,memory', [
+    ('sea-ice-daily', '2', '512m'), ('eamlis-monthly', '6', '4g'),
+    ('mpatlas-monthly', '6', '8g'), ('wdpa-monthly', '4', '8g'),
+    ('catalog-viewer', '1', '2g'), ('dataset-usage', '1', '1g'), ('monitoring-slack', '1', '512m'),
+])
+def test_every_installed_probe_uses_production_limits(target, cpu, memory):
+    assert target in BUILD_TARGETS
+    assert resource_limits(target) == ['--cpus', cpu, '--memory', memory]
+    for command in commands(target, 'b' * 40, image_id=IMAGE_ID)[1:]:
+        if command[:2] == ['docker', 'run']:
+            assert command[command.index('--cpus') + 1] == cpu
+            assert command[command.index('--memory') + 1] == memory
+
+
+@pytest.mark.parametrize('target', ['eamlis-monthly', 'mpatlas-monthly'])
+def test_installed_fixture_builds_reuse_native_test_inputs(target):
+    fixture = json.loads((ROOT / f'tests/fixtures/production_images/{target}.json').read_text())
+    from tests.test_mpatlas_monthly import feature
+    from tests.test_eamlis_identity import problem, area
+    if target == 'mpatlas-monthly':
+        assert fixture['features'][0] == feature()
+    else:
+        assert [row['properties'] for row in fixture['geojson']['features']] == [
+            problem('P1', OBJECTID=7), problem('P2', OBJECTID=9), area('AREA2', OBJECTID=11)]
+    assert any(FIXTURE_BUILD in command[-1] for command in commands(target, 'b' * 40)[1:])
