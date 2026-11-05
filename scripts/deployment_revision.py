@@ -43,7 +43,6 @@ TERRAFORM_WORKFLOWS = {
 }
 INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
 INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentError(RuntimeError):
@@ -357,43 +356,6 @@ def finish(args, api):
 
 
 
-def apply_job_path(target, root=None):
-    """Resolve Actions' composed display name from the registered caller chain."""
-    import yaml
-    root = root or ROOT
-    names = []
-    for filename, leaf in (("ci.yml", INGESTION_CONFIGS[target]["workflow"]),
-                           (INGESTION_CONFIGS[target]["workflow"], "ingestion-deploy.yml"),
-                           ("ingestion-deploy.yml", None)):
-        jobs = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"]
-        matches = [(key, job) for key, job in jobs.items()
-                   if job.get("uses") == "./.github/workflows/" + leaf] if leaf else [("apply", jobs["apply"])]
-        require(len(matches) == 1, "ambiguous apply workflow chain")
-        key, job = matches[0]
-        names.append(job.get("name", key))
-    return " / ".join(names)
-
-
-def wait_applied(args, api, *, attempts=1440, pause=time.sleep):
-    """Observe the attesting apply job while its wrapper retains target ownership."""
-    repository = verify_context(args, api)
-    applied_name = apply_job_path(args.target)
-    path = f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"
-    for attempt in range(attempts):
-        jobs = api.pages(path, field="jobs")
-        applied = [job for job in jobs if job["name"] == applied_name]
-        require(len(applied) <= 1, "ambiguous usage apply job")
-        if applied and applied[0]["status"] == "completed":
-            result = applied[0]["conclusion"]
-            require(result == "success" or result == "skipped" and check(args, api)["proceed"] == "false",
-                    "usage apply did not succeed or prove a verified no-op/supersession")
-            return
-        require(not any(job["name"].startswith(applied_name.split(" / ")[0] + " / ") and job.get("conclusion") in {"failure", "cancelled", "timed_out"} for job in jobs), "usage rollout failed before apply completion")
-        if attempt + 1 < attempts:
-            pause(10)
-    raise DeploymentError("usage apply did not complete within the bounded wait")
-
-
 def pending(api, repository):
     identifiers = []
     for target, config in INGESTION_CONFIGS.items():
@@ -593,7 +555,7 @@ def recover(args, api):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("verify", "check", "start", "wait-applied"):
+    for command in ("verify", "check", "start"):
         begin = commands.add_parser(command)
         begin.add_argument("--workflow", required=True)
         begin.add_argument("--executor-sha", required=True)
@@ -633,7 +595,7 @@ def main():
         elif args.command == "pending":
             outputs = {"records": json.dumps(pending(api, os.environ["GITHUB_REPOSITORY"]))}
         else:
-            outputs = {"wait-applied": wait_applied, "recovery-inputs": recover, "reconcile": recover,
+            outputs = {"recovery-inputs": recover, "reconcile": recover,
                        "observe": observe, "verify": verify_context, "check": check, "start": start, "finish": finish}[args.command](args, api)
         if args.command in {"pending", "check", "start"}:
             with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:

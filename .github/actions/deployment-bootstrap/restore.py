@@ -15,7 +15,7 @@ ENTRYPOINTS = ("scripts/deployment_revision.py", "scripts/terraform_plan_allowli
 def snapshot(revision, destination, *, root=Path.cwd()):
     tracked = repository_files(revision, root)
     selected = dependency_closure(dependency_graph(tracked), ENTRYPOINTS)
-    selected.update(path for path in tracked if path.startswith((".github/actions/deployment-receipt/", ".github/actions/deployment-auth/")))
+    selected.update(path for path in tracked if path.startswith((".github/actions/deployment-receipt/", ".github/actions/deployment-auth/", ".github/actions/deployment-bootstrap/verify_cdn.py")))
     selected.add(".github/terraform-targets.json")
     files = {path: tracked[path] for path in selected}
     # Absent trusted initializers must overwrite candidate package injections.
