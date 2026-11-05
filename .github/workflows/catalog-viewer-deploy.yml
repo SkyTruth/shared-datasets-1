@@ -92,7 +92,6 @@ jobs:
       if: steps.replay.outputs.proceed == 'true'
       env:
         TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
-        TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
       run: |
         set -euo pipefail
         image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}"
@@ -155,6 +154,9 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
+    - &main-ref
+      name: Validate main ref
+      run: if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
     - *trusted-checkout
     - *trusted-bootstrap
     - &deployer-auth
@@ -216,6 +218,7 @@ jobs:
     environment: shared-datasets-production
     concurrency: *state-queue
     steps:
+    - *main-ref
     - *trusted-checkout
     - *trusted-bootstrap
     - *deployer-auth

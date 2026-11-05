@@ -43,6 +43,11 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
+      - name: Validate main ref
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main" &&
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then exit 1; fi
       - &trusted-checkout
         name: Check out trusted deployment verifier
         uses: actions/checkout@v4
@@ -157,27 +162,21 @@ jobs:
           from pathlib import Path
           from scripts.cdn_plan_readiness import catalog_folders
           from scripts.terraform_target_contracts import plan_scope
-          plan = json.load(open(sys.argv[1]))
           allowed_exact, allowed_patterns = plan_scope("pmtiles-cdn-sync.yml", "runtime")
           managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
           catalog_managed_folder_names = catalog_folders(Path("catalog/shared-datasets-catalog.csv").read_text())
-          def managed_folder_name(resource):
-              index = resource.get("index")
-              if isinstance(index, str) and index:
-                  return index
-              return resource.get("address", "").partition('["')[2].rsplit('"]', 1)[0]
           blocked = []
-          for resource in plan.get("resource_changes", []):
+          for resource in json.load(open(sys.argv[1])).get("resource_changes", []):
               actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
-                  continue
+              if actions in ([], ["no-op"], ["read"]): continue
               address = resource.get("address", "")
               allowed = address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns)
               if address == "google_storage_bucket.shared_bucket" and "delete" in actions:
                   allowed = False
               if (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}[")) and "delete" in actions:
                   # Folder-only deletion cannot delete objects. Keep active catalog anchors.
-                  folder = managed_folder_name(resource)
+                  index = resource.get("index")
+                  folder = index if isinstance(index, str) and index else address.partition('["')[2].rsplit('"]', 1)[0]
                   allowed = actions == ["delete"] and address.startswith(f"{managed_folder_prefix}[") and bool(folder) and folder not in catalog_managed_folder_names
               if not allowed:
                   blocked.append(f"{'/'.join(actions)} {address}")

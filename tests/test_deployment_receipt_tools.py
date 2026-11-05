@@ -66,7 +66,9 @@ class ReceiptSigningTests(unittest.TestCase):
         self.assertIn("prepare-rehearsal", runs)
         self.assertIn("verify-rehearsal", runs)
         self.assertIn("verify-file", runs)
-        self.assertIn("install_deployment_verifier.py", runs)
+        self.assertNotIn("install_deployment_verifier.py", runs)
+        bootstrap = yaml.safe_load((ROOT / ".github/actions/deployment-bootstrap/action.yml").read_text())
+        self.assertIn("python scripts/install_deployment_verifier.py", [step.get("run") for step in bootstrap["runs"]["steps"]])
         self.assertNotIn("deployment_revision.py", runs)
         self.assertNotIn("--method POST", runs)
 

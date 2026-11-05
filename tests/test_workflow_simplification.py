@@ -165,3 +165,29 @@ def test_hosted_cdn_scope_guard_runs_with_only_stdlib(tmp_path, deleted):
     result = subprocess.run([sys.executable, '-I', '-S', '-c', boot, str(plan)],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == int(deleted), result.stdout + result.stderr
+
+
+def test_snapshot_restores_cdn_verification_from_the_trusted_revision(tmp_path):
+    import runpy
+    import tarfile
+    root = tmp_path / 'repository'
+    (root / 'scripts').mkdir(parents=True)
+    verifier = root / '.github/actions/deployment-bootstrap/verify_cdn.py'
+    verifier.parent.mkdir(parents=True)
+    verifier.write_text('print("trusted route verification")\n')
+    (root / '.github/terraform-targets.json').write_text('{}')
+    for name in ('deployment_revision', 'terraform_plan_allowlist', 'install_deployment_verifier'):
+        (root / f'scripts/{name}.py').write_text('')
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=root, text=True, stderr=subprocess.PIPE).strip()
+    git('init')
+    git('add', '.')
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.org', 'commit', '-m', 'Trusted route verifier')
+    snapshot = runpy.run_path(str(ROOT / '.github/actions/deployment-bootstrap/restore.py'))['snapshot']
+    archive = tmp_path / 'trusted.tar'
+    snapshot(git('rev-parse', 'HEAD'), archive, root=root)
+    verifier.write_text('raise RuntimeError("candidate verification must not execute")\n')
+    with tarfile.open(archive) as saved:
+        saved.extractall(root, filter='data')
+    result = subprocess.run([sys.executable, '-I', '-S', str(verifier)], capture_output=True, text=True)
+    assert result.returncode == 0 and result.stdout == 'trusted route verification\n', result.stderr
