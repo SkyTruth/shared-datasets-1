@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import hashlib
 import gzip
 import io
@@ -191,56 +192,66 @@ def validate_manifest(manifest, sha):
     return images
 
 
-def verify_archive(path, image):
-    """Never extract image TAR members to the host; verify config and every rootfs layer."""
-    path = Path(path)
-    require(path.stat().st_size == image["archive_size"] <= MAX_IMAGE
-            and hash_file(path) == image["archive_sha256"], "retained image archive digest or size mismatch")
+@contextmanager
+def saved_image(path, *, canonical=False):
+    """One bounded TAR/JSON parser for Docker exports and retained archives."""
+    require(Path(path).stat().st_size <= MAX_IMAGE, "saved image exceeds limit")
     with tarfile.open(path, mode="r:") as archive:
         members = archive.getmembers()
-        require(len(members) <= 2048, "too many Docker-save members")
         names = [member.name for member in members]
-        require(len(names) == len(set(names)), "duplicate Docker-save member")
+        require(len(members) <= 2048 and len(names) == len(set(names)), "duplicate or excessive Docker-save members")
         require(all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
-                    and "\\" not in name and name == str(PurePosixPath(name)) for name in names), "unsafe Docker-save member")
+                    and "\\" not in name and (not canonical or name == str(PurePosixPath(name)))
+                    and (member.isfile() or member.isdir()) for name, member in zip(names, members)), "unsafe Docker-save member or link")
         by_name = {member.name: member for member in members}
 
         def metadata(name):
             require(name in by_name and by_name[name].isfile() and by_name[name].size <= MAX_JSON,
                     "missing or invalid Docker-save metadata: " + name)
-            return read_json(archive.extractfile(by_name[name]).read())
+            return archive.extractfile(by_name[name]).read()
 
-        manifest = metadata("manifest.json")
+        manifest = read_json(metadata("manifest.json"))
+        fields = {"Config", "RepoTags", "Layers"}
         require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict)
-                and set(manifest[0]) == {"Config", "RepoTags", "Layers"}, "Docker-save must contain exactly one image")
+                and fields <= set(manifest[0]) <= fields | (set() if canonical else {"LayerSources", "Parent"}),
+                "Docker-save must contain exactly one supported image")
         saved = manifest[0]
+        config_bytes = metadata(saved["Config"])
+        config = read_json(config_bytes)
+        layers, diff_ids = saved["Layers"], config.get("rootfs", {}).get("diff_ids")
+        require(config.get("os") == "linux" and config.get("architecture") == "amd64", "Docker-save config platform mismatch")
+        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list) and layers
+                and isinstance(diff_ids, list) and len(layers) == len(diff_ids)
+                and all(isinstance(name, str) and name in by_name and by_name[name].isfile() for name in layers)
+                and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) for digest in diff_ids), "invalid Docker-save rootfs")
+        yield archive, by_name, saved, config_bytes, diff_ids
+
+
+def verify_archive(path, image):
+    """Never extract image TAR members to the host; verify config and every rootfs layer."""
+    path = Path(path)
+    require(path.stat().st_size == image["archive_size"] <= MAX_IMAGE
+            and hash_file(path) == image["archive_sha256"], "retained image archive digest or size mismatch")
+    with saved_image(path, canonical=True) as (archive, by_name, saved, config_bytes, diff_ids):
         config_name = image["config_digest"].removeprefix("sha256:") + ".json"
         require(saved["Config"] == config_name and saved["RepoTags"] == [image["source_tag"]],
                 "Docker-save config or tag differs from tested image")
-        config = metadata(config_name)
-        require(hash_stream(archive.extractfile(by_name[config_name])) == image["config_digest"].removeprefix("sha256:")
-                and config.get("os") == "linux" and config.get("architecture") == "amd64", "Docker-save config identity or platform mismatch")
+        require(hashlib.sha256(config_bytes).hexdigest() == image["config_digest"].removeprefix("sha256:"), "Docker-save config identity mismatch")
         layers = saved["Layers"]
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list)
-                and layers and isinstance(diff_ids, list) and len(layers) == len(diff_ids),
-                "Docker-save rootfs contract mismatch")
         allowed = {"manifest.json", config_name}
         for name, diff_id in zip(layers, diff_ids):
-            require(isinstance(name, str) and re.fullmatch(r"[0-9a-f]{64}/layer\.tar", name)
-                    and re.fullmatch(r"sha256:[0-9a-f]{64}", str(diff_id))
-                    and name in by_name and by_name[name].isfile(), "invalid Docker-save rootfs layer")
+            require(re.fullmatch(r"[0-9a-f]{64}/layer\.tar", name), "invalid Docker-save rootfs layer")
             require("sha256:" + hash_stream(archive.extractfile(by_name[name])) == diff_id, "Docker-save rootfs layer digest mismatch")
             directory = name.partition("/")[0]
             allowed.update({name, directory, directory + "/VERSION", directory + "/json"})
         if "repositories" in by_name:
             repository, _, tag = image["source_tag"].partition(":")
-            require(metadata("repositories") == {repository: {tag: layers[-1].partition("/")[0]}}, "Docker-save contains extra repository tags")
+            require(by_name["repositories"].isfile() and by_name["repositories"].size <= MAX_JSON
+                    and read_json(archive.extractfile("repositories").read()) == {repository: {tag: layers[-1].partition("/")[0]}}, "Docker-save contains extra repository tags")
             allowed.add("repositories")
-        require(set(names) <= allowed and all(member.isfile() or member.isdir() for member in members),
-                "unexpected Docker-save member or link")
+        require(set(by_name) <= allowed, "unexpected Docker-save member or link")
         require(all((member.isdir() and member.name in {layer.partition('/')[0] for layer in layers})
-                    or (member.isfile() and (member.name in layers or member.size <= MAX_JSON)) for member in members),
+                    or (member.isfile() and (member.name in layers or member.size <= MAX_JSON)) for member in by_name.values()),
                 "invalid Docker-save member type or size")
 
 
@@ -251,40 +262,13 @@ def canonicalize_archive(raw_path, destination, config_digest, tag, *, untagged=
     layers. Only the single tested config and its ordered rootfs are retained;
     unused exporter metadata is never fed to Docker by the consumer.
     """
-    require(Path(raw_path).stat().st_size <= MAX_IMAGE, "raw saved image exceeds limit")
     require(config_digest is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(config_digest)), "invalid saved config digest")
-    with tarfile.open(raw_path, mode="r:") as saved:
-        members = saved.getmembers()
-        names = [member.name for member in members]
-        require(len(members) <= 2048 and len(names) == len(set(names)), "duplicate or excessive raw Docker-save members")
-        require(all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
-                    and "\\" not in name and (member.isfile() or member.isdir()) for name, member in zip(names, members)),
-                "unsafe raw Docker-save member or link")
-        entries = {member.name: member for member in members}
-
-        def small_member(name):
-            require(name in entries and entries[name].isfile() and entries[name].size <= MAX_JSON,
-                    "missing or oversized raw Docker-save metadata")
-            return saved.extractfile(entries[name]).read()
-
-        manifest = read_json(small_member("manifest.json"))
-        require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict)
-                and {"Config", "RepoTags", "Layers"} <= set(manifest[0]) <= {"Config", "RepoTags", "Layers", "LayerSources", "Parent"},
-                "raw Docker-save must contain exactly one supported image")
-        image = manifest[0]
+    with saved_image(raw_path) as (saved, entries, image, config_bytes, diff_ids):
         require(image["RepoTags"] in (None, []) if untagged else image["RepoTags"] == [tag],
                 "raw saved image has another or additional tag")
-        config_bytes = small_member(image["Config"])
-        config = read_json(config_bytes)
         saved_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-        require((config_digest is None or saved_digest == config_digest)
-                and config.get("os") == "linux" and config.get("architecture") == "amd64", "raw saved config differs from tested image")
+        require(config_digest is None or saved_digest == config_digest, "raw saved config differs from tested image")
         layers = image["Layers"]
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list) and layers
-                and isinstance(diff_ids, list) and len(layers) == len(diff_ids)
-                and all(isinstance(name, str) and name in entries and entries[name].isfile() for name in layers)
-                and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) for digest in diff_ids), "invalid raw saved rootfs")
         config_name = saved_digest.removeprefix("sha256:") + ".json"
         canonical_layers = [digest.removeprefix("sha256:") + "/layer.tar" for digest in diff_ids]
         total = 0

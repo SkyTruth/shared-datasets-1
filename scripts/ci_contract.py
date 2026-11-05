@@ -263,23 +263,16 @@ def deployment_paths(root=None):
     graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
     # These entrypoints validate an already-selected rollout. Their imported
     # policy changes invalidate CI evidence, not the resources being delivered.
-    validation_only = {"scripts/deployment_permissions.py": "Authority probes change CI evidence, never desired deployment content"}
-    boundaries = {
-        **validation_only,
-        "scripts/deployment_revision.py": "Signed execution admission; never a deployment content producer",
-        "scripts/tested_image_authorization.py": "Checks retained image evidence; does not produce image bytes",
-        "scripts/install_deployment_verifier.py": "Installs the pinned historical receipt verifier",
-        "scripts/terraform_plan_allowlist.py": "Validates registered saved plans; no deployment content",
-        "scripts/terraform_target_contracts.py": "Exports the scopes already consumed below",
-        "scripts/ingestion_targets.py": "Exports the target policy already consumed below",
-        "scripts/ingestion_verification.py": "Checks a published release after deployment",
-        "scripts/publication_rollout_gate.py": "Checks publication readiness; its source imports do not change the deployed image",
-        "scripts/dataset_usage_deploy.py": "Validates the registered telemetry scope; image COPY owns runtime dependencies",
-        "scripts/cdn_plan_readiness.py": "Checks tested image prerequisites without producing CDN resources",
-    }
+    exceptions = registry(root, section="selection_exceptions")
+    for row in exceptions.values():
+        reasons = row.get("deployments", {}).values() if row["kind"] == "include" else [row["reason"]]
+        if (row["kind"] not in {"boundary", "exclude", "include"} or not reasons or any(not reason.strip() for reason in reasons)
+                or set(row.get("deployments", {})) - declarations.keys()):
+            raise ValueError("selection exceptions require a reason, kind and registered deployments")
     for edges in graphs:
-        for name in boundaries:
-            edges[name] = set()
+        for name, row in exceptions.items():
+            if row["kind"] != "include":
+                edges[name] = set()
     sources = {name for path, rows in resource_index(root).items()
                if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
     policy = json.loads((root / "terraform/iam-plan-prerequisites.json").read_text())
@@ -295,15 +288,13 @@ def deployment_paths(root=None):
         resources += [resource for config in registry(root).values() if config["workflow"] == workflow for resource in config["resources"]]
         resources += [resource for scope in registry(root, section="plan_scopes").get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
-        inputs = (dependency_closure(edges, [".github/workflows/" + workflow]) - validation_only.keys()) | scope_inputs(resources, root)
+        inputs = (dependency_closure(edges, [".github/workflows/" + workflow])
+                  - {name for name, item in exceptions.items() if item["kind"] == "exclude"}) | scope_inputs(resources, root)
         if resources:
             inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
         if "image" in row:
             inputs.update(dependency_inputs(root=root)[4][row["image"]])
-        exceptions = row.get("input_exceptions", {})
-        if any(not reason.strip() for reason in exceptions.values()):
-            raise ValueError(target + ": input exceptions require a reason")
-        for path in inputs | exceptions.keys():
+        for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
             paths.setdefault(path, set()).add(target)
     return paths
 

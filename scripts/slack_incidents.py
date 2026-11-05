@@ -984,7 +984,6 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             states[scope] = recover_state(ledger.api, state, ancestor=ancestor, success=success)
     prepared = []
     for scope, state in states.items():
-        require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
         existing = original.get(scope)
         incident = state["incident"]
         if scope in blocked:
@@ -1018,16 +1017,14 @@ def deliver(ledger, records, slack):
         state = ledger.verify(record)
         require(state["identity"] == identity, "Slack bot, workspace or channel changed since claim")
         incident = state["incident"]
-        posts = desired_posts(state)
-        for key in posts:
-            post = incident["posts"][key]
-            if post["state"] == "delivered":
-                continue
+        # Only the parent is produced now; historical reply claims remain in
+        # pending_posts for explicit reconciliation, never automatic delivery.
+        parent = incident["posts"].get("parent")
+        if "parent" in desired_posts(state) and parent["state"] == "claimed":
             ts = slack.post(render(state))
             incident["parent_view_sha256"] = parent_view_sha256(state)
-            post.update(state="delivered", ts=ts)
+            parent.update(state="delivered", ts=ts)
             ledger.save(state, "outcomes")
-        parent = incident["posts"].get("parent")
         if not parent or parent["state"] != "delivered":
             continue
         view = parent_view_sha256(state)

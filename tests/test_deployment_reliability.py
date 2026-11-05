@@ -212,9 +212,10 @@ def test_wdpa_processing_limits_follow_the_single_terraform_source(tmp_path, mon
     source = (ROOT / 'terraform/envs/prod/wdpa_monthly.tf').read_text()
     old = {'cpu': '4', 'memory': '8Gi', 'timeout': '43200s'}
     source = source.replace(f'"{old[field]}"', f'"{value}"')
-    module = tmp_path / 'wdpa_monthly.tf'
+    module = tmp_path / 'terraform/envs/prod/wdpa_monthly.tf'
+    module.parent.mkdir(parents=True)
     module.write_text(source)
-    monkeypatch.setattr(allowlist, 'WDPA_MODULE', module, raising=False)
+    monkeypatch.setattr(allowlist, 'ROOT', tmp_path)
     values = old | {field: value}
     task = {'timeout': values['timeout'], 'containers': [{'resources': [{'limits': {k: values[k] for k in ('cpu', 'memory')}}]}]}
     after = {'template': [{'template': [task]}]}
@@ -228,9 +229,10 @@ def test_wdpa_processing_limits_follow_the_single_terraform_source(tmp_path, mon
 
 
 def test_wdpa_nonliteral_processing_limits_fail_closed(tmp_path, monkeypatch):
-    module = tmp_path / 'wdpa_monthly.tf'
+    module = tmp_path / 'terraform/envs/prod/wdpa_monthly.tf'
+    module.parent.mkdir(parents=True)
     module.write_text((ROOT / 'terraform/envs/prod/wdpa_monthly.tf').read_text().replace('"43200s"', 'var.timeout'))
-    monkeypatch.setattr(allowlist, 'WDPA_MODULE', module, raising=False)
+    monkeypatch.setattr(allowlist, 'ROOT', tmp_path)
     with pytest.raises(ValueError, match='WDPA.*literal'):
         allowlist.wdpa_errors({}, 'image', 'config')
 

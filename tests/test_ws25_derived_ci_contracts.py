@@ -107,9 +107,9 @@ def test_planner_image_bindings_follow_consumer_declarations(source):
 
 
 def test_cross_file_local_policy_has_explicit_reasoned_inputs():
-    exceptions = registry(section='deployments')['catalog_viewer']['input_exceptions']
+    exceptions = registry(section='selection_exceptions')
     for path in ('terraform/envs/prod/canonical_mutation_iam.tf', 'catalog/categories.yaml'):
-        assert exceptions[path]
+        assert exceptions[path]['deployments']['catalog_viewer']
         assert 'catalog_viewer' in ci.select_deployments([path])
     assert ci.select_deployments(['catalog/unrelated-policy.yaml']) == []
 

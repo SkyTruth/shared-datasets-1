@@ -510,6 +510,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with: {ref: '${{ github.workflow_sha }}', fetch-depth: 0, persist-credentials: false}
+    - uses: actions/setup-python@v5
+      with: {python-version: '3.12.12'}
+    - uses: astral-sh/setup-uv@v5
+      with: {version: '0.11.8', enable-cache: true}
     - name: Install pinned durable receipt verifier
       run: python scripts/install_deployment_verifier.py
     - name: Wait for this attempt's signed apply job
@@ -517,7 +521,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         EXECUTOR_SHA: ${{ needs.ci-ready.outputs.tested_sha }}
       run: |
-        python scripts/deployment_revision.py wait-applied --target dataset-usage --workflow dataset-usage-deploy.yml \
+        uv run --frozen --no-dev python scripts/deployment_revision.py wait-applied --target dataset-usage --workflow dataset-usage-deploy.yml \
           --executor-sha "$EXECUTOR_SHA" --source-run-id "$GITHUB_RUN_ID" --source-run-attempt "$GITHUB_RUN_ATTEMPT"
 
   dataset-usage-rollout:

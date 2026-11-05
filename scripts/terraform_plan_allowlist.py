@@ -4,8 +4,7 @@
 Reads `terraform show -json` output and exits nonzero when any create, update,
 replace, or delete touches a resource address that is not allowlisted. This is
 the single owner of the resource-change allowlist rule used by the constrained
-prod Terraform apply workflows; keep it stdlib-only so workflow steps can run
-it before `uv sync`.
+prod Terraform apply workflows. WDPA limits use the shared parsed HCL index.
 
 Image targets own a closed resource scope and pin the Cloud Run job to the
 expected image. EAMLIS and sea ice permit only job updates; MPAtlas also permits
@@ -23,11 +22,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
-from scripts.terraform_target_contracts import plan_scope
+from scripts.terraform_target_contracts import plan_scope, resource_index
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
 JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items() if config["plan_guard"] != "usage"}
-WDPA_MODULE = Path(__file__).resolve().parents[1] / "terraform/envs/prod/wdpa_monthly.tf"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def split_lines(value: str) -> list[str]:
@@ -35,9 +34,9 @@ def split_lines(value: str) -> list[str]:
 
 
 def wdpa_errors(after, expected_image, expected_config):
-    module = re.search(r'^module "wdpa_monthly_job" \{(.*?)^\}', WDPA_MODULE.read_text(), re.M | re.S)
-    limits = dict(re.findall(r'^\s*(cpu|memory|timeout)\s*=\s*"([^"\n]+)"\s*(?:#.*)?$', module[1], re.M)) if module else {}
-    if set(limits) != {"cpu", "memory", "timeout"}:
+    module = resource_index(ROOT)["terraform/envs/prod/wdpa_monthly.tf"]["module.wdpa_monthly_job"]
+    limits = {key: module.get(key) for key in ("cpu", "memory", "timeout")}
+    if any(not isinstance(value, str) or "${" in value for value in limits.values()):
         raise ValueError("WDPA processing limits must be literal Terraform module inputs")
     task = after.get("template", [{}])[0].get("template", [{}])[0]
     container = task.get("containers", [{}])[0]

@@ -20,6 +20,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.ingestion_targets import DEPLOY_TARGETS
 
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
@@ -30,13 +31,10 @@ PHASES = {
 OBSERVER = ".github/workflows/deployment-verification.yml"
 RECOVERY = ".github/workflows/deployment-recovery.yml"
 REHEARSAL_SIGNERS = {
-    "ingestion-deploy.yml",
-    "dataset-usage-deploy.yml",
-    "prod-terraform-target-apply.yml",
+    *(config["workflow"] for config in DEPLOY_TARGETS.values()),
+    "ingestion-deploy.yml", "prod-terraform-target-apply.yml",
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
-    "wdpa-monthly-deploy.yml",
-    "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml", "publish-typescript-sdk.yml",
-    "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
+    "publish-typescript-sdk.yml", "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
 }
 
 
@@ -120,12 +118,8 @@ def verify_result(results, value, expected, *, batch=False):
         statement = verified.get("statement", {})
         subject = {"name": name(value), "digest": {"sha256": digest}}
         subjects = statement.get("subject")
-        subjects_match = subjects == [subject]
-        if batch:
-            # Notification checkpoints may be attested together. Require this
-            # exact subject once; production receipts retain single-subject
-            # verification unless the caller explicitly selects batch mode.
-            subjects_match = isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
+        subjects_match = (isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
+                          if batch else subjects == [subject])
         if (
             all(cert.get(key) == item for key, item in expected.items())
             and verified.get("verifiedTimestamps")
