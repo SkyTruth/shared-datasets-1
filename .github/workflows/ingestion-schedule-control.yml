@@ -4,8 +4,7 @@ on:
     inputs:
       job:
         description: "Affected ingestion schedule"
-        type: choice
-        options: [wdpa-monthly, sea-ice-daily, eamlis-monthly]
+        type: string
         required: true
       action:
         description: "Pause before reset; resume only after validated publication"
@@ -45,12 +44,7 @@ jobs:
           persist-credentials: false
       - name: Validate fixed schedule scope
         run: |
-          set -euo pipefail
-          if [[ "${JOB_NAME}" != wdpa-monthly && "${JOB_NAME}" != sea-ice-daily && "${JOB_NAME}" != eamlis-monthly ]] ||
-             [[ "${SCHEDULE_ACTION}" != pause && "${SCHEDULE_ACTION}" != resume ]]; then
-            echo "Only pause/resume of WDPA, sea ice or EAMLIS is allowed." >&2
-            exit 1
-          fi
+          python -c 'import os, sys; from scripts.ingestion_targets import TARGETS; sys.exit(0 if os.environ["JOB_NAME"] in TARGETS and os.environ["SCHEDULE_ACTION"] in {"pause", "resume"} else "Require a registered publisher schedule and pause/resume")'
       - name: Install pinned durable receipt verifier
         if: ${{ inputs.action == 'resume' && inputs.job == 'wdpa-monthly' }}
         run: python scripts/install_deployment_verifier.py
@@ -74,6 +68,8 @@ jobs:
           uv sync --frozen
           if [[ "${JOB_NAME}" == eamlis-monthly ]]; then
             uv run --no-sync python scripts/eamlis_identity_transition.py require-published
+          elif [[ "${JOB_NAME}" == mpatlas-monthly ]]; then
+            uv run --no-sync python -c 'from google.cloud import storage; from ingestion.common.gcs import GcsPublisher; from ingestion.mpatlas_monthly.run import load_baseline; load_baseline(GcsPublisher(storage.Client(project="shared-datasets-1"), "skytruth-shared-datasets-1"))'
           else
             uv run --no-sync python scripts/publication_rollout_gate.py --job "$JOB_NAME" --require-published
           fi

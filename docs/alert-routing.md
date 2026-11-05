@@ -145,21 +145,24 @@ bucket audit uses the same freshness rule. The safety health report also require
 a successful main completion of both `bucket-hygiene-audit.yml` and
 `scratch-cleanup-audit.yml` within nine days (weekly cadence plus two days of grace).
 Missing/failed audits cannot reset that clock; API failures remain visible.
+An ingestion target's live image differing from its latest signed, accepted main
+deployment for over 72 hours raises a finding unless its rollout hold is active.
+Failed reads/unverified records fail health. Pre-start failures remain covered by
+workflow failures and weekly audit freshness.
 
 A Scheduler state other than `ENABLED` for at least 72 hours since
 `userUpdateTime` fails health unless `.github/scheduler-pauses.json` contains a
-reviewed CODEOWNER, reason and future timezone-aware `expires_at` for that
-paused job. Deployment rollout holds in `.github/ingestion-rollout-holds.json`
-use the same `owner`, `reason`, timezone-qualified `expires_at` fields and a
-nonempty CODEOWNER/reason; they do not authorize Scheduler pauses. Missing
-jobs and failed reads fail visibly. Pauses suppress the associated absence checks
-only through that expiry. The paused internal dataset-usage collector is checked
-even though it has no catalog release index. Its registry entry records the deliberate
-pre-activation pause while `gcs_usage.verified_at` remains null. Holds and pauses
-warn at least 72 hours before expiry and alert after expiry; expired holds continue
-blocking deployments without failing CI selection or `ci-ready`. Lint rejects malformed
-holds and changed holds that are already expired.
+reviewed CODEOWNER, reason and future timezone-aware `expires_at`. Deployment
+holds in `.github/ingestion-rollout-holds.json` use those same fields and do not
+authorize Scheduler pauses. Missing jobs/failed reads fail visibly. Approved
+pauses suppress absence checks until expiry, including the internal dataset-usage
+collector's pre-activation pause while `gcs_usage.verified_at` is null. Holds/pauses
+warn at least 72 hours before expiry and alert afterward. Expired holds still block
+deployment, allowing CI selection and `ci-ready`; lint rejects malformed entries
+and changed holds that are already expired.
 
+Disabled incidents or a missing activation timestamp/bot token skip incident
+discovery and appear in the health report; catalog and execution checks continue.
 Setup/probe failures and health-read exceptions share one retained report with
 change-plus-daily reminders. The health reporter runs without installed probe
 dependencies or the pinned verifier. Native setup/probe failures remain red;
@@ -175,7 +178,8 @@ heartbeats. The resources scope provisions these identities before cron-sync add
 and `google_monitoring_alert_policy.operational_safety_absent`.
 
 A completed health read writes the authenticated `operational-safety-heartbeat`
-log. Its log-based metric feeds an independent Cloud Monitoring absence policy
+log only after successful health-report delivery (or its deduplicated no-send).
+A webhook failure emits no heartbeat. Its metric feeds an independent absence policy
 with a seven-hour (`25200s`) window, covering missed/disabled GitHub safety runs.
 Health queries the metric's recent time series and warns when none exists;
 a log write alone cannot establish absence detection before the first series.
@@ -188,13 +192,12 @@ occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:
 
 | Job | Samples | CPU peak upper bound | Memory peak upper bound | Proposed CPU / memory |
 | --- | ---: | ---: | ---: | --- |
-| EAMLIS | 28 | 2.60 vCPU | 0.96 GiB | 6 / 4 GiB |
-| MPAtlas | 40 | 2.32 vCPU | 3.36 GiB | 6 / 8 GiB |
+| EAMLIS | 28 | 2.60 vCPU | 0.96 GiB | 4 / 4 GiB |
+| MPAtlas | 40 | 2.32 vCPU | 3.36 GiB | 4 / 8 GiB |
 | Sea ice | 35 | 0.92 vCPU | 0.16 GiB | 2 / 512 MiB |
 
-Limits retain twice observed headroom; EAMLIS/MPAtlas CPU increased, without CPU
-cost savings. [Cloud Run](https://docs.cloud.google.com/run/docs/configuring/jobs/cpu)
-requires 4 GiB for 6 vCPU. Samples cannot bound future growth; compare peaks after
+Memory retains twice observed headroom; EAMLIS/MPAtlas keep at least 1.5 times
+observed CPU peaks. Samples cannot bound future growth; compare peaks after
 protected deployment. Evidence collection mutated no production resources.
 
 ## Monitoring configuration

@@ -21,6 +21,17 @@ POLICY = {"head_sha": SHA, "gh_version": GH_VERSION, "since": "2026-10-01T00:00:
 INVENTORY = {"asset.json": "1", "catalog.csv": "2"}
 
 
+def capture(run, policy, identity, inventory, cache):
+    return snapshots.Snapshot({"schema": snapshots.SCHEMA, "producer": native.execution(run), "policy": policy,
+        "identity": identity, "inventory_sha256": native.digest(inventory), "entries": cache.used})
+
+
+def write_snapshot(directory, snapshot):
+    path = directory / native.MEMBER
+    path.write_bytes(native.canonical(snapshot.data))
+    return path
+
+
 class SafetyArtifacts(NativeArtifacts):
     def __init__(self):
         super().__init__()
@@ -52,8 +63,8 @@ def retained(tmp_path, monkeypatch):
             verified(receipt, emitter=api.emitter, signer=native.WORKFLOW))) as crypto:
         cache.verify(api, api.record, api.statuses, IDENTITY, verify)
     assert crypto.call_count == 1
-    snapshot = snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, cache)
-    api.retain(snapshot.save(tmp_path, api.producer))
+    snapshot = capture(api.producer, POLICY, IDENTITY, INVENTORY, cache)
+    api.retain(write_snapshot(tmp_path, snapshot))
     api.reads.clear()
     return api, snapshot
 
@@ -138,7 +149,7 @@ def test_selected_proof_requires_exact_native_producer_and_bounded_verified_entr
         next(step for step in api.job["steps"] if step["name"] == name)["conclusion"] = "skipped"
     elif change in {"member", "extra-member"}:
         members = {"../cache.json": native.canonical(data)} if change == "member" else {native.MEMBER: native.canonical(data), "extra": b"{}"}
-        api.retain(snapshot.save(tmp_path, api.producer), members=members)
+        api.retain(write_snapshot(tmp_path, snapshot), members=members)
     else:
         if change == "producer":
             data["producer"]["run_attempt"] += 1
@@ -149,7 +160,7 @@ def test_selected_proof_requires_exact_native_producer_and_bounded_verified_entr
         else:
             reads = next(iter(data['entries'].values()))
             reads['repos/SkyTruth/other'] = reads.pop(PREFIX)
-        api.retain(snapshot.save(tmp_path, api.producer), members={native.MEMBER: native.canonical(data)})
+        api.retain(write_snapshot(tmp_path, snapshot), members={native.MEMBER: native.canonical(data)})
     with pytest.raises((RuntimeError, native.CacheError)):
         restore(api)
 
@@ -179,18 +190,14 @@ def test_only_checked_receipts_can_be_renewed_and_revision_cannot_change(retaine
     snapshot = restore(api)
     assert snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
     newer = {**api.current, 'id': 400}
-    renewed = snapshots.Snapshot.capture(newer, POLICY, IDENTITY, INVENTORY, snapshot.cache)
-    assert json.loads(renewed.save(tmp_path, newer).read_bytes())['entries'] == snapshot.cache.used
+    renewed = capture(newer, POLICY, IDENTITY, INVENTORY, snapshot.cache)
+    assert json.loads(write_snapshot(tmp_path, renewed).read_bytes())['entries'] == snapshot.cache.used
     with pytest.raises(RuntimeError, match='policy differs'):
-        renewed.save(tmp_path, {**newer, 'head_sha': 'b' * 40})
+        capture({**newer, 'head_sha': 'b' * 40}, POLICY, IDENTITY, INVENTORY, snapshot.cache)
 
 
-def test_probe_cannot_write_through_its_read_view():
-    api = mock.Mock()
-    view = snapshots.ReadOnlyAPI(api)
-    with pytest.raises(snapshots.SnapshotWrite):
-        view.post(PREFIX + '/deployments', {})
-    api.post.assert_not_called()
+def test_probe_transport_has_no_mutation_method():
+    assert not hasattr(snapshots.GitHub(), "post")
 
 
 def test_snapshot_producer_accepts_manual_safety_but_rejects_push(retained):
