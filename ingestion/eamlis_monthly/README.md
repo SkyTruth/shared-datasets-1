@@ -91,13 +91,16 @@ README, or the complete current translation bundle. A README plan cannot include
 feature artifacts, ledgers or a release-index rebuild. The source-quality hold
 and approved-publisher gates still apply. Scheduler resumption remains a separate
 maintainer action; this hash/metadata follow-up keeps cron paused.
-The protected deploy checks Scheduler state and defers its automatic canary
-while paused. An explicit `canary_run_date` authorizes a manual execution
+The protected entrypoint calls `ingestion-deploy.yml`, which checks Scheduler
+state and defers image preparation and apply while paused. An explicit
+`canary_run_date` authorizes a manual execution
 without resuming cron. A missing/unknown Scheduler state fails deployment.
-Successful Terraform apply records phase `applied`; a successful canary advances
-it to `verified`. Deferring the canary preserves the truthful configuration-only
-`applied` result. A prior signed `unknown` record still requires the existing
-protected recovery checks; this phase fix does not clear historical records.
+The one-hour task timeout leaves over six times the measured 8.6-minute maximum
+across the three short ingestion jobs. The shared deploy captures the canary's
+execution ID and waits for exact-image terminal success before recording
+`verified`. Failed apply or canary checks record failure; deferring before apply
+creates no deployment claim. Historical incomplete records still require
+protected recovery checks.
 
 When changed, the job writes:
 

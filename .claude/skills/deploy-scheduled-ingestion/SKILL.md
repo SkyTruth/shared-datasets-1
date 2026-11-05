@@ -60,11 +60,13 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
   queue replaces pending jobs even when `cancel-in-progress` is false. Queue
   overflow is still canceled: report it and dispatch the affected workflow
   again from reviewed `main` after capacity is available.
-- Serialize the existing whole jobs, including image builds and canary checks.
-  Longer queue waits are an accepted tradeoff. Put no matching queue on a
-  reusable-workflow caller or its parent workflow: only the execution job owns
-  it. Preserve bootstrap `needs` dependencies. Preview Terraform uses separate
-  state and keeps its own queue.
+- Ingestion entrypoints call `ingestion-deploy.yml`: prepare images before the
+  state queue, keep plan/allowlist/permissions/signed claim/apply in its `apply`
+  job, then verify canaries outside that queue. Each target entrypoint holds
+  its separate `ingestion-<target>` queue across the whole rollout to prevent
+  a newer same-target deployment racing verification. Put no matching state
+  queue on a reusable-workflow caller or its parent workflow. Preserve bootstrap
+  `needs` dependencies. Preview Terraform uses separate state and its own queue.
 - Before changing the shared queue, drain active and queued production runs
   using the old workflow configuration. Verify post-merge jobs complete without
   overlapping production writer jobs or canceled pending work.
@@ -234,8 +236,9 @@ production job that imports the shared helpers.
 5. Let the protected deployment workflow prepare and push the image after
    successful main CI and the required repository and IAM prerequisites:
 
-   - `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` and
-     `wdpa-monthly-deploy.yml` use `scripts/tested_image_authorization.py` to verify
+   - `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml`,
+     `mpatlas-monthly-deploy.yml` and `wdpa-monthly-deploy.yml` call the shared
+     `ingestion-deploy.yml`, using `scripts/tested_image_authorization.py` to verify
      and load the exact Linux AMD64 image retained by main CI's successful
      `production-images` suite. They tag and push tested bytes without rebuilding.
    - The workflow resolves and deploys the immutable registry digest. Do not

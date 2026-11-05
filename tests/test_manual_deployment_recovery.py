@@ -144,3 +144,47 @@ class ManualAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(deployment.DeploymentError, "incomplete or failed"):
             deployment.replay_decision([record], SHA, lambda older, newer: True, lambda value: [{"state": "failure", "description": "failed"}])
         self.api.post.assert_not_called()
+
+
+class IngestionTargetRecoveryTests(unittest.TestCase):
+    def test_every_registered_ingestion_target_resolves_and_reaches_refresh_plan(self):
+        import json
+        import subprocess
+        import sys
+        import tempfile
+        workflow = yaml.safe_load((ROOT / '.github/workflows/deployment-recovery.yml').read_text())
+        steps = workflow['jobs']['reconcile']['steps']
+        resolver = next(s for s in steps if s.get('id') == 'ingestion-target')
+        # Execute the shipped resolver after its transport wrapper, with real YAML parsing.
+        code = resolver['run'].split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        table = json.loads(yaml.safe_load((ROOT / '.github/workflows/ingestion-deploy.yml').read_text())['env']['INGESTION_TARGETS'])
+        refresh = next(s for s in steps if s.get('name') == 'Refresh original target scope without applying')['run']
+        image = 'registry/job@sha256:' + 'a' * 64
+        for target in (*table, 'terraform-registered', 'foreign-job'):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'outputs'
+                env = {**os.environ, 'TARGET': target, 'IMAGE': image, 'KIND': 'terraform' if target.startswith('terraform-') else 'ingestion',
+                       'GITHUB_OUTPUT': str(output), 'RUNNER_TEMP': directory}
+                result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env, capture_output=True, text=True)
+                if target == 'foreign-job':
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(output.exists())
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                variables = json.loads(output.read_text().removeprefix('image_variables='))
+                self.assertEqual(set(variables), {t['image_variable'] for t in table.values()})
+                self.assertEqual([key for key, value in variables.items() if value == image], [table[target]['image_variable']] if target in table else [])
+                targets = table[target]['targets'] if target in table else ['resource.reviewed']
+                env.update(IMAGE_VARIABLES=json.dumps(variables), TARGETS_JSON=json.dumps(targets), ARGS=str(Path(directory) / 'args'))
+                fake = '''terraform() { :; }
+bash() { printf '%s\\n' "$@" > "$ARGS"; }
+'''
+                result = subprocess.run(['bash', '-c', fake + refresh], cwd=ROOT, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = (Path(directory) / 'args').read_text().splitlines()
+                self.assertIn('plan', args)
+                self.assertNotIn('apply', args)
+                self.assertEqual({a.removeprefix('-target=') for a in args if a.startswith('-target=')}, set(targets))
+                self.assertEqual(dict(a.removeprefix('-var=').split('=', 1) for a in args if a.startswith('-var=')), variables)
+        # Trusted table resolution must survive checkout of executors predating consolidation.
+        self.assertLess(steps.index(resolver), next(i for i, s in enumerate(steps) if s.get('with', {}).get('ref') == '${{ steps.original.outputs.executor_sha }}' and s.get('with', {}).get('path') != 'original-executor'))

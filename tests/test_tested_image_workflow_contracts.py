@@ -21,6 +21,14 @@ TARGETS = ("wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily",
 
 def deployment_steps(target):
     value = load_workflow(ROOT / ".github/workflows" / f"{target}-deploy.yml")
+    if value['jobs'].get('deploy', {}).get('uses') == './.github/workflows/ingestion-deploy.yml':
+        shared = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
+        config = json.loads(shared['env']['INGESTION_TARGETS'])[target]
+        steps = copy.deepcopy(shared['jobs']['prepare']['steps'] + shared['jobs']['apply']['steps'])
+        for step in steps:
+            if 'run' in step:
+                step['run'] = step['run'].replace('$WORKFLOW_FILE', config['workflow']).replace('$TARGET', target)
+        return steps
     return next(job["steps"] for job in value["jobs"].values()
                 if any("tested_image_authorization.py" in step.get("run", "") for step in job.get("steps", [])))
 
@@ -33,9 +41,10 @@ def image_contract(steps, target):
     loaded = loaders[0]
     assert steps[loaded].get("id") == "tested-image"
     assert not steps[loaded].get("continue-on-error") and "||" not in runs[loaded], "loader cannot have a fallback"
-    for argument in (f"--workflow {target}-deploy.yml", f"--target {target}", '--executor-sha "$EXECUTOR_SHA"',
-                     '--source-run-id "$SOURCE_RUN_ID"', '--source-run-attempt "$SOURCE_RUN_ATTEMPT"'):
-        assert argument in runs[loaded], "retained image must bind exact workflow, target and tested source"
+    arguments = shlex.split(runs[loaded])
+    for flag, expected in (("--workflow", target + "-deploy.yml"), ("--target", target), ("--executor-sha", "$EXECUTOR_SHA"),
+                           ("--source-run-id", "$SOURCE_RUN_ID"), ("--source-run-attempt", "$SOURCE_RUN_ATTEMPT")):
+        assert arguments[arguments.index(flag) + 1] == expected, "retained image must bind exact workflow, target and tested source"
     assert steps[loaded].get("env", {}).get("GH_TOKEN") == "${{ github.token }}"
     assert any("deployment_revision.py verify --bootstrap" in run for run in runs[:loaded]), "trusted source proof must precede loading"
     assert any("deployment_revision.py check" in run for run in runs[:loaded]), "replay proof must precede loading"

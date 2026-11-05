@@ -47,6 +47,36 @@ jobs:
       - name: Resolve original tested deployment
         id: original
         run: python scripts/deployment_revision.py recovery-inputs --deployment-id "$DEPLOYMENT_ID"
+      - uses: astral-sh/setup-uv@v5
+        if: steps.original.outputs.kind != 'sdk'
+        with:
+          version: "0.11.8"
+          enable-cache: true
+      - name: Resolve recovery image variables from trusted ingestion targets
+        id: ingestion-target
+        if: steps.original.outputs.kind != 'sdk'
+        env:
+          TARGET: ${{ steps.original.outputs.target }}
+          IMAGE: ${{ steps.original.outputs.image }}
+          KIND: ${{ steps.original.outputs.kind }}
+        run: |
+          uv run --locked --no-dev python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import yaml
+
+          workflow = yaml.safe_load(Path('.github/workflows/ingestion-deploy.yml').read_text())
+          targets = json.loads(workflow['env']['INGESTION_TARGETS'])
+          variables = {target['image_variable']: 'unused-by-reconciliation' for target in targets.values()}
+          target = os.environ['TARGET']
+          if target in targets:
+              variables[targets[target]['image_variable']] = os.environ['IMAGE']
+          elif os.environ['KIND'] != 'terraform' or not target.startswith('terraform-'):
+              raise ValueError('Unregistered recovery target: ' + target)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('image_variables=' + json.dumps(variables) + '\n')
+          PY
       - uses: actions/checkout@v4
         if: steps.original.outputs.kind != 'sdk'
         with:
@@ -79,22 +109,13 @@ jobs:
         if: steps.original.outputs.kind != 'sdk'
         env:
           TARGETS_JSON: ${{ steps.original.outputs.targets }}
-          TARGET: ${{ steps.original.outputs.target }}
-          IMAGE: ${{ steps.original.outputs.image }}
-          KIND: ${{ steps.original.outputs.kind }}
+          IMAGE_VARIABLES: ${{ steps.ingestion-target.outputs.image_variables }}
         run: |
           set -euo pipefail
           terraform -chdir=terraform/envs/prod init -input=false
           args=(-input=false -refresh=true -out="$RUNNER_TEMP/reconciliation.tfplan")
           while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
-          args+=(-var="wdpa_monthly_image=unused-by-reconciliation" -var="eamlis_monthly_image=unused-by-reconciliation" -var="sea_ice_daily_image=unused-by-reconciliation")
-          case "$TARGET" in
-            wdpa-monthly) args+=(-var="wdpa_monthly_image=$IMAGE") ;;
-            eamlis-monthly) args+=(-var="eamlis_monthly_image=$IMAGE") ;;
-            sea-ice-daily) args+=(-var="sea_ice_daily_image=$IMAGE") ;;
-            terraform-*) if [[ "$KIND" != "terraform" ]]; then exit 1; fi ;;
-            *) exit 1 ;;
-          esac
+          while IFS= read -r variable; do args+=("-var=$variable"); done < <(python -c 'import json, os; print("\n".join(k + "=" + v for k, v in json.loads(os.environ["IMAGE_VARIABLES"]).items()))')
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan "${args[@]}"
           terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
       - name: Reconcile complete target state and applicable runtime evidence

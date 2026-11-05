@@ -3,6 +3,13 @@
 Load only the section for the job being deployed or controlled. Runtime,
 container recipes and processing limits remain in `ingestion/<job>/README.md`.
 
+The four ingestion entrypoints call `ingestion-deploy.yml`. Target-specific
+queues serialize complete rollouts, while only its Terraform `apply` job holds
+the shared production state queue. Canaries run after that queue is released;
+each execution ID is captured before watching terminal status. MPAtlas, EAMLIS
+and sea ice have one-hour task timeouts and a 62.5-minute verification window;
+WDPA retains its 24-hour task limit and ten-minute detached watch.
+
 ## mpatlas-monthly deployment
 
 Follow [the MPAtlas job contract](../../../../ingestion/mpatlas_monthly/README.md).
@@ -31,9 +38,9 @@ dispatch input for a deliberate backfill or metadata-contract repair run. Do
 not deploy this job with a local `terraform apply` or by pushing hand-built
 images.
 
-When EAMLIS Scheduler is paused, deployment defers its automatic canary unless
-an explicit `canary_run_date` is supplied. It still verifies the deployed digest
-and existing release contract. This preserves a maintenance pause and avoids
+When EAMLIS Scheduler is paused, deployment defers image preparation and apply
+unless an explicit `canary_run_date` is supplied. This preserves a maintenance
+pause and avoids
 trying a legacy completed run date after identity activation. It never resumes
 the schedule. Missing or unexpected Scheduler state fails the gate.
 

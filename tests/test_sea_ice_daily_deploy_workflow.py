@@ -1,126 +1,77 @@
-from __future__ import annotations
+"""The shared canary retains identity before polling and resumes only after validation."""
+import json
 
-import unittest
-import os
-import subprocess
-from pathlib import Path
-
-from workflow_helpers import (
-    load_workflow,
-    terraform_targets,
-    workflow_steps_by_name,
-    workflow_triggers,
-)
+import pytest
+from test_wdpa_monthly_deploy_workflow import REPO_ROOT, run_shell, shared_step, shared_workflow
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/sea-ice-daily-deploy.yml"
+@pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
+@pytest.mark.parametrize('date', ['', '2026-10-01', 'invalid; exit 0'])
+def test_canary_date_is_one_argument_and_execution_is_recorded_before_watch(tmp_path, target, date):
+    result = run_shell(tmp_path, shared_step('verify', 'Execute ingestion canary')['run'], target=target, extra={
+        'CANARY_RUN_DATE': date, 'ARGS': str(tmp_path / 'args'), 'GITHUB_SERVER_URL': 'https://github.com',
+        'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1', 'GITHUB_RUN_ID': '123',
+    }, prefix='gcloud() { printf "%s\\n" "$@" > "$ARGS"; echo canary-123; }\n')
+    if date.startswith('invalid'):
+        assert result.returncode != 0
+        assert not (tmp_path / 'args').exists()
+        return
+    assert result.returncode == 0, result.stderr
+    args = (tmp_path / 'args').read_text().splitlines()
+    assert args[:4] == ['run', 'jobs', 'execute', target]
+    assert '--async' in args
+    overrides = [a for a in args if a.startswith('--update-env-vars=')]
+    assert ('RUN_DATE=2026-10-01' in ''.join(overrides)) == bool(date)
+    assert ('SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=' in ''.join(overrides)) == (target != 'wdpa-monthly')
+    assert (tmp_path / 'environment').read_text() == 'CANARY_EXECUTION=canary-123\n'
 
 
-class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
-    def test_canary_passes_reviewed_date_as_one_argument_and_rejects_invalid_input(self):
-        steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
-        # Execute the real workflow shell with a harmless command recorder.
-        script = "gcloud() { printf '%s\\n' \"$@\"; }\n" + steps["Execute sea-ice-daily canary"]["run"]
-        for date in ("", "2026-10-01", "invalid; exit 0"):
-            with self.subTest(date=date):
-                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                                        env={**os.environ, "JOB_NAME": "sea-ice-daily", "REGION": "us-central1",
-                                             "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date,
-                                             "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
-                                             "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull})
-                if date.startswith("invalid"):
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(result.stdout, "")
-                else:
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(",RUN_DATE=2026-10-01" in result.stdout, bool(date))
-
-    def test_sea_ice_daily_deploy_workflow_is_protected_and_digest_pinned(self):
-        workflow = load_workflow(DEPLOY_WORKFLOW)
-        trigger = workflow_triggers(workflow)
-        deploy = workflow["jobs"]["deploy"]
-        env = workflow["env"]
-        steps = workflow_steps_by_name(workflow, "deploy")
-        step_names = list(steps)
-
-        self.assertEqual(workflow["name"], "Ingestion / Sea ice daily deploy")
-        self.assertNotIn("push", trigger)
-        self.assertIn("workflow_call", trigger)
-        self.assertIn("Verify feature-ID publication state", steps)
-        self.assertIn("workflow_dispatch", trigger)
-        self.assertIn("resume_scheduler", trigger["workflow_dispatch"]["inputs"])
-        self.assertEqual(deploy["environment"], "shared-datasets-production")
-        self.assertEqual(
-            deploy["concurrency"],
-            {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
-        )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
-        self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
-        self.assertEqual(env["JOB_NAME"], "sea-ice-daily")
-
-        tag = steps["Tag the exact tested sea-ice-daily image"]
-        self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", tag["run"])
-
-        self.assertIn("gdal_calc.py --help", steps["Smoke-test native tools in image"]["run"])
-        synthetic_run = steps["Smoke-test synthetic sea-ice build path in image"]["run"]
-        self.assertIn("docker run --platform linux/amd64 --rm -i", synthetic_run)
-        self.assertIn("sea_ice.build_outputs", synthetic_run)
-
-        push_run = steps["Push sea-ice-daily image"]["run"]
-        self.assertIn("SEA_ICE_DAILY_IMAGE=${image_ref}", push_run)
-
-        plan_run = steps["Terraform plan"]["run"]
-        self.assertEqual(
-            terraform_targets(plan_run),
-            {"module.sea_ice_daily_job.google_cloud_run_v2_job.this"},
-        )
-        self.assertIn("sea_ice_daily_image=${SEA_ICE_DAILY_IMAGE}", plan_run)
-        self.assertIn("wdpa_monthly_image=unused-by-sea-ice-daily-deploy", plan_run)
-        self.assertIn("eamlis_monthly_image=unused-by-sea-ice-daily-deploy", plan_run)
-        all_step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
-        self.assertNotIn("gcloud run jobs describe wdpa-monthly", all_step_runs)
-        self.assertNotIn("gcloud run jobs describe eamlis-monthly", all_step_runs)
-
-        dockerfile = (REPO_ROOT / "ingestion/sea_ice_daily/Dockerfile").read_text(encoding="utf-8")
-        self.assertIn(
-            "COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions",
-            dockerfile,
-            "sea-ice-daily image must ship reviewed feature-identity resolutions; "
-            "the job loads them from catalog/feature-identity-resolutions/ at runtime",
-        )
-
-        enforce_run = steps["Enforce sea-ice-daily resource-change allowlist"]["run"]
-        self.assertIn('python scripts/terraform_plan_allowlist.py "${RUNNER_TEMP}/sea-ice-daily.tfplan.json"', enforce_run)
-        self.assertIn('--allowed-exact="module.sea_ice_daily_job.google_cloud_run_v2_job.this"', enforce_run)
-        self.assertIn('--job-image-target=sea-ice-daily --expected-image="${SEA_ICE_DAILY_IMAGE}"', enforce_run)
-        self.assertNotIn("python - ", enforce_run)
-        self.assertNotIn("uv ", enforce_run)
-        self.assertEqual(steps["Enforce sea-ice-daily resource-change allowlist"]["if"], steps["Terraform plan"]["if"])
-        self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
-        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
-        self.assertLess(
-            step_names.index("Export Terraform plan JSON"),
-            step_names.index("Enforce sea-ice-daily resource-change allowlist"),
-        )
-        self.assertLess(
-            step_names.index("Enforce sea-ice-daily resource-change allowlist"),
-            step_names.index("Claim tested deployment revision"),
-        )
-        self.assertLess(
-            step_names.index("Enforce sea-ice-daily resource-change allowlist"),
-            step_names.index("Terraform apply"),
-        )
-
-        self.assertLess(step_names.index("Terraform apply"), step_names.index("Confirm deployed digest"))
-        self.assertLess(step_names.index("Confirm deployed digest"), step_names.index("Execute sea-ice-daily canary"))
-        self.assertLess(step_names.index("Execute sea-ice-daily canary"), step_names.index("Validate latest IMS release contract"))
-        self.assertLess(step_names.index("Validate latest IMS release contract"), step_names.index("Run IMS bucket hygiene audit"))
-        self.assertLess(step_names.index("Run IMS bucket hygiene audit"), step_names.index("Resume sea-ice-daily scheduler"))
-        self.assertIn("gcloud scheduler jobs resume", steps["Resume sea-ice-daily scheduler"]["run"])
-        resume_run = steps["Resume sea-ice-daily scheduler"]["run"]
-        self.assertLess(resume_run.index("--require-published"), resume_run.index("gcloud scheduler jobs resume"))
+@pytest.mark.parametrize('target', ['eamlis-monthly', 'sea-ice-daily'])
+@pytest.mark.parametrize('status,wrong_image,phase,success', [
+    ({'succeededCount': 1, 'completionTime': 'now'}, False, 'verified', True),
+    ({'succeededCount': 1}, False, None, False), ({'cancelledCount': 1}, False, 'failed', False),
+    ({'failedCount': 1}, False, 'failed', False), ({'completionTime': 'now'}, False, 'unknown', False),
+    ({'succeededCount': 1, 'completionTime': 'now'}, True, None, False),
+])
+def test_short_canary_requires_terminal_success_of_exact_digest(tmp_path, target, status, wrong_image, phase, success):
+    image = 'registry/job@sha256:' + 'a' * 64
+    payload = {'spec': {'template': {'spec': {'containers': [{'image': 'wrong' if wrong_image else image}]}}}, 'status': status}
+    result = run_shell(tmp_path, shared_step('verify', 'Watch ingestion canary')['run'], target=target,
+                       extra={'IMAGE': image, 'CANARY_EXECUTION': 'canary-123', 'EXECUTION_JSON': json.dumps(payload)},
+                       prefix='gcloud() { echo "$EXECUTION_JSON"; }\nsleep() { :; }\n')
+    assert (result.returncode == 0) == success, result.stderr
+    output = tmp_path / 'environment'
+    assert (output.read_text() if output.exists() else '') == (f'DEPLOYMENT_PHASE={phase}\n' if phase else '')
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize('running,cancel,inventory_ok,success', [('', 'false', True, True), ('old-canary 1', 'false', True, False), ('old-canary 1', 'true', True, True), ('', 'false', False, False)])
+def test_active_canary_is_never_cancelled_without_explicit_opt_in(tmp_path, running, cancel, inventory_ok, success):
+    result = run_shell(tmp_path, shared_step('verify', 'Resolve in-flight canary')['run'], extra={
+        'RUNNING': running, 'CANCEL_RUNNING_CANARY': cancel, 'INVENTORY_EXIT': '0' if inventory_ok else '1',
+        'CALLS': str(tmp_path / 'calls'),
+    }, prefix='''gcloud() {
+  echo "$*" >> "$CALLS"
+  if [[ "$4" == list ]]; then echo "$RUNNING"; return "$INVENTORY_EXIT"; fi
+}
+''')
+    assert (result.returncode == 0) == success, result.stderr
+    assert ('executions cancel old-canary' in (tmp_path / 'calls').read_text()) == (bool(running) and cancel == 'true')
+
+
+def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
+    names = [s.get('name') for s in shared_workflow()['jobs']['verify']['steps']]
+    order = ['Require successful signed apply', 'Confirm deployed digest', 'Execute ingestion canary', 'Watch ingestion canary',
+             'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume sea-ice-daily scheduler', 'Record deployment outcome']
+    assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
+    resume = shared_step('verify', 'Resume sea-ice-daily scheduler')
+    assert resume['if'] == "inputs.target == 'sea-ice-daily' && inputs.resume_scheduler"
+    for published in (True, False):
+        calls = tmp_path / 'calls'
+        calls.write_text('')
+        result = run_shell(tmp_path, resume['run'], target='sea-ice-daily', extra={'PUBLISHED': '0' if published else '1', 'CALLS': str(calls)}, prefix='''
+uv() { return "$PUBLISHED"; }
+gcloud() { echo "$*" >> "$CALLS"; }
+''')
+        assert (result.returncode == 0) == published
+        assert ('scheduler jobs resume' in calls.read_text()) == published
+    assert 'COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions' in (REPO_ROOT / 'ingestion/sea_ice_daily/Dockerfile').read_text()
