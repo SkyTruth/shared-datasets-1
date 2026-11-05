@@ -571,7 +571,6 @@ jobs:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
 
   mpatlas:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
@@ -707,7 +706,6 @@ jobs:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
 
   preview-terraform-iam:
     needs: [ci-ready, geospatial-changes]
@@ -723,7 +721,6 @@ jobs:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
 
   scratch-cleanup-iam:
     needs: [ci-ready, geospatial-changes, dataset-usage]
@@ -739,7 +736,6 @@ jobs:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
 
   cron-alert-policy:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]

@@ -1,4 +1,20 @@
-# October Terraform reconciliation
+# Production Terraform reconciliation
+
+The versioned target contract is [`.github/terraform-targets.json`](../.github/terraform-targets.json).
+Its stable synchronization names preserve historical signed receipt identities.
+Each entry defines one exact resource list, used for both targeting and the
+saved-plan mutation allowlist, plus permission probes, variable assignments and
+delete policy. Caller jobs retain their dependency edges and select a name; they
+cannot widen its scope. Release checks and read-only recovery use the same table.
+
+The reusable executor separates preparation, serialized plan/apply, and
+unprivileged propagation waiting. Monitoring's tested-image and credential
+preparation runs before entering the state queue; source proof and replay
+admission are checked again after acquiring it. The queued job retains its own
+runner/authentication/Terraform initialization and always signs a claimed
+terminal outcome. Propagation waits require a successful signed apply and hold
+neither the state queue nor a production environment. Historical caller/job
+labels and the immutable receipt-signing leaf remain unchanged.
 
 The October 27 read-only audit found 20 resources left over from the retired
 operational observer/schema alert and one WDPA launch-stage mismatch. Preview
@@ -25,7 +41,7 @@ permission probes and signed deployment records intact.
    after role creation. The grant is disabled by default. Its role name is
    independent of the managed role resource so revocation cannot recreate it.
 3. `retire-operational-infrastructure` targets exactly the 30 resource instances
-   in its `targets`/`allowed_exact` lists. `delete_only` permits pure deletions
+   in its registry resource list. `delete_only` permits pure deletions
    and no-ops; it rejects creations, updates, replacements and unrelated deletes.
 4. `revoke-operational-retirement` disables/removes the binding after any attempted
    grant, including a failed grant or retirement. The unbound role stays
@@ -124,10 +140,10 @@ four removed outputs and stale managed-folder metadata:
 
 `prod-terraform-state-reconcile.yml` reconciles this bookkeeping through the
 existing protected executor after a reviewed merge and successful main CI. It
-supplies an empty target list, so Terraform creates a full normal refreshed plan,
-and an empty resource allowlist, so every resource create, update, replacement
-or deletion is refused before the saved plan can be applied. Terraform can then
-persist refreshed state and outputs without mutating live resources. There is no
+selects the registry’s empty target/resource scope, producing a full normal
+refreshed plan. Every resource create, update, replacement or deletion is refused
+before the saved plan can be applied. Terraform can persist refreshed state and
+outputs without mutating live resources. There is no
 new apply implementation, executor flag, image preparation or retry in that
 state-only caller.
 The offline graph contract recognizes only a paired-empty scope without resource

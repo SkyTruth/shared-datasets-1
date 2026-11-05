@@ -20,6 +20,28 @@ SHARED = 'google_storage_bucket.shared'
 RAW = 'google_storage_bucket.telemetry'
 
 
+def write_workflow(root, workflow, filename='owned.yml'):
+    document = copy.deepcopy(workflow)
+    path = root / '.github/terraform-targets.json'
+    registry = json.loads(path.read_text()) if path.exists() else {'schema_version': 1, 'targets': {}}
+    for name, job in document['jobs'].items():
+        inputs = job['with']
+        sync = filename + '/' + name
+        resources = inputs['targets'].splitlines()
+        item = {'workflow': filename, 'readiness_target': 'iam-bootstrap', 'resources': resources}
+        if not resources and not inputs['allowed_exact']:
+            item['state_only'] = True
+        if inputs['targets'] != inputs['allowed_exact']:
+            item['invalid_allowed_exact'] = inputs['allowed_exact']
+        for key in ('allowed_patterns', 'prepare_monitoring_slack'):
+            if inputs.get(key):
+                item[key] = inputs[key]
+        registry['targets'][sync] = item
+        job['with'] = {'sync_name': sync, 'caller_workflow': filename}
+    path.write_text(json.dumps(registry))
+    (root / '.github/workflows' / filename).write_text(yaml.safe_dump(document))
+
+
 @pytest.fixture
 def policy(tmp_path):
     directory = tmp_path / '.github/workflows'
@@ -28,7 +50,7 @@ def policy(tmp_path):
         'bootstrap': {'uses': contracts.CALLER, 'with': {'targets': ROLE, 'allowed_exact': ROLE}},
         'sync': {'uses': contracts.CALLER, 'needs': 'bootstrap', 'with': {'targets': OWNER, 'allowed_exact': OWNER}},
     }}
-    (directory / 'owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(tmp_path, workflow)
     (tmp_path / 'terraform').mkdir()
     value = {'schema_version': 1, 'jobs': {'owned.yml/bootstrap': [], 'owned.yml/sync': [SHARED]}, 'retired_targets': {}}
     (tmp_path / 'terraform/iam-plan-prerequisites.json').write_text(json.dumps(value))
@@ -55,7 +77,7 @@ def test_shared_bad_dependency_reports_every_target_path(policy):
     other = 'google_storage_bucket_iam_member.mpatlas'
     for key in ('targets', 'allowed_exact'):
         workflow['jobs']['sync']['with'][key] += '\n' + other
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     graph = {OWNER: {ROLE, SHARED}, other: {SHARED}, ROLE: set(), SHARED: {RAW}, RAW: set()}
     with pytest.raises(ValueError) as failure:
         contracts.check_graph(root, graph)
@@ -91,7 +113,7 @@ def test_unknown_caller_removed_policy_and_scope_expansion_fail(policy):
         contracts.check_graph(root, graph)
     write_policy(root, value)
     workflow['jobs']['sync']['with']['allowed_patterns'] = 'google_storage_bucket.*'
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='exact mutation allowlist'):
         contracts.check_graph(root, graph)
 
@@ -128,7 +150,7 @@ def test_retirement_cannot_name_an_unknown_job(policy):
 
 def test_yaml_narrow_callers_cannot_bypass_policy_enumeration(policy):
     root, _, workflow = policy
-    (root / '.github/workflows/unregistered.yaml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow, 'unregistered.yaml')
     assert 'unregistered.yaml/sync' in contracts.callers(root)
     with pytest.raises(ValueError, match='exactly every'):
         contracts.check_graph(root, {OWNER: {ROLE}, ROLE: set()})
@@ -144,7 +166,7 @@ def state_only_job(policy):
 
 def test_paired_empty_scope_has_no_managed_mutation_dependencies(policy):
     root, _, workflow = state_only_job(policy)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     graph = {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()}
     assert contracts.check_graph(root, graph)['owned.yml/state'] == {
         'targets': [], 'managed_prerequisites': [], 'state_only': True,
@@ -158,7 +180,7 @@ def test_paired_empty_scope_has_no_managed_mutation_dependencies(policy):
 def test_state_only_cannot_acquire_resource_scope_or_prepare_external_mutations(policy, change):
     root, _, workflow = state_only_job(policy)
     workflow['jobs']['state']['with'].update(change)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='state-only|nonempty'):
         contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
 
@@ -173,7 +195,7 @@ def test_state_only_has_no_hidden_ownership_or_bootstrap_edges(policy, kind):
     else:
         workflow['jobs']['state']['needs'] = 'bootstrap'
     write_policy(root, value)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='state-only'):
         contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
 

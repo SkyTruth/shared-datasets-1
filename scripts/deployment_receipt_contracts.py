@@ -298,6 +298,25 @@ def verification_boundary(workflow, filename, parent, needs):
     return errors
 
 
+def terraform_boundary(workflow):
+    """Keep preparation/waiting outside the one serialized mutation boundary."""
+    jobs = workflow['jobs']
+    if set(jobs) != {'prepare', 'sync', 'propagation'}:
+        return ['Terraform executor requires preparation, serialized apply and propagation jobs']
+    prepare, sync, propagation = (jobs[key] for key in ('prepare', 'sync', 'propagation'))
+    if (any(jobs[key].get('environment') != PROTECTED for key in ('prepare', 'sync'))
+            or [key for key, job in jobs.items() if 'concurrency' in job] != ['sync']
+            or sync['concurrency'] != {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+            or sync.get('needs') != 'prepare' or sync.get('if') != "needs.prepare.outputs.proceed == 'true'"):
+        return ['Terraform preparation must gate the protected serialized apply']
+    if (propagation.get('needs') != 'sync' or propagation.get('permissions') != {}
+            or 'environment' in propagation
+            or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+            or sync.get('outputs', {}).get('applied') != "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}"):
+        return ['Terraform propagation requires successful signed apply without production authority']
+    return []
+
+
 def boundaries(root):
     errors = []
     for filename in WORKFLOWS:

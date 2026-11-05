@@ -69,13 +69,37 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
         path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
-        text = path.read_text().replace("      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: true", "      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: false")
-        path.write_text(text)
+        value = yaml.safe_load(path.read_text())
+        value[True]['workflow_call']['inputs']['source_run_id']['required'] = False
+        path.write_text(yaml.safe_dump(value))
         caller = self.root / ".github/workflows/cron-alert-policy-sync.yml"
         caller.write_text(caller.read_text().replace("  workflow_call:\n", "  push:\n    branches: [main]\n  workflow_call:\n", 1))
         errors = contracts.iam_contract(self.root)
         self.assertTrue(any("must require source_run_id" in item for item in errors))
         self.assertTrue(any("ci-ready" in item for item in errors))
+
+    def test_terraform_queue_and_propagation_cannot_bypass_signed_admission(self):
+        path = self.root / '.github/workflows/prod-terraform-target-apply.yml'
+        original = path.read_text()
+        mutations = {
+            'preparation under queue': lambda jobs: jobs['prepare'].update(concurrency=jobs['sync']['concurrency']),
+            'disconnected preparation': lambda jobs: jobs['sync'].update(needs=[]),
+            'bypass preparation': lambda jobs: jobs['sync'].update({'if': 'always()'}),
+            'unprotected apply': lambda jobs: jobs['sync'].pop('environment'),
+            'cancelling state queue': lambda jobs: jobs['sync']['concurrency'].update({'cancel-in-progress': True}),
+            'wait under queue': lambda jobs: jobs['propagation'].update(concurrency=jobs['sync']['concurrency']),
+            'privileged wait': lambda jobs: jobs['propagation'].update(environment='shared-datasets-production'),
+            'wait writer': lambda jobs: jobs['propagation'].update(permissions={'deployments': 'write'}),
+            'unsigned wait': lambda jobs: jobs['propagation'].update({'if': 'always()'}),
+            'unbound apply output': lambda jobs: jobs['sync']['outputs'].update(applied='true'),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = yaml.safe_load(original)
+                mutate(value['jobs'])
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('Terraform' in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
 
     def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
         for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):
