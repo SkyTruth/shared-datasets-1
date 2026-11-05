@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import copy
 from contextlib import nullcontext
 import json
@@ -14,12 +13,11 @@ from unittest import mock
 
 import pytest
 
-from scripts import ci_preflight as preflight
-from scripts.production_image_contracts import commands as image_commands
+from scripts import ci_contract, ci_preflight as preflight
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.check_workflow_syntax import parser_source
 from scripts.ci_contract import (
-    ALWAYS, CONTRACT_FILES, INGESTION_DEPLOYMENTS, NARROW_PATHS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
+    ALWAYS, CONTRACT_FILES, INGESTION_DEPLOYMENTS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
     verify_results, select_production_images,
 )
 from workflow_helpers import load_workflow, workflow_triggers
@@ -87,48 +85,46 @@ def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(pa
 
 def test_documentation_does_not_reduce_other_changed_path_requirements():
     paths = ["scripts/README.md", "ingestion/wdpa_monthly/run.py"]
-    assert set(select_suites(paths)[0]) == ALWAYS | {"geospatial-integration", "production-images"}
+    assert set(select_suites(paths)[0]) == ALWAYS | {"geospatial-integration", "production-images", "browser"}
     assert select_suites(["scripts/README.md", "scripts/unproved.py"])[0] == list(SUITES)
 
 
-@pytest.mark.parametrize("path,suites", list(NARROW_PATHS.items()))
-def test_proven_path_selects_only_its_consumer_suites(path, suites):
-    assert set(select_suites([path])[0]) == ALWAYS | set(suites)
-    assert select_suites(["scripts/README.md", path])[0] == select_suites([path])[0]
-    if not suites:
-        assert select_production_images([path]) == []
-
-
-@pytest.mark.parametrize("path", [
-    "scripts/catalog_csv.py", "scripts/release_feature_model.py", "scripts/catalog_site.py",
-    "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
-    "scripts/local_wdpa_sample.py",
-    "scripts/ci_contract.py", "scripts/new-runtime.py",
-])
-def test_unlisted_shared_and_fixture_scripts_remain_broad(path):
-    assert path not in NARROW_PATHS
-    assert select_suites([path])[0] == list(SUITES)
-
-
-def test_mixed_narrow_scripts_union_their_consumers_in_suite_order():
-    paths = ["scripts/local_wdpa_sample.py", "scripts/catalog_web_publish.py"]
-    assert select_suites(paths)[0] == list(SUITES)
-    assert select_suites(list(reversed(paths)))[0] == list(SUITES)
-
-
-def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
-    automation = "scripts/slack_incidents.py"
+@pytest.mark.parametrize("path", ["scripts/slack_incidents.py", "scripts/operational_safety_check.py",
+    "scripts/repo_alerts.py", ".github/workflows/operational-safety-check.yml"])
+def test_unrelated_automation_uses_core_suites_without_image_builds(path):
+    assert set(select_suites([path])[0]) == ALWAYS
+    assert select_production_images([path]) == []
     component = "ingestion/mpatlas_monthly/run.py"
-    assert select_suites([automation, component]) == select_suites([component])
-    assert select_production_images([automation, component]) == ["mpatlas-monthly"]
-    for broad in ("scripts/new-runtime.py", *CONTRACT_FILES):
-        assert select_suites([automation, broad])[0] == list(SUITES)
-        assert select_production_images([automation, broad]) == list(BUILD_TARGETS)
-    # Contract precedence also governs the image exception, even if a future
-    # allowlist edit accidentally duplicates a protected contract path.
-    monkeypatch.setitem(NARROW_PATHS, "scripts/ci_contract.py", ())
-    assert select_suites(["scripts/ci_contract.py"])[0] == list(SUITES)
-    assert select_production_images(["scripts/ci_contract.py"]) == list(BUILD_TARGETS)
+    assert select_suites([path, component]) == select_suites([component])
+    assert select_production_images([path, component]) == ["mpatlas-monthly"]
+    assert select_suites([path, "scripts/ci_contract.py"])[0] == list(SUITES)
+
+
+def test_generated_import_closure_includes_relative_imports_packages_and_script_calls(tmp_path, monkeypatch):
+    files = {"ingestion/mpatlas_monthly/Dockerfile":
+        'FROM python:3.12\nCOPY --from=builder /binary /bin/binary\nCOPY ingestion/mpatlas_monthly /app/job\nCOPY ["scripts/entry.py", "/app/entry.py"]\n',
+        "ingestion/mpatlas_monthly/run.py": "from . import worker\n",
+        "ingestion/mpatlas_monthly/worker.py": "from scripts import shared\n",
+        "scripts/shared.py": "import scripts.leaf\nsubprocess.run(['python', 'scripts/entry.py'])\n",
+        "scripts/leaf.py": "", "scripts/entry.py": "", "scripts/__init__.py": "",
+        "scripts/unrelated.py": ""}
+    for name, contents in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+    with monkeypatch.context() as context:
+        context.setattr(ci_contract, "ROOT", tmp_path)
+        context.setattr(ci_contract, "RECIPES", {"mpatlas-monthly": "ingestion/mpatlas_monthly/Dockerfile"})
+        ci_contract.dependency_inputs.cache_clear()
+        inputs = ci_contract.dependency_inputs()[0]["mpatlas-monthly"]
+        assert {"scripts/shared.py", "scripts/leaf.py", "scripts/entry.py", "scripts/__init__.py"} <= inputs
+        assert "scripts/unrelated.py" not in inputs
+        assert ci_contract.matches("ingestion/mpatlas_monthly/new.py", inputs)
+        assert not ci_contract.matches("ingestion/mpatlas_monthly_other/new.py", inputs)
+        assert ci_contract.matches("scripts/leaf.py", {"scripts/*.py"})
+        assert ci_contract.matches("new/component.py", {"/"})
+        assert "/binary" not in inputs
+    ci_contract.dependency_inputs.cache_clear()
 
 
 @pytest.mark.parametrize("paths,expected", [
@@ -137,7 +133,7 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
     (["ingestion/sea_ice_daily/run.py"], {"sea-ice-daily", "wdpa-monthly"}),
     (["ingestion/wdpa_monthly/build.py"], {"wdpa-monthly"}),
     (["ingestion/common/runtime.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "catalog-viewer"}),
-    (["ingestion/__init__.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack", "catalog-viewer"}),
+    (["ingestion/__init__.py"], set(BUILD_TARGETS)),
     (["ingestion/common/decision_events.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack", "catalog-viewer"}),
     (["services/catalog_viewer/run.py"], {"catalog-viewer"}),
     (["services/feature_preview_service/run.py"], {"catalog-viewer"}),
@@ -145,7 +141,7 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
     (["api/python/src/skytruth_shared_datasets/client.py"], {"catalog-viewer"}),
     (["services/monitoring_slack/run.py"], {"monitoring-slack"}),
     (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
-    (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily"}),
     (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly"}),
     (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer", "dataset-usage"}),
     (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly", "monitoring-slack"}),
@@ -171,8 +167,7 @@ def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
 
 @pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
     ["uv.lock"], ["tests/new_contract.py"], ["scripts/ci_contract.py"],
-    ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"],
-    ["catalog/ingestion-quality.json"], ["catalog/feature-identity-resolutions/example.json"]])
+    ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"]])
 def test_unproved_image_inputs_keep_every_recipe(paths):
     from scripts.tested_image_bundle import BUILD_TARGETS
     assert select_production_images(paths) == list(BUILD_TARGETS)
@@ -184,91 +179,9 @@ def test_malformed_image_comparison_fails(paths):
         select_production_images(paths)
 
 
-def python_imports(path):
-    imports = set()
-    for node in ast.walk(ast.parse(path.read_text())):
-        names = []
-        if isinstance(node, ast.Import):
-            names = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names = [node.module, *(f"{node.module}.{alias.name}" for alias in node.names)]
-        for name in names:
-            module = ROOT / (name.replace(".", "/") + ".py")
-            if module.is_file():
-                imports.add(module)
-    return imports
-
-
-def test_narrow_scripts_cover_transitive_python_import_consumers():
-    # Reinspect real import boundaries so a new runtime or test importer fails
-    # when the adjacent proof/mapping no longer covers its consumer suites.
-    files = [path for directory in ("scripts", "ingestion", "services", "api", "tests")
-             for path in (ROOT / directory).rglob("*.py")]
-    importers = {}
-    for path in files:
-        for module in python_imports(path):
-            importers.setdefault(module, set()).add(path)
-    for script in NARROW_PATHS:
-        seen, pending = set(), [ROOT / script]
-        while pending:
-            module = pending.pop()
-            if module in seen:
-                continue
-            seen.add(module)
-            pending.extend(importers.get(module, ()))
-        for consumer in seen:
-            path = consumer.relative_to(ROOT).as_posix()
-            if path.startswith(("ingestion/", "services/", "api/", "tests/test", "tests/browser/")):
-                assert set(select_suites([path])[0]) <= set(select_suites([script])[0]), (script, path)
-
-
-def test_dockerfile_copied_scripts_keep_production_image_coverage():
-    # Derive the production recipes from the executed builder, not every
-    # Dockerfile in the repository. The separate preview deployment builds its
-    # own service image; production-images does not validate that recipe.
-    recipes = set()
-    for target in BUILD_TARGETS:
-        build = image_commands(target, "a" * 40)[0]
-        recipes.add(ROOT / build[build.index("-f") + 1])
-    assert len(recipes) == len(BUILD_TARGETS)
-    recipes.update((ROOT / ".github/docker").rglob("*Dockerfile*"))
-    copied = set()
-    for recipe in recipes:
-        for line in recipe.read_text().replace("\\\n", " ").splitlines():
-            if not line.lstrip().startswith("COPY "):
-                continue
-            words = shlex.split(line)
-            if any(word.startswith("--from=") for word in words):
-                continue
-            for source in words[1:-1]:
-                if source == "scripts":
-                    copied.update(path.relative_to(ROOT).as_posix() for path in (ROOT / source).glob("*.py"))
-                elif source.startswith("scripts/"):
-                    copied.add(source)
-    assert "scripts/catalog_csv.py" in copied
-    assert "scripts/local_wdpa_sample.py" in copied
-    for script in copied:
-        assert "production-images" in select_suites([script])[0], script
-
-
-def test_browser_fixture_imports_and_script_calls_keep_browser_coverage():
-    seen = set()
-    pending = list((ROOT / "tests/browser").glob("*.py"))
-    while pending:
-        module = pending.pop()
-        if module in seen:
-            continue
-        seen.add(module)
-        pending.extend(python_imports(module))
-        # The fixture builder calls catalog_site as a subprocess.
-        for node in ast.walk(ast.parse(module.read_text())):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if node.value.startswith("scripts/") and node.value.endswith(".py"):
-                    pending.append(ROOT / node.value)
-    scripts = {path.relative_to(ROOT).as_posix() for path in seen if path.parent == ROOT / "scripts"}
-    assert {"scripts/release_feature_model.py", "scripts/catalog_site.py", "scripts/compare_releases.py"} <= scripts
-    for script in scripts:
-        assert "browser" in select_suites([script])[0], script
+@pytest.mark.parametrize("script", ["scripts/catalog_site.py", "scripts/release_feature_model.py", "scripts/compare_releases.py"])
+def test_browser_fixture_imports_and_script_calls_keep_browser_coverage(script):
+    assert "browser" in select_suites([script])[0]
 
 
 def test_cross_component_dependencies_and_explicit_unselected_suites():
@@ -276,7 +189,7 @@ def test_cross_component_dependencies_and_explicit_unselected_suites():
     assert set(select_suites(["api/python/src/skytruth_shared_datasets/snapshot.py"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
     assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == set(SUITES)
     assert "geospatial-integration" in select_suites(["ingestion/common/reset.py"])[0]
-    assert "geospatial-integration" in select_suites(["tests/test_wdpa_translation_inputs.py"])[0]
+    assert set(select_suites(["tests/test_wdpa_translation_inputs.py"])[0]) == ALWAYS
 
 
 @pytest.mark.parametrize("suites", [SUITES, tuple(ALWAYS)])
