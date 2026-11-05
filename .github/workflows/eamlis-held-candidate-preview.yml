@@ -48,8 +48,8 @@ jobs:
       - name: Authenticate read of exact held production inputs
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
       - name: Download immutable candidate and published baseline
         run: uv run python scripts/eamlis_source_loss_review.py download-preview --candidate-id "$CANDIDATE_ID" --directory "$RUNNER_TEMP/held-preview"
       - name: Authenticate preview catalog publisher

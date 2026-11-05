@@ -54,7 +54,7 @@ def test_readonly_workflow_files_match_the_oidc_policy_independently_of_labels()
     assert 'assertion.workflow ==' not in policy
     allowed = set(json.loads((ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())['bucket_reader'])
     assert allowed == set((
-        "bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml",
+        "bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml", "eamlis-held-candidate-preview.yml",
     ))
 
 

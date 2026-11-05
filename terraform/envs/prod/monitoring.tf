@@ -106,7 +106,7 @@ protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
 protoPayload.status.code>0
 NOT (
-  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${google_service_account.github_job["runtime"].email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )
 EOT

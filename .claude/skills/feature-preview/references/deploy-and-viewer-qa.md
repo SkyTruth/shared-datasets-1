@@ -2,8 +2,8 @@
 
 - Deploy or replace the preview with the GitHub Actions workflow named
   `Preview / Deploy feature branch`.
-- Select the feature branch or tag to deploy from the GitHub **Run workflow**
-  branch dropdown.
+- Select `main` in the **Run workflow** dropdown; set `source_ref` to the full
+  feature branch or tag ref (`refs/heads/...` or `refs/tags/...`).
 - Select `preview_data_mode=preserve` when redeploying preview service or
   catalog viewer code against already loaded preview data. This is the default
   and rebuilds the preview catalog from existing preview release indexes.
