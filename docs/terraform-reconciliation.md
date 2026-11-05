@@ -1,210 +1,88 @@
-# Production Terraform reconciliation
+# Production Terraform targets and reconciliation
 
-The versioned target contract is [`.github/terraform-targets.json`](../.github/terraform-targets.json).
-Its stable synchronization names preserve historical signed receipt identities.
-Each entry defines one exact resource list, used for both targeting and the
-saved-plan mutation allowlist, plus permission probes, variable assignments and
-delete policy. Caller jobs retain their dependency edges and select a name; they
-cannot widen its scope. Release checks and read-only recovery use the same table.
+Load [protected Terraform guidance](../.claude/skills/protected-terraform-apply/SKILL.md)
+before planning production changes. This document owns the target-change and
+state-only procedures. Shared execution rules live in
+[deployment contracts](deployment-contracts.md#serialization-and-protected-execution).
 
-The reusable executor separates preparation, serialized plan/apply, and
-unprivileged propagation waiting. Monitoring's tested-image and credential
-preparation runs before entering the state queue; source proof and replay
-admission are checked again after acquiring it. The queued job retains its own
-runner/authentication/Terraform initialization and always signs a claimed
-terminal outcome. Propagation waits require a successful signed apply and hold
-neither the state queue nor a production environment. Historical caller/job
-labels and the immutable receipt-signing leaf remain unchanged.
+## Change a Terraform or IAM target
 
-The October 27 read-only audit found 20 resources left over from the retired
-operational observer/schema alert and one WDPA launch-stage mismatch. Preview
-had no differences. Terraform's saved production state still tracked those
-resources; this reconciliation removes the live leftovers through the existing
-protected executor, then verifies both environments with full untargeted plans.
+1. **Define the exact mutation.** Name the resource addresses and actions, owner,
+   prerequisites and affected consumers. Use Terraform with remote shared state;
+   retain a local plan summary for review when useful. A local operator's broader
+   credentials cannot establish the CI deployer's readiness.
+2. **Update the single scope registry.** Edit
+   [`.github/terraform-targets.json`](../.github/terraform-targets.json), keeping
+   stable synchronization names because historical receipts bind their hashes.
+   Each `targets` entry supplies exact resources, readiness probe, variables,
+   deletion policy and optional preparation. Viewer/CDN scopes use `plan_scopes`.
+   [Registry ownership](deployment-contracts.md#target-registries) explains which
+   consumers read each view. No caller may widen the scope.
+3. **Declare dependencies and permission checks.** Update
+   [`terraform/iam-plan-prerequisites.json`](../terraform/iam-plan-prerequisites.json)
+   and the wrapper's `needs` when a grant/resource must exist first. Extend the
+   resource/action checks in [`deployment_permissions.py`](../scripts/deployment_permissions.py)
+   and its probe implementation only when the new class requires them. Missing
+   Terraform prerequisite declarations fail CI plan construction before fanout.
+   Keep metadata-read readiness distinct from mutation authority.
+4. **Use the constrained executor.** Thin IAM wrappers call
+   [`prod-terraform-target-apply.yml`](../.github/workflows/prod-terraform-target-apply.yml)
+   by synchronization name. Preserve caller identities, bootstrap order and the
+   [queue/saved-plan contract](deployment-contracts.md#serialization-and-protected-execution).
+   If no protected path covers the class, add one in the PR. Monitoring prepares
+   its exact tested image and credentials before the queue; propagation waits
+   run unprivileged after a successful signed apply.
+5. **Test scope and refusal behavior.** Run focused target/permission tests with
+   realistic saved-plan fixtures, including unrelated mutations, replacements,
+   missing prerequisites and the declared deletion policy. Run
+   `uv run python scripts/terraform_target_contracts.py` and
+   `uv run python scripts/release_contracts.py --target all` for offline closure
+   and workflow contracts. Terraform formatting/validation and full final checks
+   follow [validation before push](ci-preflight.md#validate-before-push).
+6. **Review, then observe protected execution.** Include intended actions,
+   allowlist coverage and any unresolved live prerequisites in a PR reviewed by
+   `jonaraphael`. After merge and successful main `ci-ready`, automatic targets
+   run through their selected entrypoints. Manual-only callers require
+   `executor_sha`, `source_run_id` and `source_run_attempt` from that exact
+   successful main-push CI. Verify signed terminal outcomes and effective live
+   state; handle failures through [recovery](ci-recovery.md).
 
-The originating reconciliation chat owns integration and recovery. Retirement
-landed in PR #324 from `codex/reconcile-production-terraform`, after the image
-handoff and selector prerequisites merged. The state/output follow-up uses
-`codex/reconcile-terraform-state-outputs` and requires the completed retirement
-and revocation. Merge current main before final validation when necessary.
+## Manual state-only reconciliation
 
-## Protected sequence
+Use [`prod-terraform-state-reconcile.yml`](../.github/workflows/prod-terraform-state-reconcile.yml)
+only after the intended infrastructure changes and authority revocation are
+verified. It is manual-only and uses the registry's paired-empty scope; it
+cannot mutate live resources or replay retirement.
 
-`scratch-cleanup-iam-sync.yml` continues to use
-`prod-terraform-target-apply.yml`, with the production environment, serialized
-state queue, exact tested-main provenance, saved-plan allowlist, live operation
-permission probes and signed deployment records intact.
+1. Read the latest signed outcomes and current state-recorded deployment inputs.
+   Resolve required full-state reads first through the reviewed manual
+   [`terraform-state-read-iam-sync.yml`](../.github/workflows/terraform-state-read-iam-sync.yml).
+   Its `terraform-state-read` probe checks shared-project metadata permissions,
+   not access to foreign-project accounts.
+2. Dispatch state reconciliation from reviewed `main` with its exact successful
+   CI source triple and `tf_vars` containing newline-separated current deployment
+   variables: immutable job/service images, Monitoring channel and numeric token
+   version. These inputs permit planning; they do not authorize redeployment.
+3. Inspect the full normal refreshed saved plan. The empty resource allowlist
+   rejects every create, update, replacement or delete, including revived
+   temporary grants. Only state/output bookkeeping may be applied by the
+   protected executor.
+4. Verify signed completion, then fresh full production and preview plans with
+   current inputs. Both must exit zero with stable state; output differences or
+   a refresh-only plan do not satisfy this gate. Preserve rollback evidence until
+   that final verification completes.
 
-1. `operational-retirement-bootstrap` creates the dedicated role without granting
-   it to anyone.
-2. `operational-retirement-grant` temporarily binds it to the Terraform deployer
-   after role creation. The grant is disabled by default. Its role name is
-   independent of the managed role resource so revocation cannot recreate it.
-3. `retire-operational-infrastructure` targets exactly the 30 resource instances
-   in its registry resource list. `delete_only` permits pure deletions
-   and no-ops; it rejects creations, updates, replacements and unrelated deletes.
-4. `revoke-operational-retirement` disables/removes the binding after any attempted
-   grant, including a failed grant or retirement. The unbound role stays
-   in Terraform for auditability; it grants no authority on its own.
+## Known prerequisite and historical evidence
 
-The original twenty-resource scope is one old WIF provider, eight filtered log
-views, two custom heartbeat metric descriptors, seven old custom roles, the old observer service
-account, and the obsolete dataset-schema alert. Buckets, dataset objects, active
-Cloud Run jobs/services, their schedulers, current identity providers and current
-alert policies are outside its mutation allowlist. Removing a log view preserves
-the underlying logs. Removing the two retired metric descriptors makes their old
-time series inaccessible; this is part of the reviewed retirement. See
-[Google's metric deletion contract](https://docs.cloud.google.com/monitoring/custom-metrics/creating-metrics#delete-metrics).
+The recorded shared-project bootstrap added five metadata reads after run
+`40564777085/1` failed before claim/apply. The full state still records
+`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`; its previously denied
+`iam.serviceAccounts.get` remains deferred. The shared-project readiness probe
+cannot prove that foreign read. Do not retry a known denied read or use
+`-refresh=false` to hide it during full-state reconciliation.
 
-The sanitized saved-plan fixture is
-`tests/fixtures/terraform_targets/operational-retirement.json`. The November
-observer-removal change adds a separately sanitized live-state inventory at
-`tests/fixtures/terraform_targets/wdpa-observer-retirement.json`: the obsolete
-WDPA observer job, Scheduler job, service account, two custom roles, four IAM
-bindings and disabled health policy. The protected worker deployment and alert
-sync no longer manage them. Their exact ten deletions are added to the same
-pure-delete scope, for thirty total. This preserves the historical status object,
-all dataset files and the active worker. Tests feed both fixtures' serialized
-bytes through the actual workflow shell guard and the saved-plan permission
-derivation, including empty/partial plans and negative controls.
-`terraform/iam-plan-prerequisites.json` records the absent declarations behind
-the 30 instances; it does not expand the exact instance-level mutation allowlist.
-
-## Approved temporary authority
-
-The user explicitly approved the original scope and absolute window on October 27.
-The November observer-removal change adds `cloudscheduler.jobs.delete` and
-`run.jobs.delete` for the exact retired observer resources. This extension must
-pass review/merge before live use; it creates no persistent deletion authority
-and does not renew the window.
-The project binding expires at **2026-11-03 00:00 UTC**, independently of immediate
-revocation. It grants the Terraform deployer the following additional permissions:
-
-```text
-cloudscheduler.jobs.delete
-iam.roles.delete
-iam.serviceAccounts.delete
-iam.serviceAccounts.get
-iam.workloadIdentityPoolProviders.delete
-iam.workloadIdentityPoolProviders.get
-logging.views.delete
-logging.views.get
-monitoring.metricDescriptors.delete
-monitoring.metricDescriptors.get
-run.jobs.delete
-```
-
-While enabled, this is project-level authority for those resource classes, not
-an IAM restriction to the target names. IAM role/account/provider permissions
-cannot use resource-name conditions to establish that narrower boundary. The
-reviewed saved plan and exact allowlist establish the workflow's mutation scope.
-Existing Monitoring policy deletion and IAM bootstrap permissions are reused.
-No dataset object writes, job execution, bucket deletion or pool deletion
-permission is added. Do not silently extend the expiry or revive the old expired
-WDPA retirement grant.
-
-If the retirement or revocation fails, inspect its signed record and live state
-before recovery. Finish revocation through the protected workflow; do not perform
-a local apply. A partial retirement is not completion. The absolute expiry is a
-backstop for interruption, not evidence that immediate revocation succeeded.
-
-## WDPA and completion
-
-Cloud Run reports the deployed job at `GA`, including its 100 GiB `/work` disk.
-The shared job module now declares `GA`; it retains the disk, resources, task
-limits and exact image. The API reports the least stable feature stage actually
-used, which can differ from an input preview stage; see the
-[Cloud Run Job contract](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs#Job).
-The full candidate plan proves the change eliminates the WDPA update without
-changing the job's image or disk.
-
-After review/merge and the protected sequence, verify signed terminal outcomes,
-absence of the temporary binding and all 30 retired resources, and full refreshed
-production/preview plans using recorded deployment image inputs. Only a clean
-plan in both environments satisfies completion. Then delete the rollback backup
-branch with its expected-OID guard and verified Git recovery evidence. Removing
-that Git bookmark alone never changes infrastructure or Terraform state.
-
-## Final state and output reconciliation
-
-The protected retirement in PR #324 completed all 20 deletions and revoked the
-temporary binding. A full post-deployment normal plan found no resource actions,
-but it still exited 2 for five saved root outputs. Targeted applies had retained
-four removed outputs and stale managed-folder metadata:
-
-- Delete `metadata_index_loader_service_account`.
-- Delete `operational_observer_log_views`.
-- Delete `operational_observer_service_account`.
-- Delete `operational_observer_workload_identity_provider`.
-- Refresh `shared_bucket_public_managed_folders` from the live folder metadata.
-
-`prod-terraform-state-reconcile.yml` reconciles this bookkeeping through the
-existing protected executor after a reviewed merge and successful main CI. It
-selects the registry’s empty target/resource scope, producing a full normal
-refreshed plan. Every resource create, update, replacement or deletion is refused
-before the saved plan can be applied. Terraform can persist refreshed state and
-outputs without mutating live resources. There is no
-new apply implementation, executor flag, image preparation or retry in that
-state-only caller.
-The offline graph contract recognizes only a paired-empty scope without resource
-prerequisites or side-effect preparation. Nonempty IAM scopes retain their
-existing graph checks.
-
-Dispatch this workflow from reviewed `main` with `executor_sha`, `source_run_id`
-and `source_run_attempt` identifying that revision's successful main-push CI.
-Supply `tf_vars` as newline-separated current state-recorded production deployment
-variables, including immutable job/service images and the Monitoring receiver's
-channel and numeric token version. These are planning inputs, not permission to
-redeploy images. Stale or incompatible inputs that propose any resource mutation
-fail the empty allowlist. The workflow is not wired to automatic main deployment,
-and it does not replay retirement or re-enable temporary authority.
-
-The first protected attempt, run `40564777085`/attempt 1 on PR #328's merged
-revision, failed during refresh before the deployment claim or apply. State
-remained unchanged. The local plan had used broader operator credentials, while
-the deployer's `iam-bootstrap` probe checked IAM writes rather than full-state
-reads. The failed plan exposed five missing shared-project metadata permissions:
-
-- `compute.globalAddresses.get`
-- `compute.regionNetworkEndpointGroups.get`
-- `compute.sslCertificates.get`
-- `compute.targetHttpProxies.get`
-- `iam.workloadIdentityPoolProviders.get`
-
-`terraform-state-read-iam-sync.yml` is a separate reviewed manual bootstrap for
-the custom role `sharedDatasetsTerraformStateReader` and its binding to the
-existing Terraform deployer. It uses the unchanged protected executor, targets
-only those two Terraform addresses, and blocks deletion/replacement. The role
-contains exactly the five reads above at shared-project scope. Dispatch requires
-the reviewed main revision and its successful main-push CI run/attempt. It is not
-selected automatically by CI and adds no image, data, secret, token or resource
-mutation permission.
-
-30x30 reconciliation is deferred. This repair does not grant or probe access to
-that project, change its existing service account, or remove its Terraform
-record. The full production state still contains
-`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`; refreshing it requires
-the previously denied `iam.serviceAccounts.get`. A clean full production plan
-therefore remains blocked while that work is deferred. Preserve the rollback
-backup until the original final verification gate is met.
-
-Before another state-only attempt, the `terraform-state-read` readiness probe
-checks the five shared-project permissions. It does not establish readiness for
-the deferred foreign account.
-The full refreshed plan still establishes the remaining provider read closure;
-the empty saved-plan allowlist still rejects every live resource mutation.
-Do not retry the unchanged failed run or use `-refresh=false` to avoid these
-prerequisites. The recorded failure fixture and CLI transport tests prove the
-previous bootstrap hint passed while each missing read now fails before planning.
-
-The normal saved-plan fixture is
-`tests/fixtures/terraform_targets/state-only-outputs.json`. Boundary tests run
-the actual plan shell and resource guard, proving that the full plan omits
-targets, preserves variable arguments, accepts zero/one/all five output changes,
-and rejects every resource action, including revival of the retired grant.
-
-After the signed state-only apply succeeds, run fresh full normal production and
-preview plans again with current deployment inputs. Both must exit 0, with stable
-remote state, all 20 resources retired and the temporary binding absent, before
-the rollback backup can be deleted. A refresh-only plan or a zero-resource count
-with remaining output differences does not satisfy this final gate.
+The [October–November retirement audit](history/terraform-retirement-2026-10-27.md)
+retains exact scopes, fixtures, expired authority, observed deletions and the
+failed-read evidence. Its completed investigation is excluded from onboarding;
+its unresolved verification gate remains above. No historical approval renews
+an expired grant.

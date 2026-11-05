@@ -1,5 +1,7 @@
 # Operational alert routing
 
+Use [CI/deployment recovery](ci-recovery.md) for ordered incident handling.
+This reference owns alert selection, delivery paths and health policy.
 Slack reports unattended failures. A supervised execution can be quiet only
 when its GitHub workflow waits for its result and reports failure itself.
 
@@ -12,7 +14,7 @@ the existing failure-only webhook remains active until incident mode is enabled.
 | Execution | Failure reporting |
 | --- | --- |
 | PR CI, build checks, manual GitHub checks | GitHub |
-| Synchronous EAMLIS/sea-ice/MPAtlas deployment canary or WDPA upload preflight | GitHub |
+| Synchronous EAMLIS/sea-ice/MPAtlas/dataset-usage deployment canary | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
 | Detached WDPA worker canary | Monitoring Slack |
 | Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
@@ -36,12 +38,13 @@ Matching the name avoids incorrectly pairing values from different env entries.
 Marker presence is the contract: an empty or false-looking value is not an opt-out.
 Missing metadata or a different creator leaves the event alertable.
 
-Only `gcloud run jobs execute --wait --update-env-vars=...` callers set the marker.
-It is never a persistent job setting and must not be used with `--async`, a
-bounded watch window, or a caller that swallows the failure. If the waiting
-command loses connectivity, times out, or its runner is cancelled, GitHub reports
-an unsuccessful workflow; the execution may still need manual inspection. A
-successful workflow is not permitted to abandon a marked execution.
+Only callers that supervise terminal completion may set the marker. This
+includes `gcloud run jobs execute --wait` and the shared executor's captured
+async launch followed by polling beyond the short job's task timeout. It is
+never a persistent job setting. Detached WDPA uses no marker because its initial
+watch can end before the task. A caller that loses connectivity, times out or
+is cancelled must fail GitHub and leave the execution for inspection; successful
+workflows cannot abandon marked executions or swallow their failure.
 
 ## WDPA execution-driven monitoring
 
@@ -87,7 +90,7 @@ publication recovery. Historical WDPA metric incidents retain their receipts.
 The protected cron sync uses exact CI-tested image bytes, passes the bot secret
 through stdin (never Terraform state), and validates bot auth/receipt permissions
 before listening. Terraform waits for service, authenticated subscription and
-Monitoring publisher grant before switching the five policy routes. Startup
+Monitoring publisher grant before switching the configured policy routes. Startup
 failure leaves native routes intact; retained channel config supports reviewed
 rollback. No failure conditions, grace windows or publication authority change.
 
@@ -142,21 +145,40 @@ bucket audit uses the same freshness rule.
 
 A Scheduler state other than `ENABLED` for at least 72 hours since
 `userUpdateTime` fails health unless `.github/scheduler-pauses.json` contains a
-reviewed CODEOWNER, reason and future timezone-aware `expires_at` for that paused job. Deployment rollout holds do not authorize Scheduler pauses. Missing
+reviewed CODEOWNER, reason and future timezone-aware `expires_at` for that
+paused job. Deployment rollout holds in `.github/ingestion-rollout-holds.json`
+use the same `owner`, `reason`, timezone-qualified `expires_at` fields and a
+nonempty CODEOWNER/reason; they do not authorize Scheduler pauses. Missing
 jobs and failed reads fail visibly. Pauses suppress the associated absence checks
 only through that expiry. The paused internal dataset-usage collector is checked
 even though it has no catalog release index. Its registry entry records the deliberate
 pre-activation pause while `gcs_usage.verified_at` remains null. Holds and pauses
 warn at least 72 hours before expiry and alert after expiry; expired holds continue
 blocking deployments without failing CI selection or `ci-ready`. Lint rejects malformed
-holds and changed holds that are already expired. Health findings post on change
-and daily reminders; identical failures neither dispatch nor count toward escalation.
+holds and changed holds that are already expired.
 
-Provision `google_project_iam_custom_role.operational_safety_reader` and its
-publisher binding through the protected monitoring sync **before enabling these
-checks**. It grants only `cloudscheduler.jobs.get`; the safety job retains its
-existing service account and protected environment. The sync target/allowlist must
-include both resources. No local production apply is permitted.
+Health findings and external health-read exceptions produce a scoped report
+without making the workflow red when reporting succeeds. The report deduplicates
+findings and sends on change plus daily reminders; identical findings neither
+dispatch incident replay nor count toward its three-dispatch escalation. Report
+upload/notification and infrastructure failures remain visible workflow failures.
+
+Before relying on the checks, use the protected monitoring sync to provision
+`google_project_iam_custom_role.operational_safety_reader` and its publisher
+binding. The role grants exactly `cloudscheduler.jobs.get`, `run.executions.get`
+and `logging.logEntries.create`; the safety job retains its existing service
+account and protected environment. The bootstrap scope includes both IAM
+resources; the cron-sync scope adds `google_logging_metric.operational_safety_heartbeat`
+and `google_monitoring_alert_policy.operational_safety_absent`.
+
+A completed health read writes the authenticated `operational-safety-heartbeat`
+log. Its log-based metric feeds an independent Cloud Monitoring absence policy
+with a seven-hour (`25200s`) window, covering missed/disabled GitHub safety runs.
+Verify the first heartbeat has established its time series before relying on
+absence detection; a policy with no initial series cannot prove the job is alive.
+The policy follows `cron_alerts_enabled` and the configured cron notification
+channels. A health-read failure remains in the deduplicated report and emits no
+success heartbeat. Local tests cannot prove deployed IAM or alert delivery.
 
 Read-only Monitoring evidence (2026-10-06 through 2026-11-05) bounded the highest
 occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:

@@ -8,6 +8,10 @@ apply to jobs that produce dataset releases.
 The [MPAtlas monthly refresh](mpatlas_monthly/README.md) checks the public zone
 API on the second day of each month and publishes only changed feature content.
 
+Use [the ingestion deployment procedure](../docs/ci-deployment.md) when adding
+or changing a deploy target. Job READMEs own source/runtime behavior; the
+procedure owns registry wiring, validation, protected rollout and verification.
+
 ## Layout
 
 Each production cron job gets its own package:
@@ -77,3 +81,11 @@ those live surfaces.
 
 When `ingestion/common/` changes, run the focused tests for every production job
 that imports it.
+
+Use narrow runtime identities: a publisher writes only its owned asset root and
+release-index object, while Scheduler receives only `roles/run.invoker`.
+Infrastructure uses remote shared Terraform state, separate from dataset files.
+Build Cloud Run images for Linux AMD64; multi-stage compiled helpers must honor
+`$BUILDPLATFORM`, `$TARGETOS` and `$TARGETARCH`. Registry/IAM bootstrap must finish
+before the tested image is pushed, and image push must precede the referencing
+job's saved-plan apply.

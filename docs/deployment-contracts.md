@@ -1,5 +1,9 @@
 # Tested production deployment contracts
 
+Use [the ingestion procedure](ci-deployment.md) or
+[the Terraform target procedure](terraform-reconciliation.md#change-a-terraform-or-iam-target)
+for ordered steps. This document owns shared execution and evidence contracts.
+
 Main-push CI supplies `executor_sha`, `source_run_id` and `source_run_attempt`
 after successful `ci-ready`. Manual main entrypoints require the same three
 inputs. The trusted verifier checks repository/workflow IDs, main-push event,
@@ -25,25 +29,57 @@ rebuilding. Docker-save normalization preserves config/rootfs bytes; the pushed
 registry manifest must retain the tested config ID before Terraform receives
 its immutable digest. Missing, expired or mismatched evidence fails closed.
 
-The four ingestion wrappers call `ingestion-deploy.yml` without inherited
-secrets. `scripts/ingestion_targets.py` owns the versioned target contract shared
-by execution, CI selection, Terraform allowlists, release checks and recovery:
-workflow names, image/config variables, resource scopes, canary limits and terminal
-phases, release validation, scheduler resume, smoke probes and asset metadata.
-Registry defaults are resolved before its GitHub output/environment transport.
-Recovery resolves image variables before checking out an older executor, including
-the usage collector's original `dataset_usage_image`.
-WDPA code deployment is independent of the month: its scheduled worker builds
-the current month, validates both realms and a compatibility sample, and
-publishes exact staged bytes with predecessor/generation/hash checks. October
-acceptance and promotion documents remain historical evidence.
+## Target registries
 
-Each wrapper holds `ingestion-<target>` across prepare/apply/verify. Only `apply`
-holds the non-cancelling `prod-terraform-state` queue with `queue: max`; plan,
-JSON export, allowlist, permission probe, signed claim and saved-plan apply remain
-together. Other targets can prepare images or verify canaries concurrently.
-The shared ingestion IAM prerequisite runs once before dependents, with secret
-authority bootstrap and live permission checks before runtime binding plans.
+[`scripts/ingestion_targets.py`](../scripts/ingestion_targets.py) exposes two
+resolved views. `DEPLOY_TARGETS` contains the five shared-executor callers:
+WDPA, MPAtlas, EAMLIS, sea ice and dataset usage. Execution, image-variable
+binding, CI selection and replay use this view. `TARGETS` contains the four
+`job-image` publication producers; publication rollout/freshness and asset
+contracts use that narrower view. Telemetry has no release-index or feature-ID
+installation requirement.
+
+Registry fields own workflow names, image/config variables, resource scopes,
+runtime windows, smoke probes, canary limits/terminal phase, release checks and
+scheduler resume. Defaults resolve before GitHub output/environment transport.
+The usage target delegates its computed scope and special plan guard to
+[`dataset_usage_deploy.py`](../scripts/dataset_usage_deploy.py), preserving its
+reader-first activation and removal checks. Recovery resolves image variables
+before candidate checkout, including the original `dataset_usage_image`.
+
+[`.github/terraform-targets.json`](../.github/terraform-targets.json) owns stable
+synchronization names, exact IAM target scopes and viewer/CDN `plan_scopes`.
+Execution, offline dependency checks, saved-plan guards and recovery read that
+same registry; names preserve historical signed hash identities. CI derives
+Terraform source consumers from these scopes rather than copying a path table.
+The [resolved CI plan](ci-preflight.md#selection-and-offline-checks) carries the
+resulting suites and required `production_image_targets` unchanged to consumers.
+
+## Serialization and protected execution
+
+Four publisher wrappers hold `ingestion-<target>` across prepare/apply/verify;
+the dataset-usage wrapper holds `deployment-dataset-usage` across its bootstrap
+and shared rollout. In `ingestion-deploy.yml`, only `apply` holds the
+non-cancelling `prod-terraform-state` queue with `queue: max`. Plan, JSON export,
+allowlist, permission probe, signed claim and saved-plan apply stay together.
+Other targets may prepare tested images or verify canaries concurrently. The
+shared ingestion IAM prerequisite runs once before dependents, with secret
+bootstrap and live checks before runtime binding plans.
+
+Every production Terraform writer uses that same literal job-level state queue,
+including reusable IAM syncs and CDN/viewer jobs. Do not put the matching group
+on a reusable caller or parent workflow. Preview uses separate state and queue.
+Drain active/queued runs on the old configuration before changing serialization.
+`queue: max` retains up to 100 pending jobs; overflow still cancels work and
+requires an owned redispatch from reviewed main after capacity is available.
+
+[`terraform_retry.sh`](../scripts/terraform_retry.sh) defaults to five attempts
+with 15/30/45/60-second delays. Lock-acquisition failures may retry before
+mutation. Only `plan` also retries recognized TLS/handshake timeouts and provider
+500/502/503/504 reads. Permission/authentication errors, invalid or stale saved
+plans and lock-release errors fail immediately; apply transport errors never
+retry because writes may already have happened. Never regenerate an apply plan
+outside its allowlist/permission sequence to bypass staleness.
 
 Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
@@ -53,22 +89,30 @@ account and `shared-datasets-production` environment remain unchanged. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.
 
-Dataset-usage and viewer prepare and push tested images before entering the
-state queue, then recheck replay admission after acquiring it. Their target
-queues cover the entire rollout. Dataset-usage carries the signed claim and
-prepared image into its separate canary job; viewer checks its ready revision
-beside apply. CDN invalidation and route polling follow signed apply in a separate
-verification job that records failures even when apply failed. Viewer/CDN use
-bounded operational permission probes instead of unconditional IAM sleeps.
-These specialized apply scopes and acceptance checks retain their own executors.
-Viewer/CDN saved-plan guards and static coverage read the same `plan_scopes` in
-`.github/terraform-targets.json`; generic IAM targets retain their existing scopes.
+Viewer uses a separate prepare/bootstrap/ready/deploy/verify graph under
+`deployment-catalog-viewer`. Prepare pushes tested bytes before the state queue.
+Bootstrap acquires the queue for the signed claim and constrained IAM saved-plan
+apply, then releases it. Ready probes live dependencies outside the queue.
+Deploy reacquires it for the guarded runtime saved-plan apply. Verify checks the
+newest ready revision and exact tested digest after releasing the queue, and
+signs the terminal outcome even after apply failure. CDN likewise invalidates
+cache and polls routes after its signed apply releases the queue. Viewer/CDN
+probe missing operational permissions with bounded retries; no blind IAM sleep
+replaces those probes. Their specialized acceptance checks keep separate executors.
 
-The installed sea-ice smoke mounts `scripts/local_ingestion_smoke.py` read-only
-and invokes `--sea-ice-only`; local profiling calls the same synthetic build.
-The SDK retains its eligibility-aware npm publisher bootstrap, and catalog web
-retains dataset-mutation/release-index source authorization. Those contracts
-differ from the tested-main deployment bootstrap.
+The installed production-image sea-ice probe and deployment's additional smoke
+both reuse `local_ingestion_smoke.py --sea-ice-only`; local profiling shares the
+same conversion. Installed probes run under production resource limits as
+specified in [preflight](ci-preflight.md#image-execution-and-hosted-evidence).
+WDPA's worker validates the current month's two realms and compatibility sample
+before publishing exact staged bytes; October acceptance remains historical.
+
+SDK publication is called from `ci.yml` only after successful main `ci-ready`
+when the resolved plan selects SDK validation. It retains eligibility-aware npm
+publisher bootstrap and exact-source manual recovery. The
+[SDK release procedure](../api/typescript/README.md#maintainer-validation-and-releases)
+remains authoritative for package releases. Catalog web retains its separate
+dataset-mutation/release-index source authorization.
 
 Immediately before each apply, `deployment_permissions.py --target <target>
 --plan-json <plan.json>` checks every changed resource's actual action and
