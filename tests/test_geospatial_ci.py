@@ -11,7 +11,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_results
-from scripts.ci_contract import NATIVE_TESTS, select_suites
+from scripts.ci_contract import NATIVE_TESTS, resolve_selection
 from scripts.ci_preflight import suite_commands
 
 from workflow_helpers import load_workflow, workflow_steps_by_name
@@ -58,8 +58,8 @@ class GeospatialCiTests(unittest.TestCase):
     def test_shared_change_classifier_covers_native_dependencies(self):
         for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', '.github/workflows/ci.yml', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
             with self.subTest(path=path):
-                self.assertIn('geospatial-integration', select_suites([path])[0])
-        self.assertNotIn('geospatial-integration', select_suites(['docs/assets/wdpa-marine.md'])[0])
+                self.assertIn('geospatial-integration', resolve_selection([path])["suites"])
+        self.assertNotIn('geospatial-integration', resolve_selection(['docs/assets/wdpa-marine.md'])["suites"])
 
 
 class GeospatialResultTests(unittest.TestCase):

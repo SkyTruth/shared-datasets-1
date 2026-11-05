@@ -263,7 +263,8 @@ class CallerAndRecordTests(unittest.TestCase):
                 d.verify_record(self.api, REPO, record)
 
     def test_each_terraform_target_binds_its_actual_manual_caller(self):
-        for sync, workflow in d.TERRAFORM_SYNCS.items():
+        for sync, config in d.TERRAFORM_SYNCS.items():
+            workflow = config["workflow"]
             target = "terraform-" + d.hashlib.sha256(sync.encode()).hexdigest()[:16]
             record = ReplayTests.record(CURRENT)
             record["environment"] = "production-" + target

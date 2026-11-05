@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.slack_notify import build_slack_payload, notify
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
-from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_SYNCS
+from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_WORKFLOWS
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
@@ -26,7 +26,7 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Apply Translation notice secret IAM bootstrap")
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-MONITORED_WORKFLOWS = (set(TARGET_WORKFLOWS.values()) | set(TERRAFORM_SYNCS.values())) - {"dataset-usage-deploy.yml"} | {
+MONITORED_WORKFLOWS = set((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values()) - {"dataset-usage-deploy.yml"} | {
     "bucket-hygiene-audit.yml", "ci.yml", "deployment-recovery.yml", "deployment-verification.yml",
     "operational-safety-check.yml", "unattended-workflow-alert.yml", "publish-dataset.yml", "scratch-cleanup-audit.yml",
 }

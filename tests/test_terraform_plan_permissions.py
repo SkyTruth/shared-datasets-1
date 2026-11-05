@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+import pytest
+
 from scripts import deployment_permissions as live
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, RESOURCE_KINDS, plan_checks
 
@@ -33,6 +35,26 @@ def checks(value, target=None):
 
 def permissions(value, target=None):
     return {permission for actual in checks(value, target).values() for permission in actual}
+
+
+@pytest.mark.parametrize("action", ["create", "update", "delete"])
+@pytest.mark.parametrize("project,name", [(PROJECT, "shared-datasets-operational-safety-heartbeat"),
+    ("foreign-project", "metric"), (PROJECT, ""), (PROJECT, "../metric")])
+def test_logging_metric_saved_plan_probes_exact_operations_or_refuses_identity(action, project, name):
+    value = plan(row("google_logging_metric", [action], {"project": project, "name": name}))
+    if project != PROJECT or not name or "/" in name:
+        with pytest.raises(ValueError, match="project|name"):
+            checks(value)
+    else:
+        assert checks(value) == {PROJECT_URL: tuple(sorted({"logging.logMetrics.get", "logging.logMetrics." + action}))}
+
+
+@pytest.mark.parametrize("kind", ["google_secret_manager_secret", "google_monitoring_notification_channel", "google_iam_workload_identity_pool_provider"])
+def test_project_operation_table_retains_action_restrictions(kind):
+    value = {"project": PROJECT, "secret_id": "fixture", "workload_identity_pool_id": "fixture",
+             "workload_identity_pool_provider_id": "fixture"}
+    with pytest.raises(ValueError, match="unsupported"):
+        checks(plan(row(kind, ["update" if kind != "google_monitoring_notification_channel" else "delete"], value)))
 
 
 class SavedPlanPermissionTests(unittest.TestCase):

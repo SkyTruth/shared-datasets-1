@@ -10,7 +10,7 @@ import zipfile
 import pytest
 
 from scripts import ci_preflight as preflight
-from scripts.ci_contract import expected_tools, select_production_images
+from scripts.ci_contract import expected_tools, resolve_selection
 from ci_result_fixtures import production_images
 from test_ci_preflight import fixture_repo
 from test_tested_image_handoff import download, handoff as handoff, zipped
@@ -98,7 +98,7 @@ def test_historical_fresh_images_remain_loadable_with_unrelated_reused_suites(ha
 @pytest.mark.parametrize("defect", [None, "command", "missing-manifest", "wrong-set", "stale", "missing-tar"])
 def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tmp_path, monkeypatch, paths, defect, matrix):
     source, git = fixture_repo(tmp_path)
-    targets = select_production_images(paths)[:1] if matrix else select_production_images(paths)
+    targets = resolve_selection(paths)["production_image_targets"][:1] if matrix else resolve_selection(paths)["production_image_targets"]
     producer = source / "scripts/production_image_contracts.py"
     # The external Docker producer is a small executable fixture. The real
     # command builder, child processes, JSON files and suite CLI remain in use.

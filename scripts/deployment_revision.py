@@ -36,13 +36,10 @@ TARGET_WORKFLOWS = {
     "catalog-viewer": "catalog-viewer-deploy.yml",
     **{target: config["workflow"] for target, config in INGESTION_CONFIGS.items()},
 }
-TERRAFORM_SYNCS = {
-    name: target["workflow"]
-    for name, target in registry().items()
-}
+TERRAFORM_SYNCS = registry()
 TERRAFORM_WORKFLOWS = {
-    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
-    for name, workflow in TERRAFORM_SYNCS.items()
+    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: target["workflow"]
+    for name, target in TERRAFORM_SYNCS.items()
 }
 INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
 INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
@@ -253,7 +250,7 @@ def git_ancestor(older, newer):
 
 def verify_context(args, api):
     repository = os.environ["GITHUB_REPOSITORY"]
-    require(args.workflow in set(TARGET_WORKFLOWS.values()) | set(TERRAFORM_SYNCS.values()), "unknown deployment workflow contract")
+    require(args.workflow in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values(), "unknown deployment workflow contract")
     require(os.environ.get("GITHUB_REF") == "refs/heads/main", "production requires main ref")
     current = api.get(f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
     allowed_path = f".github/workflows/{args.workflow}"

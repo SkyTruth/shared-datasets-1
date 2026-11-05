@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_suites
-from scripts.ci_contract import select_production_images
+from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, resolve_selection
 from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import load_workflow, workflow_triggers, workflow_steps_by_name
@@ -19,11 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize('path', ['.github/workflows/ingestion-deploy.yml', 'scripts/ingestion_targets.py', 'scripts/ingestion_verification.py'])
 def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_holds(path):
     paths = [path]
-    targets = {"mpatlas", "eamlis", "wdpa", "sea_ice"}
+    targets = {"mpatlas", "eamlis", "wdpa", "sea_ice", "dataset_usage"}
     assert set(select_deployments(paths)) == targets
-    assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == {"mpatlas", "eamlis"}
-    assert "production-images" in select_suites(paths)[0]
-    assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(select_production_images(paths))
+    assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == {"mpatlas", "eamlis", "dataset_usage"}
+    assert "production-images" in resolve_selection(paths)["suites"]
+    assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"} <= set(resolve_selection(paths)["production_image_targets"])
 
 
 @pytest.mark.parametrize('path', ['.github/terraform-targets.json', 'scripts/terraform_target_contracts.py'])
@@ -53,13 +52,13 @@ def test_every_tracked_path_validates_all_images_consumed_by_selected_deployment
     for path in filter(None, paths):
         required = {images[target] for target in select_deployments([path]) if target in images}
         if required:
-            assert "production-images" in select_suites([path])[0], path
-            assert required <= set(select_production_images([path])), path
+            assert "production-images" in resolve_selection([path])["suites"], path
+            assert required <= set(resolve_selection([path])["production_image_targets"]), path
 
 
 def test_sdk_packaged_readme_runs_release_policy_before_merge(tmp_path):
     paths = ["api/typescript/README.md"]
-    suites = select_suites(paths)[0]
+    suites = resolve_selection(paths)["suites"]
     assert {"sdk-node22", "sdk-node24"} <= set(suites)
     # Exercise the selected SDK command against real Git snapshots. An unchanged
     # package version must reject changed packaged documentation.
@@ -88,14 +87,14 @@ def test_sdk_packaged_readme_runs_release_policy_before_merge(tmp_path):
 @pytest.mark.parametrize("paths", [None, ["unknown/component"], ["docs/ci-reliability.md"], ["tests/test_publication.py"], [".github/workflows/ci.yml"]])
 def test_broad_validation_never_authorizes_unrelated_deployments(paths):
     assert select_deployments(paths) == []
-    assert ALWAYS <= set(select_suites(paths)[0])
+    assert ALWAYS <= set(resolve_selection(paths)["suites"])
 
 
 @pytest.mark.parametrize("job", ["mpatlas_monthly", "eamlis_monthly", "sea_ice_daily", "wdpa_monthly", "dataset_usage"])
 def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
     path = f"ingestion/{job}/README.md"
     assert select_deployments([path]) == []
-    assert set(select_suites([path])[0]) == ALWAYS
+    assert set(resolve_selection([path])["suites"]) == ALWAYS
 
 
 @pytest.mark.parametrize("job,target", [("eamlis_monthly", "eamlis"), ("sea_ice_daily", "sea_ice")])
@@ -103,13 +102,13 @@ def test_ingestion_readme_changes_do_not_launch_production_jobs(job):
 def test_readme_exclusion_keeps_mixed_runtime_changes_deployable(job, target, runtime_file):
     paths = [f"ingestion/{job}/README.md", f"ingestion/{job}/{runtime_file}"]
     assert set(select_deployments(paths)) == {target}
-    assert {"geospatial-integration", "production-images"} <= set(select_suites(paths)[0])
+    assert {"geospatial-integration", "production-images"} <= set(resolve_selection(paths)["suites"])
 
 
 def test_producer_changes_require_staged_evidence_before_launching_production_validation():
     assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == ["wdpa"]
     assert select_deployments(["catalog/wdpa-staged-validation.json"]) == []
-    assert "production-images" in select_suites(["ingestion/wdpa_monthly/Dockerfile"])[0]
+    assert "production-images" in resolve_selection(["ingestion/wdpa_monthly/Dockerfile"])["suites"]
 
 
 @pytest.mark.parametrize("path,target", [("ingestion/eamlis_monthly/run.py", "eamlis"), ("ingestion/sea_ice_daily/run.py", "sea_ice"), ("ingestion/wdpa_monthly/Dockerfile", "wdpa")])
@@ -151,7 +150,7 @@ def test_shared_runtime_and_terraform_modules_select_cross_component_dependents(
 ])
 def test_image_copies_are_release_and_native_validation_dependencies(path, targets):
     assert set(select_deployments([path])) == targets
-    assert {"geospatial-integration", "production-images"} <= set(select_suites([path])[0])
+    assert {"geospatial-integration", "production-images"} <= set(resolve_selection([path])["suites"])
 
 
 @pytest.mark.parametrize("path", ["catalog/shared-datasets-catalog.csv", "terraform/envs/prod/shared_bucket_public.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"])
@@ -229,6 +228,38 @@ def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_comman
     assert upload["with"]["if-no-files-found"] == "error"
 
 
+@pytest.mark.parametrize("sdk_selected", [False, True])
+def test_sdk_caller_consumes_emitted_plan_selection_after_the_gate(tmp_path, sdk_selected):
+    from test_ci_preflight import fixture_repo, emit_plan
+
+    root, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    source = root / ("api/typescript/src/index.ts" if sdk_selected else "docs/example.md")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("changed fixture\n")
+    git("add", ".")
+    git("commit", "-m", "SDK selection")
+    plan, outputs = emit_plan(root, base, tmp_path)
+    workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
+    selector = workflow["jobs"]["geospatial-changes"]["outputs"]["sdk"]
+    suite = re.fullmatch(r"\$\{\{ steps.plan.outputs.([\w-]+) }}", selector)[1]
+    assert (outputs[suite] == "true") is ("sdk-node24" in plan["suites"]) is sdk_selected
+    caller = workflow["jobs"]["typescript-sdk"]
+    assert caller["needs"] == ["ci-ready", "geospatial-changes"]
+    assert caller["uses"] == "./.github/workflows/publish-typescript-sdk.yml"
+    assert caller["with"] == {
+        "executor_sha": "${{ needs.ci-ready.outputs.tested_sha }}",
+        "source_run_id": "${{ format('{0}', github.run_id) }}",
+        "source_run_attempt": "${{ format('{0}', github.run_attempt) }}",
+    }
+    values = {"github.event_name": "push", "github.ref": "refs/heads/main",
+              "needs.ci-ready.result": "success", "needs.geospatial-changes.outputs.sdk": outputs[suite]}
+    assert condition_result(caller, values) is sdk_selected
+    for key, value in [("github.event_name", "pull_request"), ("github.ref", "refs/heads/feature"),
+                       ("needs.ci-ready.result", "failure"), ("needs.ci-ready.result", "skipped")]:
+        assert condition_result(caller, values | {key: value}) is False
+
+
 def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
     order = list(TopologicalSorter({
@@ -246,7 +277,7 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
 ])
 def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path):
     assert select_deployments([path]) == (["artifact_registry_iam", "cron_alert_policy"] if path.startswith("terraform/") else ["cron_alert_policy"])
-    assert "production-images" in select_suites([path])[0]
+    assert "production-images" in resolve_selection([path])["suites"]
 
 
 # These edges order mutations only when both owners are selected. Other direct

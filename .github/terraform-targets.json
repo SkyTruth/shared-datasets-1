@@ -68,6 +68,8 @@
         "google_monitoring_notification_channel.monitoring_slack",
         "google_pubsub_topic_iam_member.monitoring_slack_publisher",
         "google_monitoring_alert_policy.dataset_object_deleted",
+        "google_logging_metric.operational_safety_heartbeat",
+        "google_monitoring_alert_policy.operational_safety_absent",
         "terraform_data.cron_alert_channel_configured",
         "google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure",
         "google_monitoring_alert_policy.release_awaiting_identity_decision",

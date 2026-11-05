@@ -26,12 +26,12 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.check_geospatial_test_results import check_results
 from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
 from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
-    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
+    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools,
     INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
@@ -378,6 +378,7 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
         "python": [sys.executable, "--version"], "uv": ["uv", "--version"],
         "node": ["node", "--version"], "terraform": ["terraform", "version", "-json"],
         "gitleaks": ["gitleaks", "version"], "actionlint": ["actionlint", "-version"],
+        "shellcheck": ["shellcheck", "--version"],
         "gdal": ["gdalinfo", "--version"],
         "tippecanoe": ["tippecanoe", "--version"], "pmtiles": ["pmtiles", "version"],
     }
@@ -477,8 +478,6 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
                 cancelled.set()
         if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
-            if suite == "geospatial-integration":
-                check_results(output / "pytest.xml")
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
             (output / "images").mkdir(exist_ok=True)

@@ -14,12 +14,9 @@ from unittest import mock
 import pytest
 
 from scripts import ci_contract, ci_preflight as preflight
-from scripts.check_geospatial_test_results import REQUIRED_TESTS
+from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_junit
 from scripts.check_workflow_syntax import parser_source
-from scripts.ci_contract import (
-    ALWAYS, CONTRACT_FILES, INGESTION_DEPLOYMENTS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
-    verify_results, select_production_images,
-)
+from scripts.ci_contract import ALWAYS, CONTRACT_FILES, INGESTION_DEPLOYMENTS, SUITES, TOOLCHAIN, expected_tools, resolve_selection, verify_results
 from workflow_helpers import load_workflow, workflow_triggers
 from ci_result_fixtures import production_images
 from scripts.tested_image_bundle import BUILD_TARGETS
@@ -59,8 +56,8 @@ def jobs_for(validation):
 
 @pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "uv.lock"])
 def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
-    assert select_suites([path])[0] == list(SUITES)
-    assert select_suites(None)[0] == list(SUITES)
+    assert resolve_selection([path])["suites"] == list(SUITES)
+    assert resolve_selection(None)["suites"] == list(SUITES)
 
 
 @pytest.mark.parametrize("path", [
@@ -73,7 +70,7 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     "web/README.md", "tests/browser/README.md", "api/python/notes.md",
 ])
 def test_component_documentation_only_selects_always(path):
-    assert set(select_suites([path])[0]) == ALWAYS
+    assert set(resolve_selection([path])["suites"]) == ALWAYS
 
 
 @pytest.mark.parametrize("path", [
@@ -81,24 +78,24 @@ def test_component_documentation_only_selects_always(path):
     ".github/workflows/ci.yml",
 ])
 def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
-    assert select_suites([path])[0] == list(SUITES)
+    assert resolve_selection([path])["suites"] == list(SUITES)
 
 
 def test_documentation_does_not_reduce_other_changed_path_requirements():
     paths = ["scripts/README.md", "ingestion/wdpa_monthly/run.py"]
-    assert set(select_suites(paths)[0]) == ALWAYS | {"geospatial-integration", "production-images", "browser"}
-    assert select_suites(["scripts/README.md", "scripts/unproved.py"])[0] == list(SUITES)
+    assert set(resolve_selection(paths)["suites"]) == ALWAYS | {"geospatial-integration", "production-images", "browser"}
+    assert resolve_selection(["scripts/README.md", "scripts/unproved.py"])["suites"] == list(SUITES)
 
 
 @pytest.mark.parametrize("path", ["scripts/slack_incidents.py", "scripts/operational_safety_check.py",
     "scripts/repo_alerts.py", ".github/workflows/operational-safety-check.yml"])
 def test_unrelated_automation_uses_core_suites_without_image_builds(path):
-    assert set(select_suites([path])[0]) == ALWAYS
-    assert select_production_images([path]) == []
+    assert set(resolve_selection([path])["suites"]) == ALWAYS
+    assert resolve_selection([path])["production_image_targets"] == []
     component = "ingestion/mpatlas_monthly/run.py"
-    assert select_suites([path, component]) == select_suites([component])
-    assert select_production_images([path, component]) == ["mpatlas-monthly"]
-    assert select_suites([path, "scripts/ci_contract.py"])[0] == list(SUITES)
+    assert resolve_selection([path, component])["suites"] == resolve_selection([component])["suites"]
+    assert resolve_selection([path, component])["production_image_targets"] == ["mpatlas-monthly"]
+    assert resolve_selection([path, "scripts/ci_contract.py"])["suites"] == list(SUITES)
 
 
 def test_generated_import_closure_includes_relative_imports_packages_and_script_calls(tmp_path, monkeypatch):
@@ -150,8 +147,8 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
     (["README.md"], set()),
 ])
 def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):
-    assert set(select_production_images(paths)) == expected
-    assert select_production_images(paths) == select_production_images(list(reversed(paths)))
+    assert set(resolve_selection(paths)["production_image_targets"]) == expected
+    assert resolve_selection(paths)["production_image_targets"] == resolve_selection(list(reversed(paths)))["production_image_targets"]
 
 
 @pytest.mark.parametrize("path", [
@@ -162,8 +159,8 @@ def test_image_selection_follows_component_and_installed_probe_inputs(paths, exp
     if source.startswith("ingestion/")
 ])
 def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
-    assert "catalog-viewer" in select_production_images([path])
-    assert "browser" in select_suites([path])[0]
+    assert "catalog-viewer" in resolve_selection([path])["production_image_targets"]
+    assert "browser" in resolve_selection([path])["suites"]
 
 
 @pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
@@ -171,26 +168,26 @@ def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
     ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"]])
 def test_unproved_image_inputs_keep_every_recipe(paths):
     from scripts.tested_image_bundle import BUILD_TARGETS
-    assert select_production_images(paths) == list(BUILD_TARGETS)
+    assert resolve_selection(paths)["production_image_targets"] == list(BUILD_TARGETS)
 
 
 @pytest.mark.parametrize("paths", ["ingestion/eamlis_monthly/run.py", [None], [1], {}])
 def test_malformed_image_comparison_fails(paths):
     with pytest.raises(ValueError, match="changed-path list"):
-        select_production_images(paths)
+        resolve_selection(paths)["production_image_targets"]
 
 
 @pytest.mark.parametrize("script", ["scripts/catalog_site.py", "scripts/release_feature_model.py", "scripts/compare_releases.py"])
 def test_browser_fixture_imports_and_script_calls_keep_browser_coverage(script):
-    assert "browser" in select_suites([script])[0]
+    assert "browser" in resolve_selection([script])["suites"]
 
 
 def test_cross_component_dependencies_and_explicit_unselected_suites():
-    assert set(select_suites(["docs/consumer-guide.md"])[0]) == ALWAYS
-    assert set(select_suites(["api/python/src/skytruth_shared_datasets/snapshot.py"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
-    assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == set(SUITES)
-    assert "geospatial-integration" in select_suites(["ingestion/common/reset.py"])[0]
-    assert "geospatial-integration" in select_suites(["tests/test_wdpa_translation_inputs.py"])[0]
+    assert set(resolve_selection(["docs/consumer-guide.md"])["suites"]) == ALWAYS
+    assert set(resolve_selection(["api/python/src/skytruth_shared_datasets/snapshot.py"])["suites"]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
+    assert set(resolve_selection(["catalog/shared-datasets-catalog.csv"])["suites"]) == set(SUITES)
+    assert "geospatial-integration" in resolve_selection(["ingestion/common/reset.py"])["suites"]
+    assert "geospatial-integration" in resolve_selection(["tests/test_wdpa_translation_inputs.py"])["suites"]
 
 
 @pytest.mark.parametrize("suites", [SUITES, tuple(ALWAYS)])
@@ -690,7 +687,7 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
     for suite in ('lint', 'tests'):
         setup, = [step for step in workflow['jobs'][suite]['steps'] if step.get('uses') == './.github/actions/ci-tools']
         installed = set(setup.get('with', {}).get('binaries', defaults).split())
-        assert set(expected_tools(suite)) & {'terraform', 'gitleaks', 'actionlint'} <= installed
+        assert set(expected_tools(suite)) & {'terraform', 'gitleaks', 'actionlint', 'shellcheck'} <= installed
 
 
 def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):

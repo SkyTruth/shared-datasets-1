@@ -16,12 +16,9 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from xml.etree import ElementTree
-
-from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
-from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
+from scripts.ingestion_targets import DEPLOY_TARGETS, TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
 from scripts.terraform_target_contracts import registry
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
@@ -37,7 +34,7 @@ DEPLOYMENTS = (
 )
 INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CONFIGS.values())
 DEPLOYMENT_IMAGES = {
-    **{config["selection"]: target for target, config in INGESTION_CONFIGS.items()}, "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
+    **{config["selection"]: target for target, config in DEPLOY_TARGETS.items()}, "catalog_viewer": "catalog-viewer",
     "cron_alert_policy": "monitoring-slack",
 }
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
@@ -244,15 +241,6 @@ def resolve_selection(paths, **deployment_inputs):
                 suites=[suite for suite in SUITES if suite in suites], selection_reason=reason)
 
 
-def select_suites(paths):
-    plan = resolve_selection(paths)
-    return plan["suites"], plan["selection_reason"]
-
-
-def select_production_images(paths):
-    return resolve_selection(paths)["production_image_targets"]
-
-
 def planned_images(plan):
     """Consume the resolved plan; never infer a different matrix from paths."""
     images = plan["production_image_targets"]
@@ -294,7 +282,7 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
 @lru_cache(maxsize=1)
 def deployment_paths():
     """Derive IaC source files from the same exact scopes used by executors."""
-    workflows = {config["workflow"]: config["selection"] for config in INGESTION_CONFIGS.values()}
+    workflows = {config["workflow"]: config["selection"] for config in DEPLOY_TARGETS.values()}
     workflows.update({target.replace("_", "-") + ("-deploy.yml" if target in {"catalog_viewer", "dataset_usage"} else "-sync.yml"): target
                       for target in DEPLOYMENTS if target not in INGESTION_DEPLOYMENTS})
     workflows["scheduled-ingestion-deploy-iam-sync.yml"] = "ingestion_iam"
@@ -307,7 +295,7 @@ def deployment_paths():
         for resource in prerequisites:
             if not any(resource == root or resource.startswith(root + ".") for root in sources):
                 raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
-    scopes = [(config["workflow"], config["targets"]) for config in INGESTION_CONFIGS.values()]
+    scopes = [(config["workflow"], config["targets"]) for config in DEPLOY_TARGETS.values()]
     scopes += [(config["workflow"], config["resources"]) for config in registry(ROOT).values()]
     scopes += [(workflow, [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})])
                for workflow, rows in registry(ROOT, section="plan_scopes").items() for scope in rows.values()]
@@ -327,59 +315,44 @@ def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), rel
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
     ingestion = INGESTION_DEPLOYMENTS
+    executors = {config["selection"] for config in DEPLOY_TARGETS.values()}
     iam = set(DEPLOYMENTS) - ingestion - {"catalog_viewer", "dataset_usage", "pmtiles_cdn"}
     shared = {
-        ".github/workflows/ingestion-deploy.yml": ingestion,
-        "scripts/ingestion_targets.py": ingestion, "scripts/ingestion_verification.py": ingestion,
-        ".github/actions/deployment-bootstrap/action.yml": set(DEPLOYMENTS),
-        ".github/actions/deployment-bootstrap/terraform/action.yml": iam | {"dataset_usage"},
-        ".github/terraform-targets.json": iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
-        "scripts/terraform_target_contracts.py": iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
-        ".github/workflows/prod-terraform-target-apply.yml": iam,
-        "catalog/ingestion-quality.json": {"eamlis"}, "catalog/wdpa-processing-acceptance.json": {"wdpa"},
-        "docs/assets/ims-sea-ice-extent.md": {"sea_ice"},
-        "catalog/categories.yaml": {"catalog_viewer", "scratch_cleanup_iam", "cron_alert_policy"},
-        "scripts/monitoring_slack_prepare.py": {"cron_alert_policy"},
-        "terraform/envs/prod/main.tf": {"catalog_viewer", "artifact_registry_iam", "preview_terraform_iam"},
-        "terraform/envs/prod/canonical_mutation_iam.tf": {"catalog_viewer", "cron_alert_policy"},
-        "terraform/envs/prod/shared_bucket_public.tf": {"dataset_usage"},
-        "scripts/pmtiles_cdn_sync.py": {"pmtiles_cdn"}, "scripts/dataset_usage_deploy.py": {"dataset_usage"},
-        "catalog/dataset-usage.json": {"dataset_usage", "catalog_viewer"},
-        "catalog/dataset-usage-activation.json": {"dataset_usage", "catalog_viewer"},
+        (".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py"): executors,
+        (".github/actions/deployment-bootstrap/action.yml",): set(DEPLOYMENTS),
+        (".github/actions/deployment-bootstrap/terraform/action.yml",): iam | {"dataset_usage"},
+        (".github/terraform-targets.json", "scripts/terraform_target_contracts.py"): iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
+        (".github/workflows/prod-terraform-target-apply.yml",): iam,
+        ("catalog/ingestion-quality.json",): {"eamlis"},
+        ("catalog/wdpa-processing-acceptance.json",): {"wdpa"},
+        ("docs/assets/ims-sea-ice-extent.md",): {"sea_ice"},
+        ("catalog/categories.yaml",): {"catalog_viewer", "scratch_cleanup_iam", "cron_alert_policy"},
+        ("scripts/monitoring_slack_prepare.py", "services/monitoring_slack/", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"): {"cron_alert_policy"},
+        ("terraform/envs/prod/main.tf",): {"catalog_viewer", "artifact_registry_iam", "preview_terraform_iam"},
+        ("terraform/envs/prod/canonical_mutation_iam.tf",): {"catalog_viewer", "cron_alert_policy"},
+        ("terraform/envs/prod/shared_bucket_public.tf", "scripts/dataset_usage_deploy.py"): {"dataset_usage"},
+        ("scripts/pmtiles_cdn_sync.py", "terraform/modules/pmtiles-cdn/"): {"pmtiles_cdn"},
+        ("catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"): {"dataset_usage", "catalog_viewer"},
+        ("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/"): executors | {"catalog_viewer"},
+        ("pyproject.toml", "uv.lock"): set(DEPLOYMENT_IMAGES),
+        ("ingestion/common/",): ingestion,
+        ("ingestion/__init__.py",): ingestion | {"cron_alert_policy"},
+        ("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/", "services/__init__.py", "services/http_base.py"): {"catalog_viewer"},
+        ("catalog/feature-identity-resolutions/",): {"sea_ice", "wdpa"},
+        ("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"): iam | {"catalog_viewer", "pmtiles_cdn"},
     }
+    for config in DEPLOY_TARGETS.values():
+        source = config["image_variable"].removesuffix("_image")
+        shared[("ingestion/" + source + "/", "terraform/envs/prod/" + source + "*")] = {config["selection"]}
     for path in paths or []:
         if classify_change(path)[0] == "documentation":
             continue
         selected.update(deployment_paths().get(path, ()))
-        selected.update(shared.get(path, ()))
-        if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
-        if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(DEPLOYMENT_IMAGES)
+        selected.update(target for patterns, targets in shared.items() if matches(path, patterns) for target in targets)
         if path.startswith("scripts/"):
             selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items() if matches(path, dependency_inputs()[4][image]))
-        if path.startswith("ingestion/common/") or path == "ingestion/__init__.py":
-            selected.update(ingestion)
-            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
-                selected.add("cron_alert_policy")
-        for target, config in INGESTION_CONFIGS.items():
-            if (path.startswith("ingestion/" + config["image_variable"].removesuffix("_image") + "/")
-                    or path.startswith("terraform/envs/prod/" + config["image_variable"].removesuffix("_image"))):
-                selected.add(config["selection"])
-        if path.startswith("ingestion/dataset_usage/"):
-            selected.add("dataset_usage")
-        if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {"services/__init__.py", "services/http_base.py"}:
-            selected.add("catalog_viewer")
-        if path.startswith("services/monitoring_slack/"):
-            selected.add("cron_alert_policy")
-        if path.startswith("terraform/modules/pmtiles-cdn/"):
-            selected.add("pmtiles_cdn")
-        if path.startswith("catalog/feature-identity-resolutions/"):
-            selected.update({"sea_ice", "wdpa"})
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
-        if path in {"terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
-            selected.update(iam | {"catalog_viewer", "pmtiles_cdn"})
     if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
         if "catalog_viewer" in selected:
             selected.add("dataset_usage")
@@ -397,21 +370,6 @@ def contract_digest(root: Path) -> str:
     for filename in CONTRACT_FILES:
         digest.update(filename.encode() + b"\0" + (root / filename).read_bytes() + b"\0")
     return digest.hexdigest()
-
-
-def check_junit(report: Path, *, native: bool) -> None:
-    cases = list(ElementTree.parse(report).iter("testcase"))
-    if not cases:
-        raise ValueError("test collection is empty")
-    allowed_skips = set() if native else set(REQUIRED_TESTS)
-    for case in cases:
-        identity = (case.get("classname"), case.get("name"))
-        if not all(identity):
-            raise ValueError("test result is missing its case identity")
-        if case.find("failure") is not None or case.find("error") is not None:
-            raise ValueError(f"failed test: {'.'.join(identity)}")
-        if case.find("skipped") is not None and identity not in allowed_skips:
-            raise ValueError(f"unexpected skipped test: {'.'.join(identity)}")
 
 
 def verify_results(
@@ -497,25 +455,16 @@ def verify_results(
 
 
 def expected_tools(suite: str) -> dict[str, str]:
-    tools = {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]}
-    if suite == "lint":
-        tools.update({key: TOOLCHAIN[key] for key in ("terraform", "actionlint")})
-    elif suite == "tests":
-        tools.update({"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"],
-                      "terraform": TOOLCHAIN["terraform"]})
-    elif suite in {"sdk-node22", "sdk-node24", "browser"}:
-        tools["node"] = TOOLCHAIN["node24" if suite == "sdk-node24" else "node22"]
-    elif suite == "geospatial-integration":
-        # Native executable package versions are pinned by the Dockerfile and
-        # checked with real version probes in the native command log.
-        tools["gdal"] = "3.6.2"
-        tools["tippecanoe"] = "2.52.0"
-        tools["pmtiles"] = "1.30.1"
-    elif suite == "production-images":
-        pass  # Docker availability and the actual installed image tools are probed by the command.
-    else:
+    if suite not in SUITES:
         raise ValueError(f"unknown suite: {suite}")
-    return tools
+    return {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]} | {
+        "lint": {key: TOOLCHAIN[key] for key in ("terraform", "actionlint", "shellcheck")},
+        "tests": {"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"], "terraform": TOOLCHAIN["terraform"]},
+        "sdk-node22": {"node": TOOLCHAIN["node22"]}, "sdk-node24": {"node": TOOLCHAIN["node24"]},
+        "browser": {"node": TOOLCHAIN["node22"]},
+        "geospatial-integration": {"gdal": "3.6.2", "tippecanoe": "2.52.0", "pmtiles": "1.30.1"},
+        "production-images": {},  # Installed image tools are probed in the production-image command.
+    }[suite]
 
 
 def write_json(path: Path, value: dict) -> None:

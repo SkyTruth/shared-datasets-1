@@ -48,8 +48,27 @@ REQUIRED_TESTS = (
 )
 
 
-def check_results(report: Path) -> None:
+def check_junit(report: Path, *, native: bool) -> None:
     cases = list(ElementTree.parse(report).iter("testcase"))
+    if not cases:
+        raise ValueError("test collection is empty")
+    for case in cases:
+        identity = (case.get("classname"), case.get("name"))
+        if not all(identity):
+            raise ValueError("test result is missing its case identity")
+        if case.find("failure") is not None or case.find("error") is not None:
+            raise ValueError(f"failed test: {'.'.join(identity)}")
+        if case.find("skipped") is not None and (native or identity not in REQUIRED_TESTS):
+            raise ValueError(f"unexpected skipped test: {'.'.join(identity)}")
+    if native:
+        required_results(cases)
+
+
+def check_results(report: Path) -> None:
+    required_results(list(ElementTree.parse(report).iter("testcase")))
+
+
+def required_results(cases) -> None:
     errors = []
     for classname, name in REQUIRED_TESTS:
         matches = [

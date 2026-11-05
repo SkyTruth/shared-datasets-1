@@ -65,8 +65,6 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 COPY ingestion/__init__.py ./ingestion/__init__.py
 COPY ingestion/common ./ingestion/common
 COPY ingestion/wdpa_monthly ./ingestion/wdpa_monthly
-# The installed WDPA processing smoke also exercises the sea ice pipeline.
-COPY ingestion/sea_ice_daily ./ingestion/sea_ice_daily
 COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
 COPY scripts/catalog_csv.py ./scripts/catalog_csv.py
 COPY scripts/compare_releases.py ./scripts/compare_releases.py

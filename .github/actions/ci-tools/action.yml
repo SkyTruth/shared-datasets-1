@@ -6,7 +6,7 @@ inputs:
     default: '22'
   binaries:
     description: Official pinned release binaries to install
-    default: 'actionlint terraform gitleaks'
+    default: 'actionlint terraform gitleaks shellcheck'
 runs:
   using: composite
   steps:

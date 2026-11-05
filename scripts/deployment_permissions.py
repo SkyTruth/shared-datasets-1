@@ -42,6 +42,8 @@ SECRET_PERMISSIONS = (
     "secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy",
 )
 MONITORING_PERMISSIONS = (
+    "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list",
+    "logging.logMetrics.update", "logging.logMetrics.delete",
     "logging.notificationRules.create", "logging.notificationRules.delete",
     "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete",
     "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",

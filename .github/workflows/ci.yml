@@ -300,6 +300,21 @@ jobs:
 
   # Post-gate callers check selection and prerequisite results explicitly.
   # Explicit status avoids implicit success() over skipped optional ancestors.
+  typescript-sdk:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sdk == 'true' }}
+    uses: ./.github/workflows/publish-typescript-sdk.yml
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      attestations: write
+      id-token: write
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+
   dataset-mutation-selection:
     needs: ci-ready
     if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' }}

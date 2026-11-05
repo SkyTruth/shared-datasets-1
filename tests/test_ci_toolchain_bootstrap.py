@@ -12,8 +12,36 @@ from unittest.mock import Mock
 
 import pytest
 from scripts import check_workflow_syntax as syntax, ci_install_tools as installer
+from scripts import ci_preflight
+from scripts.ci_contract import expected_tools
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('version', [None, '0.10.0', '0.11.0'])
+def test_lint_evidence_probes_the_installed_shellcheck_before_execution(monkeypatch, version):
+    expected = expected_tools('lint')
+    assert expected['shellcheck'] == '0.11.0'
+    calls = []
+    def probe(command, **_kwargs):
+        calls.append(command)
+        tool = Path(command[0]).name
+        if tool.startswith('python'):
+            tool = 'python'
+        if tool == 'shellcheck' and version is None:
+            raise FileNotFoundError('shellcheck missing')
+        return ('{"terraform_version": "' + expected[tool] + '"}' if tool == 'terraform'
+                else version if tool == 'shellcheck' else expected[tool])
+    monkeypatch.setattr(ci_preflight.subprocess, 'check_output', probe)
+    if version is None:
+        with pytest.raises(FileNotFoundError, match='shellcheck missing'):
+            ci_preflight.probe_tools('lint', {})
+    elif version != expected['shellcheck']:
+        with pytest.raises(ValueError, match='shellcheck: required'):
+            ci_preflight.probe_tools('lint', {})
+    else:
+        assert ci_preflight.probe_tools('lint', {}) == expected
+    assert ['shellcheck', '--version'] in calls
 
 
 @pytest.mark.parametrize("missing_pins", [False, True])

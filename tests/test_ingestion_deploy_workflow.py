@@ -122,11 +122,11 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
 
 
     def test_ci_filter_selects_helper_and_its_behavior_tests(self):
-        from scripts.ci_contract import NATIVE_TESTS, select_suites
+        from scripts.ci_contract import NATIVE_TESTS, resolve_selection
         for path in ('scripts/translation_local_io.py', 'tests/test_translation_local_io.py', 'scripts/feature_metadata_translation_reuse.py', 'tests/test_feature_metadata_translation_reuse.py', 'tests/test_wdpa_translation_inputs.py'):
             with self.subTest(path=path):
-                self.assertIn('geospatial-integration', select_suites([path])[0])
-        self.assertNotIn('geospatial-integration', select_suites(['docs/unrelated.md'])[0])
+                self.assertIn('geospatial-integration', resolve_selection([path])["suites"])
+        self.assertNotIn('geospatial-integration', resolve_selection(['docs/unrelated.md'])["suites"])
         self.assertIn('tests/test_translation_local_io.py', NATIVE_TESTS)
 
     def test_wdpa_monthly_dockerfile_copies_conditional_runtime_dependencies(self):
