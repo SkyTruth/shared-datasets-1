@@ -39,7 +39,8 @@ jobs:
     outputs:
       release_needed: ${{ steps.candidate.outputs.release_needed }}
     steps:
-      - name: Check out trusted deployment verifier
+      - &trusted-checkout
+        name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
@@ -112,12 +113,7 @@ jobs:
             *) echo "Untrusted production caller" >&2; exit 1 ;;
           esac
 
-      - name: Check out trusted deployment verifier
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
+      - *trusted-checkout
 
 
       - name: Install pinned durable receipt verifier

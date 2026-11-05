@@ -126,7 +126,7 @@ def test_safety_job_failure_and_recovery_keep_the_same_nonproduction_scope():
 def test_workflow_batches_successes_before_allocating_runner_and_preserves_failures():
     workflow = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     cases = []
-    for name in alerts.WORKFLOW_PATHS:
+    for name in workflow_triggers(workflow)["workflow_run"]["workflows"]:
         for conclusion in alerts.FAILED_CONCLUSIONS | {"success", "skipped"}:
             run = {"name": name, "status": "completed", "conclusion": conclusion,
                    "head_branch": "main", "head_repository": {"full_name": alerts.REPOSITORY},
@@ -159,6 +159,7 @@ def test_health_step_executes_with_the_workflows_effective_incident_mode(tmp_pat
     runner.write_text('''import sys
 from unittest.mock import Mock
 from scripts import operational_safety_check as safety, catalog_drift_guard as catalog, slack_incidents as incidents
+safety.subprocess.check_call = Mock()
 safety.context = lambda *_: {'id': 300}
 incidents.GitHub = Mock
 catalog.get_client = lambda: None

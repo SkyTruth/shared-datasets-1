@@ -18,8 +18,8 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     assert workflow['name'] == 'SDK / Publish TypeScript'
     trigger = workflow_triggers(workflow)
-    assert set(trigger) == {'workflow_run', 'workflow_dispatch'}
-    assert trigger['workflow_run'] == {'workflows': ['CI / Validate and deliver', 'CI'], 'branches': ['main'], 'types': ['completed']}
+    assert set(trigger) == {'workflow_call', 'workflow_dispatch'}
+    assert trigger['workflow_call']['inputs'] == trigger['workflow_dispatch']['inputs']
     assert set(trigger['workflow_dispatch']['inputs']) == {'executor_sha', 'source_run_id', 'source_run_attempt'}
     for name, field in trigger['workflow_dispatch']['inputs'].items():
         assert field['required'] and field['type'] == 'string'
@@ -70,13 +70,13 @@ def test_completed_sdk_revision_skips_expiring_artifacts_before_publish_allocati
 
 def test_verified_nonready_ci_stops_before_strict_authorization_and_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
-    for job in ('candidate', 'publish'):
-        steps = workflow_steps_by_name(workflow, job)
-        names = list(steps)
-        assert names.index('Check out trusted deployment verifier') < names.index('Admit verified CI completion') < names.index('Verify trusted tested source authority')
-        assert '--admit-source' in steps['Admit verified CI completion']['run']
-        for name in ('Verify trusted tested source authority', 'Check out exact tested revision', 'Check already completed SDK publication'):
-            assert steps[name]['if'] == "steps.source.outputs.source_eligible == 'true'"
+    steps = workflow_steps_by_name(workflow, 'candidate')
+    names = list(steps)
+    assert names.index('Check out trusted deployment verifier') < names.index('Admit verified CI completion') < names.index('Verify executor before candidate checkout')
+    assert '--admit-source' in steps['Admit verified CI completion']['run']
+    for name in ('Verify executor before candidate checkout', 'Check out repository', 'Restore immutable receipt verifier after candidate checkout', 'Check already completed SDK publication'):
+        assert "steps.source.outputs.source_eligible == 'true'" in steps[name]['if']
+    assert workflow['jobs']['publish']['if'] == "needs.candidate.outputs.release_needed == 'true'"
     steps = workflow_steps_by_name(workflow, 'publish')
     for name in ('Check registry version and exact tarball integrity', 'Record serialized SDK deployment attempt'):
         assert "steps.candidate.outputs.release_needed == 'true'" in steps[name]['if']

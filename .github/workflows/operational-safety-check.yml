@@ -103,9 +103,6 @@ jobs:
           path: ${{ runner.temp }}/operational-safety/health/cache.json
           if-no-files-found: error
           retention-days: 3
-      - name: Record independent safety heartbeat
-        if: ${{ success() }}
-        run: gcloud logging write operational-safety-heartbeat '{"workflow":"operational-safety-check.yml"}' --payload-type=json --severity=INFO --project=shared-datasets-1
       - name: Report safety failure directly
         if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.health.outcome != 'failure' || steps.health-report.outcome == 'failure') }}
         env:

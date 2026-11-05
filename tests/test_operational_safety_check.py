@@ -31,6 +31,7 @@ START = NOW - timedelta(hours=24)
 def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
+    monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
 
 
 def stamp(value):
@@ -578,7 +579,8 @@ def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
 
 
 @pytest.mark.parametrize('filename,trigger', [('unattended-workflow-alert.yml','workflow_dispatch'), ('ci.yml','push'), ('publish-typescript-sdk.yml','workflow_run')])
-def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch, filename, trigger):
+@pytest.mark.parametrize('later_success', [False, True])
+def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch, filename, trigger, later_success):
     api=OperationalAPI()
     api.definitions.setdefault(filename, {'id': 99, 'path': '.github/workflows/' + filename})
     source=api.source(101,filename)
@@ -586,6 +588,8 @@ def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch
     api.add_source(source)
     if filename == 'ci.yml':
         api.jobs[101].append({'name':'ci-ready', 'status':'completed', 'conclusion':'success'})
+    if later_success:
+        api.add_source({**source, 'id': 102, 'conclusion': 'success'})
     (tmp_path/'result.json').write_text(json.dumps({'reconcile':False}))
     (tmp_path/'claims.json').write_text('[]')
     for key,value in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
@@ -614,7 +618,7 @@ def test_health_report_posts_changes_and_daily_reminders_without_changing_proble
     assert previous['scope'] == slack_notify.notify.call_args.kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
 
 
-@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly'])])
+@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly']), safety.subprocess.CalledProcessError(1, ['gcloud', 'logging', 'write'])])
 def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp_path, monkeypatch, failure):
     api = OperationalAPI()
     for key, value in {'GITHUB_REPOSITORY': safety.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
@@ -625,6 +629,11 @@ def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp
     monkeypatch.setattr(catalog, 'get_client', lambda: None)
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
     monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
+    if isinstance(failure, safety.subprocess.CalledProcessError) and 'logging' in failure.cmd:
+        monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
+        safety.subprocess.check_call.side_effect = failure
+        (tmp_path/'result.json').write_text('{"reconcile":false}')
+        (tmp_path/'claims.json').write_text('[]')
     monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
     safety.main()
     report = json.loads((tmp_path/'health/cache.json').read_text())
@@ -690,8 +699,7 @@ def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
     absence = resources['operational_safety_absent']['conditions'][0]['condition_absent'][0]
     assert absence['duration'] == '25200s' and 'operational_safety_heartbeat' in absence['filter']
     assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
-    heartbeat, = [step for step in job['steps'] if step.get('name') == 'Record independent safety heartbeat']
-    assert 'logging write operational-safety-heartbeat' in heartbeat['run']
+    assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 
 
 @pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload'])

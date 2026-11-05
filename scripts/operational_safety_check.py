@@ -389,7 +389,7 @@ def main():
             result = json.loads((args.work_dir / "result.json").read_text())
             if os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED") != "true":
                 sources, _, _, _ = source_inventory(api, run, (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"))
-                for source in {item["path"]: item for item in sources}.values():
+                for source in sources:
                     if source.get("conclusion") in incidents.alerts.FAILED_CONCLUSIONS:
                         event = {"repository": {"full_name": REPOSITORY}, "workflow_run": source}
                         jobs = incidents.alerts.jobs_for_event(api, source)
@@ -400,6 +400,8 @@ def main():
             for claim in json.loads((args.work_dir / "claims.json").read_text()):
                 if now - incidents.instant(claim["since"]) >= timedelta(hours=24):
                     problems.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
+            subprocess.check_call(["gcloud", "logging", "write", "operational-safety-heartbeat", '{"workflow":"operational-safety-check.yml"}',
+                "--payload-type=json", "--severity=INFO", "--project=shared-datasets-1"])
         except Exception as error:  # External health reads fail into the same scoped, deduplicated report.
             # CalledProcessError includes argv but not volatile command output.
             problems.append(f"Health check incomplete: {type(error).__name__}: {error}")
