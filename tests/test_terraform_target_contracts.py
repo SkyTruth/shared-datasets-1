@@ -3,10 +3,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
-import shlex
 import subprocess
+import sys
 from unittest import mock
 
 import pytest
@@ -23,23 +22,20 @@ SHARED = 'google_storage_bucket.shared'
 RAW = 'google_storage_bucket.telemetry'
 
 
-@pytest.mark.parametrize('filename,scopes', contracts.registry(section='plan_scopes').items())
-def test_declared_inline_scopes_pass_real_saved_plan_guards_and_foreign_resources_fail(tmp_path, filename, scopes):
-    resources = {row for item in scopes.values() for row in item.get('exact', []) + item.get('instances', [])}
-    resources.update(prefix + '.' + child for item in scopes.values() for prefix, child in item.get('modules', {}).items())
-    value = yaml.safe_load((ROOT / '.github/workflows' / filename).read_text())
-    guards = [step['run'] for job in value['jobs'].values() for step in job.get('steps', [])
-              if ('allowed_exact' in step.get('run', '') and "<<'PY'" in step['run']) or '--registered-scope' in step.get('run', '')]
+@pytest.mark.parametrize('filename,scope,item', [
+    (filename, scope, item) for filename, scopes in contracts.registry(section='plan_scopes').items()
+    for scope, item in scopes.items()])
+def test_registered_scopes_pass_real_saved_plan_guard_and_foreign_resources_fail(tmp_path, filename, scope, item):
+    resources = set(item.get('exact', []) + item.get('instances', []))
+    resources.update(prefix + '.' + child for prefix, child in item.get('modules', {}).items())
     for resource in sorted(resources | {'google_storage_bucket.foreign'}):
         address = resource + '["fixture"]' if resource.endswith('catalog_viewer_accessors') else resource
         plan = {'resource_changes': [{'address': address, 'change': {'actions': ['update']}}]}
-        results = []
-        for script in guards:
-            path = shlex.split(script.splitlines()[0])[2].replace('${RUNNER_TEMP}', str(tmp_path)).replace('$RUNNER_TEMP', str(tmp_path))
-            Path(path).write_text(json.dumps(plan))
-            results.append(subprocess.run(['bash', '-e', '-c', script], cwd=ROOT,
-                env={**os.environ, 'RUNNER_TEMP': str(tmp_path)}, capture_output=True).returncode)
-        assert (0 in results) == (resource in resources), (resource, results)
+        path = tmp_path / 'saved-plan.json'
+        path.write_text(json.dumps(plan))
+        result = subprocess.run([sys.executable, 'scripts/terraform_plan_allowlist.py', str(path),
+            '--registered-scope', filename, scope, '--refusal-prefix', 'Refusing fixture'], cwd=ROOT, capture_output=True)
+        assert result.returncode == (0 if resource in resources else 1), (resource, result.stderr)
 
 
 def write_workflow(root, workflow, filename='owned.yml'):

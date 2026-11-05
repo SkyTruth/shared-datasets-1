@@ -41,12 +41,14 @@ class ManualWorkflowTests(unittest.TestCase):
                 bootstrap = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") == "${{ github.workflow_sha }}")
                 candidate = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") in {"${{ inputs.executor_sha }}", "${{ env.EXECUTOR_SHA }}"})
                 proofs = [i for i, step in enumerate(steps) if "--bootstrap" in step.get("run", "") and "deployment_revision.py verify" in step["run"]]
-                self.assertEqual(len(proofs), 2 if filename == "publish-typescript-sdk.yml" else 1)
+                self.assertEqual(len(proofs), 1)
                 self.assertLess(bootstrap, proofs[0])
                 self.assertLess(proofs[0], candidate)
-                self.assertNotIn("if", steps[proofs[0]])
                 if filename == "publish-typescript-sdk.yml":
+                    self.assertEqual(steps[proofs[0]]['if'], "${{ (steps.source.outputs.source_eligible == 'true') && (true) }}")
                     self.assertEqual(job['if'], "needs.candidate.outputs.release_needed == 'true'")
+                else:
+                    self.assertNotIn("if", steps[proofs[0]])
 
 
     def test_missing_optional_or_wrongly_typed_manual_identity_cannot_pass(self):

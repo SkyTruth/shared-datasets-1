@@ -275,7 +275,12 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
     "scripts/monitoring_slack_prepare.py",
 ])
 def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path):
-    assert select_deployments([path]) == (["artifact_registry_iam", "cron_alert_policy"] if path.startswith("terraform/") else ["cron_alert_policy"])
+    expected = {"cron_alert_policy"}
+    if path.startswith('terraform/'):
+        expected.add('artifact_registry_iam')
+    if path == 'terraform/envs/prod/monitoring.tf':
+        expected.add('dataset_usage')  # This file declares the usage rollout's health resources.
+    assert set(select_deployments([path])) == expected
     assert "production-images" in resolve_selection([path])["suites"]
 
 
