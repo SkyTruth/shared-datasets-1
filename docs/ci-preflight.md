@@ -1,7 +1,5 @@
 # Complete validation before pushing
 
-GitHub's `ci-ready` independently validates hosted evidence. A local pass grants no merge, deployment or publication authority.
-
 ## Validate before push
 
 1. Finish focused positive and refusal checks. Real releases require [publication readiness](publication-readiness.md); publication-code changes without a release require complete synthetic runtime/serialization batches and `uv run python scripts/publication_runtime_check.py`.
@@ -11,9 +9,7 @@ GitHub's `ci-ready` independently validates hosted evidence. A local pass grants
 
 ## Isolation and tools
 
-The driver validates an isolated prospective merge under the [standard temp root](standards/local-temp-workspaces.md), preserving index/working tree. One nonblocking kernel lock admits a local driver across worktrees. Busy is failure with an owner, never a pass: do not remove the lock, poll for retries or edit/commit in a validating checkout. Inspect surviving process-owned Docker work after process death.
-
-Host Docker configuration and inherited credentials are isolated; required host capabilities must exist. [`ci_toolchain.py`](../scripts/ci_toolchain.py) pins tools installed by [`ci_install_tools.py`](../scripts/ci_install_tools.py) and the [`ci-tools` action](../.github/actions/ci-tools/action.yml). Syntax checks require checksum-verified ShellCheck **0.11.0** before actionlint. Evidence records executed commands, resolved tools and versions.
+The driver validates an isolated prospective merge under the [standard temp root](standards/local-temp-workspaces.md), preserving index/working tree and isolating Docker configuration and credentials. One nonblocking kernel lock admits a local driver across worktrees. Busy is failure with an owner: do not remove the lock, poll or edit/commit in a validating checkout. Inspect surviving process-owned Docker work after process death. [`ci_toolchain.py`](../scripts/ci_toolchain.py) pins tools installed by [`ci_install_tools.py`](../scripts/ci_install_tools.py) and the [`ci-tools` action](../.github/actions/ci-tools/action.yml); evidence records commands, resolved paths and versions. Syntax checks require checksum-verified ShellCheck **0.11.0** before actionlint. Hosted selectors use cached setup-uv with Python **3.12.12** and `uv run --frozen --only-group ci-plan`: only locked PyYAML/python-hcl2 and their dependencies. Plain Python remains separate from environments created by `uv sync`. Clean-interpreter tests audit workflow and composite imports and execute both selectors through their actual dependency flags.
 
 ## Selection and offline checks
 
@@ -29,14 +25,10 @@ Non-doc lint performs credential-free Terraform init/validate, dependency closur
 
 [`production_image_contracts.py`](../scripts/production_image_contracts.py) builds production recipes and executes installed probes under Terraform CPU/memory limits (Cloud Run defaults only when service limits are unset), without network/source mounts. Sea ice runs its synthetic conversion once at **2 vCPU / 512 MiB** with memory-backed `/tmp`; WDPA builds both realms. EAMLIS/MPAtlas use [`installed_ingestion_fixture.py`](../scripts/installed_ingestion_fixture.py). Monitoring executes an explicit installed receiver probe; test-module source is never the container payload.
 
-Hosted images use a fail-fast matrix; local batches allow two producers and terminate remaining producers on failure. Results bind target, SHA/tree, toolchain and exact producing run/attempt. Compact receipts require diagnostic evidence and, outside PRs, tested TAR uploads. PRs retain metadata without unconsumed TARs. Viewer/Slack skip buildx/remote caching; Python is pinned through uv.
+Hosted images use a fail-fast matrix; local batches allow two producers and terminate remaining producers on failure. Results bind target, SHA/tree, toolchain and exact producing run/attempt. Compact receipts require diagnostic evidence and, outside PRs, tested TAR uploads. PRs retain metadata without unconsumed TARs. Viewer/Slack skip buildx/remote caching; Python is pinned through uv. Evidence hashes cover complete validator/common modules and nested local composites; native fixture tools and browser no-skip/no-retry requirements remain mandatory.
 
 `ci-ready` requires every selected suite/image and both SDK runtimes, proven by successful producing jobs. Missing, stale, failed, cancelled or unexpectedly skipped evidence fails. Same-run selective reruns preserve exact attempt proof; cross-run reuse is unsupported. Historical receipts remain readable, loaders never rebuild missing bytes, and artifacts last 14 days. PRs cancel obsolete graphs; main/dispatch evidence and mutation locks remain independent.
 
-Evidence hashes cover complete validator/common modules and nested local composites. Native fixture tools and browser no-skip/no-retry requirements remain mandatory.
-
 ## Holds, failures and retries
 
-Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push. Historical bare hold lists are comparison baselines only.
-
-Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation.
+Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push; historical bare hold lists are comparison baselines only. Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation. The independent safety health report also deduplicates a disabled incident switch or missing bot token through its webhook, including changed findings and daily reminders.

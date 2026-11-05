@@ -448,10 +448,15 @@ def main():
         def scheduler(job):
             return json.loads(subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", job,
                 "--location=us-central1", "--project=shared-datasets-1", "--format=json"], text=True))
-        warnings, problems = [], []
+        warnings = []
+        problems = [message for failed, message in (
+            (os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED") != "true", "Event incident alerting disabled: SHARED_DATASETS_SLACK_INCIDENTS_ENABLED is not true"),
+            (not os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", "").strip(), "Event incident alerting unavailable: Slack incident bot token missing"),
+        ) if failed]
         probe_outcome = os.environ.get("SAFETY_PROBE_OUTCOME", "success")
         try:
-            warnings, problems = policy_warnings(now)
+            warnings, policy_problems = policy_warnings(now)
+            problems += policy_problems
             problems += audit_freshness(api, now=now)
             require(probe_outcome != "skipped", "Operational setup failed before discovery: " + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps"))
             from scripts import catalog_drift_guard as catalog

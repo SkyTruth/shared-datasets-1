@@ -101,6 +101,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SAFETY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
           SAFETY_SETUP_OUTCOMES: ${{ format('dependencies={0}, verifier={1}, authentication={2}', steps.dependencies.outcome, steps.verifier.outcome, steps.authentication.outcome) }}
+          SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
           interpreter=python

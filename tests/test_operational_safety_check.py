@@ -30,6 +30,8 @@ START = NOW - timedelta(hours=24)
 
 @pytest.fixture(autouse=True)
 def receipt_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
     monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
