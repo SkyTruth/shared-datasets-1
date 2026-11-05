@@ -49,8 +49,15 @@ def request(url, permissions, token):
     raw = json.dumps({"permissions": list(permissions)}).encode()
     req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            payload = json.load(response)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    payload = json.load(response)
+                break
+            except (urllib.error.URLError, TimeoutError) as error:
+                if attempt == 2 or isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600:
+                    raise
+                time.sleep(5 * (attempt + 1))
     except urllib.error.HTTPError as error:
         # Capture structured Google error diagnostics, never request headers or
         # an incomplete body that might contain a truncated credential value.

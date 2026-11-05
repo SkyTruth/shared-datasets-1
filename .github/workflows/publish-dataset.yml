@@ -104,6 +104,7 @@ jobs:
     needs: reviewed_pr_plans
     if: ${{ needs.reviewed_pr_plans.outputs.has_identity_reset_plan == 'true' && !inputs.authorization_rehearsal }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     permissions:
       contents: read

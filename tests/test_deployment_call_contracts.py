@@ -57,7 +57,7 @@ def test_every_ci_deployment_and_nested_call_preserves_string_source_identity():
     documents = workflows()
     calls = list(source_calls(documents))
     ci_calls = {job_name.replace("-", "_") for caller_name, _, job_name, _ in calls if caller_name == "ci.yml"}
-    assert ci_calls == set(DEPLOYMENTS) | {"identity_decision_reconcile", "dataset_usage_verify"}, "every reusable deployment must have a checked source contract"
+    assert ci_calls == (set(DEPLOYMENTS) - {"dataset_usage"}) | {"identity_decision_reconcile", "dataset_usage_rollout"}, "every reusable deployment must have a checked source contract"
     assert any(caller_name != "ci.yml" for caller_name, *_ in calls), "nested Terraform forwarding must be checked"
     for call in calls:
         assert_source_contract(documents, *call)

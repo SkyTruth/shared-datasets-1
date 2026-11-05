@@ -1,13 +1,7 @@
 name: Ingestion / Shared deploy
 'on':
   workflow_call:
-    outputs:
-      deployment_id: {description: Claimed deployment, value: '${{ jobs.apply.outputs.deployment_id }}'}
-      image: {description: Tested image, value: '${{ jobs.prepare.outputs.image }}'}
     inputs:
-      stage: {type: string, default: all}
-      deployment_id: {type: string, default: ''}
-      image: {type: string, default: ''}
       target: {required: true, type: string}
       executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
       source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
@@ -23,9 +17,6 @@ permissions:
   attestations: write
 env:
   TARGET: ${{ inputs.target }}
-  STAGE: ${{ inputs.stage }}
-  VERIFY_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
-  VERIFY_IMAGE: ${{ inputs.image }}
   WORKFLOW_FILE: ${{ format('{0}-deploy.yml', inputs.target) }}
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
   SOURCE_RUN_ID: ${{ inputs.source_run_id }}
@@ -43,8 +34,8 @@ env:
 jobs:
   prepare:
     name: Prepare tested image
-    if: inputs.stage != 'verify'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: shared-datasets-production
     outputs:
       ready: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
@@ -160,6 +151,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.ready == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state
@@ -269,11 +261,12 @@ jobs:
     needs:
     - prepare
     - apply
-    if: ${{ always() && inputs.stage != 'apply' && (needs.apply.outputs.deployment_id != '' || inputs.deployment_id != '') }}
+    if: ${{ always() && needs.apply.outputs.deployment_id != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     environment: shared-datasets-production
     env:
-      IMAGE: ${{ inputs.image || needs.prepare.outputs.image }}
+      IMAGE: ${{ needs.prepare.outputs.image }}
     steps:
     - *trusted-checkout
     - *trusted-bootstrap
@@ -284,11 +277,7 @@ jobs:
         CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
         GH_TOKEN: ${{ github.token }}
       run: |
-        if [[ "$STAGE" == verify ]]; then
-          python scripts/deployment_revision.py verify-applied --deployment-id "$VERIFY_DEPLOYMENT_ID"
-        else
-          test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
-        fi
+        test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
     - name: Authenticate protected observer
       uses: ./.github/actions/deployment-auth
       with:
@@ -396,7 +385,7 @@ jobs:
       id: deployment-outcome
       env:
         GH_TOKEN: ${{ github.token }}
-        DEPLOYMENT_ID: ${{ inputs.deployment_id || needs.apply.outputs.deployment_id }}
+        DEPLOYMENT_ID: ${{ needs.apply.outputs.deployment_id }}
         JOB_STATUS: ${{ job.status }}
       run: |
         phase="${DEPLOYMENT_PHASE:-unknown}"

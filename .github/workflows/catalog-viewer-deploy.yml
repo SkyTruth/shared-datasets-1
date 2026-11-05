@@ -42,6 +42,7 @@ jobs:
   prepare:
     name: Prepare tested viewer image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: shared-datasets-production
     steps:
     - name: Check out trusted deployment verifier
@@ -145,6 +146,7 @@ jobs:
   bootstrap:
     name: Apply viewer IAM bootstrap
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state
@@ -204,6 +206,7 @@ jobs:
     - bootstrap
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.deployment_id != '' && needs.prepare.outputs.claim_signed == 'success' && (needs.bootstrap.result == 'success' || (needs.bootstrap.result == 'skipped' && github.event_name != 'workflow_dispatch' && !inputs.sync_iam)) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: shared-datasets-production
     steps:
     - name: Check out trusted deployment verifier
@@ -228,6 +231,7 @@ jobs:
   deploy:
     name: Apply prepared viewer revision
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state
@@ -306,6 +310,7 @@ jobs:
     - deploy
     if: ${{ always() && needs.prepare.outputs.deployment_id != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: shared-datasets-production
     env:
       CATALOG_VIEWER_IMAGE: ${{ needs.prepare.outputs.image }}

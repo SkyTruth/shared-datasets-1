@@ -10,17 +10,14 @@ import runpy
 import subprocess
 import sys
 import tarfile
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 
 from scripts import ci_contract as ci, ingestion_targets as ingestion, production_image_contracts as images
-from scripts import deployment_revision as revision, deployment_emission as emission
 from scripts.terraform_target_contracts import registry
 from workflow_helpers import load_workflow
 from test_ci_deployments import condition_result
-from test_deployment_emission import record, run, status, verified, REPO, SHA, IMAGE
+from test_deployment_emission import IMAGE
 
 ROOT = Path(__file__).resolve().parents[1]
 REPLAY = json.loads((ROOT / 'tests/fixtures/ci-selection-replay.json').read_text())
@@ -73,22 +70,6 @@ def test_executor_reads_exact_typed_emission_for_every_target(tmp_path, target):
                                 env=environment | {'GITHUB_ENV': str(output)}, text=True, capture_output=True)
         assert failed.returncode != 0
         assert not output.exists()
-
-
-@pytest.mark.parametrize('stage,target,identifier,image,accepted', [
-    ('all', 'dataset-usage', '', '', True), ('apply', 'dataset-usage', '', '', True),
-    ('verify', 'dataset-usage', '71', IMAGE, True), ('verify', 'wdpa-monthly', '71', IMAGE, False),
-    ('invalid', 'dataset-usage', '', '', False), ('verify', 'dataset-usage', '', IMAGE, False),
-    ('verify', 'dataset-usage', '71', 'mutable:latest', False), ('all', 'dataset-usage', '71', IMAGE, False),
-])
-def test_split_stage_is_closed_before_authentication(tmp_path, stage, target, identifier, image, accepted):
-    workflow = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
-    command = next(step['run'] for step in workflow['jobs']['verify']['steps'] if step.get('id') == 'target')
-    env = {**os.environ, 'TARGET': target, 'WORKFLOW_FILE': target + '-deploy.yml', 'GITHUB_ENV': str(tmp_path / 'env'),
-           'STAGE': stage, 'VERIFY_DEPLOYMENT_ID': identifier, 'VERIFY_IMAGE': image}
-    result = subprocess.run(['bash', '-e', '-c', command], cwd=ROOT, env=env, text=True, capture_output=True)
-    assert (result.returncode == 0) is accepted, result.stderr
-    assert (tmp_path / 'env').exists() is accepted
 
 
 def test_import_and_literal_executor_closure_restores_python_and_javascript(tmp_path):
@@ -187,71 +168,6 @@ def test_pr_skips_unconsumed_tars_but_keeps_gate_evidence(event, upload, allowed
     gate = next(step for step in job['steps'] if step.get('name') == 'Upload compact gate result')
     assert step_condition(gate, {'github.event_name': event, 'steps.retained-results.outcome': 'success',
                                    'steps.retained-image.outcome': upload}) is allowed
-
-
-def test_usage_apply_unblocks_iam_independently_of_canary():
-    jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    assert jobs['dataset-usage']['with']['stage'] == 'apply'
-    verify = jobs['dataset-usage-verify']
-    assert verify['concurrency'] == {'group': 'deployment-dataset-usage', 'queue': 'max', 'cancel-in-progress': False}
-    assert verify['with']['stage'] == 'verify'
-    assert verify['with']['deployment_id'] == '${{ needs.dataset-usage.outputs.deployment_id }}'
-    for name in ('ingestion-iam', 'scratch-cleanup-iam'):
-        assert 'dataset-usage' in jobs[name]['needs'] and 'dataset-usage-verify' not in jobs[name]['needs']
-        values = {'github.event_name': 'push', 'github.ref': 'refs/heads/main', 'needs.ci-ready.result': 'success',
-                  'needs.geospatial-changes.outputs.dataset_usage': 'true', 'needs.dataset-usage.result': 'success',
-                  'needs.geospatial-changes.outputs.' + name.replace('-', '_'): 'true'}
-        assert condition_result(jobs[name], values)
-        assert not condition_result(jobs[name], values | {'needs.dataset-usage.result': 'failure'})
-
-
-@pytest.mark.parametrize('defect', ['valid', 'image', 'target', 'executor', 'source-attempt', 'execution-attempt',
-                                  'unsigned', 'wrong-leaf', 'failed', 'unapplied', 'later-outcome'])
-def test_split_verification_consumes_exact_signed_applied_receipt(tmp_path, monkeypatch, defect):
-    claim = record()
-    claim['environment'] = 'production-dataset-usage'
-    claim['payload']['target'] = 'dataset-usage'
-    phase = status('applied')
-    if defect in {'failed', 'unapplied', 'later-outcome'}:
-        phase = status({'failed': 'failed', 'unapplied': 'started', 'later-outcome': 'verified'}[defect])
-    emitter = run()
-    emitter['referenced_workflows'] = [{'path': f'{REPO}/.github/workflows/ingestion-deploy.yml@refs/heads/main', 'sha': SHA, 'ref': 'refs/heads/main'}]
-    api = Mock()
-    def get(path):
-        if '/deployments/' in path:
-            return claim
-        if path == 'repos/' + REPO:
-            return {'id': 17, 'full_name': REPO}
-        if '/actions/workflows/' in path:
-            return {'id': 12, 'path': emitter['path']}
-        return emitter
-    api.get.side_effect = get
-    api.pages.side_effect = lambda path, field=None: [phase] if "/statuses?" in path else [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
-    env = dict(GITHUB_REPOSITORY=REPO, GITHUB_RUN_ID='13', GITHUB_RUN_ATTEMPT='2', TARGET='dataset-usage', EXECUTOR_SHA=SHA,
-               SOURCE_RUN_ID='13', SOURCE_RUN_ATTEMPT='2', IMAGE=IMAGE, RUNNER_TEMP=str(tmp_path), STAGE='verify')
-    field = {'image': 'IMAGE', 'target': 'TARGET', 'executor': 'EXECUTOR_SHA', 'source-attempt': 'SOURCE_RUN_ATTEMPT', 'execution-attempt': 'GITHUB_RUN_ATTEMPT'}.get(defect)
-    if field:
-        env[field] = '3' if field.endswith('ATTEMPT') else 'wrong'
-    for key, value in env.items():
-        monkeypatch.setenv(key, value)
-    value = emission.receipt(REPO, claim, phase)
-    proof = verified(value, emitter=emitter, signer=revision.INGESTION_SIGNER)
-    if defect == 'wrong-leaf':
-        proof[0]['verificationResult']['signature']['certificate']['buildSignerURI'] = 'https://github.com/' + REPO + '/.github/workflows/unrelated.yml@refs/heads/main'
-    def attest(command, **kwargs):
-        if defect == 'unsigned':
-            raise subprocess.CalledProcessError(1, command)
-        return json.dumps(proof)
-    monkeypatch.setattr(emission.subprocess, 'check_output', attest)
-    if defect == 'valid':
-        revision.verify_applied(SimpleNamespace(deployment_id=71), api)
-    else:
-        with pytest.raises((revision.DeploymentError, subprocess.CalledProcessError)):
-            revision.verify_applied(SimpleNamespace(deployment_id=71), api)
-        if field:
-            with pytest.raises(revision.DeploymentError):
-                revision.finish(SimpleNamespace(deployment_id=71, phase='failed', execution=''), api)
-    api.post.assert_not_called()
 
 
 @pytest.mark.parametrize('change,error', [

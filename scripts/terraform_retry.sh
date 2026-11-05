@@ -37,33 +37,30 @@ operation=''
 for argument in "$@"; do
   if [[ "$argument" != -* ]]; then operation="$argument"; break; fi
 done
+output_file="$(mktemp)"
+trap 'rm -f "$output_file"' EXIT
 attempt=1
 while true; do
-  output_file="$(mktemp)"
   set +e
   "${TERRAFORM_BIN}" "$@" 2>&1 | tee "${output_file}"
   status="${PIPESTATUS[0]}"
   set -e
 
   if [[ "${status}" -eq 0 ]]; then
-    rm -f "${output_file}"
     exit 0
   fi
 
   if ! retryable_failure "${output_file}"; then
-    rm -f "${output_file}"
     exit "${status}"
   fi
 
   if [[ "${attempt}" -ge "${TERRAFORM_RETRY_ATTEMPTS}" ]]; then
     echo "terraform_retry: ${reason} after ${attempt} attempt(s); giving up" >&2
-    rm -f "${output_file}"
     exit "${status}"
   fi
 
   delay=$(( TERRAFORM_RETRY_BASE_DELAY * attempt ))
   echo "terraform_retry: ${reason} (attempt ${attempt}/${TERRAFORM_RETRY_ATTEMPTS}); retrying in ${delay}s" >&2
-  rm -f "${output_file}"
   sleep "${delay}"
   attempt=$(( attempt + 1 ))
 done

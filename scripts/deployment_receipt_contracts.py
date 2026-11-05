@@ -243,8 +243,7 @@ def ingestion_boundary(workflow):
 def verification_boundary(workflow, filename, parent, needs, *, apply_parent=None):
     errors = []
     verify = workflow["jobs"].get("verify", {})
-    split = filename == "ingestion-deploy.yml"
-    expected_if = "${{ always() && inputs.stage != 'apply' && (needs.apply.outputs.deployment_id != '' || inputs.deployment_id != '') }}" if split else "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}"
+    expected_if = "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}"
     if verify.get("needs") != needs or verify.get("if") != expected_if:
         errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
     admission = {
@@ -257,12 +256,9 @@ def verification_boundary(workflow, filename, parent, needs, *, apply_parent=Non
         steps = verify["steps"]
         if any(mutations(step)[1] for step in steps[:steps.index(guards[0])]):
             errors.append(f"{filename}: signed apply admission must precede canary")
-    if split and guards and not all(token in guards[0].get("run", "") for token in (
-            'if [[ "$STAGE" == verify ]]; then', 'python scripts/deployment_revision.py verify-applied --deployment-id "$VERIFY_DEPLOYMENT_ID"', 'else', 'fi')):
-        errors.append("split verification requires signed apply admission")
     outcomes = [step for step in verify.get("steps", []) if command(step, "finish")]
     if (len(outcomes) != 1 or outcomes[0].get("if") != "${{ always() }}"
-            or not {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ inputs.deployment_id || needs.apply.outputs.deployment_id }}" if split else "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}.items() <= outcomes[0].get("env", {}).items()):
+            or not {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}.items() <= outcomes[0].get("env", {}).items()):
         errors.append(f"{filename}: every claimed terminal outcome must be recorded even after failed apply")
     return errors
 

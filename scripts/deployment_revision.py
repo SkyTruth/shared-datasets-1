@@ -110,7 +110,7 @@ def record_payload(record):
 def verify_record_identity(api, repository, record):
     """Check claimed API identity; this alone never proves protected emission."""
     payload = record_payload(record)
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
+    repo = verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])["repository"]
     execution = api.get(f"repos/{repository}/actions/runs/{payload['execution_run_id']}/attempts/{payload['execution_run_attempt']}")
     target_workflow = TERRAFORM_WORKFLOWS.get(payload["target"], TARGET_WORKFLOWS.get(payload["target"]))
     require(target_workflow is not None, "unknown deployment target contract")
@@ -124,7 +124,6 @@ def verify_record_identity(api, repository, record):
     require(execution.get("path") in allowed_callers and execution.get("event") in allowed_events
             and execution.get("head_branch") == "main", "record originates from an untrusted execution")
     workflow = api.get(f"repos/{repository}/actions/workflows/{execution['path'].rsplit('/', 1)[-1]}")
-    repo = api.get(f"repos/{repository}")
     require(workflow.get("id") == execution.get("workflow_id") and workflow.get("path") == execution["path"], "record execution workflow mismatch")
     require(all(execution.get(key, {}).get("id") == repo.get("id") and execution.get(key, {}).get("full_name") == repository for key in ("repository", "head_repository")), "record execution repository mismatch")
     if execution["event"] == "push":
@@ -359,8 +358,6 @@ def finish(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
-    if os.environ.get("STAGE") == "verify":
-        verify_split_identity(record, payload)
     state = {"applied": "success", "verified": "success", "verification_pending": "in_progress", "failed": "failure", "unknown": "error"}[args.phase]
     environment_url = ""
     if args.execution:
@@ -377,22 +374,23 @@ def finish(args, api):
 
 
 
-def verify_split_identity(record, payload):
-    require(payload["target"] == os.environ["TARGET"] == "dataset-usage"
-            and record["sha"] == os.environ["EXECUTOR_SHA"] and payload["artifact"] == os.environ["IMAGE"]
-            and (payload["ci_run_id"], payload["ci_run_attempt"]) == (int(os.environ["SOURCE_RUN_ID"]), int(os.environ["SOURCE_RUN_ATTEMPT"]))
-            and (payload["execution_run_id"], payload["execution_run_attempt"]) == (int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"])),
-            "split verification does not match this usage deployment attempt")
-
-
-def verify_applied(args, api):
-    """Admit split verification only from this attempt's exact signed apply."""
-    repository = os.environ["GITHUB_REPOSITORY"]
-    record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
-    payload = verify_record_identity(api, repository, record)
-    verify_split_identity(record, payload)
-    statuses = verified_statuses(api, repository, record)
-    require(statuses and statuses[0]["state"] == "success" and statuses[0]["description"] == "applied", "split verification requires a signed successful apply")
+def wait_applied(args, api, *, attempts=1440, pause=time.sleep):
+    """Observe the attesting apply job while its wrapper retains target ownership."""
+    repository = verify_context(args, api)
+    path = f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"
+    for attempt in range(attempts):
+        jobs = api.pages(path, "jobs")
+        applied = [job for job in jobs if job["name"] == "dataset-usage-rollout / deploy / Apply ingestion Terraform"]
+        require(len(applied) <= 1, "ambiguous usage apply job")
+        if applied and applied[0]["status"] == "completed":
+            result = applied[0]["conclusion"]
+            require(result == "success" or result == "skipped" and check(args, api)["proceed"] == "false",
+                    "usage apply did not succeed or prove a verified no-op/supersession")
+            return
+        require(not any(job["name"].startswith("dataset-usage-rollout /") and job.get("conclusion") in {"failure", "cancelled", "timed_out"} for job in jobs), "usage rollout failed before apply completion")
+        if attempt + 1 < attempts:
+            pause(10)
+    raise DeploymentError("usage apply did not complete within the bounded wait")
 
 
 def pending(api, repository):
@@ -486,7 +484,6 @@ def observe(args, api):
     require(payload.get("target") in INGESTION_TARGETS and INGESTION_CONFIGS[payload["target"]]["canary_mode"] == "deferred",
             "only detached executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     statuses = verified_statuses(api, repository, record)
     require(statuses and statuses[0].get("description") == "verification_pending", "deployment is not awaiting verification")
     match = re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/([a-z][a-z0-9-]{0,62})\?project=shared-datasets-1", statuses[0].get("environment_url", ""))
@@ -512,13 +509,11 @@ def recovery_record(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
     require(payload.get("target") in INGESTION_TARGETS | {"typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
-    require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")
     if payload["target"] == "typescript-sdk":
         require(re.fullmatch(r"sdk@sha256:[0-9a-f]{64}", payload["artifact"]) and targets == [], "SDK recovery requires its package digest and no Terraform scope")
-        return record, payload
-    require(isinstance(targets, list) and targets and all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "record has no saved-plan scope; use reviewed recovery")
+    else:
+        require(isinstance(targets, list) and targets and all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "record has no saved-plan scope; use reviewed recovery")
     return record, payload
 
 
@@ -597,7 +592,7 @@ def recover(args, api):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("verify", "check", "start"):
+    for command in ("verify", "check", "start", "wait-applied"):
         begin = commands.add_parser(command)
         begin.add_argument("--workflow", required=True)
         begin.add_argument("--executor-sha", required=True)
@@ -605,7 +600,7 @@ def main():
         begin.add_argument("--source-run-attempt", required=True, type=int)
         if command == "verify":
             begin.add_argument("--bootstrap", action="store_true")
-        if command in {"check", "start"}:
+        if command != "verify":
             begin.add_argument("--target", required=True)
             begin.add_argument("--artifact", required=command == "start")
         if command == "start":
@@ -615,8 +610,6 @@ def main():
     end.add_argument("--deployment-id", required=True, type=int)
     end.add_argument("--execution", default="")
     end.add_argument("--phase", required=True, choices=["applied", "verification_pending", "verified", "failed", "unknown"])
-    applied = commands.add_parser("verify-applied")
-    applied.add_argument("--deployment-id", required=True, type=int)
     commands.add_parser("pending")
     window = commands.add_parser("window")
     window.add_argument("--target", required=True)
@@ -633,8 +626,8 @@ def main():
             recovery.add_argument("--executor-dir")
     args = parser.parse_args()
     try:
-        if args.command == "verify-applied":
-            verify_applied(args, GitHub())
+        if args.command == "wait-applied":
+            wait_applied(args, GitHub())
         elif args.command == "window":
             runtime_window(args)
         elif args.command in {"recovery-inputs", "reconcile"}:

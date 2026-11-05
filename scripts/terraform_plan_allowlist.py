@@ -27,6 +27,7 @@ from scripts.terraform_target_contracts import plan_scope
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
 JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items() if config["plan_guard"] != "usage"}
+WDPA_MODULE = Path(__file__).resolve().parents[1] / "terraform/envs/prod/wdpa_monthly.tf"
 
 
 def split_lines(value: str) -> list[str]:
@@ -34,13 +35,17 @@ def split_lines(value: str) -> list[str]:
 
 
 def wdpa_errors(after, expected_image, expected_config):
+    module = re.search(r'^module "wdpa_monthly_job" \{(.*?)^\}', WDPA_MODULE.read_text(), re.M | re.S)
+    limits = dict(re.findall(r'^\s*(cpu|memory|timeout)\s*=\s*"([^"\n]+)"\s*(?:#.*)?$', module[1], re.M)) if module else {}
+    if set(limits) != {"cpu", "memory", "timeout"}:
+        raise ValueError("WDPA processing limits must be literal Terraform module inputs")
     task = after.get("template", [{}])[0].get("template", [{}])[0]
     container = task.get("containers", [{}])[0]
     env = {e.get("name"): e.get("value") for e in container.get("env", [])}
     volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
     disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
     errors = []
-    if container.get("resources", [{}])[0].get("limits") != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "43200s":
+    if task.get("timeout") != limits.pop("timeout") or container.get("resources", [{}])[0].get("limits") != limits:
         errors.append("unexpected WDPA processing limits")
     if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
         errors.append("WDPA scheduled executions require the exact tested producer")
@@ -54,8 +59,6 @@ def wdpa_errors(after, expected_image, expected_config):
         errors.append("WDPA scratch paths must use /work")
     return errors
 
-
-IMAGE_VALIDATORS = {"wdpa": wdpa_errors}
 
 def blocked_changes(
     plan: dict,
@@ -89,8 +92,8 @@ def blocked_changes(
             image = containers[0].get("image") if containers else None
             if image != job_image[1]:
                 blocked.append(f"unexpected image for {address}: {image!r}")
-            if config["plan_guard"] in IMAGE_VALIDATORS:
-                blocked.extend(IMAGE_VALIDATORS[config["plan_guard"]](after, job_image[1], expected_config))
+            if config["plan_guard"] == "wdpa":
+                blocked.extend(wdpa_errors(after, job_image[1], expected_config))
     return blocked
 
 
