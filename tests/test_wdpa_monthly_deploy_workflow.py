@@ -9,17 +9,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+from scripts.deployment_revision import TARGET_WORKFLOWS
+from scripts.terraform_plan_allowlist import job_image_scope
+
 from workflow_helpers import (
     load_workflow,
-    python_literal_string_set,
-    terraform_targets,
     workflow_steps_by_name,
-    workflow_triggers,
 )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/wdpa-monthly-deploy.yml"
+DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/ingestion-deploy.yml"
 DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 
@@ -62,7 +63,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn('CMD ["python", "-m", "ingestion.wdpa_monthly.automatic"]', DOCKERFILE.read_text())
 
     def test_allowlist_cannot_increase_worker_size_or_use_ram_scratch(self):
-        run = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Enforce wdpa-monthly resource-change allowlist"]["run"]
+        run = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "apply")["Enforce ingestion resource-change allowlist"]["run"]
         code = run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         image = "registry/wdpa@sha256:" + "a" * 64
         config = "sha256:" + "b" * 64
@@ -96,7 +97,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                 plan.write_text(json.dumps({"resource_changes": [{
                     "address": "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
                     "change": {"actions": ["update"], "after": proposed}}]}))
-                result = subprocess.run([sys.executable, "-c", code, str(plan), image], capture_output=True, text=True, env={**os.environ, "TESTED_IMAGE_CONFIG": config})
+                result = subprocess.run([sys.executable, "-c", code, str(plan), image], capture_output=True, text=True, env={**os.environ, "TESTED_IMAGE_CONFIG": config, "TARGET_CONFIG": json.dumps(target_table()["wdpa-monthly"])})
                 self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stdout + result.stderr)
 
     def test_schedule_resume_requires_publication_but_no_monthly_approval(self):
@@ -114,90 +115,9 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertNotRegex(terraform, r"(?m)^\s*RUN_DATE\s*=")
         self.assertIn("var.wdpa_monthly_image_config_digest", terraform)
 
-    def test_wdpa_monthly_deploy_workflow_is_protected_and_digest_pinned(self):
-        workflow = load_workflow(DEPLOY_WORKFLOW)
-        trigger = workflow_triggers(workflow)
-        deploy = workflow["jobs"]["deploy"]
-        env = workflow["env"]
-        steps = workflow_steps_by_name(workflow, "deploy")
-        step_names = list(steps)
-
-        self.assertEqual(workflow["name"], "Ingestion / WDPA monthly deploy")
-        self.assertNotIn("push", trigger)
-        self.assertIn("workflow_call", trigger)
-        self.assertIn("workflow_dispatch", trigger)
-        self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
-        self.assertEqual(deploy["environment"], "shared-datasets-production")
-        self.assertEqual(
-            deploy["concurrency"],
-            {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
-        )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
-        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
-        self.assertEqual(env["IMAGE_NAME"], "wdpa-monthly")
-        self.assertEqual(env["JOB_NAME"], "wdpa-monthly")
-
-        loader = steps["Load exact tested wdpa-monthly image"]["run"]
-        self.assertIn("scripts/tested_image_authorization.py", loader)
-        self.assertLess(step_names.index("Verify feature-ID publication state"),
-                        step_names.index("Load exact tested wdpa-monthly image"))
-
-        self.assertIn("tippecanoe --version", steps["Smoke-test native tools in image"]["run"])
-        import_run = steps["Smoke-test job import closure in image"]["run"]
-        self.assertIn("import ingestion.wdpa_monthly.run", import_run)
-        self.assertIn("scripts.feature_metadata_localization", import_run)
-        self.assertIn("scripts.translation_local_io", import_run)
-        self.assertIn("scripts.vector_asset", import_run)
-
-        push_run = steps["Push wdpa-monthly image"]["run"]
-        self.assertIn("WDPA_MONTHLY_IMAGE=${image_ref}", push_run)
-
-        plan_run = steps["Terraform plan"]["run"]
-        self.assertEqual(
-            terraform_targets(plan_run),
-            {
-                "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "google_iam_deny_policy.canonical_destructive_actions[0]",
-            },
-        )
-        self.assertIn("wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}", plan_run)
-        self.assertIn("eamlis_monthly_image=unused-by-wdpa-monthly-deploy", plan_run)
-        self.assertIn("sea_ice_daily_image=unused-by-wdpa-monthly-deploy", plan_run)
-        all_step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
-        self.assertNotIn("gcloud run jobs describe eamlis-monthly", all_step_runs)
-        self.assertNotIn("gcloud run jobs describe sea-ice-daily", all_step_runs)
-
-        enforce_run = steps["Enforce wdpa-monthly resource-change allowlist"]["run"]
-        self.assertEqual(
-            python_literal_string_set(enforce_run, "allowed_exact"),
-            {
-                "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
-                "google_iam_deny_policy.canonical_destructive_actions[0]",
-            },
-        )
-        self.assertIn('if actions != ["update"]', enforce_run)
-        self.assertIn("image != expected_image", enforce_run)
-        self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
-        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
-        self.assertLess(
-            step_names.index("Enforce wdpa-monthly resource-change allowlist"),
-            step_names.index("Terraform apply"),
-        )
-
-        self.assertLess(step_names.index("Terraform apply"), step_names.index("Confirm deployed digest"))
-        self.assertLess(step_names.index("Confirm deployed digest"), step_names.index("Execute wdpa-monthly canary"))
-        self.assertLess(step_names.index("Execute wdpa-monthly canary"), step_names.index("Watch wdpa-monthly canary"))
-
-        canary_run = steps["Execute wdpa-monthly canary"]["run"]
-        self.assertIn("--async", canary_run)
-        self.assertIn("RUN_DATE=${CANARY_RUN_DATE}", canary_run)
-        self.assertNotIn("WDPA_PROMOTION_BUNDLE", canary_run)
-        watch_run = steps["Watch wdpa-monthly canary"]["run"]
-        self.assertIn("gcloud run jobs executions describe", watch_run)
-        self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
 
     def test_canary_watch_requires_completed_exact_image_and_reports_cancellation(self):
-        script = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Watch wdpa-monthly canary"]["run"]
+        script = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "verify")["Watch ingestion canary"]["run"]
         image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-monthly@sha256:" + "a" * 64
         tools = """gcloud() { printf '%s\\n' "$EXECUTION_JSON"; echo call >> "$CALLS"; }
 sleep() { :; }
@@ -219,7 +139,7 @@ sleep() { :; }
                 result = subprocess.run(["bash", "-c", tools + script], cwd=REPO_ROOT, capture_output=True, text=True,
                                         env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
                                              "EXECUTION_JSON": json.dumps(payload), "CALLS": str(call_file),
-                                             "WDPA_MONTHLY_IMAGE": image, "WDPA_CANARY_EXECUTION": "wdpa-execution",
+                                             "IMAGE": image, "CANARY_EXECUTION": "wdpa-execution", "TARGET": "wdpa-monthly",
                                              "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
                                              "GITHUB_ENV": str(env_file)})
                 self.assertEqual(result.returncode, exit_code, result.stderr)
@@ -227,34 +147,6 @@ sleep() { :; }
                 self.assertEqual(env_file.read_text().strip() if env_file.exists() else None,
                                  f"DEPLOYMENT_PHASE={phase}" if phase else None)
 
-    def test_paused_schedule_requires_explicit_canary_date(self):
-        steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
-        script = steps["Resolve in-flight canary"]["run"]
-        fake_gcloud = '''gcloud() {
-          if [[ "$1" == scheduler ]]; then
-            printf '%s\\n' "$TEST_SCHEDULE_STATE"
-          elif [[ "$1 $2 $3" == "run jobs executions" ]]; then
-            echo queried >> "$TEST_EXECUTION_QUERIES"
-          else
-            return 1
-          fi
-        }
-        '''
-        for state, date, expected in (("PAUSED", "", "false"), ("PAUSED", "2026-09-30", "true"), ("ENABLED", "", "true")):
-            with self.subTest(state=state, date=date), tempfile.TemporaryDirectory() as tmp:
-                output = Path(tmp) / "output"
-                queries = Path(tmp) / "queries"
-                result = subprocess.run(
-                    ["bash", "-c", fake_gcloud + script],
-                    env={**os.environ, "TEST_SCHEDULE_STATE": state, "CANARY_RUN_DATE": date,
-                         "CANCEL_RUNNING_CANARY": "false", "GITHUB_OUTPUT": str(output),
-                         "TEST_EXECUTION_QUERIES": str(queries), "JOB_NAME": "wdpa-monthly",
-                         "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1"},
-                    capture_output=True, text=True, check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(output.read_text().strip(), f"run_canary={expected}")
-                self.assertEqual(queries.exists(), expected == "true")
 
     def test_ci_filter_selects_helper_and_its_behavior_tests(self):
         from scripts.ci_contract import NATIVE_TESTS, select_suites
@@ -280,5 +172,138 @@ sleep() { :; }
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
+# Shared workflow boundary checks execute the shipped shell with harmless external
+# command recorders. Per-target data remains in the deploy workflow's one table.
+
+
+def shared_workflow():
+    return load_workflow(DEPLOY_WORKFLOW)
+
+
+def target_table():
+    return json.loads(shared_workflow()['env']['INGESTION_TARGETS'])
+
+
+def shared_step(job, name):
+    return workflow_steps_by_name(shared_workflow(), job)[name]
+
+
+def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix=''):
+    binary = tmp_path / 'bin'
+    binary.mkdir(exist_ok=True)
+    if not (binary / 'python').exists():
+        (binary / 'python').symlink_to(sys.executable)
+    env = {
+        **os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
+        'TARGET': target, 'WORKFLOW_FILE': target + '-deploy.yml',
+        'TARGET_CONFIG': json.dumps(target_table()[target]),
+        'INGESTION_TARGETS': shared_workflow()['env']['INGESTION_TARGETS'],
+        'RUNNER_TEMP': str(tmp_path), 'GITHUB_ENV': str(tmp_path / 'environment'),
+        'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_WORKSPACE': str(REPO_ROOT),
+        'GOOGLE_CLOUD_PROJECT': 'shared-datasets-1', 'REGION': 'us-central1',
+        'CANARY_RUN_DATE': '', 'CANCEL_RUNNING_CANARY': 'false',
+        **(extra or {}),
+    }
+    return subprocess.run(['bash', '-e', '-c', prefix + script], cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
+def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
+    config = target_table()[target]
+    assert config['workflow'] == TARGET_WORKFLOWS[target]
+    if target != 'wdpa-monthly':
+        assert set(config['targets']) == job_image_scope(target)
+    resolved = run_shell(tmp_path, shared_step('prepare', 'Resolve registered ingestion target')['run'], target=target)
+    assert resolved.returncode == 0, resolved.stderr
+    assert json.loads((tmp_path / 'outputs').read_text().removeprefix('config=')) == config
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/terraform_retry.sh').write_text('python -c \'import json,sys; print(json.dumps(sys.argv[1:]))\' "$@"\n')
+    image = 'registry/job@sha256:' + 'a' * 64
+    result = run_shell(tmp_path, shared_step('apply', 'Terraform plan')['run'], target=target,
+                       extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': image, 'TESTED_IMAGE_CONFIG': 'sha256:' + 'b' * 64})
+    assert result.returncode == 0, result.stderr
+    args = json.loads(result.stdout)
+    assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(config['targets'])
+    variables = dict(a.removeprefix('-var=').split('=', 1) for a in args if a.startswith('-var='))
+    assert variables[config['image_variable']] == image
+    assert set(t['image_variable'] for t in target_table().values()) <= variables.keys()
+    assert ('wdpa_monthly_image_config_digest' in variables) == (target == 'wdpa-monthly')
+
+
+def test_unregistered_target_fails_before_image_or_authentication(tmp_path):
+    result = run_shell(tmp_path, shared_step('prepare', 'Resolve registered ingestion target')['run'],
+                       extra={'TARGET': 'arbitrary-job', 'WORKFLOW_FILE': 'arbitrary-job-deploy.yml'})
+    assert result.returncode != 0
+    assert not (tmp_path / 'outputs').exists()
+
+
+@pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
+@pytest.mark.parametrize('caller,ref,accepted', [('ci.yml', 'main', True), ('self', 'main', True), ('foreign.yml', 'main', False), ('self', 'feature', False)])
+def test_each_runner_rejects_foreign_caller_before_bootstrap(tmp_path, target, caller, ref, accepted):
+    name = target + '-deploy.yml' if caller == 'self' else caller
+    for job in ('prepare', 'apply', 'verify'):
+        result = run_shell(tmp_path, shared_step(job, 'Validate main ref')['run'], target=target, extra={
+            'GITHUB_REF': 'refs/heads/' + ref, 'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1',
+            'GITHUB_WORKFLOW_REF': f'SkyTruth/shared-datasets-1/.github/workflows/{name}@refs/heads/{ref}',
+        })
+        assert (result.returncode == 0) == accepted, result.stderr
+
+
+def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollout():
+    workflow = shared_workflow()
+    jobs = workflow['jobs']
+    assert {target for target, config in target_table().items() if config['rollout_gate']} == {'wdpa-monthly', 'sea-ice-daily'}
+    assert {target for target, config in target_table().items() if config['paused_gate']} == {'wdpa-monthly', 'eamlis-monthly'}
+    assert 'concurrency' not in workflow
+    locked = [name for name, job in jobs.items() if job.get('concurrency', {}).get('group') == 'prod-terraform-state']
+    assert locked == ['apply']
+    assert jobs['apply']['concurrency'] == {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+    assert jobs['apply']['needs'] == 'prepare'
+    assert jobs['verify']['needs'] == ['prepare', 'apply']
+    assert 'always()' in jobs['verify']['if'] and "deployment_id != ''" in jobs['verify']['if']
+    for job in jobs.values():
+        assert job['environment'] == 'shared-datasets-production'
+        sequence = job['steps']
+        names = [s.get('name') for s in sequence]
+        assert names.index('Verify executor before candidate checkout') < names.index('Check out repository')
+        assert names.index('Verify tested main revision') < names.index('Authenticate to Google Cloud')
+        auth = next(s for s in sequence if s.get('uses', '').startswith('google-github-actions/auth@'))
+        assert auth['with'] == {'workload_identity_provider': '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}', 'service_account': '${{ env.TERRAFORM_SERVICE_ACCOUNT }}'}
+    for target in target_table():
+        wrapper = load_workflow(REPO_ROOT / f'.github/workflows/{target}-deploy.yml')
+        job = wrapper['jobs']['deploy']
+        assert job['uses'] == './.github/workflows/ingestion-deploy.yml'
+        assert job['with']['target'] == target
+        for key, requested in workflow['permissions'].items():
+            assert wrapper['permissions'].get(key) == requested, 'a reusable workflow cannot elevate its caller token'
+        triggers = wrapper['on']
+        for key in ('executor_sha', 'source_run_id', 'source_run_attempt'):
+            assert job['with'][key] == '${{ inputs.' + key + ' }}'
+            assert all(triggers[event]['inputs'][key]['required'] for event in ('workflow_call', 'workflow_dispatch'))
+        assert job['concurrency'] == {'group': 'ingestion-' + target, 'queue': 'max', 'cancel-in-progress': False}
+    locked_runs = '\n'.join(s.get('run', '') for s in jobs['apply']['steps'])
+    assert 'jobs execute' not in locked_runs and 'jobs executions describe' not in locked_runs
+    names = [s.get('name') for s in jobs['apply']['steps']]
+    order = ['Terraform plan', 'Export Terraform plan JSON', 'Enforce ingestion resource-change allowlist', 'Verify complete saved-plan mutation permissions',
+             'Claim tested deployment revision', 'Attest serialized deployment claim before mutation', 'Terraform apply']
+    assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
+    assert "steps.claim-receipt.outcome == 'success'" in shared_step('apply', 'Terraform apply')['if']
+
+
+@pytest.mark.parametrize('apply_result,claim', [('failure', 'success'), ('cancelled', 'success'), ('success', 'failure'), ('success', 'skipped'), ('success', 'success')])
+def test_canary_requires_successful_apply_and_signed_claim(tmp_path, apply_result, claim):
+    result = run_shell(tmp_path, shared_step('verify', 'Require successful signed apply')['run'],
+                       extra={'APPLY_RESULT': apply_result, 'CLAIM_SIGNED': claim})
+    assert (result.returncode == 0) == (apply_result == claim == 'success')
+
+
+@pytest.mark.parametrize('target', ['mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
+@pytest.mark.parametrize('defect', ['valid', 'image', 'foreign', 'delete', 'replace', 'create'])
+def test_shared_allowlist_executes_real_guard_and_rejects_unauthorized_changes(tmp_path, target, defect):
+    address = target_table()[target]['targets'][0]
+    image = 'registry/job@sha256:' + 'a' * 64
+    actions = {'delete': ['delete'], 'replace': ['delete', 'create'], 'create': ['create']}.get(defect, ['update'])
+    plan = {'resource_changes': [{'address': address if defect != 'foreign' else 'module.foreign.google_cloud_run_v2_job.this', 'change': {'actions': actions, 'after': {'template': [{'template': [{'containers': [{'image': 'wrong' if defect == 'image' else image}]}]}]}}}]}
+    (tmp_path / 'ingestion.tfplan.json').write_text(json.dumps(plan))
+    result = run_shell(tmp_path, shared_step('apply', 'Enforce ingestion resource-change allowlist')['run'], target=target, extra={'IMAGE': image})
+    assert (result.returncode == 0) == (defect == 'valid' or defect == 'create' and target == 'mpatlas-monthly'), result.stderr

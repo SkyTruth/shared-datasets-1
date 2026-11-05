@@ -40,9 +40,20 @@ immutable artifacts, and publishes their exact bytes after checking predecessor
 state and generation/hash pins. Code deployment is independent of the month;
 October acceptance and promotion plans remain historical audit evidence.
 
-Production Terraform jobs retain the `prod-terraform-state` non-cancelling queue
-from plan through resource allowlist, saved-plan apply and verification. The
-caller never holds that same queue. The main pipeline invokes shared ingestion
+The four ingestion entrypoints call `ingestion-deploy.yml`. Its target table
+owns workflow names, Terraform image variables and resource scopes, publication
+gates and asset metadata; read-only recovery reads that same trusted table
+before checking out an older executor. Each entrypoint holds its own
+`ingestion-<target>` queue across preparation, apply and runtime verification.
+Different targets can prepare images and verify canaries concurrently.
+
+Only the shared workflow's `apply` job holds the `prod-terraform-state`
+non-cancelling queue: init, plan, resource allowlist, saved-plan permission probe,
+signed claim and saved-plan apply remain together. Image loading/pushing and
+canary verification use separate runners outside that state queue. Each runner
+repeats trusted bootstrap authorization before candidate checkout and uses the
+same protected production environment and Terraform service account. The
+caller never holds the state queue. The main pipeline invokes shared ingestion
 IAM once, before dependents; the secret authority bootstrap precedes runtime
 binding plans, with live permission verification between them.
 
@@ -99,6 +110,8 @@ The Actions bot identity and a caller-supplied run URL do not prove who emitted 
 record. Each initial claim and outcome has a canonical receipt binding the exact
 deployment ID, status ID, target, executor, source CI attempt, artifact, target
 scope and phase. The protected leaf signs it using GitHub artifact attestations.
+Ingestion's signing leaf is `ingestion-deploy.yml`; target entrypoints remain
+the allowed top-level manual callers.
 Verification uses checksum-pinned GitHub CLI 2.96.0 and the cryptographically
 verified Fulcio certificate to require the repository ID, main ref, exact leaf
 and caller workflow revisions, GitHub-hosted runner, run ID and attempt. Observer
@@ -141,14 +154,19 @@ errors requiring reconciliation. A forged source or record cannot justify this
 no-op.
 
 Outcomes distinguish applied configuration, pending runtime verification,
-verified terminal success, failure and unknown state. Short canaries wait for
-terminal status. Before building or applying, an active execution defers the
-whole ingestion target; production work is never cancelled automatically. A
-paused WDPA schedule also defers the target until an explicit canary date is
-supplied, so installation and verification share one deployment attempt.
+verified terminal success, failure and unknown state. Canaries capture their
+execution ID immediately after asynchronous launch, then poll exact-image
+terminal status. Short jobs wait up to 62.5 minutes, exceeding their one-hour
+Cloud Run task timeout. WDPA retains its ten-minute watch and detached observer.
+Before preparing or applying, an active execution defers the whole ingestion
+target; production work is never cancelled automatically. Paused WDPA and EAMLIS
+schedules defer the target until an explicit canary date is supplied, so
+installation and verification share one deployment attempt.
 Ingestion no-ops require verified runtime evidence; applied
 configuration alone is insufficient. A canary skipped because of a later race
-leaves unknown state and fails visibly. Detached WDPA executions retain the exact execution ID and
+fails visibly. The verification job records and signs failure even when the
+apply job failed after claiming a deployment. Scheduler resume follows successful
+canary, release contract and bucket hygiene validation. Detached WDPA executions retain the exact execution ID and
 image in their pending record. The independent execution observer and Cloud Run
 failure alerts remain active. `Deployments / Completion check` reads pending
 records hourly, allocating a protected verifier only when one exists; it checks

@@ -1,0 +1,845 @@
+name: Ingestion / Shared deploy
+'on':
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+      cancel_running_canary:
+        type: boolean
+        default: false
+      canary_run_date:
+        type: string
+        default: ''
+      resume_scheduler:
+        type: boolean
+        default: true
+permissions:
+  actions: read
+  deployments: write
+  contents: read
+  id-token: write
+  attestations: write
+env:
+  INGESTION_TARGETS: |
+    {
+      "wdpa-monthly": {
+        "workflow": "wdpa-monthly-deploy.yml",
+        "image_variable": "wdpa_monthly_image",
+        "targets": [
+          "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+          "google_iam_deny_policy.canonical_destructive_actions[0]"
+        ],
+        "rollout_gate": true,
+        "paused_gate": true,
+        "asset_slug": "",
+        "asset_root": ""
+      },
+      "mpatlas-monthly": {
+        "workflow": "mpatlas-monthly-deploy.yml",
+        "image_variable": "mpatlas_monthly_image",
+        "targets": [
+          "module.mpatlas_monthly_job.google_cloud_run_v2_job.this",
+          "google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker",
+          "module.mpatlas_monthly_scheduler.google_cloud_scheduler_job.this",
+          "google_iam_deny_policy.canonical_destructive_actions[0]"
+        ],
+        "rollout_gate": false,
+        "paused_gate": false,
+        "asset_slug": "mpatlas-zone-assessments",
+        "asset_root": "100-geographic-reference/130-protected-areas/mpatlas-zone-assessments"
+      },
+      "eamlis-monthly": {
+        "workflow": "eamlis-monthly-deploy.yml",
+        "image_variable": "eamlis_monthly_image",
+        "targets": [
+          "module.eamlis_monthly_job.google_cloud_run_v2_job.this"
+        ],
+        "rollout_gate": false,
+        "paused_gate": true,
+        "asset_slug": "eamlis-abandoned-mine-land-inventory",
+        "asset_root": "300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory"
+      },
+      "sea-ice-daily": {
+        "workflow": "sea-ice-daily-deploy.yml",
+        "image_variable": "sea_ice_daily_image",
+        "targets": [
+          "module.sea_ice_daily_job.google_cloud_run_v2_job.this"
+        ],
+        "rollout_gate": true,
+        "paused_gate": false,
+        "asset_slug": "ims-sea-ice-extent",
+        "asset_root": "200-imagery-derived/250-weather-climate/ims-sea-ice-extent"
+      }
+    }
+  TARGET: ${{ inputs.target }}
+  WORKFLOW_FILE: ${{ format('{0}-deploy.yml', inputs.target) }}
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  BUCKET: skytruth-shared-datasets-1
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+  CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+  TF_IN_AUTOMATION: '1'
+  TF_INPUT: '0'
+jobs:
+  prepare:
+    name: Prepare tested image
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    outputs:
+      config: ${{ steps.target.outputs.config }}
+      ready: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+      image: ${{ steps.image.outputs.image }}
+      config_digest: ${{ steps.tested-image.outputs.config_digest }}
+    steps:
+    - name: Validate main ref
+      run: |
+        set -euo pipefail
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+              ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main" &&
+               "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+          echo "Execution must use this workflow or CI from main." >&2
+          exit 1
+        fi
+    - name: Check out trusted verifier
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Resolve registered ingestion target
+      id: target
+      run: |
+        python - <<'PYCODE'
+        import json, os
+        config = json.loads(os.environ['INGESTION_TARGETS'])[os.environ['TARGET']]
+        assert config['workflow'] == os.environ['WORKFLOW_FILE']
+        encoded = json.dumps(config, separators=(',', ':'))
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+            stream.write('config=' + encoded + '\n')
+        with open(os.environ['GITHUB_ENV'], 'a') as stream:
+            stream.write('TARGET_CONFIG=' + encoded + '\n')
+        PYCODE
+    - name: Install pinned durable receipt verifier
+      run: python scripts/install_deployment_verifier.py
+    - name: Verify executor before candidate checkout
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        python scripts/deployment_revision.py verify --bootstrap --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.executor_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify tested main revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py verify --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Check prior deployment before preparing image
+      id: replay
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py check --target "$TARGET" --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Set up gcloud
+      uses: google-github-actions/setup-gcloud@v2
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12.12
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: 0.11.8
+        enable-cache: true
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Sync Python dependencies
+      run: uv sync --locked --all-groups
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Verify feature-ID publication state
+      if: steps.replay.outputs.proceed == 'true' && fromJSON(steps.target.outputs.config).rollout_gate
+      run: |
+        uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET"
+    - name: Verify live deployment permissions
+      run: python scripts/deployment_permissions.py --target "$TARGET"
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Check runtime verification window
+      id: window
+      run: |
+        set -euo pipefail
+        if [[ "$(python -c 'import json,os; print(str(json.loads(os.environ["TARGET_CONFIG"])["paused_gate"]).lower())')" == true ]]; then
+          state="$(gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state)')"
+          case "$state" in
+            PAUSED)
+              if [[ -z "$CANARY_RUN_DATE" ]]; then
+                echo "::notice::Deployment deferred: paused schedule requires an explicit canary date."
+                echo 'ready=false' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi ;;
+            ENABLED) ;;
+            *) echo "Unknown scheduler state: $state" >&2; exit 1 ;;
+          esac
+        fi
+        python scripts/deployment_revision.py window --target "$TARGET" \
+          --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Verify Artifact Registry image permissions
+      run: python scripts/deployment_permissions.py --target artifact-registry-images
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+    - name: Verify run-bound signing capability without mutation
+      uses: ./.github/actions/deployment-receipt
+      with:
+        mode: rehearsal
+        signer-workflow: ingestion-deploy.yml
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+    - name: Load exact tested image
+      id: tested-image
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        python scripts/tested_image_authorization.py --workflow "$WORKFLOW_FILE" --target "$TARGET" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+          --output "$RUNNER_TEMP/tested-$TARGET"
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+    - name: Tag the exact tested image
+      env:
+        TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+      run: |
+        set -euo pipefail
+        image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${TARGET}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
+        docker tag "$TESTED_IMAGE_ID" "$image_tag"
+        echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+    - name: Smoke-test native tools in image
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+      run: |
+        set -euo pipefail
+        docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c \
+          'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version && command -v tippecanoe-decode'
+        if [[ "$TARGET" == sea-ice-daily ]]; then
+          docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c 'gdal_calc.py --help && gdal_polygonize.py --help'
+        fi
+    - name: Smoke-test job import closure in image
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+      run: |
+        set -euo pipefail
+        module="${TARGET//-/_}"
+        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c \
+          "import ingestion.${module}.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset"
+        if [[ "$TARGET" == wdpa-monthly ]]; then
+          docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c \
+            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.automatic; import scripts.feature_metadata_localization, scripts.translation_local_io'
+        fi
+    - name: Smoke-test synthetic sea-ice build path in image
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && inputs.target == 'sea-ice-daily'
+      run: |
+        set -euo pipefail
+
+        docker run --platform linux/amd64 --rm -i "$IMAGE_TAG" python - <<'PY'
+        import datetime as dt
+        import tempfile
+        from pathlib import Path
+
+        from ingestion.sea_ice_daily import run as sea_ice
+
+        tmp = Path(tempfile.mkdtemp(prefix="ims-synthetic-"))
+        source_tif = tmp / "source.tif"
+        sea_ice.run_command([
+            "gdal_create",
+            "-of",
+            "GTiff",
+            "-outsize",
+            "4",
+            "4",
+            "-bands",
+            "1",
+            "-burn",
+            "3",
+            "-ot",
+            "Byte",
+            "-a_srs",
+            "EPSG:3857",
+            "-a_ullr",
+            "-100000",
+            "100000",
+            "100000",
+            "-100000",
+            str(source_tif),
+        ])
+        outputs = sea_ice.build_outputs(
+            source_tif=source_tif,
+            source_date=dt.date(2026, 4, 28),
+            workdir=tmp,
+            baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(
+                contract_id="generated-2026-v1",
+            ),
+        )
+        assert outputs.row_count > 0
+        assert outputs.fgb.exists()
+        assert outputs.pmtiles.exists()
+        assert outputs.metadata.exists()
+        assert outputs.schema.exists()
+        print({
+            "row_count": outputs.row_count,
+            "fgb_size": outputs.fgb.stat().st_size,
+            "pmtiles_size": outputs.pmtiles.stat().st_size,
+            "metadata_size": outputs.metadata.stat().st_size,
+            "schema_size": outputs.schema.stat().st_size,
+        })
+        PY
+    - name: Push tested image and verify registry config
+      env:
+        TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
+      run: |
+        set -euo pipefail
+
+        docker push "${IMAGE_TAG}"
+        docker buildx imagetools inspect --raw "${IMAGE_TAG}" > "$RUNNER_TEMP/$TARGET-manifest.json"
+        python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_CONFIG"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/$TARGET-manifest.json"
+        image_digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+        if [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "Could not resolve immutable image digest for ${IMAGE_TAG}" >&2
+          exit 1
+        fi
+        image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${TARGET}@${image_digest}"
+        echo "image=${image_ref}" >> "$GITHUB_OUTPUT"
+      id: image
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+  apply:
+    name: Apply ingestion Terraform
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    env:
+      TARGET_CONFIG: ${{ needs.prepare.outputs.config }}
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      TESTED_IMAGE_CONFIG: ${{ needs.prepare.outputs.config_digest }}
+    outputs:
+      deployment_id: ${{ steps.revision.outputs.deployment_id }}
+      claim_signed: ${{ steps.claim-receipt.outcome }}
+    steps:
+    - name: Validate main ref
+      run: |
+        set -euo pipefail
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+              ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main" &&
+               "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+          echo "Execution must use this workflow or CI from main." >&2
+          exit 1
+        fi
+    - name: Check out trusted verifier
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install pinned durable receipt verifier
+      run: python scripts/install_deployment_verifier.py
+    - name: Verify executor before candidate checkout
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        python scripts/deployment_revision.py verify --bootstrap --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.executor_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify tested main revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py verify --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+    - name: Set up gcloud
+      uses: google-github-actions/setup-gcloud@v2
+    - name: Check runtime verification window
+      id: window
+      run: |
+        set -euo pipefail
+        if [[ "$(python -c 'import json,os; print(str(json.loads(os.environ["TARGET_CONFIG"])["paused_gate"]).lower())')" == true ]]; then
+          state="$(gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state)')"
+          case "$state" in
+            PAUSED)
+              if [[ -z "$CANARY_RUN_DATE" ]]; then
+                echo "::notice::Deployment deferred: paused schedule requires an explicit canary date."
+                echo 'ready=false' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi ;;
+            ENABLED) ;;
+            *) echo "Unknown scheduler state: $state" >&2; exit 1 ;;
+          esac
+        fi
+        python scripts/deployment_revision.py window --target "$TARGET" \
+          --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.8.5
+      if: steps.window.outputs.ready == 'true'
+    - name: Terraform init
+      run: terraform -chdir=terraform/envs/prod init -input=false
+      if: steps.window.outputs.ready == 'true'
+    - name: Terraform plan
+      run: |
+        set -euo pipefail
+        args=(-input=false -out="$RUNNER_TEMP/ingestion.tfplan")
+        while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json,os; print("\n".join(json.loads(os.environ["TARGET_CONFIG"])["targets"]))')
+        while IFS= read -r variable; do args+=("-var=$variable=unused-by-$TARGET-deploy"); done < <(python -c 'import json,os; print("\n".join(t["image_variable"] for t in json.loads(os.environ["INGESTION_TARGETS"]).values()))')
+        image_variable="$(python -c 'import json,os; print(json.loads(os.environ["TARGET_CONFIG"])["image_variable"])')"
+        args+=("-var=$image_variable=$IMAGE")
+        if [[ "$TARGET" == wdpa-monthly ]]; then args+=("-var=wdpa_monthly_image_config_digest=$TESTED_IMAGE_CONFIG"); fi
+        bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan "${args[@]}"
+      if: steps.window.outputs.ready == 'true'
+    - name: Export Terraform plan JSON
+      run: |
+        terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/ingestion.tfplan" > "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Enforce ingestion resource-change allowlist
+      run: |
+        set -euo pipefail
+        if [[ "$TARGET" != wdpa-monthly ]]; then
+        args=("$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes "--job-image-target=$TARGET" "--expected-image=$IMAGE" "--refusal-prefix=Refusing $TARGET deploy")
+          targets="$(python -c 'import json,os; print("\n".join(json.loads(os.environ["TARGET_CONFIG"])["targets"]))')"
+          args+=("--allowed-exact=$targets")
+          python scripts/terraform_plan_allowlist.py "${args[@]}"
+        else
+        python - "$RUNNER_TEMP/ingestion.tfplan.json" "$IMAGE" <<'PY'
+        import json
+        import os
+        import sys
+
+        plan = json.load(open(sys.argv[1]))
+        expected_image = sys.argv[2]
+        expected_config = os.environ["TESTED_IMAGE_CONFIG"]
+        allowed_exact = set(json.loads(os.environ["TARGET_CONFIG"])["targets"])
+
+        blocked = []
+        for resource in plan.get("resource_changes", []):
+            actions = resource.get("change", {}).get("actions", [])
+            if actions in ([], ["no-op"], ["read"]):
+                continue
+            address = resource.get("address", "")
+            if address not in allowed_exact:
+                blocked.append(f"{'/'.join(actions)} {address}")
+                continue
+            if actions != ["update"]:
+                blocked.append(f"{'/'.join(actions)} {address}")
+                continue
+            if address != "module.wdpa_monthly_job.google_cloud_run_v2_job.this":
+                continue
+            after = resource.get("change", {}).get("after", {})
+            containers = (
+                after.get("template", [{}])[0]
+                .get("template", [{}])[0]
+                .get("containers", [{}])
+            )
+            image = containers[0].get("image") if containers else None
+            if image != expected_image:
+                blocked.append(f"unexpected image for {address}: {image!r}")
+            task = after.get("template", [{}])[0].get("template", [{}])[0]
+            limits = containers[0].get("resources", [{}])[0].get("limits", {}) if containers else {}
+            if limits != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "86400s":
+                blocked.append(f"unexpected processing limits for {address}")
+            volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
+            disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
+            mounts = containers[0].get("volume_mounts", [])
+            env = {e.get("name"): e.get("value") for e in containers[0].get("env", [])}
+            if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
+                blocked.append("WDPA scheduled executions require the exact tested producer")
+            if "WDPA_PROMOTION_BUNDLE" in env:
+                blocked.append("WDPA must not pin a monthly bundle")
+            if "RUN_DATE" in env:
+                blocked.append("WDPA RUN_DATE must remain execution-only")
+            if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(m.get("name") == "work" and m.get("mount_path") == "/work" for m in mounts):
+                blocked.append("WDPA requires the 100 GiB disk at /work")
+            if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":
+                blocked.append("WDPA scratch paths must use /work")
+
+        if blocked:
+            print("Refusing wdpa-monthly deploy because the Terraform plan changes non-allowlisted resources:")
+            for item in blocked:
+                print(f"- {item}")
+            raise SystemExit(1)
+        PY
+        fi
+      if: steps.window.outputs.ready == 'true'
+    - name: Verify complete saved-plan mutation permissions
+      run: |
+        python scripts/deployment_permissions.py --target "$TARGET" --plan-json "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Verify run-bound signing capability without mutation
+      uses: ./.github/actions/deployment-receipt
+      with:
+        mode: rehearsal
+        signer-workflow: ingestion-deploy.yml
+      if: steps.window.outputs.ready == 'true'
+    - name: Claim tested deployment revision
+      id: revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py start --target "$TARGET" --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+          --artifact "$IMAGE" --plan-json "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Attest serialized deployment claim before mutation
+      id: claim-receipt
+      uses: ./.github/actions/deployment-receipt
+      with:
+        mode: receipt
+        receipt-path: ${{ steps.revision.outputs.receipt_path }}
+      if: steps.revision.outputs.proceed == 'true'
+    - name: Terraform apply
+      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+      run: |
+        bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
+  verify:
+    name: Verify ingestion canary
+    needs:
+    - prepare
+    - apply
+    if: ${{ always() && needs.apply.outputs.deployment_id != '' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    env:
+      TARGET_CONFIG: ${{ needs.prepare.outputs.config }}
+      IMAGE: ${{ needs.prepare.outputs.image }}
+    steps:
+    - name: Validate main ref
+      run: |
+        set -euo pipefail
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+              ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main" &&
+               "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+          echo "Execution must use this workflow or CI from main." >&2
+          exit 1
+        fi
+    - name: Check out trusted verifier
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install pinned durable receipt verifier
+      run: python scripts/install_deployment_verifier.py
+    - name: Verify executor before candidate checkout
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        python scripts/deployment_revision.py verify --bootstrap --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.executor_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify tested main revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py verify --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Require successful signed apply
+      env:
+        APPLY_RESULT: ${{ needs.apply.result }}
+        CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
+      run: |
+        test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+    - name: Set up gcloud
+      uses: google-github-actions/setup-gcloud@v2
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12.12
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: 0.11.8
+        enable-cache: true
+    - name: Sync Python dependencies
+      run: uv sync --locked --all-groups
+    - name: Confirm deployed digest
+      run: |
+        set -euo pipefail
+
+        deployed_image="$(gcloud run jobs describe "${TARGET}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+        echo "Deployed image: ${deployed_image}"
+        if [[ "${deployed_image}" != "${IMAGE}" ]]; then
+          echo "Cloud Run job image does not match expected digest." >&2
+          exit 1
+        fi
+    - name: Check runtime verification window
+      id: window
+      run: |
+        set -euo pipefail
+        if [[ "$(python -c 'import json,os; print(str(json.loads(os.environ["TARGET_CONFIG"])["paused_gate"]).lower())')" == true ]]; then
+          state="$(gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state)')"
+          case "$state" in
+            PAUSED)
+              if [[ -z "$CANARY_RUN_DATE" ]]; then
+                echo "::notice::Deployment deferred: paused schedule requires an explicit canary date."
+                echo 'ready=false' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi ;;
+            ENABLED) ;;
+            *) echo "Unknown scheduler state: $state" >&2; exit 1 ;;
+          esac
+        fi
+        python scripts/deployment_revision.py window --target "$TARGET" \
+          --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+    - name: Require runtime verification window
+      env:
+        READY: ${{ steps.window.outputs.ready }}
+      run: |
+        if [[ "$READY" != true ]]; then
+          echo "Canary unavailable after apply; deployment requires reconciliation." >&2
+          exit 1
+        fi
+    - name: Resolve in-flight canary
+      run: |
+        set -euo pipefail
+        running="$(gcloud run jobs executions list --job="$TARGET" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+          --format='value(metadata.name,status.runningCount)' | awk '$2 != "" && $2 != "0" {print $1; exit}')"
+        if [[ -n "$running" ]]; then
+          if [[ "$CANCEL_RUNNING_CANARY" != true ]]; then
+            echo "Execution $running is active; refusing a duplicate canary." >&2
+            exit 1
+          fi
+          gcloud run jobs executions cancel "$running" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --quiet
+        fi
+    - name: Execute ingestion canary
+      run: |
+        set -euo pipefail
+        if [[ -n "$CANARY_RUN_DATE" && ! "$CANARY_RUN_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          echo 'canary_run_date must be YYYY-MM-DD' >&2
+          exit 1
+        fi
+        args=("$TARGET" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --async --format='value(metadata.name)')
+        execution_env=""
+        if [[ "$TARGET" != wdpa-monthly ]]; then
+          execution_env="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
+        fi
+        if [[ -n "$CANARY_RUN_DATE" ]]; then execution_env="${execution_env:+$execution_env,}RUN_DATE=$CANARY_RUN_DATE"; fi
+        if [[ -n "$execution_env" ]]; then args+=("--update-env-vars=$execution_env"); fi
+        execution="$(gcloud run jobs execute "${args[@]}")"
+        if [[ -z "$execution" ]]; then echo 'Canary returned no execution identity.' >&2; exit 1; fi
+        echo "CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
+    - name: Watch ingestion canary
+      run: |
+        set -euo pipefail
+        attempts=125
+        if [[ "$TARGET" == wdpa-monthly ]]; then attempts=20; fi
+        for ((attempt=0; attempt<attempts; attempt++)); do
+          phase="$(gcloud run jobs executions describe "$CANARY_EXECUTION" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json | python -c 'import json,os,sys; from scripts.deployment_revision import terminal_execution; print(terminal_execution(json.load(sys.stdin), os.environ["IMAGE"]))')"
+          case "$phase" in
+            verified) echo 'DEPLOYMENT_PHASE=verified' >> "$GITHUB_ENV"; exit 0 ;;
+            failed|unknown) echo "DEPLOYMENT_PHASE=$phase" >> "$GITHUB_ENV"; exit 1 ;;
+            verification_pending) ;;
+            *) echo "Invalid canary verification phase: $phase" >&2; exit 1 ;;
+          esac
+          sleep 30
+        done
+        if [[ "$TARGET" == wdpa-monthly ]]; then
+          echo 'DEPLOYMENT_PHASE=verification_pending' >> "$GITHUB_ENV"
+        else
+          echo 'Short-job canary did not reach terminal success within 62.5 minutes.' >&2
+          exit 1
+        fi
+    - name: Validate latest release contract
+      if: inputs.target != 'wdpa-monthly'
+      run: |
+        set -euo pipefail
+
+        uv run python - <<'PY'
+        import gzip
+        import os
+        import json
+        import struct
+        import subprocess
+
+        from scripts.release_feature_model import (
+            read_metadata_sidecar_bytes,
+            validate_release_manifest,
+            validate_release_schema,
+            validate_sidecar_records,
+        )
+
+        bucket = os.environ["BUCKET"]
+        config = json.loads(os.environ["TARGET_CONFIG"])
+        asset_slug = config["asset_slug"]
+        asset_root = config["asset_root"]
+        index_uri = f"gs://{bucket}/_catalog/releases/{asset_slug}.json"
+        index = json.loads(subprocess.check_output(["gcloud", "storage", "cat", index_uri]))
+        release = index["latest_release"]["date"]
+        base = f"gs://{bucket}/{asset_root}/releases/{release}/{asset_slug}"
+
+        manifest = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".manifest.json"]))
+        validate_release_manifest(
+            manifest,
+            expected_asset_slug=asset_slug,
+            expected_release=release,
+            require_generations=True,
+        )
+
+        schema = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".schema.json"]))
+        validate_release_schema(schema, expected_asset_slug=asset_slug, expected_release=release)
+
+        metadata_bytes = subprocess.check_output(["gcloud", "storage", "cat", base + ".metadata.ndjson.gz"])
+        records = list(read_metadata_sidecar_bytes(metadata_bytes, label=base + ".metadata.ndjson.gz"))
+        sidecar = validate_sidecar_records(
+            records,
+            expected_asset_slug=asset_slug,
+            expected_release=release,
+        )
+        if not sidecar.valid:
+            raise RuntimeError("; ".join(sidecar.errors))
+
+        fgb = subprocess.check_output(["gcloud", "storage", "cat", base + ".fgb"])
+        fgb_fields = {
+            key: key.encode() in fgb
+            for key in ("feature_id", "geometry_hash", "properties_hash")
+        }
+        if not all(fgb_fields.values()):
+            raise RuntimeError(f"FGB missing required fields: {fgb_fields}")
+
+        raw_header = subprocess.check_output(["gcloud", "storage", "cat", "--range=0-126", base + ".pmtiles"])
+        _root_offset, _root_length, metadata_offset, metadata_length = struct.unpack("<QQQQ", raw_header[8:40])
+        metadata_raw = subprocess.check_output([
+            "gcloud",
+            "storage",
+            "cat",
+            f"--range={metadata_offset}-{metadata_offset + metadata_length - 1}",
+            base + ".pmtiles",
+        ])
+        pmtiles_metadata = json.loads(gzip.decompress(metadata_raw).decode("utf-8"))
+        layers = [
+            {"id": layer.get("id"), "fields": sorted((layer.get("fields") or {}).keys())}
+            for layer in pmtiles_metadata.get("vector_layers") or []
+        ]
+        if not layers or any(layer["fields"] != ["feature_id"] for layer in layers):
+            raise RuntimeError(f"PMTiles metadata fields are not feature_id-only: {layers}")
+
+        print(json.dumps({
+            "latest_release": release,
+            "sidecar_count": sidecar.feature_count,
+            "fgb_required_fields": fgb_fields,
+            "pmtiles_layers": layers,
+        }, indent=2, sort_keys=True))
+        PY
+    - name: Run asset bucket hygiene audit
+      if: inputs.target != 'wdpa-monthly'
+      run: |
+        set -euo pipefail
+
+        uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
+          --bucket "${BUCKET}" \
+          --format json > "${RUNNER_TEMP}/bucket-hygiene.json"
+        uv run python - "${RUNNER_TEMP}/bucket-hygiene.json" <<'PY'
+        import json
+        import os
+        import sys
+
+        asset_slug = json.loads(os.environ["TARGET_CONFIG"])["asset_slug"]
+        payload = json.load(open(sys.argv[1]))
+        findings = payload.get("findings", [])
+        asset_findings = [
+            finding for finding in findings
+            if asset_slug in json.dumps(finding, sort_keys=True)
+            and "feature-metadata" in json.dumps(finding, sort_keys=True).lower()
+        ]
+        if asset_findings:
+            print(json.dumps(asset_findings, indent=2, sort_keys=True))
+            raise SystemExit("Asset feature-metadata hygiene findings remain")
+        print("No asset feature-metadata hygiene findings remain.")
+        PY
+    - name: Resume sea-ice-daily scheduler
+      if: inputs.target == 'sea-ice-daily' && inputs.resume_scheduler
+      run: |
+        set -euo pipefail
+
+        uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily --require-published
+        gcloud scheduler jobs resume "$TARGET" \
+          --location="${REGION}" \
+          --project="${GOOGLE_CLOUD_PROJECT}"
+        gcloud scheduler jobs describe "$TARGET" \
+          --location="${REGION}" \
+          --project="${GOOGLE_CLOUD_PROJECT}" \
+          --format='value(state,schedule,timeZone)'
+    - name: Record deployment outcome
+      id: deployment-outcome
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DEPLOYMENT_ID: ${{ needs.apply.outputs.deployment_id }}
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        phase="${DEPLOYMENT_PHASE:-unknown}"
+        if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+        args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+        if [[ -n "${CANARY_EXECUTION:-}" ]]; then args+=(--execution "${CANARY_EXECUTION##*/}"); fi
+        python scripts/deployment_revision.py "${args[@]}"
+      if: ${{ always() }}
+    - name: Attest terminal deployment outcome
+      uses: ./.github/actions/deployment-receipt
+      with:
+        mode: receipt
+        receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}
+      if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
