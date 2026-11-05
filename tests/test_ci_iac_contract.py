@@ -12,7 +12,7 @@ from test_ci_preflight import ROOT, fixture_repo
 
 
 @pytest.mark.parametrize('defect', [None, 'unlisted', 'unsupported', 'permission', 'module', 'deleted'])
-@pytest.mark.parametrize('contract', ['inline', 'terraform', 'manual', 'ingestion'])
+@pytest.mark.parametrize('contract', ['inline', 'terraform', 'manual', 'ingestion', 'plan_scope'])
 def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypatch, defect, contract):
     root, git = fixture_repo(tmp_path)
     (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {}}))
@@ -41,6 +41,10 @@ def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypat
         (workflows / 'prod-terraform-target-apply.yml').write_text('jobs: {}\n')
         if contract == 'manual':
             (workflows / 'ci.yml').write_text('jobs: {}\n')
+    elif contract == 'plan_scope':
+        (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {},
+            'plan_scopes': {'sync.yml': {'runtime': {'exact': [address]}}}}))
+        (workflows / 'sync.yml').write_text('jobs: {}\n')
     elif contract == 'ingestion':
         monkeypatch.setitem(TARGETS['eamlis-monthly'], 'targets', [address])
         (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/ingestion-deploy.yml\n'

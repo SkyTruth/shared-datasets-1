@@ -287,6 +287,47 @@
     }
   },
   "plan_scopes": {
+    "dataset-usage-deploy.yml": {
+      "runtime": {
+        "exact": [
+          "google_cloud_run_v2_job_iam_member.dataset_usage_scheduler_invoker",
+          "google_logging_project_exclusion.dataset_usage_duplicate",
+          "google_logging_project_sink.dataset_usage",
+          "google_project_iam_audit_config.storage_data_write",
+          "google_project_iam_custom_role.dataset_usage_bucket_health",
+          "google_project_iam_custom_role.dataset_usage_health",
+          "google_project_iam_member.dataset_usage_health",
+          "google_service_account_iam_member.dataset_usage_deployer_act_as",
+          "google_service_account_iam_member.dataset_usage_scheduler_deployer_act_as",
+          "google_storage_bucket.dataset_usage_raw",
+          "google_storage_bucket.dataset_usage_state",
+          "google_storage_bucket.shared_bucket",
+          "google_storage_bucket_iam_member.dataset_usage_configuration_reader",
+          "google_storage_bucket_iam_member.dataset_usage_native_probe_reader",
+          "google_storage_bucket_iam_member.dataset_usage_probe_reader",
+          "google_storage_bucket_iam_member.dataset_usage_raw_configuration_reader",
+          "google_storage_bucket_iam_member.dataset_usage_raw_reader",
+          "google_storage_bucket_iam_member.dataset_usage_sink_writer",
+          "google_storage_bucket_iam_member.dataset_usage_state_writer",
+          "google_storage_bucket_iam_member.dataset_usage_storage_logger",
+          "google_storage_bucket_iam_member.dataset_usage_viewer",
+          "module.dataset_usage_job.google_cloud_run_v2_job.this",
+          "module.dataset_usage_scheduler.google_cloud_scheduler_job.this",
+          "module.dataset_usage_scheduler_service_account.google_service_account.this",
+          "module.dataset_usage_service_account.google_service_account.this"
+        ]
+      },
+      "retirement": {
+        "exact": [
+          "google_logging_project_exclusion.dataset_usage_duplicate",
+          "google_logging_project_sink.dataset_usage",
+          "google_project_iam_custom_role.dataset_usage_health",
+          "google_project_iam_member.dataset_usage_health",
+          "google_storage_bucket_iam_member.dataset_usage_probe_reader",
+          "google_storage_bucket_iam_member.dataset_usage_sink_writer"
+        ]
+      }
+    },
     "catalog-viewer-deploy.yml": {
       "bootstrap": {
         "exact": [
@@ -313,6 +354,18 @@
       }
     },
     "pmtiles-cdn-sync.yml": {
+      "bootstrap": {
+        "exact": [
+          "google_project_iam_custom_role.pmtiles_managed_folder_sync",
+          "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync"
+        ]
+      },
+      "bootstrap-update-only": {
+        "exact": [
+          "google_project_iam_custom_role.pmtiles_url_map_sync",
+          "google_storage_bucket.shared_bucket"
+        ]
+      },
       "runtime": {
         "exact": [
           "google_storage_bucket.shared_bucket",

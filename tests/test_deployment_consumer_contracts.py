@@ -51,7 +51,7 @@ def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, jo
     assert names.index(guard_name) < names.index('Check out trusted deployment verifier') < names.index(checkout)
     trusted = steps['Check out trusted deployment verifier']['with']
     assert trusted == {'ref': '${{ github.workflow_sha }}', 'fetch-depth': 0, 'persist-credentials': False}
-    proof = ('Verify executor before candidate checkout' if filename in {'pmtiles-cdn-sync.yml', 'catalog-viewer-deploy.yml'} else 'Verify trusted catalog source authority' if filename == 'catalog-web-deploy.yml' else 'Verify trusted tested source authority')
+    proof = ('Verify trusted catalog source authority' if filename == 'catalog-web-deploy.yml' else 'Verify executor before candidate checkout')
     assert '--bootstrap' in steps[proof]['run']
     assert names.index(proof) < names.index(checkout)
     assert workflow['env']['BOOTSTRAP_WORKFLOW_SHA'] == '${{ github.workflow_sha }}'

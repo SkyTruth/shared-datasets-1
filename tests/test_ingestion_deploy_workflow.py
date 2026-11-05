@@ -71,7 +71,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         image = "registry/wdpa@sha256:" + "a" * 64
         config = "sha256:" + "b" * 64
         after = {"template": [{"template": [{
-            "timeout": "86400s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
+            "timeout": "43200s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
             "containers": [{"image": image, "resources": [{"limits": {"cpu": "4", "memory": "8Gi"}}],
                 "volume_mounts": [{"name": "work", "mount_path": "/work"}],
                 "env": [{"name": "TMPDIR", "value": "/work/tmp"}, {"name": "SHARED_DATASETS_WORKDIR", "value": "/work/shared-datasets-1"},

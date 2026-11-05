@@ -328,6 +328,16 @@ def test_installed_fixture_builds_reuse_native_test_inputs(target):
     assert any((ROOT / 'scripts/installed_ingestion_fixture.py').read_text() in command for command in commands(target, 'b' * 40)[1:])
 
 
+def test_missing_registered_fixture_cannot_fall_back_to_another_producer(tmp_path, monkeypatch):
+    from scripts import production_image_contracts as images
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/local_ingestion_smoke.py').write_text('native smoke')
+    monkeypatch.setattr(images, 'ROOT', tmp_path)
+    monkeypatch.setattr(images, 'resource_limits', lambda target: [])
+    with pytest.raises(FileNotFoundError, match='eamlis-monthly.json'):
+        images.commands('eamlis-monthly', 'b' * 40)
+
+
 def test_wdpa_fixture_carries_translation_fields_through_its_real_cli_input(tmp_path, monkeypatch):
     from scripts import local_ingestion_smoke as smoke
     from ingestion.wdpa_monthly import translations

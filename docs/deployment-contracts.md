@@ -51,7 +51,7 @@ reader-first activation and removal checks. Recovery resolves image variables
 before candidate checkout, including the original `dataset_usage_image`.
 
 [`.github/terraform-targets.json`](../.github/terraform-targets.json) owns stable
-synchronization names, exact IAM target scopes, viewer/CDN `plan_scopes` and
+synchronization names, exact IAM target scopes, viewer/CDN/usage `plan_scopes` and
 named read-only `permission_probes`. Unknown permission targets fail closed.
 Execution, offline dependency checks, saved-plan guards and recovery read that
 same registry; names preserve historical signed hash identities. CI derives
@@ -105,16 +105,16 @@ cache and polls routes after its signed apply releases the queue. Viewer/CDN
 probe missing operational permissions with bounded retries; no blind IAM sleep
 replaces those probes. Their specialized acceptance checks keep separate executors.
 
-The installed production-image sea-ice probe and deployment's additional smoke
-both reuse `local_ingestion_smoke.py --sea-ice-only`; local profiling shares the
-same conversion. Installed probes run under production resource limits as
+The installed sea-ice probe uses `local_ingestion_smoke.py --sea-ice-only`;
+local profiling shares the same conversion. Installed probes run once in CI,
+with memory-backed `/tmp` and production resource limits as
 specified in [preflight](ci-preflight.md#image-execution-and-hosted-evidence).
 WDPA's worker validates the current month's two realms and compatibility sample
 before publishing exact staged bytes; October acceptance remains historical.
 
-SDK publication is called from `ci.yml` only after successful main `ci-ready`
-when the resolved plan selects SDK validation. It retains eligibility-aware npm
-publisher bootstrap and exact-source manual recovery. The
+CI dispatches the top-level SDK publisher only after successful main `ci-ready`
+when the resolved plan selects SDK validation. It re-verifies the tested source
+and retains exact-source manual recovery. The
 [SDK release procedure](../api/typescript/README.md#maintainer-validation-and-releases)
 remains authoritative for package releases. Catalog web retains its separate
 dataset-mutation/release-index source authorization.

@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.terraform_target_contracts import plan_scope
 
 BUCKET = 'skytruth-shared-datasets-1'
 DELETE = 'storage.managedFolders.delete'
@@ -38,11 +39,8 @@ ORIGINAL_PERMISSIONS = frozenset({
     'compute.urlMaps.invalidateCache', 'compute.urlMaps.update', 'compute.urlMaps.validate',
 })
 ROLE_PERMISSIONS = ORIGINAL_PERMISSIONS | PROBE_PERMISSIONS
-BOOTSTRAP_EXACT = {
-    'google_project_iam_custom_role.pmtiles_managed_folder_sync',
-    'google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync',
-}
-BOOTSTRAP_UPDATE_ONLY = {'google_storage_bucket.shared_bucket', ROLE_ADDRESS}
+BOOTSTRAP_EXACT, _ = plan_scope('pmtiles-cdn-sync.yml', 'bootstrap')
+BOOTSTRAP_UPDATE_ONLY, _ = plan_scope('pmtiles-cdn-sync.yml', 'bootstrap-update-only')
 
 
 def require(condition, message):

@@ -111,12 +111,6 @@ jobs:
           if [[ "$GITHUB_REF" != refs/heads/main ]]; then exit 1; fi
           if [[ "$GITHUB_WORKFLOW_REF" != "${GITHUB_REPOSITORY}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main" ]]; then exit 1; fi
       - *trusted-checkout
-      - name: Verify trusted tested source authority
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml \
-            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
       - *admit-source
       - *trusted-executor
       - *sdk-replay

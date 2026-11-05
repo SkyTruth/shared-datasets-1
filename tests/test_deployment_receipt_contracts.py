@@ -220,17 +220,22 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertTrue(contracts.permissions(self.root))
 
     def test_sdk_existing_oidc_boundary_requires_main_and_trusted_bootstrap(self):
-        job = {"steps": [
-            {"run": 'if [[ "$GITHUB_REF" != refs/heads/main ]]; then exit 1; fi\ncase "$GITHUB_WORKFLOW_REF" in publish-typescript-sdk.yml@refs/heads/main) ;; *) exit 1 ;; esac'},
-            {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}"}},
-            {"run": "python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml"},
-        ]}
-        self.assertTrue(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", job))
-        for index in range(3):
+        workflow = yaml.safe_load((self.workflows / 'publish-typescript-sdk.yml').read_text())
+        job = workflow['jobs']['publish']
+        self.assertTrue(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", job, self.root))
+        for index in (0, 1, 3):
             changed = copy.deepcopy(job)
             changed["steps"].pop(index)
             with self.subTest(index=index):
-                self.assertFalse(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", changed))
+                self.assertFalse(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", changed, self.root))
+        for defect in ({'if': False}, {'continue-on-error': True}, {'with': {'workflow': 'ci.yml'}}):
+            changed = copy.deepcopy(job)
+            changed['steps'][3].update(defect)
+            with self.subTest(defect=defect):
+                self.assertFalse(contracts.sdk_boundary('publish-typescript-sdk.yml', 'publish', changed, self.root))
+        changed = copy.deepcopy(job)
+        changed['steps'].insert(2, {'uses': 'google-github-actions/auth@v3'})
+        self.assertFalse(contracts.sdk_boundary('publish-typescript-sdk.yml', 'publish', changed, self.root))
 
     def notification(self):
         source = Path(__file__).resolve().parents[1] / ".github/workflows" / contracts.NOTIFICATION_WORKFLOW

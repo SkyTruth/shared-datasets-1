@@ -40,7 +40,7 @@ def wdpa_errors(after, expected_image, expected_config):
     volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
     disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
     errors = []
-    if container.get("resources", [{}])[0].get("limits") != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "86400s":
+    if container.get("resources", [{}])[0].get("limits") != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "43200s":
         errors.append("unexpected WDPA processing limits")
     if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
         errors.append("WDPA scheduled executions require the exact tested producer")

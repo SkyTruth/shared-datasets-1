@@ -176,7 +176,7 @@ def receipt_link(step, identifier):
     return step.get("uses") == ACTION and step.get("with", {}).get("mode") == "receipt" and step["with"].get("receipt-path") == "${{ steps." + identifier + ".outputs.receipt_path }}" and enabled(step) and not step.get("continue-on-error")
 
 
-def sdk_boundary(filename, identifier, job):
+def sdk_boundary(filename, identifier, job, root):
     """Retain the SDK's existing npm OIDC publisher authorization contract."""
     if filename != "publish-typescript-sdk.yml" or identifier != "publish":
         return False
@@ -187,11 +187,13 @@ def sdk_boundary(filename, identifier, job):
     bootstrap = steps[1]
     if not all(item in guard for item in ('if [[ "$GITHUB_REF" != refs/heads/main ]]', "exit 1", "$GITHUB_WORKFLOW_REF", "publish-typescript-sdk.yml@refs/heads/main")) or not str(bootstrap.get("uses", "")).startswith("actions/checkout@") or bootstrap.get("with", {}).get("ref") != "${{ github.workflow_sha }}":
         return False
-    for step in steps[2:]:
-        if str(step.get("uses", "")).startswith("actions/checkout@"):
-            return False  # Candidate code cannot replace the trusted verifier.
-        if "deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml" in step.get("run", "").replace("\\\n", " "):
-            return enabled(step)
+    if any('if' in step or step.get('continue-on-error') for step in steps[:2]):
+        return False
+    for step in expanded_steps(root, {"steps": steps[2:]}):
+        if str(step.get("uses", "")).startswith(("actions/checkout@", "google-github-actions/auth@")) or any(mutations(step)):
+            return False
+        if command(step, "verify") and "--bootstrap" in step.get("run", ""):
+            return enabled(step) and not step.get("continue-on-error") and step.get("env", {}).get("WORKFLOW_FILE") == filename
     return False
 
 
@@ -376,7 +378,7 @@ def permissions(root):
             writes = effective == "write-all" or isinstance(effective, dict) and any(effective.get(key) == "write" for key in ("deployments", "attestations"))
             if not writes:
                 continue
-            protected = job.get("environment") == PROTECTED or isinstance(job.get("environment"), dict) and job["environment"].get("name") == PROTECTED or sdk_boundary(path.name, identifier, job)
+            protected = job.get("environment") == PROTECTED or isinstance(job.get("environment"), dict) and job["environment"].get("name") == PROTECTED or sdk_boundary(path.name, identifier, job, root)
             caller = str(job.get("uses", "")).startswith("./.github/workflows/")
             condition = str(job.get("if", ""))
             main_only = "github.ref == 'refs/heads/main'" in condition and "github.event_name == 'push'" in condition

@@ -147,9 +147,10 @@ def commands(target, executor, *, image_id=None):
         checks.append(run + ["scripts/wdpa_input_memory_probe.py", "--help"])
     # Source lives in linted modules; execution uses installed code, never a source mount.
     fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
-    if fixture.is_file():
+    if fixture.is_file() or target not in {"wdpa-monthly", "sea-ice-daily"}:
+        payload = fixture.read_text()  # Missing registered fixtures cannot select another producer's smoke.
         checks.append(run + ["-c", (ROOT / "scripts/installed_ingestion_fixture.py").read_text(), target,
-            fixture.read_text()])
+            payload])
     else:
         smoke = ["scripts/local_ingestion_smoke.py"] if target == "wdpa-monthly" else ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text()]
         checks.append(run + [*smoke,

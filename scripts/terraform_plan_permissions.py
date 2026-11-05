@@ -435,8 +435,6 @@ def static_checks(root, base, head):
     from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
     from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
-    from scripts.dataset_usage_deploy import RESOURCES, RETIREMENT_RESOURCES
-    from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
 
     def git(*args):
         return subprocess.check_output(['git', '-C', str(root), *args], text=True)
@@ -469,7 +467,6 @@ def static_checks(root, base, head):
     changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
     exact = {declaration(row) for item in terraform_targets.registry(root).values() for row in item['resources']}
     exact.update(declaration(row) for item in TARGETS.values() for row in item['targets'])
-    exact.update(declaration(row) for row in RESOURCES | RETIREMENT_RESOURCES | BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
     for path in (root / '.github/workflows').glob('*.yml'):
         for job in yaml.safe_load(path.read_text())['jobs'].values():
             exact.update(declaration(row) for row in job.get('with', {}).get('allowed_exact', '').splitlines() if row.strip())
