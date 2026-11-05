@@ -247,7 +247,8 @@ the hosted job installs it alongside gitleaks.
 | Shared or unknown | All suites | Explicit release dependencies only |
 
 Markdown files use the documentation tier, including workflow and Terraform
-READMEs. Catalog inputs, templates, asset metadata and test fixtures retain their
+READMEs. The packaged TypeScript SDK README runs both SDK release-policy checks.
+Catalog inputs, templates, asset metadata and test fixtures retain their
 consumer validation. Non-Markdown tools under guidance directories remain unknown.
 Each `NARROW_PATHS` entry retains its consumer proof. The Slack incident worker,
 notification-verification reuse, operational safety discovery, workflow-failure
@@ -266,6 +267,9 @@ edges wait for IAM only when those syncs are selected; a selected failed sync
 still blocks its consumers. The catalog, usage and monitoring deploy workflows
 use that same selection signal for their embedded IAM bootstraps. Explicit
 manual infrastructure dispatches retain bootstrap checks.
+Every deployment consuming a tested image forces the production-image suite and
+its required target, including deployments selected only by Terraform changes.
+IaC changes build those required targets rather than every production recipe.
 Tiers never grant mutation authority; tested-artifact, approval,
 permission and terminal-verification gates remain unchanged.
 The standard Python run permits only the six named native fixtures to skip

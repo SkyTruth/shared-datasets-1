@@ -69,7 +69,7 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     "ingestion/README.md", "ingestion/wdpa_monthly/README.md",
     "ingestion/common/nested/operations.md", "services/README.md",
     "services/catalog_viewer/README.md", "services/nested/docs/operations.md",
-    "api/python/README.md", "api/typescript/README.md", "api/nested/package/README.md",
+    "api/python/README.md", "api/nested/package/README.md",
     "scripts/nested/README.md", ".github/README.md", "terraform/modules/cloud_run_job/README.md",
     "web/README.md", "tests/browser/README.md", "api/python/notes.md",
 ])
@@ -146,6 +146,10 @@ def test_automation_cannot_hide_mixed_or_contract_dependencies(monkeypatch):
     (["services/monitoring_slack/run.py"], {"monitoring-slack"}),
     (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
     (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly"}),
+    (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer", "dataset-usage"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly", "monitoring-slack"}),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], set()),
     (["README.md"], set()),
 ])
 def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):

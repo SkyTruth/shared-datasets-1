@@ -1,6 +1,7 @@
 import ast
 import json
 import re
+import subprocess
 import sys
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -8,11 +9,56 @@ from pathlib import Path
 import pytest
 
 from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_suites
+from scripts.ci_contract import select_production_images
 from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import load_workflow, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_every_tracked_path_validates_all_images_consumed_by_selected_deployments():
+    # Enumerate the repository, rather than maintaining examples of IaC paths.
+    # This independent map is the actual tested-image deployment contract.
+    images = {
+        "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "wdpa": "wdpa-monthly",
+        "sea_ice": "sea-ice-daily", "catalog_viewer": "catalog-viewer",
+        "dataset_usage": "dataset-usage", "cron_alert_policy": "monitoring-slack",
+    }
+    paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT, text=True).split("\0")
+    for path in filter(None, paths):
+        required = {images[target] for target in select_deployments([path]) if target in images}
+        if required:
+            assert "production-images" in select_suites([path])[0], path
+            assert required <= set(select_production_images([path])), path
+
+
+def test_sdk_packaged_readme_runs_release_policy_before_merge(tmp_path):
+    paths = ["api/typescript/README.md"]
+    suites = select_suites(paths)[0]
+    assert {"sdk-node22", "sdk-node24"} <= set(suites)
+    # Exercise the selected SDK command against real Git snapshots. An unchanged
+    # package version must reject changed packaged documentation.
+    from test_ci_preflight import fixture_repo
+
+    source, git = fixture_repo(tmp_path)
+    package = source / "api/typescript"
+    package.mkdir(parents=True, exist_ok=True)
+    for filename in ("package.json", "package-lock.json", "scripts/release-policy.mjs"):
+        destination = package / filename
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / "api/typescript" / filename).read_bytes())
+    (package / "README.md").write_text("Original documentation\n")
+    git("add", ".")
+    git("commit", "-m", "SDK package")
+    base = git("rev-parse", "HEAD")
+    (package / "README.md").write_text("Changed package contents\n")
+    git("add", ".")
+    git("commit", "-m", "Change README without bump")
+    command, cwd = suite_commands("sdk-node22", source, {"base": base, "tested_sha": "HEAD"}, tmp_path)[0]
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "SDK package content changed" in result.stderr
 
 
 @pytest.mark.parametrize("paths", [None, ["unknown/component"], ["docs/ci-reliability.md"], ["tests/test_publication.py"], [".github/workflows/ci.yml"]])

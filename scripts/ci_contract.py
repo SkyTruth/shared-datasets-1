@@ -29,6 +29,11 @@ DEPLOYMENTS = (
     "scratch_cleanup_iam", "cron_alert_policy",
 )
 INGESTION_DEPLOYMENTS = frozenset({"mpatlas", "eamlis", "wdpa", "sea_ice"})
+DEPLOYMENT_IMAGES = {
+    "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "sea_ice": "sea-ice-daily",
+    "wdpa": "wdpa-monthly", "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
+    "cron_alert_policy": "monitoring-slack",
+}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 NATIVE_TESTS = (
@@ -149,6 +154,10 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
             suites.update({"geospatial-integration", "production-images"})
         return "metadata", suites
+    # The SDK ships its README and release-policy.mjs requires a version bump
+    # when those package bytes change. It must reach both runtime policy checks.
+    if path == "api/typescript/README.md":
+        return "component", {"sdk-node22", "sdk-node24", "browser"}
     if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
     if path.startswith(".github/"):
@@ -201,6 +210,8 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             return list(SUITES), f"{tier} dependency: {path}"
         selected.update(suites)
         tiers.add(tier)
+    if set(select_deployments(paths)) & DEPLOYMENT_IMAGES.keys():
+        selected.add("production-images")
     return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
 
 
@@ -241,6 +252,10 @@ def select_production_images(paths: list[str] | None) -> list[str]:
             return list(BUILD_TARGETS)
         if classify_change(path)[0] == "documentation":
             continue
+        # IaC is not a Docker input. Its selected deployments below supply the
+        # exact tested-image floor, even for job-only configuration changes.
+        if path.startswith("terraform/"):
+            continue
         if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
             continue
         if path in VIEWER_INGESTION_INPUTS:
@@ -261,12 +276,7 @@ def select_production_images(paths: list[str] | None) -> list[str]:
     # WDPA's installed smoke imports sea ice; both images contain those inputs.
     if "sea-ice-daily" in selected:
         selected.add("wdpa-monthly")
-    deployment_images = {
-        "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "sea_ice": "sea-ice-daily",
-        "wdpa": "wdpa-monthly", "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
-        "cron_alert_policy": "monitoring-slack",
-    }
-    selected.update(deployment_images[target] for target in select_deployments(paths) if target in deployment_images)
+    selected.update(DEPLOYMENT_IMAGES[target] for target in select_deployments(paths) if target in DEPLOYMENT_IMAGES)
     return [target for target in BUILD_TARGETS if target in selected]
 
 
