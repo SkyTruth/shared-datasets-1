@@ -103,6 +103,7 @@ def test_real_reconcile_step_runs_trusted_policy_with_separate_executor_data(tmp
     (tmp_path / 'reconciliation.json').write_text('{"resource_changes": []}')
     harness = tmp_path / 'trusted-harness.py'
     harness.write_text('import json,os,pathlib,runpy,sys\n'
+                       f'assert pathlib.Path.cwd() == pathlib.Path({str(workspace)!r})\n'
                        'args=sys.argv[1:]; args=[a for a in args if a not in ("-I","-S")]\n'
                        'script=pathlib.Path(args.pop(0)).resolve()\n'
                        f'assert script == pathlib.Path({str(ROOT / "scripts/deployment_revision.py")!r})\n'
@@ -137,7 +138,8 @@ def test_real_reconcile_step_runs_trusted_policy_with_separate_executor_data(tmp
 
 
 def test_schedule_runbook_uses_protected_control_for_every_registered_publisher():
+    from scripts.ingestion_targets import TARGETS
     text = (ROOT / '.claude/skills/deploy-scheduled-ingestion/references/job-operations.md').read_text()
     assert 'gcloud scheduler jobs pause' not in text
     assert 'ingestion-schedule-control.yml' in text
-    assert all(target in text for target in ('eamlis-monthly', 'wdpa-monthly', 'sea-ice-daily', 'mpatlas-monthly'))
+    assert all(target in text for target in TARGETS)

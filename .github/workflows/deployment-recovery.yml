@@ -76,8 +76,8 @@ jobs:
           set -euo pipefail
           terraform -chdir=original-executor/terraform/envs/prod init -input=false -lockfile=readonly
           args=(-input=false -lock=false -refresh=true -out="$RUNNER_TEMP/reconciliation.tfplan")
-          while IFS= read -r target; do args+=("-target=$target"); done < <(python -I -S -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
-          while IFS= read -r variable; do args+=("-var=$variable"); done < <(python -I -S -c 'import json, os; print("\n".join(k + "=" + v for k, v in json.loads(os.environ["IMAGE_VARIABLES"]).items()))')
+          while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
+          while IFS= read -r variable; do args+=("-var=$variable"); done < <(python -c 'import json, os; print("\n".join(k + "=" + v for k, v in json.loads(os.environ["IMAGE_VARIABLES"]).items()))')
           bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=original-executor/terraform/envs/prod plan "${args[@]}"
           terraform -chdir=original-executor/terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
       - name: Reconcile complete target state and applicable runtime evidence
@@ -86,14 +86,11 @@ jobs:
           KIND: ${{ steps.original.outputs.kind }}
         run: |
           set -euo pipefail
-          args=(--deployment-id "$DEPLOYMENT_ID")
           if [[ "$KIND" == sdk ]]; then
-            args+=(--executor-dir "$GITHUB_WORKSPACE/original-executor")
+            python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --executor-dir "$GITHUB_WORKSPACE/original-executor"
           else
-            args+=(--plan-json "$RUNNER_TEMP/reconciliation.json")
-            cd original-executor
+            GIT_DIR="$GITHUB_WORKSPACE/original-executor/.git" python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --plan-json "$RUNNER_TEMP/reconciliation.json"
           fi
-          python -I -S "$GITHUB_WORKSPACE/scripts/deployment_revision.py" reconcile "${args[@]}"
 
       - name: Attest reconciled deployment outcome
         if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}

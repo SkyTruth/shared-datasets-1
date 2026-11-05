@@ -41,8 +41,8 @@ original alert reconciled as distinct milestones.
    Do not create schedules or claim automatic retries without authorization and
    verified configuration.
 
-`deployment-recovery.yml` retains its trusted main checkout and reads the
-original executor in `original-executor/`. Its trusted retry/reconciler scripts
+`deployment-recovery.yml` retains its trusted main working directory;
+`GIT_DIR` binds revision reads to `original-executor/`. Trusted retry/reconciler scripts
 inspect the original Terraform configuration or SDK bytes; executor scripts
 never replace recovery policy. Infrastructure plans use observer credentials,
 refresh live resources with `-lock=false` and never apply or write state.
