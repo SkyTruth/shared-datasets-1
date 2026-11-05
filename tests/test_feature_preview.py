@@ -182,7 +182,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("name: Destroy feature branch preview", workflow)
         self.assertIn("Validate main ref", workflow)
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
-        self.assertIn("Preview / Destroy environment may only apply from main", workflow)
+        self.assertIn("Execution must use this workflow from main.", workflow)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
         self.assertIn("Release stable preview bootstrap state", workflow)

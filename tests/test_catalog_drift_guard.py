@@ -161,14 +161,15 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("--format markdown", workflow)
         self.assertNotIn("--local-only", workflow)
 
-    def test_scratch_cleanup_audit_uses_protected_publisher_path(self):
+    def test_scratch_cleanup_audit_uses_protected_cleanup_identity(self):
         workflow = (REPO_ROOT / ".github/workflows/scratch-cleanup-audit.yml").read_text()
 
         self.assertIn("name: Data / Scratch cleanup audit", workflow)
         self.assertIn("schedule:", workflow)
         self.assertIn("environment: shared-datasets-production", workflow)
         self.assertIn("GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
-        self.assertIn("shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com", workflow)
+        self.assertIn("shared-datasets-cleanup@shared-datasets-1.iam.gserviceaccount.com", workflow)
+        self.assertNotIn("shared-datasets-publisher@", workflow)
         self.assertIn("scripts/scratch_cleanup.py", workflow)
         self.assertIn("--apply", workflow)
         self.assertNotIn("--send-slack", workflow)
