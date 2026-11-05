@@ -45,6 +45,9 @@ behavior; source-specific operations are linked below.
    batches for publication-code changes without a pending release. Size CPU,
    memory, timeout and scratch for the full source, and preserve the
    [installed-image checks](deployment-contracts.md#images-and-execution).
+   Installed probes use memory-backed `/tmp` under those limits. WDPA's 12-hour
+   task timeout allows 3 h 39 m above the observed 8 h 21 m maximum. Release at
+   most one held ingestion target per change so each rollout can be observed.
 6. **Validate the final revision and obtain review.** Follow
    [validation before push](ci-preflight.md#validate-before-push) once the code,
    prerequisites and focused checks are ready. Include expected resource actions,

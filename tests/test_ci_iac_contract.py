@@ -12,14 +12,16 @@ from test_ci_preflight import ROOT, fixture_repo
 
 
 @pytest.mark.parametrize('defect', [None, 'unlisted', 'unsupported', 'permission', 'module', 'deleted'])
-@pytest.mark.parametrize('contract', ['inline', 'terraform', 'ingestion'])
+@pytest.mark.parametrize('contract', ['inline', 'terraform', 'manual', 'ingestion'])
 def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypatch, defect, contract):
     root, git = fixture_repo(tmp_path)
     (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {}}))
     workflows = root / '.github/workflows'
+    for path in workflows.glob('*.yml'):
+        path.write_text('jobs: {}\n')
     (workflows / 'ci.yml').write_text('jobs:\n  artifact-registry-iam:\n    uses: ./.github/workflows/sync.yml\n')
     address = 'google_project_iam_custom_role.publisher'
-    path = root / 'terraform/envs/prod/artifact_registry_iam.tf'
+    path = root / 'terraform/envs/prod' / ('terraform_state_read_iam.tf' if contract == 'manual' else 'artifact_registry_iam.tf')
     path.parent.mkdir(parents=True, exist_ok=True)
     body = 'resource "google_project_iam_custom_role" "publisher" { permissions = ["iam.roles.get"] }\n'
     path.write_text(body)
@@ -30,13 +32,15 @@ def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypat
         child.write_text(body)
         address = 'module.worker.' + address
     (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    with:\n      allowed_exact: ' + address + '\n')
-    if contract == 'terraform':
+    if contract in {'terraform', 'manual'}:
         (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {
             'Fixture sync': {'workflow': 'sync.yml', 'readiness_target': 'iam-bootstrap', 'resources': [address]},
         }}))
         (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/prod-terraform-target-apply.yml\n'
             '    with:\n      sync_name: Fixture sync\n      caller_workflow: sync.yml\n')
         (workflows / 'prod-terraform-target-apply.yml').write_text('jobs: {}\n')
+        if contract == 'manual':
+            (workflows / 'ci.yml').write_text('jobs: {}\n')
     elif contract == 'ingestion':
         monkeypatch.setitem(TARGETS['eamlis-monthly'], 'targets', [address])
         (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/ingestion-deploy.yml\n'

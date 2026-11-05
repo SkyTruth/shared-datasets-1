@@ -75,7 +75,6 @@ def test_component_documentation_only_selects_always(path):
 
 @pytest.mark.parametrize("path", [
     "tests/fixtures/README.md", "scripts/README.md.py", "pyproject.toml",
-    ".github/workflows/ci.yml",
 ])
 def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
     assert resolve_selection([path])["suites"] == list(SUITES)
@@ -95,7 +94,7 @@ def test_unrelated_automation_uses_core_suites_without_image_builds(path):
     component = "ingestion/mpatlas_monthly/run.py"
     assert resolve_selection([path, component])["suites"] == resolve_selection([component])["suites"]
     assert resolve_selection([path, component])["production_image_targets"] == ["mpatlas-monthly"]
-    assert resolve_selection([path, "scripts/ci_contract.py"])["suites"] == list(SUITES)
+    assert set(resolve_selection([path, "scripts/ci_contract.py"])["suites"]) == ALWAYS
 
 
 def test_generated_import_closure_includes_relative_imports_packages_and_script_calls(tmp_path, monkeypatch):
@@ -164,7 +163,7 @@ def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
 
 
 @pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
-    ["uv.lock"], ["tests/new_contract.py"], ["scripts/ci_contract.py"],
+    ["uv.lock"], ["tests/new_contract.py"], ["scripts/production_image_contracts.py"],
     ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"]])
 def test_unproved_image_inputs_keep_every_recipe(paths):
     from scripts.tested_image_bundle import BUILD_TARGETS
@@ -625,8 +624,8 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
     (["docs/new-tool.py"], set(SUITES), []),
     ([".claude/skills/new-tool.py"], set(SUITES), []),
-    (["terraform/iam-plan-prerequisites.json"], set(SUITES), []),
-    ([".github/workflows/ci.yml"], set(SUITES), []),
+    (["terraform/iam-plan-prerequisites.json"], ALWAYS, []),
+    ([".github/workflows/ci.yml"], ALWAYS, []),
     (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
     ([], ALWAYS, []),
 ])
@@ -1007,3 +1006,60 @@ def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
     git("add", ".")
     git("commit", "-m", "change nested bootstrap")
     assert preflight.make_plan(source, base, "HEAD")["contract_digest"] != plan["contract_digest"]
+
+
+@pytest.mark.parametrize("path", ["scripts/ci_contract.py", "scripts/ci_preflight.py", ".github/workflows/ci.yml",
+                                 "terraform/iam-plan-prerequisites.json"])
+def test_ci_administration_does_not_rebuild_production_images(path):
+    assert set(resolve_selection([path])["suites"]) == ALWAYS
+    assert resolve_selection([path])["production_image_targets"] == []
+
+
+@pytest.mark.parametrize("consumer", ["image", "native", "browser", "unused", "unproved"])
+def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, consumer):
+    source, git = fixture_repo(tmp_path)
+    for path in source.rglob("*.py"):
+        path.write_text("")
+    leaf = source / ("tests/fixtures/retired.json" if consumer == "unproved" else "scripts/retired.py")
+    leaf.write_text("value = 1\n")
+    recipe = source / "ingestion/mpatlas_monthly/Dockerfile"
+    recipe.parent.mkdir(parents=True, exist_ok=True)
+    recipe.write_text("FROM python:3.12\nCOPY ingestion/mpatlas_monthly /app/job\n")
+    entry = source / {"image": "ingestion/mpatlas_monthly/run.py", "native": ci_contract.NATIVE_TESTS[0],
+                      "browser": "tests/browser/server.py", "unused": "tests/test_unused.py", "unproved": "tests/test_unused.py"}[consumer]
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text("from scripts import retired\n" if consumer not in {"unused", "unproved"} else "")
+    git("add", ".")
+    git("commit", "-m", "base consumers")
+    base = git("rev-parse", "HEAD")
+    leaf.unlink()
+    entry.write_text("")  # Both halves of a removed import must use the base graph.
+    git("add", ".")
+    git("commit", "-m", "remove module and import")
+    selected, emitted = emit_plan(source, base, tmp_path)
+    if consumer == "unproved":
+        assert selected["suites"] == list(SUITES)
+        return
+    assert selected["production_image_targets"] == (["mpatlas-monthly"] if consumer == "image" else [])
+    assert emitted["production-images"] == str(consumer == "image").lower()
+    assert ("geospatial-integration" in selected["suites"]) is (consumer in {"image", "native"})
+    assert ("browser" in selected["suites"]) is (consumer == "browser")
+
+
+@pytest.mark.parametrize("released", [0, 1, 2, 4])
+def test_lint_releases_at_most_one_held_target(tmp_path, released):
+    source, git = fixture_repo(tmp_path)
+    holds = {target: dict(owner="jonaraphael", reason="review", expires_at="2099-01-01T00:00:00Z")
+             for target in sorted(INGESTION_DEPLOYMENTS)}
+    path = source / preflight.INGESTION_ROLLOUT_HOLDS
+    path.write_text(json.dumps(holds))
+    git("add", ".")
+    git("commit", "-m", "holds")
+    base = git("rev-parse", "HEAD")
+    path.write_text(json.dumps(dict(list(holds.items())[released:])))
+    selected = {"base": base, "tested_sha": "HEAD", "changed_paths": [preflight.INGESTION_ROLLOUT_HOLDS]}
+    if released > 1:
+        with pytest.raises(ValueError, match="at most one rollout hold"):
+            preflight.suite_commands("lint", source, selected, tmp_path)
+    else:
+        assert preflight.suite_commands("lint", source, selected, tmp_path)

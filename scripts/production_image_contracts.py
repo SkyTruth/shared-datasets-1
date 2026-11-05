@@ -93,7 +93,7 @@ def verify_viewer_image(image):
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
     try:
-        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", *resource_limits("catalog-viewer"), "--name", name, image], check=True)
+        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer"), "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -133,7 +133,7 @@ def commands(target, executor, *, image_id=None):
     tested_image = image_id or image
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
              f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", *resource_limits(target)]
+    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *resource_limits(target)]
     if target == "monitoring-slack":
         return [build, run + ["--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()]]
     if target == "catalog-viewer":
@@ -146,9 +146,10 @@ def commands(target, executor, *, image_id=None):
     if target == "wdpa-monthly":
         checks.append(run + ["scripts/wdpa_input_memory_probe.py", "--help"])
     # Source lives in linted modules; execution uses installed code, never a source mount.
-    if target in {"eamlis-monthly", "mpatlas-monthly"}:
+    fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
+    if fixture.is_file():
         checks.append(run + ["-c", (ROOT / "scripts/installed_ingestion_fixture.py").read_text(), target,
-            (ROOT / f"tests/fixtures/production_images/{target}.json").read_text()])
+            fixture.read_text()])
     else:
         smoke = ["scripts/local_ingestion_smoke.py"] if target == "wdpa-monthly" else ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text()]
         checks.append(run + [*smoke,
@@ -159,10 +160,7 @@ def commands(target, executor, *, image_id=None):
 
 def cached_build(command, target):
     """Reuse build layers in Actions; checks and retained images always run anew."""
-    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true":
-        return command
-    # These small Python recipes rebuild cheaply; remote cache reads have stalled.
-    if target in {"catalog-viewer", "monitoring-slack"}:
+    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true" or target in {"catalog-viewer", "monitoring-slack"}:
         return command
     cache = f"type=gha,version=2,scope=production-{target}"
     return ["docker", "buildx", "build", "--load", "--cache-from", cache,

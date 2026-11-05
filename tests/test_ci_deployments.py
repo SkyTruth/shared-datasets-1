@@ -246,12 +246,11 @@ def test_sdk_caller_consumes_emitted_plan_selection_after_the_gate(tmp_path, sdk
     assert (outputs[suite] == "true") is ("sdk-node24" in plan["suites"]) is sdk_selected
     caller = workflow["jobs"]["typescript-sdk"]
     assert caller["needs"] == ["ci-ready", "geospatial-changes"]
-    assert caller["uses"] == "./.github/workflows/publish-typescript-sdk.yml"
-    assert caller["with"] == {
-        "executor_sha": "${{ needs.ci-ready.outputs.tested_sha }}",
-        "source_run_id": "${{ format('{0}', github.run_id) }}",
-        "source_run_attempt": "${{ format('{0}', github.run_attempt) }}",
-    }
+    assert "uses" not in caller and "id-token" not in caller["permissions"]
+    assert caller["permissions"]["actions"] == "write"
+    step = caller["steps"][0]
+    assert "gh workflow run publish-typescript-sdk.yml --ref main" in step["run"]
+    assert step["env"]["EXECUTOR_SHA"] == "${{ needs.ci-ready.outputs.tested_sha }}"
     values = {"github.event_name": "push", "github.ref": "refs/heads/main",
               "needs.ci-ready.result": "success", "needs.geospatial-changes.outputs.sdk": outputs[suite]}
     assert condition_result(caller, values) is sdk_selected
