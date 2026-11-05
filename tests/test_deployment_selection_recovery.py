@@ -154,7 +154,9 @@ def test_signed_deferral_is_visible_after_72h_and_retry_can_deploy(tmp_path, mon
     receipt = json.loads(Path((tmp_path / 'outputs').read_text().strip().split('=', 1)[1]).read_text())
     assert receipt['status']['description'] == 'deferred'
     assert receipt['status']['state'] == 'pending'
-    assert deployment.replay_decision([record], CURRENT, lambda *_: True, lambda _: statuses) == 'proceed'
+    assert deployment.replay_decision([record], CURRENT, lambda *_: True, lambda _: statuses, artifact=IMAGE) == 'proceed'
+    with pytest.raises(deployment.DeploymentError, match='same revision now produces different artifact'):
+        deployment.replay_decision([record], CURRENT, lambda *_: True, lambda _: statuses, artifact=IMAGE.replace('d'*64, 'e'*64))
     api.post.reset_mock()
     monkeypatch.setattr(safety, 'ROOT', tmp_path)
     holds = tmp_path / safety.INGESTION_ROLLOUT_HOLDS

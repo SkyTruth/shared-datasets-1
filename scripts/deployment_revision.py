@@ -216,6 +216,8 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
         if terminal and terminal[0].get("description") == "deferred" and terminal[0].get("state") == "pending":
+            require(artifact is None or record_payload(latest)["artifact"] == artifact,
+                    "same revision now produces different artifact bytes; reconcile before recovery")
             return "superseded" if superseded else "proceed"
         accepted = {"verified"} if record_payload(latest)["target"] in INGESTION_TARGETS else {"applied", "verified"}
         require(terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted,
