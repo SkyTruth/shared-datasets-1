@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.slack_notify import build_slack_payload, notify
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
+from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_SYNCS
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
@@ -25,31 +26,9 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Apply Translation notice secret IAM bootstrap")
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-MONITORED_WORKFLOWS = {
-    "artifact-registry-iam-sync.yml",
-    "bucket-hygiene-audit.yml",
-    "catalog-viewer-deploy.yml",
-    "catalog-web-deploy.yml",
-    "ci.yml",
-    "cron-alert-policy-sync.yml",
-    "deployment-recovery.yml",
-    "deployment-verification.yml",
-    "eamlis-monthly-deploy.yml",
-    "mpatlas-monthly-deploy.yml",
-    "operational-safety-check.yml",
-    "unattended-workflow-alert.yml",
-    "pmtiles-cdn-sync.yml",
-    "preview-terraform-iam-sync.yml",
-    "prod-terraform-state-reconcile.yml",
-    "publish-dataset.yml",
-    "publish-typescript-sdk.yml",
-    "scheduled-ingestion-deploy-iam-sync.yml",
-    "scratch-cleanup-audit.yml",
-    "scratch-cleanup-iam-sync.yml",
-    "sea-ice-daily-deploy.yml",
-    "terraform-state-read-iam-sync.yml",
-    "wdpa-monthly-deploy.yml",
-    "wdpa-monthly-build.yml",
+MONITORED_WORKFLOWS = (set(TARGET_WORKFLOWS.values()) | set(TERRAFORM_SYNCS.values())) - {"dataset-usage-deploy.yml"} | {
+    "bucket-hygiene-audit.yml", "ci.yml", "deployment-recovery.yml", "deployment-verification.yml",
+    "operational-safety-check.yml", "unattended-workflow-alert.yml", "publish-dataset.yml", "scratch-cleanup-audit.yml",
 }
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
 OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}

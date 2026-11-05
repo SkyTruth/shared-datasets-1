@@ -31,13 +31,14 @@ def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_hol
 def test_shared_terraform_contract_selects_automatic_consumers_only(path):
     assert set(select_deployments([path])) == {
         'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
-        'cron_alert_policy', 'ingestion_iam', 'dataset_usage',
+        'cron_alert_policy', 'ingestion_iam', 'dataset_usage', 'catalog_viewer', 'pmtiles_cdn',
     }
 
 
 def test_shared_bootstrap_selects_all_callers():
     assert set(select_deployments(['.github/actions/deployment-bootstrap/action.yml'])) == {
-        'mpatlas', 'eamlis', 'wdpa', 'sea_ice', 'dataset_usage',
+        'mpatlas', 'eamlis', 'wdpa', 'sea_ice', 'dataset_usage', 'catalog_viewer', 'pmtiles_cdn',
+        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam', 'cron_alert_policy', 'ingestion_iam',
     }
 
 
@@ -444,3 +445,10 @@ def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutatio
               "needs.dataset-mutation-selection.outputs.has_catalog_changes": "" if has_mutations == 'true' else "true"}
     assert condition_result(jobs['publish-reviewed-dataset'], values) is (has_mutations == 'true')
     assert condition_result(jobs['refresh-reviewed-catalog'], values) is (has_mutations == 'false')
+
+
+def test_nested_terraform_bootstrap_selects_only_its_registered_automatic_consumers():
+    assert set(select_deployments([".github/actions/deployment-bootstrap/terraform/action.yml"])) == {
+        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
+        'cron_alert_policy', 'ingestion_iam', 'dataset_usage',
+    }

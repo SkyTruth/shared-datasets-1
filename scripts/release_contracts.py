@@ -24,6 +24,7 @@ from scripts import deployment_receipt_contracts as receipts
 from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
 from scripts import cdn_plan_readiness as cdn
 from scripts import terraform_target_contracts as terraform_targets
+from scripts.terraform_target_contracts import workflow
 
 DEPLOYS = {config["selection"].replace("_", "-"): target for target, config in INGESTION_CONFIGS.items()}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -35,10 +36,6 @@ IMAGE_PROBE_WORKFLOWS = (
     "ingestion-deploy.yml",
     "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
-
-
-def workflow(root, name):
-    return terraform_targets.workflow(root, name)
 
 
 def role_permissions(text, name):
@@ -63,7 +60,7 @@ def saved_plan_permission_contract(root, filenames=PLAN_PROBE_WORKFLOWS):
         applies = 0
         for job in workflow(root, filename)["jobs"].values():
             saved, checked, role_plans, guarded = {}, set(), set(), set()
-            for step in job.get("steps", []):
+            for step in receipts.expanded_steps(root, job):
                 run = re.sub(r"\$\{([A-Z_]+)\}", r"$\1", step.get("run", "").replace("\\\n", " "))
                 for line in run.splitlines():
                     if '-target=' + cdn.ROLE_ADDRESS in line:
@@ -105,8 +102,8 @@ def image_permission_contract(root):
         pushes = 0
         for job in workflow(root, filename)["jobs"].values():
             checked = False
-            for step in job.get("steps", []):
-                enabled = str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}
+            for step in receipts.expanded_steps(root, job):
+                enabled = receipts.enabled(step) and not step.get("continue-on-error")
                 for line in step.get("run", "").replace("\\\n", " ").splitlines():
                     if enabled and probe.fullmatch(line):
                         checked = True

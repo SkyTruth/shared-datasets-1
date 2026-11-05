@@ -25,18 +25,32 @@ NOTIFICATION_PERMISSIONS = {
 NOTIFICATION_ATTEST = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 
 
-def expanded_steps(root, job):
+def expanded_steps(root, job, ancestry=()):
+    """Inspect nested local composites through the same input transport as Actions.
+
+    Receipt signing remains atomic. Parent gates and tolerated failures cannot
+    turn a disabled or failing child into successful authorization evidence.
+    """
     for step in job.get("steps", []):
-        if step.get("uses") != BOOTSTRAP:
+        path = step.get("uses", "")
+        if not path.startswith("./.github/actions/") or path == ACTION:
             yield step
             continue
-        action = yaml.safe_load((root / BOOTSTRAP.removeprefix("./") / "action.yml").read_text())
+        action_path = (root / path / "action.yml").resolve()
+        if not action_path.is_relative_to((root / ".github/actions").resolve()) or action_path in ancestry:
+            raise ValueError("Invalid or cyclic local composite: " + path)
+        action = yaml.safe_load(action_path.read_text())
         encoded = json.dumps(action["runs"]["steps"])
-        for key, value in step.get("with", {}).items():
-            encoded = encoded.replace("${{ inputs." + key + " }}", value)
-        for child in json.loads(encoded):
+        values = {key: item.get("default", "") for key, item in action.get("inputs", {}).items()}
+        for key, value in (values | step.get("with", {})).items():
+            encoded = encoded.replace("${{ inputs." + key + " }}", json.dumps(value if isinstance(value, str) else json.dumps(value))[1:-1])
+        for child in expanded_steps(root, {"steps": json.loads(encoded)}, (*ancestry, action_path)):
             if "if" in step:
-                child["if"] = step["if"]
+                terms = [str(item).removeprefix("${{").removesuffix("}}").strip()
+                         for item in (step["if"], child.get("if", "true"))]
+                child["if"] = False if not enabled(step) or not enabled(child) else "${{ (" + ") && (".join(terms) + ") }}"
+            if step.get("continue-on-error"):
+                child["continue-on-error"] = True
             yield child
 
 
@@ -159,7 +173,7 @@ def mutations(step):
 
 
 def receipt_link(step, identifier):
-    return step.get("uses") == ACTION and step.get("with", {}).get("mode") == "receipt" and step["with"].get("receipt-path") == "${{ steps." + identifier + ".outputs.receipt_path }}" and enabled(step)
+    return step.get("uses") == ACTION and step.get("with", {}).get("mode") == "receipt" and step["with"].get("receipt-path") == "${{ steps." + identifier + ".outputs.receipt_path }}" and enabled(step) and not step.get("continue-on-error")
 
 
 def sdk_boundary(filename, identifier, job):
@@ -282,12 +296,12 @@ def boundaries(root):
             }.items()):
                 errors.append(f"{filename}: verify must inherit the exact signed claim and image")
         for job_id, job in value["jobs"].items():
-            steps = job.get("steps", [])
+            steps = list(expanded_steps(root, job))
             inherited = filename in {"ingestion-deploy.yml", "dataset-usage-deploy.yml"} and job_id == "verify"
             rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):
-                if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal" and enabled(step):
+                if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal" and enabled(step) and not step.get("continue-on-error"):
                     if step["with"].get("signer-workflow") != filename:
                         errors.append(f"{filename}/{job_id}: rehearsal must bind the exact leaf signer")
                     else:

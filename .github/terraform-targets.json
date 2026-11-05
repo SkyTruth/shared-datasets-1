@@ -283,5 +283,45 @@
       "block_deletes": true,
       "image_placeholder": "unused-by-state-read-iam-sync"
     }
+  },
+  "plan_scopes": {
+    "catalog-viewer-deploy.yml": {
+      "bootstrap": {
+        "exact": [
+          "google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"
+        ]
+      },
+      "runtime": {
+        "exact": [
+          "google_cloud_run_v2_service.catalog_viewer",
+          "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
+          "google_project_iam_custom_role.catalog_viewer_sign_blob",
+          "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
+          "google_service_account_iam_member.catalog_viewer_self_sign_blob",
+          "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
+          "google_storage_bucket.catalog_comparisons",
+          "google_storage_bucket_iam_member.catalog_comparisons_worker"
+        ],
+        "instances": [
+          "google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors"
+        ],
+        "modules": {
+          "module.catalog_viewer_service_account": "google_service_account.this"
+        }
+      }
+    },
+    "pmtiles-cdn-sync.yml": {
+      "runtime": {
+        "exact": [
+          "google_storage_bucket.shared_bucket",
+          "google_compute_url_map.pmtiles_cdn"
+        ],
+        "instances": [
+          "google_storage_managed_folder.shared_bucket_public_prefixes",
+          "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers"
+        ],
+        "unindexed_instances": true
+      }
+    }
   }
 }

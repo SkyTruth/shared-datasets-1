@@ -521,7 +521,9 @@ def static_checks(root, base, head):
         if filename.endswith('pmtiles-cdn-sync.yml'):
             from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
             exact.update(BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
-        exact.update(terraform_targets.INLINE_SCOPES.get(posixpath.basename(filename), ()))
+        for item in terraform_targets.registry(root, section='plan_scopes').get(posixpath.basename(filename), {}).values():
+            exact.update(item.get('exact', []) + item.get('instances', []))
+            exact.update(prefix + '.' + child for prefix, child in item.get('modules', {}).items())
 
     for target in select_deployments(paths):
         scope(ci[target.replace('_', '-')]['uses'][2:])

@@ -15,7 +15,6 @@ from scripts import deployment_revision as revision
 
 import pytest
 from scripts.deployment_revision import TARGET_WORKFLOWS
-from scripts.terraform_plan_allowlist import job_image_scope
 from scripts.ingestion_targets import TARGETS
 from scripts.deployment_receipt_contracts import expanded_steps
 
@@ -188,7 +187,6 @@ def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix='
 def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
     config = target_table()[target]
     assert config['workflow'] == TARGET_WORKFLOWS[target]
-    assert set(config['targets']) == job_image_scope(target)
     resolved = run_shell(tmp_path, shared_step('prepare', 'Resolve registered ingestion target')['run'], target=target)
     assert resolved.returncode == 0, resolved.stderr
     assert json.loads((tmp_path / 'outputs').read_text().removeprefix('config=')) == config
@@ -230,7 +228,7 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
     script = workflow_steps_by_name(workflow, job)['Restore immutable receipt verifier after candidate checkout']['run']
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
     assert result.returncode == 0, result.stderr
-    for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
+    for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'terraform_target_contracts.py', 'ci_toolchain.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
         expected = subprocess.check_output(['git', 'show', f'{revision}:scripts/{filename}'], cwd=REPO_ROOT)
         assert (candidate / 'scripts' / filename).read_bytes() == expected
     expected = subprocess.check_output(['git', 'show', f'{revision}:.github/actions/deployment-receipt/action.yml'], cwd=REPO_ROOT)

@@ -23,8 +23,10 @@ SHARED = 'google_storage_bucket.shared'
 RAW = 'google_storage_bucket.telemetry'
 
 
-@pytest.mark.parametrize('filename,resources', contracts.INLINE_SCOPES.items())
-def test_declared_inline_scopes_pass_real_saved_plan_guards_and_foreign_resources_fail(tmp_path, filename, resources):
+@pytest.mark.parametrize('filename,scopes', contracts.registry(section='plan_scopes').items())
+def test_declared_inline_scopes_pass_real_saved_plan_guards_and_foreign_resources_fail(tmp_path, filename, scopes):
+    resources = {row for item in scopes.values() for row in item.get('exact', []) + item.get('instances', [])}
+    resources.update(prefix + '.' + child for item in scopes.values() for prefix, child in item.get('modules', {}).items())
     value = yaml.safe_load((ROOT / '.github/workflows' / filename).read_text())
     guards = [step['run'] for job in value['jobs'].values() for step in job.get('steps', [])
               if 'allowed_exact' in step.get('run', '') and "<<'PY'" in step['run']]

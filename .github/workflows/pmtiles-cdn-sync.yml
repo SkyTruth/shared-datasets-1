@@ -197,19 +197,11 @@ jobs:
           import json
           import posixpath
           import sys
+          from scripts.terraform_target_contracts import plan_scope
 
           plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_storage_bucket.shared_bucket",
-              "google_compute_url_map.pmtiles_cdn",
-              "google_storage_managed_folder.shared_bucket_public_prefixes",
-              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-          }
+          allowed_exact, allowed_patterns = plan_scope("pmtiles-cdn-sync.yml", "runtime")
           managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
-          allowed_for_each_prefixes = {
-              "google_storage_managed_folder.shared_bucket_public_prefixes",
-              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-          }
 
           # Managed-folder deletes remove only the folder-level IAM anchor and
           # never delete objects. A delete is legitimate only when the asset
@@ -225,11 +217,6 @@ jobs:
                   folder = posixpath.dirname(posixpath.dirname(object_name))
                   if folder:
                       catalog_managed_folder_names.add(f"{folder}/")
-
-          def is_allowed_address(address):
-              if address in allowed_exact:
-                  return True
-              return any(address.startswith(f"{prefix}[") for prefix in allowed_for_each_prefixes)
 
           def managed_folder_name(resource):
               index = resource.get("index")
@@ -264,7 +251,7 @@ jobs:
                       continue
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
-              if is_allowed_address(address):
+              if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 

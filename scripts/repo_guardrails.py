@@ -168,14 +168,8 @@ class GuardrailError(ValueError):
 
 
 def run_git(args: Sequence[str], *, repo_root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo_root,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    return subprocess.run(["git", *args], cwd=repo_root, check=False, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def git_changed_files(base: str, head: str, *, repo_root: Path) -> list[ChangedFile]:
@@ -239,13 +233,8 @@ def changed_catalog_slugs(base_text: str | None, head_text: str | None) -> set[s
 
 
 def changed_asset_doc_slugs(changes: Sequence[ChangedFile]) -> set[str]:
-    slugs: set[str] = set()
-    for change in changes:
-        for path in (change.path, change.old_path):
-            match = ASSET_DOC_RE.fullmatch(path or "")
-            if match:
-                slugs.add(match.group(1))
-    return slugs
+    return {match[1] for change in changes for path in (change.path, change.old_path)
+            if (match := ASSET_DOC_RE.fullmatch(path or ""))}
 
 
 def check_catalog_csv_source(changes: Sequence[ChangedFile], *, base: str, head: str, repo_root: Path) -> list[str]:
@@ -355,14 +344,9 @@ def check_second_iac_framework(
 
 
 def production_ingestion_jobs(repo_root: Path) -> list[str]:
-    jobs: list[str] = []
-    ingestion_root = repo_root / "ingestion"
-    for path in sorted(ingestion_root.iterdir()):
-        if path.name in INGESTION_JOB_EXCLUDES or not path.is_dir():
-            continue
-        if (path / "run.py").exists() and (path / "README.md").exists():
-            jobs.append(path.name)
-    return jobs
+    return [path.name for path in sorted((repo_root / "ingestion").iterdir())
+            if path.name not in INGESTION_JOB_EXCLUDES and path.is_dir()
+            and (path / "run.py").exists() and (path / "README.md").exists()]
 
 
 def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
@@ -434,10 +418,8 @@ def check_terraform_static(repo_root: Path) -> list[str]:
 
 
 def terraform_apply_guidance_paths(repo_root: Path) -> list[Path]:
-    paths: set[Path] = set()
-    for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS:
-        paths.update(path for path in repo_root.glob(pattern) if path.is_file())
-    return sorted(paths)
+    return sorted({path for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS
+                   for path in repo_root.glob(pattern) if path.is_file()})
 
 
 def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
@@ -629,24 +611,17 @@ def check_diff(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
     changes = git_changed_files(args.base, args.head, repo_root=repo_root)
     labels = labels_from_event(args.event_path)
-    errors: list[str] = []
-    errors.extend(check_catalog_csv_source(changes, base=args.base, head=args.head, repo_root=repo_root))
-    errors.extend(check_top_level_categories(base=args.base, head=args.head, repo_root=repo_root, labels=labels))
-    errors.extend(check_approved_formats(base=args.base, head=args.head, repo_root=repo_root, labels=labels))
-    errors.extend(check_second_iac_framework(changes, repo_root=repo_root, labels=labels))
-    return errors
+    return [*check_catalog_csv_source(changes, base=args.base, head=args.head, repo_root=repo_root),
+            *check_top_level_categories(base=args.base, head=args.head, repo_root=repo_root, labels=labels),
+            *check_approved_formats(base=args.base, head=args.head, repo_root=repo_root, labels=labels),
+            *check_second_iac_framework(changes, repo_root=repo_root, labels=labels)]
 
 
 def check_static(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
-    errors: list[str] = []
-    errors.extend(check_ingestion_no_gcs_deletes(repo_root))
-    errors.extend(check_ingestion_skip_tests(repo_root))
-    errors.extend(check_secrets(repo_root))
-    errors.extend(check_terraform_static(repo_root))
-    errors.extend(check_no_local_terraform_apply_guidance(repo_root))
-    errors.extend(check_workflow_boundaries(repo_root))
-    return errors
+    return [*check_ingestion_no_gcs_deletes(repo_root), *check_ingestion_skip_tests(repo_root),
+            *check_secrets(repo_root), *check_terraform_static(repo_root),
+            *check_no_local_terraform_apply_guidance(repo_root), *check_workflow_boundaries(repo_root)]
 
 
 def report(errors: Iterable[str]) -> int:

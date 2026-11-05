@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import json
 import re
 import os
 import subprocess
@@ -11,25 +10,7 @@ from typing import Any
 
 import yaml
 from scripts.terraform_target_contracts import workflow as resolved_workflow
-
-
-def expanded_steps(root, job):
-    """Exercise local composites through their declared input transport."""
-    for step in job.get('steps', []):
-        action_path = step.get('uses', '')
-        if not action_path.startswith('./.github/actions/') or action_path == './.github/actions/deployment-receipt':
-            yield step
-            continue
-        action = yaml.safe_load((root / action_path[2:] / 'action.yml').read_text())
-        encoded = json.dumps(action['runs']['steps'])
-        values = {key: item.get('default', '') for key, item in action.get('inputs', {}).items()}
-        values.update(step.get('with', {}))
-        for key, value in values.items():
-            encoded = encoded.replace('${{ inputs.' + key + ' }}', json.dumps(value)[1:-1])
-        for child in expanded_steps(root, {'steps': json.loads(encoded)}):
-            if 'if' in step:
-                child['if'] = step['if']
-            yield child
+from scripts.deployment_receipt_contracts import expanded_steps
 
 
 def load_workflow(path: Path) -> dict[str, Any]:

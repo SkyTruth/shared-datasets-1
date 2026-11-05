@@ -155,7 +155,7 @@ class IngestionTargetRecoveryTests(unittest.TestCase):
         from scripts.ingestion_targets import TARGETS
         steps = yaml.safe_load((ROOT / '.github/workflows/deployment-recovery.yml').read_text())['jobs']['reconcile']['steps']
         refresh = next(s for s in steps if s.get('name') == 'Refresh original target scope without applying')['run']
-        for target in (*TARGETS, next(iter(deployment.TERRAFORM_WORKFLOWS))):
+        for target in (*TARGETS, "dataset-usage", next(iter(deployment.TERRAFORM_WORKFLOWS))):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / 'outputs'
                 targets = TARGETS[target]['targets'] if target in TARGETS else ['resource.reviewed']
@@ -166,8 +166,8 @@ class IngestionTargetRecoveryTests(unittest.TestCase):
                     deployment.recover(args, Mock())
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 variables = json.loads(values['image_variables'])
-                self.assertEqual(set(variables), {t['image_variable'] for t in TARGETS.values()})
-                self.assertEqual([k for k, v in variables.items() if v == image], [TARGETS[target]['image_variable']] if target in TARGETS else [])
+                self.assertEqual(set(variables), {t['image_variable'] for t in TARGETS.values()} | ({'dataset_usage_image'} if target == 'dataset-usage' else set()))
+                self.assertEqual([k for k, v in variables.items() if v == image], [TARGETS[target]['image_variable']] if target in TARGETS else ['dataset_usage_image'] if target == 'dataset-usage' else [])
                 log = Path(directory) / 'args'
                 recorder = 'terraform() { :; }\nbash() { printf "%s\\n" "$@" > "$ARGS"; }\n'
                 result = subprocess.run(['bash', '-c', recorder + refresh], cwd=ROOT, capture_output=True, text=True,

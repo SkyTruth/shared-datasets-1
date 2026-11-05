@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
 from scripts.github_api_read import read
+from scripts.terraform_target_contracts import registry
 from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS, image_variables
 
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -38,7 +39,7 @@ TARGET_WORKFLOWS = {
 }
 TERRAFORM_SYNCS = {
     name: target["workflow"]
-    for name, target in json.loads((Path(__file__).resolve().parents[1] / ".github/terraform-targets.json").read_text())["targets"].items()
+    for name, target in registry().items()
 }
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow

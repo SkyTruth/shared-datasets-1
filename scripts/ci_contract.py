@@ -72,39 +72,20 @@ NATIVE_TESTS = (
     "tests/test_eamlis_monthly.py",
     "tests/test_mpatlas_monthly.py",
 )
-CONTRACT_FILES = (
-    "ingestion/common/stage_checkpoints.py",
-    "scripts/publication_runtime_check.py", "scripts/publication_readiness.py",
-    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
-    ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
-    "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
-    "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
-    "scripts/check_workflow_syntax.py",
+# Hash complete validator/action modules so new imports and nested composites
+# cannot escape evidence invalidation through an omitted hand-maintained entry.
+# Selection remains derived independently from COPY/import consumers below.
+CONTRACT_FILES = tuple(sorted({
+    path.relative_to(ROOT).as_posix()
+    for pattern in ("scripts/*.py", "ingestion/common/*.py", ".github/actions/**/*.yml", ".github/docker/*Dockerfile")
+    for path in ROOT.glob(pattern)
+} | {
+    "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
+    ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
+    ".github/terraform-targets.json", "terraform/iam-plan-prerequisites.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
-    "scripts/check_identity_resolutions.py",
-    "scripts/ci_source_proof.py",
-    "scripts/sdk_release_authorization.py", "scripts/dataset_mutation_authorization.py",
-    "scripts/reviewed_dataset_plan.py", "scripts/github_api_read.py",
-    "scripts/deployment_revision.py", "scripts/workflow_identity.py",
-    ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
-    "scripts/release_contracts.py", "scripts/deployment_permissions.py",
-    "scripts/wdpa_processing_gate.py",
-    "scripts/production_image_contracts.py",
-    "scripts/dataset_usage_cold_start.py",
-    "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
-    ".github/terraform-targets.json", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py",
-    ".github/actions/deployment-bootstrap/action.yml",
-    "tests/fixtures/terraform_targets/failed-main.json",
-    "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
-    "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
-    "scripts/dataset_usage_deploy.py",
-    "scripts/scheduled_job_contracts.py",
-    "scripts/cdn_plan_readiness.py",
-    "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
-    "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
-    ".github/actions/deployment-receipt/action.yml",
-    ".github/workflows/ingestion-deploy.yml", "scripts/deployment_receipt_contracts.py",
-)
+    "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
+}))
 
 
 @lru_cache(maxsize=1)
@@ -312,7 +293,9 @@ def select_deployments(
         if path in {".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py"}:
             selected.update(ingestion)
         if path == ".github/actions/deployment-bootstrap/action.yml":
-            selected.update(ingestion | {"dataset_usage"})
+            selected.update(ingestion | iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"})
+        if path == ".github/actions/deployment-bootstrap/terraform/action.yml":
+            selected.update(iam | {"dataset_usage"})
         if path.startswith("scripts/"):
             selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items()
                             if matches(path, dependency_inputs()[4][image]))
@@ -377,7 +360,7 @@ def select_deployments(
         if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
             selected.update(iam)
         if path in {".github/terraform-targets.json", "scripts/terraform_target_contracts.py"}:
-            selected.update(iam | {"dataset_usage"})
+            selected.update(iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"})
         if path == "terraform/envs/prod/main.tf":
             selected.update({"artifact_registry_iam", "preview_terraform_iam"})
         if path.startswith("ingestion/dataset_usage/") or path in {

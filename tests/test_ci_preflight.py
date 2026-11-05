@@ -1003,3 +1003,14 @@ def test_expired_holds_do_not_change_ci_selection_or_ready_but_lint_rejects_new_
     selected = preflight.make_plan(source, base, 'HEAD')
     with pytest.raises(ValueError, match='already expired'):
         preflight.suite_commands('lint', source, selected, tmp_path)
+
+
+def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
+    source, git = fixture_repo(tmp_path)
+    base = git("rev-parse", "HEAD")
+    plan = preflight.make_plan(source, base, base)
+    action = source / ".github/actions/deployment-bootstrap/terraform/action.yml"
+    action.write_text("changed nested bootstrap\n")
+    git("add", ".")
+    git("commit", "-m", "change nested bootstrap")
+    assert preflight.make_plan(source, base, "HEAD")["contract_digest"] != plan["contract_digest"]

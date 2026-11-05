@@ -22,6 +22,8 @@ apply-scope/permission-contract checks using `scripts/ingestion_targets.py` and
 state-reader and state-only reconciliation remain manual. Static checks cannot prove dynamic values,
 instance keys or effective IAM; protected saved-plan/live probes remain required.
 Unknown inputs keep broad validation; selection never authorizes deployment.
+Evidence hashes cover complete validator/common modules and local composites,
+including nested actions. Workflow syntax checks include ShellCheck.
 
 Image inputs come from each production Dockerfile's COPY declarations and local
 Python import closure, including relative imports and literal subprocess scripts.
@@ -47,7 +49,9 @@ Artifacts last 14 days. PR runs cancel obsolete PR graphs; main/dispatch evidenc
 and protected mutation locks remain independent.
 
 `.github/ingestion-rollout-holds.json` maps targets to nonempty `owner`, `reason`
-and timezone-qualified `expires_at`. Expired holds fail selection/lint. Holds
+and timezone-qualified `expires_at`. Selection remains independent of the clock;
+lint rejects malformed entries and changed entries that are already expired. The
+safety probe warns at least 72 hours before expiry and alerts after expiry. Holds
 retain validation/images; removing one selects deployment on the next main push.
 Historical bare-name lists are readable only as comparison baselines.
 Use focused pytest/ruff/workflow-syntax checks while editing; they do not replace

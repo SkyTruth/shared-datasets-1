@@ -31,7 +31,8 @@ by execution, CI selection, Terraform allowlists, release checks and recovery:
 workflow names, image/config variables, resource scopes, canary limits and terminal
 phases, release validation, scheduler resume, smoke probes and asset metadata.
 Registry defaults are resolved before its GitHub output/environment transport.
-Recovery resolves image variables before checking out an older executor.
+Recovery resolves image variables before checking out an older executor, including
+the usage collector's original `dataset_usage_image`.
 WDPA code deployment is independent of the month: its scheduled worker builds
 the current month, validates both realms and a compatibility sample, and
 publishes exact staged bytes with predecessor/generation/hash checks. October
@@ -60,6 +61,8 @@ beside apply. CDN invalidation and route polling follow signed apply in a separa
 verification job that records failures even when apply failed. Viewer/CDN use
 bounded operational permission probes instead of unconditional IAM sleeps.
 These specialized apply scopes and acceptance checks retain their own executors.
+Viewer/CDN saved-plan guards and static coverage read the same `plan_scopes` in
+`.github/terraform-targets.json`; generic IAM targets retain their existing scopes.
 
 The installed sea-ice smoke mounts `scripts/local_ingestion_smoke.py` read-only
 and invokes `--sea-ice-only`; local profiling calls the same synthetic build.

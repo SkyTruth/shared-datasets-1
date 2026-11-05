@@ -89,5 +89,5 @@ jobs:
             echo "[Open the private staging catalog]($PREVIEW_URL) and select EAMLIS."
             echo 'The candidate and published baseline are available as separate versions.'
             echo 'After investigation, prepare the immutable approval PR with:'
-            echo '`uv run python scripts/eamlis_source_loss_review.py prepare-plan`'
+            printf '\140uv run python scripts/eamlis_source_loss_review.py prepare-plan\140\n'
           } >> "$GITHUB_STEP_SUMMARY"

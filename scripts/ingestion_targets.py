@@ -80,6 +80,8 @@ def image_variables(target, image):
     variables = {config["image_variable"]: "unused-by-reconciliation" for config in TARGETS.values()}
     if target in TARGETS:
         variables[TARGETS[target]["image_variable"]] = image
+    if target == "dataset-usage":
+        variables["dataset_usage_image"] = image
     return variables
 
 

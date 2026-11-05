@@ -64,7 +64,7 @@ def main() -> int:
             files.append(str(target))
         if not files:
             raise ValueError("no workflow files found")
-        return subprocess.run(["actionlint", "-shellcheck=", "-pyflakes=", *files], cwd=root, check=False).returncode
+        return subprocess.run(["actionlint", "-shellcheck=shellcheck", "-pyflakes=", *files], cwd=root, check=False).returncode
 
 
 if __name__ == "__main__":

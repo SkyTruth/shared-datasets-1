@@ -276,14 +276,12 @@ jobs:
           import json
           import sys
           from scripts.terraform_plan_allowlist import blocked_changes
+          from scripts.terraform_target_contracts import plan_scope
 
           plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager",
-          }
-
+          allowed_exact, allowed_patterns = plan_scope("catalog-viewer-deploy.yml", "bootstrap")
           blocked = blocked_changes(plan, allowed_exact=allowed_exact,
-                                    allowed_patterns=[], block_deletes=False)
+                                    allowed_patterns=allowed_patterns, block_deletes=False)
 
           if blocked:
               print("Refusing catalog-viewer Secret Manager IAM bootstrap because the Terraform plan changes non-allowlisted resources:")
@@ -329,25 +327,12 @@ jobs:
         run: |
           python - "${RUNNER_TEMP}/catalog-viewer.tfplan.json" <<'PY'
           import json
-          import re
           import sys
           from scripts.terraform_plan_allowlist import blocked_changes
+          from scripts.terraform_target_contracts import plan_scope
 
           plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_cloud_run_v2_service.catalog_viewer",
-              "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
-              "google_project_iam_custom_role.catalog_viewer_sign_blob",
-              "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
-              "google_service_account_iam_member.catalog_viewer_self_sign_blob",
-              "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
-              "google_storage_bucket.catalog_comparisons",
-              "google_storage_bucket_iam_member.catalog_comparisons_worker",
-          }
-          allowed_patterns = [
-              re.compile(r"^module\.catalog_viewer_service_account\."),
-              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.catalog_viewer_accessors\["),
-          ]
+          allowed_exact, allowed_patterns = plan_scope("catalog-viewer-deploy.yml", "runtime")
 
           blocked = blocked_changes(plan, allowed_exact=allowed_exact,
                                     allowed_patterns=allowed_patterns, block_deletes=False)

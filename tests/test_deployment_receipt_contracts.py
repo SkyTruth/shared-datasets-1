@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -32,6 +33,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.workflows = self.root / ".github/workflows"
         self.workflows.mkdir(parents=True)
+        shutil.copytree(Path(__file__).resolve().parents[1] / '.github/actions', self.root / '.github/actions')
         for name in contracts.WORKFLOWS:
             value = leaf(name)
             if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml"}:
@@ -45,6 +47,46 @@ class ReceiptContractTests(unittest.TestCase):
     def test_all_registered_leaves_have_valid_linked_claims_and_outcomes(self):
         self.assertEqual(contracts.boundaries(self.root), [])
         self.assertEqual(contracts.permissions(self.root), [])
+
+    def test_nested_composites_keep_input_transport_gates_and_receipt_barriers(self):
+        filename = 'catalog-viewer-deploy.yml'
+        value = leaf(filename)
+        steps = value['jobs']['deploy']['steps']
+        steps[0]['with']['signer-workflow'] = '${{ inputs.signer }}'
+        for depth in range(3):
+            path = self.root / f'.github/actions/nested-{depth}/action.yml'
+            path.parent.mkdir()
+            path.write_text(yaml.safe_dump({'inputs': {'signer': {'default': filename}},
+                'runs': {'using': 'composite', 'steps': steps}}))
+            steps = [{'uses': f'./.github/actions/nested-{depth}', 'with': {'signer': '${{ inputs.signer }}'}}]
+        steps[0]['with']['signer'] = filename
+        job = value['jobs']['deploy']
+        job['steps'] = steps
+        self.write(filename, value)
+        self.assertEqual(len(list(contracts.expanded_steps(self.root, job))), 7)
+        self.assertEqual(contracts.boundaries(self.root), [])
+        for field in ({'if': False}, {'continue-on-error': True}):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(value)
+                broken['jobs']['deploy']['steps'][0].update(field)
+                self.write(filename, broken)
+                self.assertTrue(contracts.boundaries(self.root))
+        self.write(filename, value)
+        path = self.root / '.github/actions/nested-0/action.yml'
+        action = yaml.safe_load(path.read_text())
+        action['runs']['steps'][0]['if'] = False
+        path.write_text(yaml.safe_dump(action))
+        self.assertTrue(contracts.boundaries(self.root))
+
+    def test_recursive_or_escaping_composites_fail_closed(self):
+        path = self.root / '.github/actions/cyclic/action.yml'
+        path.parent.mkdir()
+        job = {'steps': [{'uses': './.github/actions/cyclic'}]}
+        path.write_text(yaml.safe_dump({'runs': {'using': 'composite', **job}}))
+        with self.assertRaisesRegex(ValueError, 'cyclic'):
+            list(contracts.expanded_steps(self.root, job))
+        with self.assertRaisesRegex(ValueError, 'Invalid'):
+            list(contracts.expanded_steps(self.root, {'steps': [{'uses': './.github/actions/../../../foreign'}]}))
 
     def test_step_labels_and_equivalent_shell_do_not_define_receipt_authority(self):
         name = "ingestion-deploy.yml"
