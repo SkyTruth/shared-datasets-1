@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from decimal import Decimal
 from functools import lru_cache
 import hashlib
 import json
@@ -77,6 +78,26 @@ def scope_inputs(resources, root=ROOT):
                         selected.add(child)
                         pending.append(child)
     return selected | {path.removesuffix('.tf') + '_variables.tf' for path in selected if path.endswith('.tf')}
+
+
+def production_image_limits(root=ROOT):
+    """Serialize literal production caps using the same parsed declaration index."""
+    from scripts.tested_image_bundle import image_recipes
+    index, result = resource_index(root), {}
+    for target in image_recipes(root):
+        package = target.replace('-', '_')
+        declarations = index[f'terraform/envs/prod/{package}.tf']
+        if 'module.' + package + '_job' in declarations:
+            limits = declarations['module.' + package + '_job']
+        else:
+            container, = declarations['google_cloud_run_v2_service.' + package]['template'][0]['containers']
+            limits = container['resources'][0]['limits'] if 'resources' in container else {'cpu': '1', 'memory': '512Mi'}
+        if any(not isinstance(limits.get(key), str) or not re.fullmatch(pattern, limits[key])
+               for key, pattern in (('cpu', r'[0-9]+(?:\.[0-9]+)?'), ('memory', r'[0-9]+(?:\.[0-9]+)?(?:Mi|Gi)'))):
+            raise ValueError(f'{target}: production limits must be literal CPU and memory quantities')
+        result[target] = ['--cpu-period', '100000', '--cpu-quota', str(int(Decimal(limits['cpu']) * 100000)),
+                          '--memory', limits['memory'].replace('Gi', 'g').replace('Mi', 'm')]
+    return result
 
 
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:

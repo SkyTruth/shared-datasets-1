@@ -13,7 +13,7 @@ from identity_policy_helpers import cel
 from terraform_helpers import evaluate, load_terraform, resources
 from workflow_helpers import load_workflow, workflow_triggers
 
-ROOT = Path(os.environ.get('WS24_ROOT', Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / 'terraform/envs/prod'
 REPO = 'SkyTruth/shared-datasets-1'
 MAIN = 'refs/heads/main'

@@ -11,7 +11,7 @@ from scripts.terraform_plan_permissions import plan_checks
 from terraform_helpers import evaluate, load_terraform, resources
 from workflow_helpers import load_workflow
 
-ROOT = Path(os.environ.get('WS22_ROOT', Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / 'terraform/envs/prod'
 REPO = 'SkyTruth/shared-datasets-1'
 OBSERVER = 'shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com'

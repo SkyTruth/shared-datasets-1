@@ -11,6 +11,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 from time import perf_counter
@@ -387,3 +388,28 @@ def verify_local_config(reference, config_digest, *, require_manifest=False, dir
     require(inspect_image(reference)["Id"] == image_id
             and inspect_image(image_id)["Id"] == image_id, "loaded image tag or immutable identity changed during verification")
     return image_id
+
+
+ENTRYPOINTS = ("scripts/deployment_revision.py", "scripts/terraform_plan_allowlist.py", "scripts/install_deployment_verifier.py")
+
+
+def snapshot_trusted(revision, destination, *, root=ROOT):
+    tracked = repository_files(revision, root)
+    selected = dependency_closure(dependency_graph(tracked), ENTRYPOINTS)
+    selected.update(path for path in tracked if path.startswith((".github/actions/deployment-receipt/", ".github/actions/deployment-auth/", "scripts/cdn_plan_readiness.py")))
+    selected.add(".github/terraform-targets.json")
+    files = {path: tracked[path] for path in selected}
+    # Absent trusted initializers must overwrite candidate package injections.
+    for path in selected:
+        for parent in list(Path(path).parents)[:-1]:
+            initializer = str(parent / "__init__.py")
+            files[initializer] = tracked.get(initializer, b"")
+    with tarfile.open(destination, "w") as archive:
+        for path, raw in sorted(files.items()):
+            entry = tarfile.TarInfo(path)
+            entry.size, entry.mode = len(raw), 0o644
+            archive.addfile(entry, io.BytesIO(raw))
+
+
+if __name__ == "__main__":
+    snapshot_trusted(*sys.argv[1:])

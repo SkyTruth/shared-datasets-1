@@ -7,7 +7,6 @@ here instead of after release. CI and isolated agent preflight run this command.
 from __future__ import annotations
 
 import argparse
-from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -17,7 +16,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.terraform_target_contracts import registry
+from scripts.terraform_target_contracts import registry, production_image_limits
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
@@ -124,12 +123,12 @@ def resolve_image(image):
     return image_id
 
 
-def verify_viewer_image(image):
+def verify_viewer_image(image, limits=None):
     """Start the actual default CMD with no network or credentials, then check health."""
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
     try:
-        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer"), "--name", name, image], check=True)
+        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer", limits), "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -138,43 +137,23 @@ def verify_viewer_image(image):
         subprocess.run(["docker", "rm", "--force", name], check=False)
 
 
-def resource_limits(target):
-    """Read the declared job/service limits; reject nonliteral configured values."""
-    package = target.replace("-", "_")
-    text = (ROOT / f"terraform/envs/prod/{package}.tf").read_text()
-    text = re.sub(r'/\*.*?\*/|(?m:^[ \t]*(?:#|//)[^\n]*$)', '', text, flags=re.S)
-    if target in {"catalog-viewer", "monitoring-slack"}:
-        block = re.search(rf'^([ \t]*)resource "google_cloud_run_v2_service" "{package}" {{(.*?)^\1}}', text, re.S | re.M)[2]
-        limits = re.search(r'limits\s*=\s*{([^}]+)}', block, re.S)
-        if limits is None and re.search(r'\bresources\s*{', block):
-            raise ValueError(f"{target}: configured production limits must be literal")
-        # Cloud Run service defaults when Terraform omits resources entirely.
-        block = limits[1] if limits else 'cpu = "1"\nmemory = "512Mi"'
-    else:
-        block = re.search(rf'^([ \t]*)module "{package}_job" {{(.*?)^\1}}', text, re.S | re.M)[2]
-    values = {}
-    for key in ("cpu", "memory"):
-        match = re.search(rf'(?:^|,)\s*{key}\s*=\s*"([0-9]+(?:\.[0-9]+)?(?:Mi|Gi)?)"(?=\s*(?:,|$))', block, re.M)
-        if match is None:
-            raise ValueError(f"{target}: production {key} limit must be a literal")
-        values[key] = match[1]
-    # CFS quotas preserve the configured cap even on a smaller CI host. Docker
-    # rejects --cpus above daemon capacity before the container can start.
-    return ["--cpu-period", "100000", "--cpu-quota", str(int(Decimal(values["cpu"]) * 100000)),
-            "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
+def resource_limits(target, limits=None):
+    """The hosted runner consumes the plan's caps without importing HCL parsers."""
+    return production_image_limits(ROOT)[target] if limits is None else limits
 
 
-def commands(target, executor, *, image_id=None):
+def commands(target, executor, *, image_id=None, limits=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
              f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *resource_limits(target)]
+    limits = resource_limits(target, limits)
+    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *limits]
     checks = registry(section="image_checks")[target]
     if not checks or set(checks) - {"host", "container"} or any(not rows or any(not args for args in rows) for rows in checks.values()):
         raise ValueError("Invalid registered installed image checks")
     values = dict(python=sys.executable, image=tested_image, interpreter_probe=INTERPRETER_PROBE,
-                  native_probe=NATIVE_VERSION_PROBE, monitoring_probe=MONITORING_PROBE)
+                  native_probe=NATIVE_VERSION_PROBE, monitoring_probe=MONITORING_PROBE, limits=json.dumps(limits))
     fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
     if any("{fixture}" in args for rows in checks.values() for args in rows):
         values["fixture"] = fixture.read_text()
@@ -200,20 +179,21 @@ def main():
     parser.add_argument("--target", action="append", choices=BUILD_TARGETS)
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
+    parser.add_argument("--limits", type=json.loads, help="Serialized production caps from the validation plan")
     args = parser.parse_args()
     if args.viewer_image:
         if args.target or args.output:
             parser.error("viewer-image cannot be combined with build targets")
-        verify_viewer_image(args.viewer_image)
+        verify_viewer_image(args.viewer_image, args.limits)
         return
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
     for target in args.target or BUILD_TARGETS:
-        subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
+        subprocess.run(cached_build(commands(target, executor, limits=args.limits)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)
-        for command in commands(target, executor, image_id=image_id)[1:]:
+        for command in commands(target, executor, image_id=image_id, limits=args.limits)[1:]:
             subprocess.run(command, check=True)
         if args.output:
             retained[target] = pack_image(target, executor, image_id, args.output / "images")

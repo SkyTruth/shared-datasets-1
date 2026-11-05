@@ -630,7 +630,7 @@ def test_registry_rejects_invalid_combinations_at_construction(change):
 
 def test_new_trusted_import_and_package_initializer_cannot_load_candidate_bytes(tmp_path):
     import runpy
-    snapshot = runpy.run_path(str(REPO_ROOT / '.github/actions/deployment-bootstrap/restore.py'))['snapshot']
+    snapshot = runpy.run_path(str(REPO_ROOT / 'scripts/tested_image_bundle.py'))['snapshot_trusted']
     root = tmp_path / 'repository'
     (root / 'scripts').mkdir(parents=True)
     (root / '.github').mkdir()

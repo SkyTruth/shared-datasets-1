@@ -391,7 +391,7 @@
     "wdpa": {"workflow": "wdpa-monthly-deploy.yml", "image": "wdpa-monthly", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam", "cron_alert_policy"]},
     "sea_ice": {"workflow": "sea-ice-daily-deploy.yml", "image": "sea-ice-daily", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam", "cron_alert_policy"]},
     "ingestion_iam": {"workflow": "scheduled-ingestion-deploy-iam-sync.yml", "terraform_prerequisites": []},
-    "pmtiles_cdn": {"workflow": "pmtiles-cdn-sync.yml", "terraform_prerequisites": []},
+    "pmtiles_cdn": {"workflow": "pmtiles-cdn-sync.yml", "record_target": "pmtiles-cdn", "terraform_prerequisites": []},
     "catalog_viewer": {"workflow": "catalog-viewer-deploy.yml", "image": "catalog-viewer", "terraform_prerequisites": ["artifact_registry_iam"]},
     "dataset_usage": {"workflow": "dataset-usage-deploy.yml", "image": "dataset-usage", "terraform_prerequisites": ["artifact_registry_iam", "catalog_viewer", "pmtiles_cdn"]},
     "artifact_registry_iam": {"workflow": "artifact-registry-iam-sync.yml", "terraform_prerequisites": []},
@@ -400,7 +400,7 @@
     "cron_alert_policy": {"workflow": "cron-alert-policy-sync.yml", "image": "monitoring-slack", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam"]}
   },
   "image_checks": {
-    "catalog-viewer": {"host": [["{python}", "scripts/production_image_contracts.py", "--viewer-image", "{image}"]]},
+    "catalog-viewer": {"host": [["{python}", "scripts/production_image_contracts.py", "--viewer-image", "{image}", "--limits", "{limits}"]]},
     "dataset-usage": {"container": [["{image}", "--print-policy-hash"], ["--entrypoint", "python", "{image}", "-c", "{usage_probe}"]]},
     "eamlis-monthly": {
       "container": [["{image}", "python", "-c", "{interpreter_probe}"], ["{image}", "python", "-c", "{native_probe}"], ["{image}", "python", "-c", "{fixture_script}", "eamlis-monthly", "{fixture}"]]

@@ -73,7 +73,7 @@ def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
         assert clause in step['if']
     assert step['env']['EXECUTOR_SHA'] == '${{ github.event.pull_request.head.sha }}'
     assert step['env']['PR_NUMBER'] == '${{ github.event.pull_request.number }}'
-    assert 'python -I -S .github/actions/deployment-bootstrap/approval.py "$PR_NUMBER"' in step['run']
+    assert 'python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"' in step['run']
 
 
 @pytest.mark.parametrize('selection,approval,expected', [([], 9, 0), (['sea_ice'], 0, 0),
@@ -97,4 +97,4 @@ def test_premerge_acceptance_shell_rejects_missing_plan_or_approval(tmp_path, se
     called = tmp_path / 'approval-args'
     assert called.exists() is (isinstance(selection, list) and bool(selection))
     if called.exists():
-        assert called.read_text().strip() == '-I -S .github/actions/deployment-bootstrap/approval.py 387'
+        assert called.read_text().strip() == '-I -S scripts/deployment_revision.py accept --pr-number 387'

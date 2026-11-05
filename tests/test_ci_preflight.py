@@ -29,6 +29,7 @@ def plan(suites=SUITES):
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
         "tested_sha": "c" * 40, "tree": "d" * 40,
+        "production_image_limits": preflight.production_image_limits(),
         "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": list(BUILD_TARGETS) if "production-images" in suites else [],
     }
 
@@ -368,6 +369,15 @@ def fixture_repo(tmp_path):
         target = root / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((ROOT / filename).read_text() if filename == ".github/workflows/ci.yml" else "fixture\n")
+    for recipe in ci_contract.RECIPES.values():
+        package = Path(recipe).parent.name
+        path = f'terraform/envs/prod/{package}.tf'
+        destination = root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / path).read_bytes())
+        destination = root / recipe
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / recipe).read_bytes())
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
@@ -635,7 +645,7 @@ def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path,
     for path in paths:
         target = source / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" else "changed fixture\n")
+        target.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" or path.endswith(".tf") else "changed fixture\n")
     if paths:
         run("add", ".")
         run("commit", "-m", "change")

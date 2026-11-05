@@ -54,7 +54,7 @@ def test_premerge_acceptance_uses_the_same_exact_head_policy_in_clean_python(tmp
     gh.write_text(f'#!{sys.executable}\nimport json,sys\nfixture={fixture!r}\n' +
                   ('sys.exit(1)\n' if case == 'api-failure' else 'print(json.dumps(fixture[sys.argv[-1]]))\n'))
     gh.chmod(0o755)
-    command = [sys.executable, '-I', '-S', '.github/actions/deployment-bootstrap/approval.py', '27']
+    command = [sys.executable, '-I', '-S', 'scripts/deployment_revision.py', 'accept', '--pr-number', '27']
     # The post-merge bootstrap deliberately supplies no argument. The PR check
     # supplies the expected head, never a synthetic merge SHA.
     done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
