@@ -17,6 +17,7 @@ env:
 jobs:
   catalog-drift:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Validate trusted live-drift ref
         run: |

@@ -9,6 +9,7 @@ permissions:
 jobs:
   pending:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       records: ${{ steps.pending.outputs.records }}
     steps:
