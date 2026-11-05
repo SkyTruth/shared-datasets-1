@@ -449,8 +449,8 @@ def main():
             warnings, policy_problems = policy_warnings(now)
             problems += policy_problems
             problems += audit_freshness(api, now=now)
-            problems += deployed_image_lag(api, now=now)
             require(probe_outcome != "skipped", "Operational setup failed before discovery: " + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps"))
+            problems += deployed_image_lag(api, now=now)
             from scripts import catalog_drift_guard as catalog
             problems += freshness(catalog.get_client(), now=now, scheduler=scheduler)
             result = json.loads((args.work_dir / "result.json").read_text()) if probe_outcome == "success" else {"reconcile": False}
