@@ -22,12 +22,12 @@ jobs:
       source_run_attempt: ${{ inputs.source_run_attempt }}
       sync_name: Dataset usage deploy IAM bootstrap
   deploy:
+    name: deploy
     needs: bootstrap
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || needs.bootstrap.result == 'success') }}
     uses: ./.github/workflows/ingestion-deploy.yml
     with:
       target: dataset-usage
-      stage: ${{ inputs.stage || 'all' }}
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
@@ -38,11 +38,7 @@ jobs:
       source_run_id: {description: "Main-push CI run that tested executor_sha", required: true, type: string}
       source_run_attempt: {description: "Exact successful ci-ready attempt", required: true, type: string}
   workflow_call:
-    outputs:
-      deployment_id: {description: Claimed deployment, value: '${{ jobs.deploy.outputs.deployment_id }}'}
-      image: {description: Tested image, value: '${{ jobs.deploy.outputs.image }}'}
     inputs:
-      stage: {type: string, default: all}
       sync_iam: {required: true, type: boolean}
       executor_sha: {description: "Exact tested main revision", required: true, type: string}
       source_run_id: {description: "Main-push CI run that tested executor_sha", required: true, type: string}

@@ -83,10 +83,10 @@ these identities changes receipt signing, tested-image digests or dataset approv
    [queue ownership](deployment-contracts.md#serialization-and-protected-execution)
    before changing concurrency: prepare and canary verification stay outside
    the state queue. Automatic usage deploys emit a signed applied receipt before
-   their separate canary job; ingestion and cleanup IAM depend on that apply. Both
-   phases retain the `deployment-dataset-usage` target queue, outside the state queue.
-   Split verification checks the exact target, image, source and execution attempt
-   against the signed receipt before authentication. Other ingestion wrappers
+   their canary job; ingestion and cleanup IAM depend on that apply. The
+   apply and canary stay inside one continuous `deployment-dataset-usage` queue.
+   A read-only CI gate observes this exact attempt's attesting apply job, releasing
+   IAM dependents while the canary still owns the target. Other ingestion wrappers
    keep the combined rollout. Manual recovery/dispatch requires `executor_sha`,
    `source_run_id` and `source_run_attempt` from the exact successful main-push
    CI attempt. A deferred rollout is not a completed deployment.

@@ -14,6 +14,7 @@ permissions:
 jobs:
   reconcile:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state

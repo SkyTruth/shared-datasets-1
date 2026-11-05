@@ -35,6 +35,7 @@ jobs:
   sync:
     name: Apply PMTiles CDN route sync
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state
@@ -236,6 +237,7 @@ jobs:
     needs: sync
     if: ${{ always() && needs.sync.outputs.deployment_id != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: shared-datasets-production
     steps:
       - name: Check out trusted deployment verifier

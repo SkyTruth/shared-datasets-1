@@ -20,6 +20,7 @@ permissions:
 jobs:
   control:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state

@@ -506,33 +506,33 @@ jobs:
     secrets: inherit
 
   dataset-usage:
+    # Observe apply completion without releasing the rollout's target queue.
+    needs: &usage-prerequisites [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
+    if: &usage-selected ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 245
+    permissions: {contents: read, actions: read, deployments: read}
+    steps:
+    - uses: actions/checkout@v4
+      with: {ref: '${{ github.workflow_sha }}', fetch-depth: 0, persist-credentials: false}
+    - name: Install pinned durable receipt verifier
+      run: python scripts/install_deployment_verifier.py
+    - name: Wait for this attempt's signed apply job
+      env:
+        GH_TOKEN: ${{ github.token }}
+        EXECUTOR_SHA: ${{ needs.ci-ready.outputs.tested_sha }}
+      run: |
+        python scripts/deployment_revision.py wait-applied --target dataset-usage --workflow dataset-usage-deploy.yml \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$GITHUB_RUN_ID" --source-run-attempt "$GITHUB_RUN_ATTEMPT"
+
+  dataset-usage-rollout:
     # Settle bucket CORS before the logging-only deployment plans the same bucket.
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    needs: *usage-prerequisites
+    if: *usage-selected
     permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
     with:
-      stage: apply
       sync_iam: ${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
-
-  dataset-usage-verify:
-    concurrency:
-      group: deployment-dataset-usage
-      queue: max
-      cancel-in-progress: false
-    needs: [ci-ready, dataset-usage]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.dataset-usage.outputs.deployment_id != '' }}
-    permissions: {contents: read, actions: read, deployments: write, id-token: write, attestations: write}
-    uses: ./.github/workflows/ingestion-deploy.yml
-    with:
-      target: dataset-usage
-      stage: verify
-      deployment_id: ${{ needs.dataset-usage.outputs.deployment_id }}
-      image: ${{ needs.dataset-usage.outputs.image }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}

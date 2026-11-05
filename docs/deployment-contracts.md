@@ -61,14 +61,16 @@ resulting suites and required `production_image_targets` unchanged to consumers.
 
 ## Serialization and protected execution
 
-Four publisher wrappers hold `ingestion-<target>` across prepare/apply/verify;
-the dataset-usage wrapper holds `deployment-dataset-usage` across its bootstrap
-and shared rollout. In `ingestion-deploy.yml`, only `apply` holds the
-non-cancelling `prod-terraform-state` queue with `queue: max`. Plan, JSON export,
-allowlist, permission probe, signed claim and saved-plan apply stay together.
-Other targets may prepare tested images or verify canaries concurrently. The
-shared ingestion IAM prerequisite runs once before dependents, with secret
-bootstrap and live checks before runtime binding plans.
+Four publisher wrappers hold `ingestion-<target>` across prepare/apply/verify.
+Usage holds `deployment-dataset-usage` continuously across bootstrap and rollout.
+CI's read-only `dataset-usage` gate observes this attempt's attesting apply job;
+ingestion and cleanup IAM proceed while `dataset-usage-rollout` keeps the canary
+inside that target queue. Failed/deferred applies fail; skipped applies require
+signed no-op/supersession evidence. Only shared `apply` holds `prod-terraform-state`
+with `queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
+State writers have 30-minute caps, preparation 20, and short follow-ups 5–20.
+Canary verification allows 150 minutes for two 62.5-minute windows plus setup;
+the read-only apply gate allows four hours of queue contention (245-minute cap).
 
 Every production Terraform writer uses that same literal job-level state queue,
 including reusable IAM syncs and CDN/viewer jobs. Do not put the matching group
@@ -84,6 +86,9 @@ mutation. Only `plan` also retries recognized TLS/handshake timeouts and provide
 plans and lock-release errors fail immediately; apply transport errors never
 retry because writes may already have happened. Never regenerate an apply plan
 outside its allowlist/permission sequence to bypass staleness.
+HTTP permission reads retry transport/timeouts/5xx three times with 5/10-second
+delays; 4xx and malformed success responses fail immediately. WDPA's saved-plan
+guard derives literal CPU, memory and timeout from its Terraform module.
 
 Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
