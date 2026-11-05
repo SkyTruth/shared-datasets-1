@@ -434,39 +434,27 @@ def static_checks(root, base, head):
     Runtime values, instance keys and effective IAM still need the saved plan.
     """
     import posixpath
-    import subprocess
-    import hcl2
-    from hcl2.utils import SerializationOptions
     import yaml
     from scripts import deployment_permissions as permissions
     from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
     from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 
-    def git(*args):
-        return subprocess.check_output(['git', '-C', str(root), *args], text=True)
-
     def declarations(revision):
-        files = git('ls-tree', '-r', '--name-only', revision, '--', 'terraform/').splitlines()
-        modules = {'terraform/envs/prod': []}
-        for path in files:
-            if path.endswith('.tf'):
-                modules.setdefault(posixpath.dirname(path), []).append(hcl2.loads(git('show', f'{revision}:{path}'),
-                    serialization_options=SerializationOptions(with_comments=False, strip_string_quotes=True)))
+        modules = {'terraform/envs/prod': {}}
+        for path, rows in terraform_targets.resource_index(root, revision).items():
+            modules.setdefault(posixpath.dirname(path), {}).update(rows)
         result = {}
         def walk(directory, prefix='', ancestry=(), visiting=()):
             require(directory in modules and directory not in visiting, 'missing or cyclic local Terraform module: ' + directory)
-            for document in modules[directory]:
-                for block in document.get('resource', []):
-                    for kind, resources in block.items():
-                        for name, body in resources.items():
-                            result[prefix + kind + '.' + name] = (body, ancestry)
-                for block in document.get('module', []):
-                    for name, body in block.items():
-                        source = body['source']
-                        require(source.startswith('./') or source.startswith('../'), 'static check requires local module sources')
-                        walk(posixpath.normpath(posixpath.join(directory, source)), prefix + 'module.' + name + '.',
-                             (*ancestry, body), (*visiting, directory))
+            for name, body in modules[directory].items():
+                if name.startswith('module.'):
+                    source = body['source']
+                    require(source.startswith('./') or source.startswith('../'), 'static check requires local module sources')
+                    walk(posixpath.normpath(posixpath.join(directory, source)), prefix + name + '.',
+                         (*ancestry, body), (*visiting, directory))
+                elif not name.startswith('data.'):
+                    result[prefix + name] = (body, ancestry)
         walk('terraform/envs/prod')
         return result
 

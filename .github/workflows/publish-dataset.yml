@@ -46,6 +46,7 @@ jobs:
   reviewed_pr_plans:
     name: Detect reviewed PR mutation plans
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
@@ -166,6 +167,7 @@ jobs:
       mutation_completed: ${{ steps.publication_receipt.outputs.mutation_completed || steps.deletion_receipt.outputs.mutation_completed }}
     needs: reviewed_pr_plans
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     environment: shared-datasets-production
     if: >-
       ${{
@@ -347,6 +349,7 @@ jobs:
     needs: reviewed_pr_plans
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.authorization_rehearsal && inputs.receipt_recovery_run_id == '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: shared-datasets-production
     permissions:
       contents: read
@@ -370,6 +373,7 @@ jobs:
     name: "Complete publication receipt (PR #${{ inputs.pr_number }}; run ${{ inputs.receipt_recovery_run_id }}; attempt ${{ inputs.receipt_recovery_attempt }})"
     if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.receipt_recovery_run_id != '' && !inputs.authorization_rehearsal }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: shared-datasets-production
     permissions:
       contents: read

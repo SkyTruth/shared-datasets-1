@@ -27,6 +27,7 @@ jobs:
   geospatial-changes:
     name: geospatial-changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     outputs:
       pr_terraform: ${{ steps.pr-plan.outputs.pr_terraform }}
       should_run: ${{ steps.plan.outputs.should_run }}
@@ -341,6 +342,7 @@ jobs:
     needs: ci-ready
     if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read

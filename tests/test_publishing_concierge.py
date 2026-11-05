@@ -847,6 +847,24 @@ class PublishingConciergeTests(unittest.TestCase):
             "catalog_generated_at": "2026-06-04T13:36:42Z",
         }
 
+    def test_preview_commands_dispatch_control_on_main_with_full_source_ref(self):
+        for ref, expected in (("feat/test-preview", "refs/heads/feat/test-preview"),
+                              ("refs/heads/feat/test-preview", "refs/heads/feat/test-preview"),
+                              ("refs/tags/v1.0", "refs/tags/v1.0")):
+            with self.subTest(ref=ref), tempfile.TemporaryDirectory() as temporary:
+                state_file = self._start_workflow(Path(temporary), request_classification="preview-only",
+                                                  release_date="2026-11-05", preview_ref=ref)
+                state = json.loads(state_file.read_text())
+                command = ("gh workflow run feature-preview-deploy.yml --ref main "
+                           f"-f source_ref={expected} -f preview_data_mode=preserve")
+                self.assertIn(command, json.dumps(state))
+                self.assertIn(command, publishing_concierge.commands_for_preview_catalog_refresh(state)[1])
+                evidence = {**self._preview_catalog_refresh_payload(), "dispatched_ref": expected}
+                self.assertEqual(publishing_concierge.validate_preview_catalog_refresh(state, evidence)["dispatched_ref"], expected)
+        for ref in ("refs/pull/1/merge", "feature;bad", "feature$(bad)"):
+            with self.subTest(ref=ref), self.assertRaises(publishing_concierge.WorkflowError):
+                publishing_concierge.commands_for_preview_catalog_refresh({"preview_ref": ref})
+
     def test_preview_refresh_accepts_current_and_historical_workflow_evidence(self):
         state = {"preview_ref": "feat/test-preview"}
         for name in ("feature-preview-deploy.yml", "Preview / Deploy feature branch", "Deploy Feature Branch to Preview"):

@@ -19,6 +19,7 @@ concurrency:
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: shared-datasets-production
     env:
       CANDIDATE_ID: ${{ inputs.candidate_id }}

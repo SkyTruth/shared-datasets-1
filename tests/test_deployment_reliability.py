@@ -181,7 +181,8 @@ def test_every_production_queue_runner_has_explicit_bounded_timeout(filename):
                 assert job['timeout-minutes'] <= 30
 
 
-def test_all_production_target_and_state_queues_bound_their_reusable_leaf_jobs():
+@pytest.mark.parametrize("all_queues", [False, True])
+def test_all_production_target_and_state_queues_bound_their_reusable_leaf_jobs(all_queues):
     seen = set()
 
     def visit(path, inherited=False):
@@ -192,13 +193,13 @@ def test_all_production_target_and_state_queues_bound_their_reusable_leaf_jobs()
 
         def held(concurrency):
             group = concurrency.get('group', '') if isinstance(concurrency, dict) else concurrency
-            return group == 'prod-terraform-state' or group.startswith(('deployment-', 'ingestion-'))
+            return bool(group) if all_queues else group == 'prod-terraform-state' or group.startswith(('deployment-', 'ingestion-'))
 
         for name, job in document['jobs'].items():
             locked = inherited or held(document.get('concurrency', {})) or held(job.get('concurrency', {}))
             if 'runs-on' in job and locked:
                 assert isinstance(job.get('timeout-minutes'), int), (path.name, name)
-                assert 1 <= job['timeout-minutes'] <= 150
+                assert 1 <= job['timeout-minutes'] <= (360 if all_queues else 150)
             elif job.get('uses', '').startswith('./.github/workflows/'):
                 visit(ROOT / job['uses'].removeprefix('./'), locked)
 

@@ -68,7 +68,9 @@ ingestion and cleanup IAM proceed while `dataset-usage-rollout` keeps the canary
 inside that target queue. Failed/deferred applies fail; skipped applies require
 signed no-op/supersession evidence. Only shared `apply` holds `prod-terraform-state`
 with `queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
-State writers have 30-minute caps, preparation 20, and short follow-ups 5–20.
+Every queue bounds its runners, including reusable leaves. State writers have
+30-minute caps, preparation 20, and short follow-ups 5–20; preview control
+allows 90, canonical promotion 120, and catalog publishing 45 minutes.
 Canary verification allows 150 minutes for two 62.5-minute windows plus setup;
 the read-only apply gate allows four hours of queue contention (245-minute cap).
 

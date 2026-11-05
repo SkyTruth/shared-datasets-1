@@ -42,7 +42,7 @@ def test_executor_reads_exact_typed_emission_for_every_target(tmp_path, target):
     assert reads <= set(key_types)
     command = next(step['run'] for step in steps if step.get('id') == 'target')
     environment = {**os.environ, 'TARGET': target, 'WORKFLOW_FILE': target + '-deploy.yml',
-                   'GITHUB_ENV': str(tmp_path / 'environment'), 'STAGE': 'all'}
+                   'GITHUB_ENV': str(tmp_path / 'environment')}
     result = subprocess.run(['bash', '-e', '-c', command], cwd=ROOT, env=environment, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     emitted = parse_environment((tmp_path / 'environment').read_text())

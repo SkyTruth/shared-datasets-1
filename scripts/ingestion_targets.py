@@ -108,13 +108,6 @@ if __name__ == "__main__":
         print("\n".join(f"-var={key}={value}" for key, value in image_variables("", "unused-by-reconciliation").items()))
         sys.exit(0)
     name = os.environ["TARGET"]
-    stage = os.environ.get("STAGE", "all")
-    if stage not in {"all", "apply", "verify"} or stage != "all" and name != "dataset-usage":
-        raise ValueError("Split apply/verify is restricted to usage telemetry")
-    identifier, image = os.environ.get("VERIFY_DEPLOYMENT_ID", ""), os.environ.get("VERIFY_IMAGE", "")
-    if (stage == "verify" and (not identifier.isdecimal() or not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image))
-            or stage != "verify" and (identifier or image)):
-        raise ValueError("Only split verification accepts a required deployment ID and immutable image")
     config = DEPLOY_TARGETS[name]
     if config["workflow"] != os.environ["WORKFLOW_FILE"]:
         raise ValueError("Ingestion target does not belong to its caller")

@@ -289,7 +289,7 @@ def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path
 
 
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
-    "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
+    "dataset-usage-rollout", "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
 ]
 
 
@@ -314,8 +314,10 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
     from scripts.terraform_target_contracts import registry
     declarations = registry(section="deployments")
-    optional = ([name.replace("_", "-") for name in declarations[job_id.replace("-", "_")]["terraform_prerequisites"]]
-                if job_id.replace("-", "_") in declarations else [name for name in needs if name.replace("-", "_") in declarations])
+    selection_name = next((name for name, row in declarations.items()
+                           if job.get("uses") == "./.github/workflows/" + row["workflow"]), job_id.replace("-", "_"))
+    optional = ([name.replace("_", "-") for name in declarations[selection_name]["terraform_prerequisites"]]
+                if selection_name in declarations else [name for name in needs if name.replace("-", "_") in declarations])
     assert set(optional) == {name for name in needs if name.replace("-", "_") in declarations}
     assert set(optional) <= set(needs)
     values = {
@@ -332,7 +334,7 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
         "announce-repo-functionality": "needs.dataset-mutation-selection.outputs.has_repo_alert",
         "publish-reviewed-dataset": "needs.dataset-mutation-selection.outputs.has_mutations",
         "refresh-reviewed-catalog": "needs.dataset-mutation-selection.outputs.has_catalog_changes",
-    }.get(job_id, f"needs.geospatial-changes.outputs.{job_id.replace('-', '_')}")
+    }.get(job_id, f"needs.geospatial-changes.outputs.{selection_name}")
     if job_id != "dataset-mutation-selection":
         with subtests.test(selection="unselected"):
             assert condition_result(job, {**values, selection: "false"}) is False

@@ -39,6 +39,7 @@ jobs:
   preview:
     name: Deploy selected branch to preview
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: shared-datasets-production
     concurrency:
       group: feature-branch-preview

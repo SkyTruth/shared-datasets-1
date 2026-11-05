@@ -19,6 +19,7 @@ jobs:
   destroy:
     name: Destroy feature branch preview
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: feature-branch-preview

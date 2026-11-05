@@ -506,7 +506,7 @@ class RepoGuardrailsTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
 
-    def test_workflow_boundaries_accept_feature_preview_dropdown_dispatch(self):
+    def test_workflow_boundaries_reject_feature_preview_dropdown_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             workflows = root / ".github/workflows"
@@ -536,7 +536,7 @@ class RepoGuardrailsTests(unittest.TestCase):
 
             errors = repo_guardrails.check_workflow_boundaries(root)
 
-        self.assertEqual(errors, [])
+        self.assertTrue(any("must validate refs/heads/main" in error for error in errors))
 
     def test_workflow_boundaries_keep_dropdown_exception_preview_only(self):
         with tempfile.TemporaryDirectory() as tmp:

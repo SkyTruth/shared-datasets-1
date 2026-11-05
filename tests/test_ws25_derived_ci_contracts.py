@@ -18,7 +18,11 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize('name', registry(section='deployments'))
 def test_deployment_prerequisites_match_ci_needs_and_conditions(name):
     declarations = registry(section='deployments')
-    job = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs'][name.replace('_', '-')]
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    job, = [job for job in jobs.values() if job.get('uses') == './.github/workflows/' + declarations[name]['workflow']]
+    if name == 'dataset_usage':
+        assert jobs['dataset-usage']['needs'] == job['needs']
+        assert jobs['dataset-usage']['if'] == job['if']
     expected = set(declarations[name].get('terraform_prerequisites', []))
     assert expected == {parent.replace('-', '_') for parent in job['needs'] if parent.replace('-', '_') in declarations}
     for parent in expected:
