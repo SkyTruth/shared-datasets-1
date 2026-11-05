@@ -1,5 +1,10 @@
 {
   "schema_version": 1,
+  "record_workflows": {
+    "wdpa-monthly-build": "wdpa-monthly-build.yml",
+    "typescript-sdk": "publish-typescript-sdk.yml",
+    "catalog-web": "catalog-web-deploy.yml"
+  },
   "targets": {
     "Artifact Registry IAM sync": {
       "workflow": "artifact-registry-iam-sync.yml",

@@ -27,10 +27,12 @@ def test_historical_record_targets_derive_live_workflows_from_the_registry(monke
     assert runpy.run_path(str(script))['TARGET_WORKFLOWS'] == expected
     original = contracts.registry
     deployments = original(section='deployments')
+    records = original(section='record_workflows') | {'typescript-sdk': 'replacement-sdk.yml'}
     deployments['catalog_viewer']['workflow'] = 'replacement-viewer.yml'
     monkeypatch.setattr(contracts, 'registry', lambda *args, section='targets', **kwargs:
-                        deployments if section == 'deployments' else original(*args, section=section, **kwargs))
-    assert runpy.run_path(str(script))['TARGET_WORKFLOWS'] == expected | {'catalog-viewer': 'replacement-viewer.yml'}
+                        deployments if section == 'deployments' else records if section == 'record_workflows' else original(*args, section=section, **kwargs))
+    assert runpy.run_path(str(script))['TARGET_WORKFLOWS'] == expected | {
+        'catalog-viewer': 'replacement-viewer.yml', 'typescript-sdk': 'replacement-sdk.yml'}
 
 
 def test_plan_cli_serializes_caps_from_the_tested_tree(tmp_path):

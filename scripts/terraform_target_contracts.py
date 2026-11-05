@@ -103,7 +103,7 @@ def production_image_limits(root=ROOT):
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:
     """One reviewed resource scope per stable, historically signed sync name."""
     value = json.loads((root / '.github/terraform-targets.json').read_text())
-    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes', 'deployments', 'image_checks', 'pr_plan_exclusions', 'selection_exceptions'} or value['schema_version'] != 1:
+    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes', 'deployments', 'image_checks', 'pr_plan_exclusions', 'selection_exceptions', 'record_workflows'} or value['schema_version'] != 1:
         raise ValueError('Unsupported Terraform target registry')
     return value[section] if section == 'targets' else value.get(section, {})
 

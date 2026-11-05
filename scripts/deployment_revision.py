@@ -27,12 +27,9 @@ from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
-TARGET_WORKFLOWS = {
-    "wdpa-monthly-build": "wdpa-monthly-build.yml",
-    "typescript-sdk": "publish-typescript-sdk.yml",
-    "catalog-web": "catalog-web-deploy.yml",
-    **{row.get("record_target", row.get("image")): row["workflow"]
-       for row in registry(section="deployments").values() if "image" in row or "record_target" in row},
+TARGET_WORKFLOWS = registry(section="record_workflows") | {
+    row.get("record_target", row.get("image")): row["workflow"]
+    for row in registry(section="deployments").values() if "image" in row or "record_target" in row
 }
 TERRAFORM_SYNCS = registry()
 TERRAFORM_WORKFLOWS = {
