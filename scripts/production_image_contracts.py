@@ -128,7 +128,6 @@ def resource_limits(target):
             "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
 
 
-
 def commands(target, executor, *, image_id=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
@@ -151,7 +150,8 @@ def commands(target, executor, *, image_id=None):
         checks.append(run + ["-c", (ROOT / "scripts/installed_ingestion_fixture.py").read_text(), target,
             (ROOT / f"tests/fixtures/production_images/{target}.json").read_text()])
     else:
-        checks.append(run + ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text(),
+        smoke = ["scripts/local_ingestion_smoke.py"] if target == "wdpa-monthly" else ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text()]
+        checks.append(run + [*smoke,
             "--workdir", "/tmp/shared-datasets-1/_scratch/installed-fixture",
             *(["--sea-ice-only"] if target == "sea-ice-daily" else [])])
     return [build, *checks]

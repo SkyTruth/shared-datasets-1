@@ -26,7 +26,8 @@ def expand(value, runner, suite, attempt):
     return (value.replace("${{ runner.temp }}", str(runner))
             .replace("${{ matrix.node }}", suite.removeprefix("sdk-node"))
             .replace("${{ matrix.target }}", suite.removeprefix("production-images-"))
-            .replace("${{ github.run_attempt }}", str(attempt)))
+            .replace("${{ github.run_attempt }}", str(attempt))
+            .replace("${{ env.ARTIFACT_SUITE || github.job }}", suite))
 
 
 def producer_steps(workflow, suite):

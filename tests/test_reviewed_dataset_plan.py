@@ -494,35 +494,23 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         ):
             reviewed_dataset_plan.normalize_document(doc)
 
-    def test_prepare_cli_creates_identical_file_and_fence_without_overwriting_tampering(
-        self,
-    ):
+    def test_prepare_cli_creates_identical_file_and_fence_without_overwriting_tampering(self):
         from test_dataset_mutation_authorization import document
-        from scripts import reviewed_dataset_plan as p
-
+        p = reviewed_dataset_plan
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             payload = root / "publish.json"
             payload.write_bytes(p.canonical_bytes(document()["publish"]))
+            command = ["prepare", "--publish", str(payload), "--repo-root", str(root)]
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                self.assertEqual(
-                    p.main(
-                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
-                    ),
-                    0,
-                )
+                self.assertEqual(p.main(command), 0)
             path = root / p.document_path(document())
             self.assertEqual(path.read_bytes(), p.canonical_bytes(document()))
             p.check_rendered_body(stdout.getvalue(), document())
             path.write_text("tampered")
             with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(
-                    p.main(
-                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
-                    ),
-                    2,
-                )
+                self.assertEqual(p.main(command), 2)
 
     def test_producer_rejects_dot_proposals_and_escaping_symlink_before_mkdir(self):
         from test_dataset_mutation_authorization import document

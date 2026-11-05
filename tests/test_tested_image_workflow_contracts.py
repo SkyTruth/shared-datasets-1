@@ -86,7 +86,7 @@ def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, targ
 def image_results():
     selected = sorted(ALWAYS | {"production-images"})
     plan = {"schema_version": 1, "base": "a" * 40, "head": "b" * 40, "tested_sha": "c" * 40,
-            "tree": "d" * 40, "contract_digest": "e" * 64, "suites": selected}
+            "tree": "d" * 40, "contract_digest": "e" * 64, "suites": selected, "production_image_targets": sorted(IMAGE_TARGETS)}
     results = [{**{key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")},
                 "suite": suite, "status": "success", "tools": expected_tools(suite),
                 "commands": [{"argv": ["actual-small-image-fixtures"], "exit_code": 0}]} for suite in selected]
@@ -127,7 +127,7 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
 ])
 def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets):
     plan, results, image_result = image_results()
-    plan["changed_paths"] = paths
+    plan.update(changed_paths=paths, production_image_targets=sorted(targets))
     all_images = image_result["production_images"]["images"]
     image_result["production_images"]["images"] = {target: all_images[target] for target in targets}
     verify_results(plan, results)
@@ -138,8 +138,8 @@ def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets)
     if targets:
         with pytest.raises(ValueError, match="differs from validation selection"):
             verify_results(plan, results)
-    plan["changed_paths"] = []
-    with pytest.raises(ValueError, match="differs from validation selection"):
+    plan["production_image_targets"] = []
+    with pytest.raises(ValueError, match="invalid resolved"):
         verify_results(plan, results)
 
 

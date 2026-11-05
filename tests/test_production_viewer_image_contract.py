@@ -295,7 +295,7 @@ def test_every_installed_probe_uses_production_limits(target, cpu, memory):
     assert resource_limits(target) == ['--cpu-period', '100000', '--cpu-quota', str(int(cpu) * 100000), '--memory', memory]
     selected = commands(target, 'b' * 40, image_id=IMAGE_ID)
     if target in {'sea-ice-daily', 'wdpa-monthly'}:
-        synthetic = next(command for command in selected if (ROOT / 'scripts/local_ingestion_smoke.py').read_text() in command)
+        synthetic = next(command for command in selected if 'scripts/local_ingestion_smoke.py' in command or (ROOT / 'scripts/local_ingestion_smoke.py').read_text() in command)
         assert ('--sea-ice-only' in synthetic) is (target == 'sea-ice-daily')
     for command in selected[1:]:
         if command[:2] == ['docker', 'run']:
@@ -315,3 +315,19 @@ def test_installed_fixture_builds_reuse_native_test_inputs(target):
         assert [row['properties'] for row in fixture['geojson']['features']] == [
             problem('P1', OBJECTID=7), problem('P2', OBJECTID=9), area('AREA2', OBJECTID=11)]
     assert any((ROOT / 'scripts/installed_ingestion_fixture.py').read_text() in command for command in commands(target, 'b' * 40)[1:])
+
+
+def test_wdpa_fixture_carries_translation_fields_through_its_real_cli_input(tmp_path, monkeypatch):
+    from scripts import local_ingestion_smoke as smoke
+    from ingestion.wdpa_monthly import translations
+    def build(command, **kwargs):
+        assert command[1] == "scripts/local_wdpa_sample.py" and "--discover-only" not in command
+        features = json.loads((tmp_path / "source.geojson").read_text())["features"]
+        assert {row["properties"]["MARINE"] for row in features} == {"0", "1"}
+        assert all(set(translations.FIELDS) <= row["properties"].keys() for row in features)
+        output = tmp_path / "build"
+        output.mkdir()
+        (output / "benchmark.json").write_text(json.dumps(dict(state="succeeded", contracts_verified=True,
+            assets={slug: {"rows": 1} for slug in ("wdpa-marine", "wdpa-terrestrial")})))
+    monkeypatch.setattr(smoke.subprocess, "run", build)
+    assert smoke.wdpa_build(tmp_path)["state"] == "succeeded"

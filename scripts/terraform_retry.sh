@@ -17,8 +17,6 @@ if [[ $# -eq 0 ]]; then
 fi
 
 retryable_failure() {
-  # A release failure can follow completed or partial writes. Its state must
-  # be reconciled explicitly; never run the saved apply again automatically.
   if grep -Eqi 'Error releasing the state lock|Permission denied|Forbidden|Unauthorized|Unauthenticated|PERMISSION_DENIED|invalid_grant|status code (400|401|403)|HTTP (400|401|403)|Error (400|401|403):|Invalid |Saved plan' "$1"; then
     return 1
   fi
