@@ -355,7 +355,7 @@ def test_image_suite_uses_verified_interpreter_without_installing_host_dependenc
     assert completed.returncode == 0, completed.stderr
 
 
-def fixture_repo(tmp_path):
+def fixture_repo(tmp_path, *, image_targets=BUILD_TARGETS):
     root = tmp_path / "source"
     root.mkdir()
     executable = os.environ.get("CI_GIT", "git")
@@ -369,7 +369,8 @@ def fixture_repo(tmp_path):
         target = root / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((ROOT / filename).read_text() if filename == ".github/workflows/ci.yml" else "fixture\n")
-    for recipe in ci_contract.RECIPES.values():
+    for target in image_targets:
+        recipe = ci_contract.RECIPES[target]
         package = Path(recipe).parent.name
         path = f'terraform/envs/prod/{package}.tf'
         destination = root / path
