@@ -51,10 +51,13 @@ jobs:
           version: "0.11.8"
           enable-cache: false
       - name: Install locked probe dependencies
+        id: dependencies
         run: uv sync --locked --no-dev
       - name: Install pinned durable receipt verifier
+        id: verifier
         run: python scripts/install_deployment_verifier.py
       - name: Authenticate read-only catalog probe
+        id: authentication
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -100,8 +103,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SAFETY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
+          SAFETY_SETUP_OUTCOMES: ${{ format('dependencies={0}, verifier={1}, authentication={2}', steps.dependencies.outcome, steps.verifier.outcome, steps.authentication.outcome) }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
-        run: uv run --no-sync python scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
+        run: |
+          interpreter=python
+          if [[ -x .venv/bin/python ]]; then interpreter=.venv/bin/python; fi
+          "$interpreter" scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
       - name: Retain safety health report
         id: health-report
         if: ${{ always() && steps.health.outcome != 'skipped' }}
@@ -112,7 +119,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Report safety failure directly
-        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.probe.outcome != 'failure' || steps.health.outcome != 'success' || steps.health-report.outcome != 'success') }}
+        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.probe.outcome == 'success' || steps.health.outcome != 'success' || steps.health-report.outcome != 'success') }}
         env:
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |

@@ -21,9 +21,11 @@ WORKFLOW = ".github/workflows/operational-safety-check.yml"
 JOB = "Check for operational work"
 HEALTH_SCOPE = "health:operational-safety-check"
 
-from scripts import incident_verification_cache as native, install_deployment_verifier as verifier
+from scripts import incident_verification_cache as native
 from scripts.ingestion_targets import TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
+from scripts.sdk_release_authorization import GitHub
+from scripts import workflow_failure_alert as alerts
 
 ROOT = Path(__file__).resolve().parents[1]
 with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
@@ -37,7 +39,6 @@ UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already pub
 PROBE_STEP = "Check operational work"
 UPLOAD_STEP = "Retain operational safety snapshot"
 SCHEMA = "shared-datasets-operational-snapshot-v2"
-PREFIX = "repos/" + native.REPOSITORY
 
 
 class SnapshotWrite(RuntimeError):
@@ -52,25 +53,13 @@ class ReadOnlyAPI:
         raise SnapshotWrite("operational discovery cannot mutate incident state")
 
 
-def validate_context(policy, identity):
-    require(isinstance(policy, dict) and set(policy) == {"head_sha", "gh_version", "since"}
-            and isinstance(policy["head_sha"], str) and re.fullmatch(r"[0-9a-f]{40}", policy["head_sha"])
-            and isinstance(policy["gh_version"], str) and policy["gh_version"].startswith(f"gh version {verifier.VERSION} "),
-            "invalid snapshot policy")
-    native.timestamp(policy["since"])
-    require(isinstance(identity, dict) and set(identity) == {"team", "user", "channel"}
-            and all(isinstance(identity[key], str) and re.fullmatch(pattern, identity[key])
-                    for key, pattern in (("team", r"T[A-Z0-9]+"), ("user", r"U[A-Z0-9]+"), ("channel", r"[CG][A-Z0-9]+"))),
-            "invalid snapshot Slack identity")
-
-
 class Snapshot:
     """Retain catalog proof and verified receipts; always traverse live incident inputs."""
     def __init__(self, data):
         require(isinstance(data, dict) and set(data) == {"schema", "producer", "policy", "identity", "inventory_sha256", "entries"}
                 and data["schema"] == SCHEMA, "invalid snapshot document")
         require(isinstance(data["producer"], dict) and native.execution(data["producer"]) == data["producer"], "invalid snapshot producer")
-        validate_context(data["policy"], data["identity"])
+        native.validate_context(data["policy"], data["identity"], since=True)
         require(data["producer"]["head_sha"] == data["policy"]["head_sha"], "snapshot policy differs from producer revision")
         require(isinstance(data["inventory_sha256"], str) and native.SHA.fullmatch(data["inventory_sha256"]), "invalid inventory fingerprint")
         self.cache = native.VerificationCache(data["producer"], data["identity"],
@@ -95,7 +84,7 @@ class Snapshot:
 
     @classmethod
     def restore(cls, api, run, policy, identity, inventory):
-        validate_context(policy, identity)
+        native.validate_context(policy, identity, since=True)
         require(native.execution(run)["head_sha"] == policy["head_sha"], "current policy differs from execution")
         retained = native.retained_payload(api, run, workflow_path=WORKFLOW, job_name=JOB,
             required_steps=(PROBE_STEP, UPLOAD_STEP), events=("schedule", "workflow_dispatch"), name_prefix="safety-snapshot")
@@ -120,16 +109,10 @@ def context(api, environment=os.environ, *, workflow=WORKFLOW):
             "require exact trusted main workflow")
     identifier, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
     run = api.get(f"repos/{REPOSITORY}/actions/runs/{identifier}/attempts/{attempt}")
-    repository = api.get(f"repos/{REPOSITORY}")
-    definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
     require(run.get("id") == identifier and run.get("run_attempt") == attempt
-            and run.get("head_branch") == "main" and run.get("event") in {"schedule", "workflow_dispatch"}
-            and run.get("path") == definition.get("path") == workflow and run.get("workflow_id") == definition.get("id")
-            and re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha", "")))
-            and repository.get("full_name") == REPOSITORY and type(repository.get("id")) is int
-            and repository["id"] > 0
-            and all(run.get(key, {}).get("id") == repository["id"] and run.get(key, {}).get("full_name") == REPOSITORY
-                    for key in ("repository", "head_repository")), "invalid execution provenance")
+            and run["event"] in {"schedule", "workflow_dispatch"}
+            and run["path"] == workflow, "invalid execution provenance")
+    alerts.source_identity(api, run, workflow)
     return run
 
 
@@ -141,17 +124,12 @@ def validate_safety_dispatch(api, event, environment=os.environ, *, workflow=".g
     require(all(re.fullmatch(r"[1-9][0-9]*", value) for value in values), "missing safety producer attempt")
     identifier, attempt = map(int, values)
     producer = api.get(f"repos/{REPOSITORY}/actions/runs/{identifier}")
-    definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
+    alerts.source_identity(api, producer, WORKFLOW)
     require(producer.get("id") == identifier and producer.get("run_attempt") == attempt
-            and producer.get("path") == definition.get("path") == WORKFLOW
-            and producer.get("workflow_id") == definition.get("id")
-            and re.fullmatch(r"[0-9a-f]{40}", str(producer.get("head_sha")))
+            and producer["path"] == WORKFLOW
             and (producer["head_sha"] == current["head_sha"] or api.get(
                 f"repos/{REPOSITORY}/compare/{producer['head_sha']}...{current['head_sha']}").get("status") == "ahead")
-            and producer.get("head_branch") == "main"
-            and producer.get("event") in {"schedule", "workflow_dispatch"}
-            and all(producer.get(key, {}).get("id") == current[key]["id"]
-                    and producer.get(key, {}).get("full_name") == REPOSITORY for key in ("repository", "head_repository")),
+            and producer.get("event") in {"schedule", "workflow_dispatch"},
             "untrusted safety producer")
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{identifier}/attempts/{attempt}/jobs?per_page=100", field="jobs")
     found = [job for job in jobs if job.get("name") == JOB]
@@ -183,19 +161,14 @@ def catalog_inventory(client):
 
 
 def source_inventory(api, run, since, *, now=None):
-    from scripts import slack_incidents as incidents
     now = now or datetime.now(timezone.utc)
-    start = max(incidents.instant(since), now - timedelta(hours=24))
+    start = max(native.timestamp(since), now - timedelta(hours=24))
     query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
                        + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     rows = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
-    selected = [item for item in rows if item.get("id") != run["id"]
-                and item.get("name") in incidents.alerts.WORKFLOW_PATHS and item.get("head_branch") == "main"
-                and item.get("head_repository", {}).get("full_name") == REPOSITORY]
-    # Healthy timer runs are not new operational events. Their success is read
-    # below when an existing safety incident actually needs recovery.
-    substantive = [item for item in selected if item.get("path") != WORKFLOW or item.get("conclusion") != "success"]
-    return sorted(substantive, key=lambda item: item["id"]), selected, start, now
+    return [item for item in rows if item.get("id") != run["id"]
+                and item.get("name") in alerts.WORKFLOW_PATHS and item.get("head_branch") == "main"
+                and item.get("head_repository", {}).get("full_name") == REPOSITORY], start, now
 
 
 def catalog_changed(client, directory):
@@ -279,7 +252,6 @@ def verification_due(api, sources, pending, *, now):
 
 def reconciliation_stalled(api, run):
     """Read the last two actual dispatch steps; no extra counter or ledger."""
-    from scripts import slack_incidents as incidents
     since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     query = urlencode({"branch": "main", "created": ">=" + since, "per_page": 100})
     rows = api.pages(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
@@ -287,7 +259,7 @@ def reconciliation_stalled(api, run):
     if len(prior) < 2:
         return False
     for item in prior:
-        if item.get("status") != "completed" or not incidents.alerts.verify_source_event(api, item):
+        if item.get("status") != "completed" or not alerts.verify_source_event(api, item):
             return False
         jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{item['id']}/attempts/{item['run_attempt']}/jobs?per_page=100", field="jobs")
         if not any(job["name"] == JOB and any(step["name"] == "Request operational reconciliation"
@@ -322,9 +294,8 @@ def freshness(client, *, now, scheduler, pauses=None):
     pauses = json.loads((ROOT / ".github/scheduler-pauses.json").read_text()) if pauses is None else pauses
     validate_suspensions(pauses, targets=CRON_ASSETS)
     require(set(pauses) <= set(CRON_ASSETS), "unknown Scheduler pause")
-    rows = CATALOG
     require({slug for slugs in CRON_ASSETS.values() for slug in slugs} ==
-            {slug for slug, row in rows.items() if row["status"] == "active" and row["update_cadence"] in FRESHNESS_DAYS},
+            {slug for slug, row in CATALOG.items() if row["status"] == "active" and row["update_cadence"] in FRESHNESS_DAYS},
             "scheduled asset inventory differs from catalog")
     problems = []
     for job, slugs in CRON_ASSETS.items():
@@ -340,7 +311,7 @@ def freshness(client, *, now, scheduler, pauses=None):
         if approved:
             continue
         for slug in slugs:
-            cadence = rows[slug]["update_cadence"]
+            cadence = CATALOG[slug]["update_cadence"]
             blob = client.bucket(DEFAULT_BUCKET).blob(indexes.PREFIX + slug + ".json")
             blob.reload()
             require(0 < blob.size <= indexes.MAX_INDEX_BYTES, "invalid release-index size")
@@ -352,23 +323,21 @@ def freshness(client, *, now, scheduler, pauses=None):
 
 def probe(api, run, identity, since, client, directory):
     from scripts import deployment_revision as deployments
-    from scripts.incident_verification_cache import VerificationCache
 
-    _, all_sources, start, end = source_inventory(api, run, since)
+    all_sources, start, end = source_inventory(api, run, since)
     generations = catalog_inventory(client)
-    inventory = generations
     policy = {"head_sha": run["head_sha"], "gh_version": subprocess.check_output(["gh", "--version"], text=True), "since": since}
     # Every pending WDPA record matters, including older revisions hidden behind
     # a newer deployment. The native observer still verifies before mutation.
     pending = deployments.pending(api, REPOSITORY)
-    snapshot = None if pending else Snapshot.restore(api, run, policy, identity, inventory)
+    snapshot = None if pending else Snapshot.restore(api, run, policy, identity, generations)
     changed = False if snapshot else catalog_changed(client, directory)
-    cache = snapshot.cache if snapshot else VerificationCache.restore(api, run, identity, gh_version=policy["gh_version"])
+    cache = snapshot.cache if snapshot else native.VerificationCache.restore(api, run, identity, gh_version=policy["gh_version"])
     settled, claims = dry_reconciliation(ReadOnlyAPI(api), run, identity, all_sources, start, end, directory, cache)
     (directory / "claims.json").write_text(json.dumps(claims))
     # Do not certify bytes that arrived while the full catalog check ran.
     stable_catalog = catalog_inventory(client) == generations
-    snapshot = Snapshot.capture(run, policy, identity, inventory, cache) if not pending and not claims and settled and not changed and stable_catalog else None
+    snapshot = Snapshot.capture(run, policy, identity, generations, cache) if not pending and not claims and settled and not changed and stable_catalog else None
     if snapshot:
         snapshot.save(directory, run)
     return {"catalog": changed or not stable_catalog, "reconcile": not settled,
@@ -390,7 +359,6 @@ def policy_warnings(now):
 
 def audit_freshness(api, *, now):
     """Weekly audits must complete successfully within a week plus two days."""
-    from scripts.workflow_failure_alert import verify_source_event
     problems = []
     for filename in ("bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"):
         definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{filename}")
@@ -400,7 +368,7 @@ def audit_freshness(api, *, now):
         runs = api.pages(f"repos/{REPOSITORY}/actions/workflows/{filename}/runs?{query}", field="workflow_runs")
         if not any(run.get("path") == definition["path"] and run.get("workflow_id") == definition["id"]
                    and run.get("status") == "completed" and run.get("conclusion") == "success"
-                   and verify_source_event(api, run)
+                   and alerts.verify_source_event(api, run)
                    and timedelta(0) <= now - datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) < timedelta(days=9)
                    for run in runs):
             problems.append(f"{filename}: no successful main completion within 9 days")
@@ -408,8 +376,6 @@ def audit_freshness(api, *, now):
 
 
 def previous_health(api, run):
-    from scripts.incident_verification_cache import artifact_payload
-    from scripts.workflow_failure_alert import verify_source_event
     query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     prior = api.pages(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
     for producer in sorted((row for row in prior if row["id"] < run["id"] and row.get("status") == "completed" and row.get("path") == WORKFLOW), key=lambda row: row["id"], reverse=True):
@@ -417,11 +383,11 @@ def previous_health(api, run):
         selected = [row for row in artifacts if row["name"] == f"safety-health-{producer['id']}-{producer['run_attempt']}" and not row["expired"]]
         if not selected:
             continue
-        require(len(selected) == 1 and producer.get("path") == WORKFLOW and producer.get("event") in {"schedule", "workflow_dispatch"} and verify_source_event(api, producer), "untrusted safety health report")
+        require(len(selected) == 1 and producer.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, producer), "untrusted safety health report")
         jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{producer['id']}/attempts/{producer['run_attempt']}/jobs?per_page=100", field="jobs")
         job, = [row for row in jobs if row["name"] == JOB]
         require(any(step["name"] == "Retain safety health report" and step.get("status") == "completed" and step["conclusion"] == "success" for step in job["steps"]), "health report upload did not succeed")
-        report = artifact_payload(api, {**producer, "cache_job_started_at": job["started_at"], "cache_job_completed_at": job["completed_at"]}, selected[0])
+        report = native.artifact_payload(api, {**producer, "cache_job_started_at": job["started_at"], "cache_job_completed_at": job["completed_at"]}, selected[0])
         require(set(report) in ({"problems", "warnings", "notified_at"}, {"scope", "problems", "warnings", "notified_at"})
                 and report.get("scope", HEALTH_SCOPE) == HEALTH_SCOPE
                 and all(isinstance(report[key], list) and all(isinstance(item, str) for item in report[key]) for key in ("problems", "warnings")), "invalid safety health report")
@@ -430,7 +396,6 @@ def previous_health(api, run):
 
 
 def report_health(api, run, directory, problems, warnings, now):
-    from scripts.incident_verification_cache import canonical
     from scripts.slack_notify import notify
     previous = previous_health(api, run)
     report = {"scope": HEALTH_SCOPE, "problems": sorted(set(problems)), "warnings": sorted(set(warnings)), "notified_at": previous["notified_at"]}
@@ -442,9 +407,25 @@ def report_health(api, run, directory, problems, warnings, now):
                status="error" if problems else "warning", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
         report["notified_at"] = now.isoformat()
     (directory / "health").mkdir(exist_ok=True)
-    (directory / "health/cache.json").write_bytes(canonical(report))
+    (directory / "health/cache.json").write_bytes(native.canonical(report))
     for finding in findings:
         print("::warning::" + finding)
+
+
+def heartbeat_series(now):
+    """Absence alerting needs an existing series; a log write alone is not proof."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/monitoring.read"])
+    query = {"filter": 'metric.type="logging.googleapis.com/user/operational-safety-heartbeat" AND resource.type="global"',
+             "interval.startTime": (now - timedelta(hours=7)).isoformat(), "interval.endTime": now.isoformat(),
+             "view": "HEADERS", "pageSize": 1}
+    with AuthorizedSession(credentials) as session:
+        response = session.get("https://monitoring.googleapis.com/v3/projects/shared-datasets-1/timeSeries", params=query, timeout=30)
+        response.raise_for_status()
+        series = response.json().get("timeSeries", [])
+        require(isinstance(series, list), "invalid heartbeat time-series response")
+        return [] if series else ["Heartbeat metric has no recent time series; absence detection is not established"]
 
 
 def main():
@@ -454,13 +435,11 @@ def main():
     parser.add_argument("--work-dir", type=Path)
     args = parser.parse_args()
     if args.validate_catalog_dispatch:
-        from scripts.deployment_revision import GitHub
         validate_safety_dispatch(GitHub(), json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
         return
-    from scripts import catalog_drift_guard as catalog, slack_incidents as incidents
     require(args.work_dir is not None, "require a working directory")
     args.work_dir.mkdir(parents=True, exist_ok=True)
-    api = incidents.GitHub()
+    api = GitHub()
     run = context(api)
     if args.health:
         now = datetime.now(timezone.utc)
@@ -472,14 +451,17 @@ def main():
         try:
             warnings, problems = policy_warnings(now)
             problems += audit_freshness(api, now=now)
+            require(probe_outcome != "skipped", "Operational setup failed before discovery: " + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps"))
+            from scripts import catalog_drift_guard as catalog
             problems += freshness(catalog.get_client(), now=now, scheduler=scheduler)
             result = json.loads((args.work_dir / "result.json").read_text()) if probe_outcome == "success" else {"reconcile": False}
             if result["reconcile"] and reconciliation_stalled(api, run):
                 problems.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
             for claim in (json.loads((args.work_dir / "claims.json").read_text()) if probe_outcome == "success" else []):
-                if now - incidents.instant(claim["since"]) >= timedelta(hours=24):
+                if now - native.timestamp(claim["since"]) >= timedelta(hours=24):
                     problems.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
             if probe_outcome == "success":
+                warnings += heartbeat_series(now)
                 subprocess.check_call(["gcloud", "logging", "write", "operational-safety-heartbeat", '{"workflow":"operational-safety-check.yml"}',
                 "--payload-type=json", "--severity=INFO", "--project=shared-datasets-1"])
         except Exception as error:  # External health reads fail into the same scoped, deduplicated report.
@@ -489,6 +471,7 @@ def main():
             problems.append(f"Operational discovery {probe_outcome}; inspect Check operational work")
         report_health(api, run, args.work_dir, problems, warnings, now)
         return
+    from scripts import catalog_drift_guard as catalog, slack_incidents as incidents
     client = catalog.get_client()
     identity = incidents.Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
                                os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")).identity()

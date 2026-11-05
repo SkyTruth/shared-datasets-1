@@ -987,8 +987,8 @@ def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_pa
     assert optimized[1] == original[1] and len(optimized[1]) == 2
     assert len(original[0]) == 17 and len(optimized[0]) == 13
     assert original[0].count(prefix) == 4 and optimized[0].count(prefix) == 1
-    assert original[0].count(prefix + "/actions/workflows/2") == 2
-    assert optimized[0].count(prefix + "/actions/workflows/2") == 1
+    assert original[0].count(prefix + "/actions/workflows/deployment-verification.yml") == 2
+    assert optimized[0].count(prefix + "/actions/workflows/deployment-verification.yml") == 1
     identity_paths = {prefix, *(path for path in original[0] if "/actions/workflows/" in path)}
     assert [path for path in optimized[0] if path not in identity_paths] == [
         path for path in original[0] if path not in identity_paths]

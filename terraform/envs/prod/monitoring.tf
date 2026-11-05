@@ -423,13 +423,13 @@ EOT
   ]
 }
 
-# The safety probe retains its publisher identity. This adds only the single
-# Scheduler/execution reads and heartbeat write; protected monitoring sync provisions these first.
+# The existing publisher reads Scheduler/executions/heartbeat series and writes
+# the heartbeat; protected monitoring sync provisions this role first.
 resource "google_project_iam_custom_role" "operational_safety_reader" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalSafetyReader"
   title       = "Shared datasets operational safety reader"
-  permissions = ["cloudscheduler.jobs.get", "run.executions.get", "logging.logEntries.create"]
+  permissions = ["cloudscheduler.jobs.get", "run.executions.get", "logging.logEntries.create", "monitoring.timeSeries.list"]
 }
 
 resource "google_project_iam_member" "operational_safety_reader" {

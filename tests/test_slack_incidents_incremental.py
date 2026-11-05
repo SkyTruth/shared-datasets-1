@@ -366,6 +366,5 @@ def test_status_appended_during_verification_cannot_produce_recovery_or_memo(dur
                 api.statuses.insert(0, latest)
             return result
         verifier.side_effect = changing_crypto
-        with pytest.raises(incidents.IncidentError, match="status history changed"):
-            incidents.terminal_success(api, "deployment:wdpa-monthly")
+        assert incidents.terminal_success(api, "deployment:wdpa-monthly") == (None, None)
     assert verifier.call_count == 2

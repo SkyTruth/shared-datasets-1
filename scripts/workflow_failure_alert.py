@@ -25,15 +25,20 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Apply Translation notice secret IAM bootstrap")
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-MONITORED_WORKFLOWS = set((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values()) - {"dataset-usage-deploy.yml"} | {
-    "bucket-hygiene-audit.yml", "ci.yml", "deployment-recovery.yml", "deployment-verification.yml",
-    "operational-safety-check.yml", "unattended-workflow-alert.yml", "publish-dataset.yml", "scratch-cleanup-audit.yml",
+WORKFLOW_EVENTS = {
+    **dict.fromkeys(set((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values()) - {"dataset-usage-deploy.yml"} | {
+        "bucket-hygiene-audit.yml", "publish-dataset.yml", "scratch-cleanup-audit.yml",
+    }, {"schedule", "workflow_run"}),
+    "ci.yml": {"push"},
+    **dict.fromkeys(("deployment-recovery.yml", "deployment-verification.yml", "operational-safety-check.yml",
+                     "unattended-workflow-alert.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
+                     "publish-typescript-sdk.yml"), {"schedule", "workflow_run", "workflow_dispatch"}),
 }
-WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
-OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
-UNATTENDED_DISPATCH_WORKFLOWS = OBSERVER_WORKFLOWS | {
-    name for path in {"operational-safety-check.yml", "catalog-web-deploy.yml", "unattended-workflow-alert.yml", "catalog-viewer-deploy.yml"} for name in WORKFLOW_NAMES[path]
-}
+WORKFLOW_PATHS = {name: filename for filename in WORKFLOW_EVENTS for name in WORKFLOW_NAMES[filename]}
+
+
+def unattended(run):
+    return run["event"] in WORKFLOW_EVENTS.get(WORKFLOW_PATHS.get(run["name"]), set())
 
 
 def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
@@ -60,14 +65,15 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
 def safety_health_only(run, jobs):
     if run["name"] not in WORKFLOW_NAMES["operational-safety-check.yml"]:
         return False
-    # A retained health report owns covered probe failures. Dispatch, setup,
-    # notification and upload failures still need infrastructure incident routing.
+    # Retained reports own setup/probe findings; dispatch and delivery still alert.
     for job in jobs:
         steps = job.get("steps", [])
+        probe = next((index for index, step in enumerate(steps) if step["name"] == "Check operational work"), 0)
+        covered = {step["name"] for step in steps[:probe]} | {"Check operational work", "Check freshness and stalled operations"}
         failed = {step["name"] for step in steps if step.get("conclusion") in FAILED_CONCLUSIONS}
-        if (failed and failed <= {"Check operational work", "Check freshness and stalled operations"}
+        if (failed and failed <= covered
                 and any(step.get("name") == "Retain safety health report" and step.get("conclusion") == "success" for step in steps)
-                and ("Check operational work" not in failed or any(step.get("name") == "Check freshness and stalled operations"
+                and (failed == {"Check freshness and stalled operations"} or any(step.get("name") == "Check freshness and stalled operations"
                      and step.get("conclusion") == "success" for step in steps))):
             return True
     return False
@@ -78,9 +84,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     # Maintenance and automatic follow-ups are unattended. CI's main-push
     # publication jobs share that coverage; other supervised checks stay in GitHub.
     if (
-        not (run["event"] in {"schedule", "workflow_run"}
-             or (run["event"] == "push" and run["name"] in WORKFLOW_NAMES["ci.yml"])
-             or (run["event"] == "workflow_dispatch" and run["name"] in UNATTENDED_DISPATCH_WORKFLOWS))
+        not unattended(run)
         or run["conclusion"] not in FAILED_CONCLUSIONS
         or run["status"] != "completed"
         or run["head_branch"] != "main"
@@ -88,8 +92,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         or event["repository"]["full_name"] != REPOSITORY
     ):
         return None
-    run_id = run["id"]
-    if type(run_id) is not int or run_id <= 0:
+    if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
     if catalog_probe_only(run, jobs or []):
         return None
@@ -103,36 +106,39 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         "title": "Unattended GitHub workflow failed",
         "body": f"{name} finished with {run['conclusion']}.\n"
                 f"Trigger: {run['event']}.\n"
-                f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Open workflow run>",
+                f"<https://github.com/{REPOSITORY}/actions/runs/{run['id']}|Open workflow run>",
         "status": "error",
     }
 
 
-def verify_source_event(api: GitHub, run: dict) -> bool:
-    """Verify every source identity before notification; obsolete attempts are no-ops."""
-    run_id = run["id"]
-    if type(run_id) is not int or run_id <= 0:
+def source_identity(api: GitHub, run: dict, path: str) -> None:
+    """Authenticate an API run against its declared main workflow path."""
+    if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
     if type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0 or not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha"))):
         raise ValueError("invalid source attempt or revision")
-    if run.get("name") not in WORKFLOW_PATHS:
-        raise ValueError("unknown unattended workflow identity")
-    authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
-    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{authoritative['workflow_id']}")
+    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{path.rsplit('/', 1)[-1]}")
     repository = api.get(f"repos/{REPOSITORY}")
-    if (workflow.get("id") != authoritative["workflow_id"]
-            or workflow.get("path") != ".github/workflows/" + WORKFLOW_PATHS[run["name"]]
-            or authoritative.get("path") != workflow.get("path")
-            or authoritative.get("id") != run_id
-            or authoritative.get("name") != run["name"]
-            or authoritative.get("head_sha") != run["head_sha"]
-            or authoritative.get("event") != run["event"]
-            or authoritative.get("head_branch") != "main"
-            or any(authoritative.get(key, {}).get("id") != repository.get("id")
-                   or authoritative.get(key, {}).get("full_name") != REPOSITORY
+    if (workflow.get("id") != run["workflow_id"]
+            or workflow.get("path") != path or run.get("path") != path
+            or run.get("head_branch") != "main"
+            or any(run.get(key, {}).get("id") != repository.get("id")
+                   or run.get(key, {}).get("full_name") != REPOSITORY
                    for key in ("repository", "head_repository"))
             or repository.get("full_name") != REPOSITORY
             or type(repository.get("id")) is not int or repository["id"] <= 0):
+        raise ValueError("failure event does not identify a trusted main source workflow")
+
+
+def verify_source_event(api: GitHub, run: dict) -> bool:
+    """Verify every source identity before notification; obsolete attempts are no-ops."""
+    if type(run.get("id")) is not int or run["id"] <= 0 or type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0:
+        raise ValueError("invalid source run or attempt")
+    if run.get("name") not in WORKFLOW_PATHS:
+        raise ValueError("unknown unattended workflow identity")
+    authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
+    source_identity(api, authoritative, ".github/workflows/" + WORKFLOW_PATHS[run["name"]])
+    if any(authoritative.get(key) != run.get(key) for key in ("id", "name", "head_sha", "event")):
         raise ValueError("failure event does not identify a trusted main source workflow")
     if authoritative["run_attempt"] > run["run_attempt"]:
         return False

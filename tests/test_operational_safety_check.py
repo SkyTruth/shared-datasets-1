@@ -34,6 +34,7 @@ def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
     monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
     monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
+    monkeypatch.setattr(safety, "heartbeat_series", mock.Mock(return_value=[]))
 
 
 def stamp(value):
@@ -147,12 +148,11 @@ def test_inventory_retains_missed_final_events_and_source_attempt_changes():
     api.add_source(missed)
     api.add_source(api.source(102, "operational-safety-check.yml", conclusion="success"))
     api.add_source(api.current)
-    inventory, all_sources, start, end = safety.source_inventory(api, api.current, stamp(START), now=NOW)
-    assert [source["id"] for source in inventory] == [101]
-    assert [source["id"] for source in all_sources] == [101, 102]
+    inventory, start, end = safety.source_inventory(api, api.current, stamp(START), now=NOW)
+    assert [source["id"] for source in inventory] == [101, 102]
     assert (start, end) == (START, NOW)
     missed["run_attempt"] += 1
-    changed, _, _, _ = safety.source_inventory(api, api.current, stamp(START), now=NOW)
+    changed, _, _ = safety.source_inventory(api, api.current, stamp(START), now=NOW)
     assert changed != inventory and changed[0]["run_attempt"] == 2
     assert "branch=main" in api.calls[-1][1]
 
@@ -162,7 +162,7 @@ def test_inventory_is_activation_limited_and_retains_unfinished_or_failed_safety
     api.add_source(api.source(101, "operational-safety-check.yml"))
     api.add_source(api.source(102, "operational-safety-check.yml", status="in_progress", conclusion=None))
     activated = NOW - timedelta(hours=2)
-    inventory, _, start, _ = safety.source_inventory(api, api.current, stamp(activated), now=NOW)
+    inventory, start, _ = safety.source_inventory(api, api.current, stamp(activated), now=NOW)
     assert [row["id"] for row in inventory] == [101, 102] and start == activated
     query = parse_qs(api.calls[-1][1].split("?", 1)[1])
     assert query["created"] == [stamp(activated) + ".." + stamp(NOW)]
@@ -321,6 +321,7 @@ def test_probe_main_always_requires_bot_identity_and_serializes_worker_decisions
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(incidents, "GitHub", lambda: api)
+    monkeypatch.setattr(safety, "GitHub", lambda: api)
     monkeypatch.setattr(catalog, "get_client", lambda: client)
     bot = mock.Mock()
     bot.identity.return_value = IDENTITY
@@ -402,7 +403,7 @@ def test_catalog_admission_rejects_forged_context_or_producer(dispatch_context, 
         job["steps"][0]["conclusion"] = "skipped"
     else:
         event["inputs"]["safety_run_id"] = "../200"
-    with pytest.raises(RuntimeError, match="OPERATIONAL_SAFETY|comparison commit unavailable"):
+    with pytest.raises((RuntimeError, ValueError), match="OPERATIONAL_SAFETY|comparison commit unavailable|trusted main source|unknown unattended"):
         safety.validate_safety_dispatch(api, event, environment, workflow=api.current["path"])
     assert api.posts == []
 
@@ -434,6 +435,7 @@ def test_batch_cli_authenticates_exact_inflight_probe_without_parent_wait(tmp_pa
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(incidents, "GitHub", lambda: api)
+    monkeypatch.setattr(safety, "GitHub", lambda: api)
     slack = mock.Mock()
     slack.identity.return_value = IDENTITY
     monkeypatch.setattr(incidents, "Slack", lambda *_: slack)
@@ -499,7 +501,7 @@ def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_
                 'GITHUB_WORKFLOW_REF':safety.REPOSITORY+'/'+safety.WORKFLOW+'@refs/heads/main',
                 'GITHUB_RUN_ID':'300','GITHUB_RUN_ATTEMPT':'1'}.items():
         monkeypatch.setenv(k,v)
-    monkeypatch.setattr(incidents,'GitHub',lambda:api)
+    monkeypatch.setattr(safety,'GitHub',lambda:api)
     monkeypatch.setattr(catalog,'get_client',lambda:client)
     monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
     monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(directory)])
@@ -610,7 +612,7 @@ def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp
                        'GITHUB_WORKFLOW_REF': safety.REPOSITORY + '/' + safety.WORKFLOW + '@refs/heads/main',
                        'GITHUB_RUN_ID': '300', 'GITHUB_RUN_ATTEMPT': '1'}.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setattr(incidents, 'GitHub', lambda: api)
+    monkeypatch.setattr(safety, 'GitHub', lambda: api)
     monkeypatch.setattr(catalog, 'get_client', lambda: None)
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
     monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
@@ -723,7 +725,7 @@ def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(def
 
 def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result_files(tmp_path, monkeypatch):
     api = OperationalAPI()
-    monkeypatch.setattr(incidents, 'GitHub', lambda: api)
+    monkeypatch.setattr(safety, 'GitHub', lambda: api)
     monkeypatch.setattr(safety, 'context', lambda *_: api.current)
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], []))
     monkeypatch.setattr(catalog, 'get_client', lambda: None)
