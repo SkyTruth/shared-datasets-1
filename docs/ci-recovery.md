@@ -50,8 +50,8 @@ The protected **GitHub workflow identity sync** must first install the recovery 
 read-only planning metadata role and exact default-state read/workspace-list
 grant. Only `deployment-recovery.yml` can assume this identity. State may contain the
 Terraform-managed Monitoring Slack channel auth token; observers retain no state
-read grant. The recovery identity
-grants no state writes, Secret Manager version access or deployment authority.
+read grant. Recovery has no state writes, Secret Manager version access or
+deployment authority.
 Unsupported metadata reads fail closed and require reviewed recovery. Receipt
 verification requires pinned `gh`; a version failure identifies the installer.
 

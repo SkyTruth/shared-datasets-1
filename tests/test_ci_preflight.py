@@ -407,9 +407,10 @@ def fixture_repo(tmp_path, *, image_targets=BUILD_TARGETS):
     git = fixture_git(root)
     git("remote", "remove", "origin")
     if not image_targets:
-        for target in BUILD_TARGETS:
-            package = Path(ci_contract.RECIPES[target]).parent.name
-            (root / f"terraform/envs/prod/{package}.tf").unlink()
+        # Static-HCL cases construct their complete scope; unrelated production
+        # declarations add parser work and can hide fixture dependencies.
+        for path in (root / "terraform").rglob("*.tf"):
+            path.unlink()
         git("add", ".")
         git("commit", "-m", "non-image fixture")
     return root, git
