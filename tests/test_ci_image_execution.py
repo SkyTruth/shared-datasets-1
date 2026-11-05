@@ -110,7 +110,7 @@ def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tm
     for path in paths:
         target = source / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("changed input\n")
+        target.write_text(target.read_text() + "\n# changed input\n")
     git("add", ".")
     git("commit", "-m", "select image targets")
     monkeypatch.setenv("GITHUB_RUN_ID", "42094352596")
