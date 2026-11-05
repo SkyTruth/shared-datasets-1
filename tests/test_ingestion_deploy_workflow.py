@@ -15,7 +15,7 @@ from scripts import deployment_revision as revision
 
 import pytest
 from scripts.deployment_revision import TARGET_WORKFLOWS
-from scripts.ingestion_targets import TARGETS
+from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 from scripts.deployment_receipt_contracts import expanded_steps
 
 from workflow_helpers import (
@@ -176,14 +176,14 @@ def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix='
         'CANARY_RUN_DATE': '', 'CANCEL_RUNNING_CANARY': 'false',
         **{key.upper(): str(value).lower() if isinstance(value, bool) else str(value)
            for key, value in target_table()[target].items() if key in {
-               'image_config_variable', 'canary_attempts', 'canary_timeout_phase', 'canary_run_url',
+               'plan_guard', 'image_config_variable', 'canary_attempts', 'canary_timeout_phase', 'canary_run_url',
            }},
         **(extra or {}),
     }
     return subprocess.run(['bash', '-e', '-c', prefix + script], cwd=REPO_ROOT, env=env, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
+@pytest.mark.parametrize('target', TARGETS)
 def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
     config = target_table()[target]
     assert config['workflow'] == TARGET_WORKFLOWS[target]
@@ -197,7 +197,7 @@ def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
                        extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': image, 'TESTED_IMAGE_CONFIG': 'sha256:' + 'b' * 64})
     assert result.returncode == 0, result.stderr
     args = json.loads(result.stdout)
-    assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(config['targets'])
+    assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(subprocess.check_output(config['targets_command'], text=True).splitlines() if config['targets_command'] else config['targets'])
     variables = dict(a.removeprefix('-var=').split('=', 1) for a in args if a.startswith('-var='))
     assert variables[config['image_variable']] == image
     assert set(t['image_variable'] for t in target_table().values()) <= variables.keys()
@@ -209,6 +209,20 @@ def test_unregistered_target_fails_before_image_or_authentication(tmp_path):
                        extra={'TARGET': 'arbitrary-job', 'WORKFLOW_FILE': 'arbitrary-job-deploy.yml'})
     assert result.returncode != 0
     assert not (tmp_path / 'outputs').exists()
+
+
+def test_target_discovery_failure_stops_before_terraform(tmp_path):
+    binary = tmp_path / 'bin'
+    binary.mkdir()
+    uv = binary / 'uv'
+    uv.write_text('#!/bin/sh\nif [ "$1" = sync ]; then exit 0; fi\nexit 2\n')
+    uv.chmod(0o755)
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/terraform_retry.sh').write_text('touch "$RUNNER_TEMP/terraform-called"\n')
+    result = run_shell(tmp_path, shared_step('apply', 'Terraform plan')['run'], target='dataset-usage',
+                       extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': 'registry/job@sha256:' + 'a' * 64})
+    assert result.returncode != 0
+    assert not (tmp_path / 'terraform-called').exists()
 
 
 @pytest.mark.parametrize('filename,job', [
@@ -287,7 +301,8 @@ def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollo
         for key in ('executor_sha', 'source_run_id', 'source_run_attempt'):
             assert job['with'][key] == '${{ inputs.' + key + ' }}'
             assert all(triggers[event]['inputs'][key]['required'] for event in ('workflow_call', 'workflow_dispatch'))
-        assert job['concurrency'] == {'group': 'ingestion-' + target, 'queue': 'max', 'cancel-in-progress': False}
+        if target != 'dataset-usage':
+            assert job['concurrency'] == {'group': 'ingestion-' + target, 'queue': 'max', 'cancel-in-progress': False}
     locked_runs = '\n'.join(s.get('run', '') for s in jobs['apply']['steps'])
     assert 'jobs execute' not in locked_runs and 'jobs executions describe' not in locked_runs
     names = [s.get('name') for s in jobs['apply']['steps']]
@@ -392,9 +407,9 @@ def test_short_canary_requires_terminal_success_of_exact_digest(tmp_path, target
 def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
     names = [s.get('name') for s in shared_workflow()['jobs']['verify']['steps']]
     order = ['Require successful signed apply', 'Confirm deployed digest', 'Execute ingestion canary', 'Watch ingestion canary',
-             'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume sea-ice-daily scheduler', 'Record deployment outcome']
+             'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume verified ingestion scheduler', 'Record deployment outcome']
     assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
-    resume = shared_step('verify', 'Resume sea-ice-daily scheduler')
+    resume = shared_step('verify', 'Resume verified ingestion scheduler')
     assert resume['if'] == "fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler"
     for published in (True, False):
         calls = tmp_path / 'calls'
@@ -490,9 +505,10 @@ def test_runtime_window_wait_is_required_before_canary_launch():
     for job in ("prepare", "apply", "verify"):
         command = shared_step(job, "Check runtime verification window")["run"]
         assert ("--wait-seconds 3750" in command) == (job == "verify")
-    for target in TARGETS:
+    for target, config in TARGETS.items():
         wrapper = load_workflow(REPO_ROOT / f".github/workflows/{target}-deploy.yml")
-        assert wrapper["on"]["workflow_dispatch"]["inputs"]["cancel_running_canary"]["default"] is False
+        if config["plan_guard"] != "usage":
+            assert wrapper["on"]["workflow_dispatch"]["inputs"]["cancel_running_canary"]["default"] is False
 
 
 @pytest.mark.parametrize("defect", ["valid", "manifest", "schema", "sidecar", "fgb", "tiles", "hygiene"])
@@ -542,29 +558,39 @@ def test_extracted_release_commands_validate_real_serialized_artifacts(tmp_path,
         verify.hygiene(report)
 
 
-def test_usage_canary_releases_state_lock_and_records_failed_apply():
-    from scripts.deployment_receipt_contracts import verification_boundary
+def test_usage_wrapper_keeps_bootstrap_and_shared_canary_boundary():
+    from scripts.deployment_receipt_contracts import ingestion_boundary
     workflow = load_workflow(REPO_ROOT / ".github/workflows/dataset-usage-deploy.yml")
-    deploy, verify = workflow["jobs"]["deploy"], workflow["jobs"]["verify"]
-    assert "concurrency" not in verify
-    assert deploy["concurrency"]["group"] == "prod-terraform-state"
-    assert not any("jobs execute" in s.get("run", "") for s in deploy["steps"])
-    assert any("jobs execute" in s.get("run", "") for s in verify["steps"])
+    assert set(workflow["jobs"]) == {"bootstrap", "deploy"}
+    assert workflow["jobs"]["deploy"]["uses"] == "./.github/workflows/ingestion-deploy.yml"
+    assert workflow["jobs"]["deploy"]["with"]["target"] == "dataset-usage"
+    assert workflow["jobs"]["deploy"]["needs"] == "bootstrap"
+    assert workflow["jobs"]["bootstrap"]["with"]["sync_name"] == "Dataset usage deploy IAM bootstrap"
     assert workflow["concurrency"] == {"group": "deployment-dataset-usage", "queue": "max", "cancel-in-progress": False}
-    assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy") == []
-    verify["if"] = "success()"
-    assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy")
+    assert ingestion_boundary(shared_workflow()) == []
 
 
-@pytest.mark.parametrize('prepared,proceed,cancelled,accepted', [
-    ('success', 'true', False, True), ('failure', 'true', False, False),
-    ('skipped', 'true', False, False), ('success', 'false', False, False),
-    ('success', 'true', True, False),
+def test_usage_window_does_not_require_broader_regional_inventory_permissions(tmp_path, monkeypatch):
+    monkeypatch.setenv('GITHUB_OUTPUT', str(tmp_path / 'output'))
+    with patch.object(revision.subprocess, 'check_output') as cloud:
+        revision.runtime_window(SimpleNamespace(target='dataset-usage', canary_run_date='', allow_cancel='false'))
+    cloud.assert_not_called()
+    assert (tmp_path / 'output').read_text() == 'ready=true\n'
+    assert TARGETS['dataset-usage']['window_in_plan']
+    guard = shared_step('apply', 'Enforce usage telemetry, activation and cost boundaries')
+    assert "steps.window.outputs.ready == 'true'" in guard['if']
+    assert 'scripts/dataset_usage_deploy.py --plan-json' in guard['run']
+
+
+@pytest.mark.parametrize('bootstrap,sync,event,accepted', [
+    ('success', True, 'push', True), ('skipped', False, 'push', True),
+    ('failure', True, 'push', False), ('skipped', True, 'push', False),
+    ('success', False, 'workflow_dispatch', True), ('failure', False, 'workflow_dispatch', False),
 ])
-def test_usage_apply_explicitly_admits_prepared_image_after_skipped_bootstrap(prepared, proceed, cancelled, accepted):
+def test_usage_wrapper_preserves_iam_admission(bootstrap, sync, event, accepted):
     from test_ci_deployments import condition_result
-    workflow = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')
-    assert workflow['jobs']['deploy']['needs'] == 'prepare'
-    assert condition_result(workflow['jobs']['deploy'], {
-        'needs.prepare.result': prepared, 'needs.prepare.outputs.proceed': proceed,
-    }, cancelled=cancelled) is accepted
+    job = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')['jobs']['deploy']
+    assert condition_result(job, {
+        'needs.bootstrap.result': bootstrap, 'inputs.sync_iam': sync,
+        'github.event_name': event, 'github.ref': 'refs/heads/main',
+    }) is accepted

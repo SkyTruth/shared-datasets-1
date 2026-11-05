@@ -21,7 +21,7 @@ from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
-from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS
 from scripts import cdn_plan_readiness as cdn
 from scripts import terraform_target_contracts as terraform_targets
 from scripts.terraform_target_contracts import workflow
@@ -29,12 +29,12 @@ from scripts.terraform_target_contracts import workflow
 DEPLOYS = {config["selection"].replace("_", "-"): target for target, config in INGESTION_CONFIGS.items()}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml",
+    "prod-terraform-target-apply.yml", "ingestion-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
     "ingestion-deploy.yml",
-    "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
+    "catalog-viewer-deploy.yml",
 )
 
 
@@ -204,6 +204,11 @@ def deployment_contract(root, target):
             errors.append(f"{name}: exact tested {key} must be required and forwarded")
     shared = workflow(root, "ingestion-deploy.yml")
     jobs = shared["jobs"]
+    if INGESTION_CONFIGS[DEPLOYS[target]]["plan_guard"] == "usage":
+        guards = [step for step in jobs["apply"]["steps"] if "scripts/dataset_usage_deploy.py --plan-json" in step.get("run", "")]
+        if (len(guards) != 1 or guards[0].get("continue-on-error")
+                or guards[0].get("if") != "steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'"):
+            errors.append(f"{name}: usage telemetry saved-plan guard must gate deployment")
     if jobs["apply"].get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
         errors.append(f"{name}: protected serialized production job required")
     for job in jobs.values():

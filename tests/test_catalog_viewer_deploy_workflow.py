@@ -35,32 +35,33 @@ def test_viewer_preserves_protected_scopes_and_transports_only_prepared_image():
         assert triggers['workflow_call']['inputs'][name]['required']
         assert triggers['workflow_call']['inputs'][name]['type'] == triggers['workflow_dispatch']['inputs'][name]['type'] == 'string'
         assert triggers['workflow_dispatch']['inputs'][name]['required']
-    prepare, deploy = (workflow['jobs'][name] for name in ('prepare', 'deploy'))
-    assert 'concurrency' not in prepare
-    assert deploy['environment'] == prepare['environment'] == 'shared-datasets-production'
-    assert deploy['concurrency'] == {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+    jobs = workflow['jobs']
+    assert set(jobs) == {'prepare', 'bootstrap', 'ready', 'deploy', 'verify'}
+    assert all(job['environment'] == 'shared-datasets-production' for job in jobs.values())
+    assert [key for key, job in jobs.items() if 'concurrency' in job] == ['bootstrap', 'deploy']
     assert workflow['concurrency'] == {'group': 'deployment-catalog-viewer', 'queue': 'max', 'cancel-in-progress': False}
-    assert deploy['needs'] == 'prepare' and deploy['if'] == "needs.prepare.outputs.proceed == 'true'"
-    assert deploy['env'] == {'CATALOG_VIEWER_IMAGE': '${{ needs.prepare.outputs.image }}',
-                             'CATALOG_VIEWER_LOCAL_DIGEST': '${{ needs.prepare.outputs.config_digest }}'}
-    assert not any('docker ' in s.get('run', '') or 'sleep 30' in s.get('run', '') for s in deploy['steps'])
-    steps = workflow_steps_by_name(workflow, 'deploy')
-    assert terraform_targets(steps['Terraform plan Secret Manager IAM bootstrap']['run']) == BOOTSTRAP
-    assert terraform_targets(steps['Terraform plan']['run']) == RESOURCES
-    assert 'catalog_viewer_image=${CATALOG_VIEWER_IMAGE}' in steps['Terraform plan']['run']
-    assert all('-refresh=false' in steps[name]['run'] for name in ('Terraform plan', 'Terraform plan Secret Manager IAM bootstrap'))
-    names = list(steps)
-    ordered = ['Attest serialized deployment claim before mutation', 'Terraform apply Secret Manager IAM bootstrap',
-               'Verify catalog-viewer live dependencies', 'Terraform plan', 'Enforce catalog-viewer resource-change allowlist',
-               'Verify permissions required by the saved viewer plan', 'Terraform apply', 'Verify ready revision uses tested image']
-    assert [names.index(name) for name in ordered] == sorted(names.index(name) for name in ordered)
+    bootstrap = workflow_steps_by_name(workflow, 'bootstrap')
+    deploy = workflow_steps_by_name(workflow, 'deploy')
+    assert terraform_targets(bootstrap['Terraform plan Secret Manager IAM bootstrap']['run']) == BOOTSTRAP
+    assert terraform_targets(deploy['Terraform plan']['run']) == RESOURCES
+    assert 'catalog_viewer_image=${CATALOG_VIEWER_IMAGE}' in deploy['Terraform plan']['run']
+    assert '-refresh=false' in deploy['Terraform plan']['run']
+    assert '-refresh=false' in bootstrap['Terraform plan Secret Manager IAM bootstrap']['run']
+    assert 'Verify catalog-viewer live dependencies' in workflow_steps_by_name(workflow, 'ready')
+    assert 'Verify ready revision uses tested image' in workflow_steps_by_name(workflow, 'verify')
+    from scripts.deployment_receipt_contracts import viewer_boundary
+    assert viewer_boundary(workflow) == []
+    names = list(deploy)
+    order = ['Require successful signed bootstrap', 'Terraform plan', 'Enforce catalog-viewer resource-change allowlist',
+             'Verify permissions required by the saved viewer plan', 'Terraform apply']
+    assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
 
 
 @pytest.mark.parametrize('bootstrap', [True, False])
 @pytest.mark.parametrize('foreign', [True, False])
 @pytest.mark.parametrize('actions', [['create'], ['update'], ['delete'], ['no-op']])
 def test_actual_viewer_allowlists_preserve_exact_scope(tmp_path, bootstrap, foreign, actions):
-    steps = workflow_steps_by_name(load_workflow(WORKFLOW), 'deploy')
+    steps = workflow_steps_by_name(load_workflow(WORKFLOW), 'bootstrap' if bootstrap else 'deploy')
     name = 'Enforce Secret Manager IAM bootstrap allowlist' if bootstrap else 'Enforce catalog-viewer resource-change allowlist'
     plan = 'catalog-viewer-secret-manager-iam-bootstrap' if bootstrap else 'catalog-viewer'
     for address in BOOTSTRAP if bootstrap else RESOURCES:

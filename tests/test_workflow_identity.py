@@ -30,7 +30,7 @@ def test_shared_ingestion_leaf_adds_no_top_level_or_notification_authority():
     assert "ingestion-deploy.yml" not in alerts.MONITORED_WORKFLOWS
     assert "ingestion-deploy.yml" not in deployment_revision.TARGET_WORKFLOWS.values()
     assert set(deployment_revision.TARGET_WORKFLOWS[target] for target in deployment_revision.INGESTION_TARGETS) == {
-        "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+        "dataset-usage-deploy.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
     }
 
 

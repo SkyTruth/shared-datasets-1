@@ -302,12 +302,12 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     if path.name == "ingestion-deploy.yml":
                         assert step["name"] == "Execute ingestion canary"
                         assert step['env']['CANARY_RUN_URL'] == '${{ fromJSON(needs.prepare.outputs.config).canary_run_url }}'
-                        from scripts.ingestion_targets import TARGETS
+                        from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
                         assert {name for name, config in TARGETS.items() if not config['canary_run_url']} == {'wdpa-monthly'}
                         assert "Watch ingestion canary" in workflow_steps_by_name(workflow, "verify")
                     else:
                         assert "--wait" in run and "--async" not in run
-    assert set(marked_steps) == {"Execute ingestion canary", "Execute bounded usage canary"}
+    assert set(marked_steps) == {"Execute ingestion canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
