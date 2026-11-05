@@ -119,7 +119,7 @@ def dependency_inputs(revision=None, root=None):
                 copied.add(source + "/" if directory else source)
         copies[target] = set(copied)
         copied.update({f"tests/fixtures/production_images/{target}.json", f"tests/test_{target.replace('-', '_')}.py"})
-        if "{fixture_script}" in json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot[".github/terraform-targets.json"]).get("image_checks", {})).get(target, {})):
+        if "{fixture_script}" in json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot.get(".github/terraform-targets.json", b"{}")).get("image_checks", {})).get(target, {})):
             copied.add("scripts/installed_ingestion_fixture.py")
         images[target] = copied
     native = closure(NATIVE_TESTS)

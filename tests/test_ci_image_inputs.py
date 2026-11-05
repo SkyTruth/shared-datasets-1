@@ -5,9 +5,19 @@ import shlex
 import pytest
 
 from scripts.ci_contract import resolve_selection, SUITES
+from scripts import ci_contract
 from scripts.tested_image_bundle import RECIPES
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_historical_recipe_before_probe_registry_keeps_its_copy_inputs(tmp_path, monkeypatch):
+    recipe = 'ingestion/mpatlas_monthly/Dockerfile'
+    monkeypatch.setattr(ci_contract, 'RECIPES', {'mpatlas-monthly': recipe})
+    monkeypatch.setattr(ci_contract, 'repository_files', lambda *_: {recipe: b'FROM python:3.12\nCOPY ingestion/mpatlas_monthly /app/job\n',
+                                                                 'ingestion/mpatlas_monthly/run.py': b''})
+    inputs = ci_contract.dependency_inputs('before-registry', tmp_path)[0]['mpatlas-monthly']
+    assert ci_contract.matches('ingestion/mpatlas_monthly/run.py', inputs)
 
 
 @pytest.mark.parametrize('path', ['uv.lock', 'pyproject.toml'])
