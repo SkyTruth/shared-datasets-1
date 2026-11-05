@@ -1015,20 +1015,20 @@ def test_ci_administration_does_not_rebuild_production_images(path):
     assert resolve_selection([path])["production_image_targets"] == []
 
 
-@pytest.mark.parametrize("consumer", ["image", "native", "browser", "unused"])
+@pytest.mark.parametrize("consumer", ["image", "native", "browser", "unused", "unproved"])
 def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, consumer):
     source, git = fixture_repo(tmp_path)
     for path in source.rglob("*.py"):
         path.write_text("")
-    leaf = source / "scripts/retired.py"
+    leaf = source / ("tests/fixtures/retired.json" if consumer == "unproved" else "scripts/retired.py")
     leaf.write_text("value = 1\n")
     recipe = source / "ingestion/mpatlas_monthly/Dockerfile"
     recipe.parent.mkdir(parents=True, exist_ok=True)
     recipe.write_text("FROM python:3.12\nCOPY ingestion/mpatlas_monthly /app/job\n")
     entry = source / {"image": "ingestion/mpatlas_monthly/run.py", "native": ci_contract.NATIVE_TESTS[0],
-                      "browser": "tests/browser/server.py", "unused": "tests/test_unused.py"}[consumer]
+                      "browser": "tests/browser/server.py", "unused": "tests/test_unused.py", "unproved": "tests/test_unused.py"}[consumer]
     entry.parent.mkdir(parents=True, exist_ok=True)
-    entry.write_text("from scripts import retired\n" if consumer != "unused" else "")
+    entry.write_text("from scripts import retired\n" if consumer not in {"unused", "unproved"} else "")
     git("add", ".")
     git("commit", "-m", "base consumers")
     base = git("rev-parse", "HEAD")
@@ -1037,6 +1037,9 @@ def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, 
     git("add", ".")
     git("commit", "-m", "remove module and import")
     selected, emitted = emit_plan(source, base, tmp_path)
+    if consumer == "unproved":
+        assert selected["suites"] == list(SUITES)
+        return
     assert selected["production_image_targets"] == (["mpatlas-monthly"] if consumer == "image" else [])
     assert emitted["production-images"] == str(consumer == "image").lower()
     assert ("geospatial-integration" in selected["suites"]) is (consumer in {"image", "native"})

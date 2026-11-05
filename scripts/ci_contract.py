@@ -176,7 +176,7 @@ def dependency_inputs(revision=None, root=None):
     native.update({name for name, inputs in edges.items() if name.startswith("tests/")
                    and inputs & {item for item in native if not item.endswith("/__init__.py")}})
     browser = closure(name for name in sources if name.startswith("tests/browser/"))
-    return images, native, browser, sources.keys() if snapshot is None else snapshot.keys(), copies
+    return images, native, browser, sources.keys() | {name for name in snapshot or {} if name.startswith(".github/")}, copies
 
 
 def matches(path, inputs):

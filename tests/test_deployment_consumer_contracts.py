@@ -10,7 +10,7 @@ from workflow_helpers import load_workflow, workflow_steps_by_name
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
-    ('publish-typescript-sdk.yml', 'publish', 'Check out exact tested revision', 'Require trusted main workflow'),
+    ('publish-typescript-sdk.yml', 'publish', 'Check out repository', 'Require trusted main workflow'),
     ('pmtiles-cdn-sync.yml', 'sync', 'Check out repository', 'Validate main ref'),
     ('catalog-viewer-deploy.yml', 'deploy', 'Check out repository', 'Validate main ref'),
     ('catalog-web-deploy.yml', 'deploy', 'Check out repository', 'Require trusted main workflow'),

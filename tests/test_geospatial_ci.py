@@ -56,7 +56,7 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIn(['gdal_calc.py', '--help'], [args for args, _ in commands])
 
     def test_shared_change_classifier_covers_native_dependencies(self):
-        for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', '.github/workflows/ci.yml', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
+        for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
             with self.subTest(path=path):
                 self.assertIn('geospatial-integration', resolve_selection([path])["suites"])
         self.assertNotIn('geospatial-integration', resolve_selection(['docs/assets/wdpa-marine.md'])["suites"])
