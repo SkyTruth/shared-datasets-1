@@ -2,7 +2,7 @@ name: CI / Validate and deliver
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - main
@@ -141,7 +141,7 @@ jobs:
       - *validation-python
       - *validation-plan
       - name: Owner approval of this exact head required before merge
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.event.pull_request.user.login != 'jonaraphael' }}
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'jonaraphael' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

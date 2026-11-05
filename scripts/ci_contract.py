@@ -118,11 +118,10 @@ def dependency_inputs(revision=None, root=None):
                 directory = (root / source).is_dir() if snapshot is None else any(name.startswith(source + "/") for name in snapshot)
                 copied.add(source + "/" if directory else source)
         copies[target] = set(copied)
-        fixture = f"tests/fixtures/production_images/{target}.json"
-        if (root / fixture).is_file() if snapshot is None else fixture in snapshot:
-            copied.add(fixture)
-        copied.add(f"tests/test_{target.replace('-', '_')}.py")
-        images[target] = copied | closure(name for name in sources if matches(name, copied) and not name.startswith("tests/"))
+        copied.update({f"tests/fixtures/production_images/{target}.json", f"tests/test_{target.replace('-', '_')}.py"})
+        if "{fixture_script}" in json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot[".github/terraform-targets.json"]).get("image_checks", {})).get(target, {})):
+            copied.add("scripts/installed_ingestion_fixture.py")
+        images[target] = copied
     native = closure(NATIVE_TESTS)
     native.update({name for name, inputs in edges.items() if name.startswith("tests/")
                    and inputs & {item for item in native if not item.endswith("/__init__.py")}})
@@ -139,9 +138,9 @@ def classify_change(path: str, inputs=None) -> tuple[str, set[str]]:
     if (path in {
             "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
             ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
-            "scripts/production_image_contracts.py", "scripts/installed_ingestion_fixture.py", "scripts/tested_image_bundle.py",
+            "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py",
         } or path.startswith("tests/fixtures/") and path.endswith(".md")):
-        return "shared", set(SUITES)
+        return "component" if path in {"pyproject.toml", "uv.lock"} else "shared", set(SUITES)
     images, native, browser, sources, _ = inputs or dependency_inputs()
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}

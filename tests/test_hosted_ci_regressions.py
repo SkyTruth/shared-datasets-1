@@ -64,12 +64,13 @@ def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
     assert job['timeout-minutes'] <= 5
     assert 'owner-acceptance' in jobs['ci-ready']['needs']
     assert workflow_triggers(load_workflow(ROOT / '.github/workflows/ci.yml'))['pull_request']['types'] == [
-        'opened', 'synchronize', 'reopened', 'ready_for_review']
+        'opened', 'synchronize', 'reopened']
     assert any(s.get('env', {}).get('RESULT') == '${{ needs.owner-acceptance.result }}'
                and 'success' in s.get('run', '') for s in jobs['ci-ready']['steps'])
     assert jobs['pr-terraform-plan']['needs'] == job['needs'] == 'geospatial-changes'
+    assert 'draft' not in step['if']
     for clause in ("github.event_name == 'pull_request'", 'github.event.pull_request.head.repo.full_name == github.repository',
-                   '!github.event.pull_request.draft', "github.event.pull_request.user.login != 'jonaraphael'"):
+                   "github.event.pull_request.user.login != 'jonaraphael'"):
         assert clause in step['if']
     assert step['env']['EXECUTOR_SHA'] == '${{ github.event.pull_request.head.sha }}'
     assert step['env']['PR_NUMBER'] == '${{ github.event.pull_request.number }}'

@@ -52,18 +52,14 @@ def test_executor_machinery_selects_one_representative_per_shared_executor(path,
     assert 'sea_ice' not in select_deployments([path], ingestion_holds=('sea_ice',))
 
 
-@pytest.mark.parametrize('variable', re.findall(r'^variable "([^"]+)"',
-    (ROOT / 'terraform/envs/prod/variables.tf').read_text(), re.M))
-def test_each_variable_change_keeps_every_potential_consumer(variable):
+def test_variable_file_change_keeps_every_potential_consumer():
     # Conservative file selection covers every default, including defaults used
     # by IAM scopes. No variable is executor-only content.
-    assert variable
     assert set(select_deployments(['terraform/envs/prod/variables.tf'])) == set(DEPLOYMENTS)
 
 
-@pytest.mark.parametrize('target', DEPLOYMENTS)
-def test_each_registry_target_change_selects_its_owner(target):
-    assert target in select_deployments(['.github/terraform-targets.json'])
+def test_registry_change_selects_every_owner():
+    assert set(select_deployments(['.github/terraform-targets.json'])) == set(DEPLOYMENTS)
 
 
 @pytest.mark.parametrize('target,path', [
@@ -136,8 +132,9 @@ def test_every_tracked_path_validates_all_images_consumed_by_selected_deployment
     for path in filter(None, paths):
         required = {images[target] for target in select_deployments([path]) if target in images}
         if required:
-            assert "production-images" in resolve_selection([path])["suites"], path
-            assert required <= set(resolve_selection([path])["production_image_targets"]), path
+            plan = resolve_selection([path])
+            assert "production-images" in plan["suites"], path
+            assert required <= set(plan["production_image_targets"]), path
 
 
 def test_sdk_packaged_readme_runs_release_policy_before_merge(tmp_path):

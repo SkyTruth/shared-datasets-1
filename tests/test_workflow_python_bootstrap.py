@@ -61,6 +61,7 @@ def python_commands(run):
 
 
 def workflow_cases():
+    seen = set()
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         for job_id, job in yaml.safe_load(path.read_text())["jobs"].items():
             synced = None
@@ -86,8 +87,12 @@ def workflow_cases():
                             flags = None
                     elif '"$interpreter"' in line:
                         flags = synced  # Safety health explicitly selects .venv/bin/python.
-                    probes.append((flags, kind, source))
-                yield pytest.param(probes, id=f"{path.name}/{job_id}/{index}-{step.get('name', step.get('id', 'run'))}")
+                    probe = (flags, kind, source)
+                    if probe not in seen:
+                        probes.append(probe)
+                        seen.add(probe)
+                if probes:
+                    yield pytest.param(probes, id=f"{path.name}/{job_id}/{index}-{step.get('name', step.get('id', 'run'))}")
 
 
 @pytest.fixture(scope="session")
@@ -254,3 +259,9 @@ def test_bootstrap_handles_cold_cache_and_exported_virtualenv(tmp_path, tmp_path
     interpreter = isolated_python.__wrapped__(tmp_path_factory)(("--only-group", "ci-plan"))
     done = subprocess.run([str(interpreter), '-I', '-c', 'import yaml, hcl2'], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+
+
+def test_workflow_imports_keep_every_unique_program_environment_without_duplicate_probes():
+    probes = [probe for row in workflow_cases() for probe in row.values[0]]
+    assert len(probes) == len(set(probes))
+    assert {None, (), ('--no-dev',), ('--all-groups',), ('--only-group', 'ci-plan')} <= {p[0] for p in probes}

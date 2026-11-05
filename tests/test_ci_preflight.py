@@ -112,9 +112,14 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
     with monkeypatch.context() as context:
         context.setattr(ci_contract, "ROOT", tmp_path)
         context.setattr(ci_contract, "RECIPES", {"mpatlas-monthly": "ingestion/mpatlas_monthly/Dockerfile"})
+        context.setattr(ci_contract, "registry", lambda *args, **kwargs: {})
+        context.setattr(ci_contract, "NATIVE_TESTS", ("ingestion/mpatlas_monthly/run.py",))
         ci_contract.dependency_inputs.cache_clear()
-        inputs = ci_contract.dependency_inputs()[0]["mpatlas-monthly"]
-        assert {"scripts/shared.py", "scripts/leaf.py", "scripts/entry.py", "scripts/__init__.py"} <= inputs
+        images, native, *_ = ci_contract.dependency_inputs()
+        inputs = images["mpatlas-monthly"]
+        assert {"scripts/shared.py", "scripts/leaf.py", "scripts/entry.py", "scripts/__init__.py"} <= native
+        assert "scripts/entry.py" in inputs
+        assert "scripts/shared.py" not in inputs and "scripts/leaf.py" not in inputs
         assert "scripts/unrelated.py" not in inputs
         assert ci_contract.matches("ingestion/mpatlas_monthly/new.py", inputs)
         assert not ci_contract.matches("ingestion/mpatlas_monthly_other/new.py", inputs)
@@ -127,10 +132,10 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
 @pytest.mark.parametrize("paths,expected", [
     (["ingestion/eamlis_monthly/checksum_repair.py", "tests/test_eamlis_checksum_repair.py"], {"eamlis-monthly"}),
     (["ingestion/mpatlas_monthly/run.py", "tests/test_mpatlas_monthly.py"], {"mpatlas-monthly"}),
-    (["ingestion/sea_ice_daily/run.py"], {"sea-ice-daily", "wdpa-monthly"}),
+    (["ingestion/sea_ice_daily/run.py"], {"sea-ice-daily"}),
     (["ingestion/wdpa_monthly/build.py"], {"wdpa-monthly"}),
     (["ingestion/common/runtime.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "catalog-viewer"}),
-    (["ingestion/__init__.py"], set(BUILD_TARGETS)),
+    (["ingestion/__init__.py"], set(BUILD_TARGETS) - {"dataset-usage"}),
     (["ingestion/common/decision_events.py"], {"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly", "monitoring-slack", "catalog-viewer"}),
     (["services/catalog_viewer/run.py"], {"catalog-viewer"}),
     (["services/feature_preview_service/run.py"], {"catalog-viewer"}),
@@ -163,7 +168,7 @@ def test_viewer_copied_ingestion_inputs_select_its_image_and_browser(path):
 
 
 @pytest.mark.parametrize("paths", [None, ["unknown/input"], ["scripts/new-runtime.py"],
-    ["uv.lock"], ["tests/new_contract.py"], ["scripts/production_image_contracts.py"],
+    ["tests/new_contract.py"], ["scripts/production_image_contracts.py"],
     ["ingestion/eamlis_monthly/run.py", "scripts/new-runtime.py"]])
 def test_unproved_image_inputs_keep_every_recipe(paths):
     from scripts.tested_image_bundle import BUILD_TARGETS
@@ -308,7 +313,7 @@ def test_parallel_python_command_preserves_failures_and_worker_crashes(tmp_path,
         assert completed.returncode == 0, completed.stdout + completed.stderr
         check_junit(tmp_path / "pytest.xml", native=False)
         assert {path.name for path in tmp_path.glob("case-*.txt")} == {f"case-{case}.txt" for case in range(4)}
-        assert {path.read_text() for path in tmp_path.glob("case-*.txt")} == {"gw0", "gw1"}
+        assert {path.read_text() for path in tmp_path.glob("case-*.txt")} == {f"gw{worker}" for worker in range(4)}
     else:
         assert completed.returncode != 0
         with pytest.raises(ValueError, match="failed test"):
@@ -367,7 +372,7 @@ def fixture_repo(tmp_path):
     for filename in CONTRACT_FILES:
         target = root / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((ROOT / filename).read_text() if filename == ".github/workflows/ci.yml" else "fixture\n")
+        target.write_text((ROOT / filename).read_text() if filename in {".github/workflows/ci.yml", ".github/terraform-targets.json"} else "fixture\n")
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
@@ -440,7 +445,7 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
                 for suite in validation["suites"]}
     assert ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."] in commands["tests"]
-    assert ["uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o",
+    assert ["uv", "run", "--no-sync", "pytest", "-n", "4", "--max-worker-restart", "0", "-o",
             "xfail_strict=true", f"--junitxml={tmp_path / 'tests' / 'pytest.xml'}"] in commands["tests"]
     for script in ("admission_check", "repo_guardrails", "catalog_docs", "catalog_site", "check_identity_resolutions"):
         assert any(f"scripts/{script}.py" in args for args in commands["tests"])
@@ -649,7 +654,7 @@ def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
     trigger = workflow_triggers(workflow)["pull_request"]
     assert set(trigger) == {"types"}
-    assert "ready_for_review" in trigger["types"]
+    assert "ready_for_review" not in trigger["types"]
     ready = workflow["jobs"]["ci-ready"]
     assert workflow["jobs"]["geospatial-changes"]["name"] == "geospatial-changes"
     assert ready["name"] == "ci-ready"
@@ -1027,6 +1032,9 @@ def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, 
     recipe = source / "ingestion/mpatlas_monthly/Dockerfile"
     recipe.parent.mkdir(parents=True, exist_ok=True)
     recipe.write_text("FROM python:3.12\nCOPY ingestion/mpatlas_monthly /app/job\n")
+    if consumer == "image":
+        recipe.write_text(recipe.read_text() + "COPY scripts/retired.py /app/scripts/retired.py\n")
+        (source / 'tests/test_mpatlas_monthly.py').write_text('from ingestion.mpatlas_monthly import run\n')
     entry = source / {"image": "ingestion/mpatlas_monthly/run.py", "native": ci_contract.NATIVE_TESTS[0],
                       "browser": "tests/browser/server.py", "unused": "tests/test_unused.py", "unproved": "tests/test_unused.py"}[consumer]
     entry.parent.mkdir(parents=True, exist_ok=True)

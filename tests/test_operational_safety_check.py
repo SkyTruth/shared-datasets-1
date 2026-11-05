@@ -25,7 +25,7 @@ from test_operational_snapshot import capture
 from test_slack_incidents import IDENTITY, signed_record
 
 PREFIX = "repos/" + safety.REPOSITORY
-NOW = datetime.now(timezone.utc).replace(microsecond=0)
+NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
 START = NOW - timedelta(hours=24)
 
 
