@@ -584,9 +584,9 @@ def test_resources_retain_cpu_headroom_and_twice_observed_memory_peak(filename,c
     assert gib >= {1:0.5,2:0.5,4:2,6:4,8:4}[int(job['cpu'])]
 
 
-def test_later_main_revision_accepts_only_ancestral_successful_probe_hint(dispatch_context):
+def test_later_main_revision_accepts_only_ancestral_successful_probe_hint(dispatch_context, historical_git_repo):
     api, environment, event=dispatch_context
-    previous=deployments.subprocess.check_output(['git','rev-parse','7bd972e'],cwd=incidents.ROOT,text=True).strip()
+    previous=historical_git_repo.sha
     api.comparison='ahead'
     api.runs[200]['head_sha']=previous
     api.jobs[200][0]['head_sha']=previous

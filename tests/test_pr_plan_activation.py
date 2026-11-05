@@ -11,6 +11,7 @@ import yaml
 from scripts import pr_terraform_plan as pr
 from scripts import terraform_target_contracts as contracts
 from scripts.ci_preflight import suite_commands
+from terraform_helpers import terraform_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,7 +69,7 @@ def test_activation_does_not_admit_forks_or_non_pr_events(event, fork, active):
 def test_exclusions_equal_exact_secret_refresh_dependency_closures(tmp_path):
     providers = Path(os.environ.get('TF_DATA_DIR', ROOT / 'terraform/envs/prod/.terraform')) / 'providers'
     prod = contracts.prepare(ROOT, tmp_path, providers)
-    graph = contracts.parse_graph(contracts.graph(prod, 'terraform', contracts.isolated_environment(tmp_path), tmp_path))
+    graph = contracts.parse_graph(contracts.graph(prod, terraform_executable(), contracts.isolated_environment(tmp_path), tmp_path))
     # Real provider graph: an IAM-only plan checks bucket existence but cannot
     # pull its logging configuration into scope or wait for the usage canary.
     for name in ('Scheduled ingestion deploy IAM sync', 'Scratch cleanup IAM sync'):

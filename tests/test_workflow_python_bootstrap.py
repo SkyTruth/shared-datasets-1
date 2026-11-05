@@ -174,8 +174,19 @@ s.subprocess.check_call.assert_not_called()
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("base", ["HEAD", "7bd972e"])
-def test_hosted_selectors_execute_with_actual_workflow_dependency_flags(isolated_python, tmp_path, base):
+@pytest.fixture(scope="module")
+def selector_repository(tmp_path_factory):
+    from test_ci_preflight import fixture_repo
+    root, git = fixture_repo(tmp_path_factory.mktemp("selector-repository"))
+    path = root / "terraform/envs/prod/main.tf"
+    path.write_text(path.read_text() + "\n# representative infrastructure change\n")
+    git("add", ".")
+    git("commit", "-m", "changed production input")
+    return root
+
+
+@pytest.mark.parametrize("base", ["HEAD", "HEAD~1"])
+def test_hosted_selectors_execute_with_actual_workflow_dependency_flags(isolated_python, tmp_path, base, selector_repository):
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     plan = tmp_path / "plan.json"
     output = tmp_path / "github-output"
@@ -187,7 +198,7 @@ def test_hosted_selectors_execute_with_actual_workflow_dependency_flags(isolated
         for key, value in {"$BASE_SHA": base, "$GITHUB_SHA": "HEAD", "$SOURCE_HEAD": "HEAD",
                            "$RUNNER_TEMP/ci-plan/plan.json": str(plan), "$GITHUB_OUTPUT": str(output)}.items():
             arguments = [argument.replace(key, value) for argument in arguments]
-        result = subprocess.run([str(isolated_python(flags)), "-I", *arguments[python + 1:]], cwd=ROOT,
+        result = subprocess.run([str(isolated_python(flags)), "-I", *arguments[python + 1:]], cwd=selector_repository,
             env={**os.environ, "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
     bootstrap = next(step for step in workflow["jobs"]["geospatial-changes"]["steps"]
@@ -211,7 +222,7 @@ def test_ci_plan_lock_reuses_existing_versions_and_has_no_runtime_or_test_packag
 
 
 @pytest.mark.parametrize("missing", ["yaml", "hcl2"])
-def test_selector_negative_control_reaches_both_lazy_parser_dependencies(isolated_python, tmp_path, missing):
+def test_selector_negative_control_reaches_both_lazy_parser_dependencies(isolated_python, tmp_path, missing, selector_repository):
     program = '''
 import importlib.abc, runpy, sys
 missing = sys.argv[1]
@@ -220,11 +231,11 @@ class MissingDependency(importlib.abc.MetaPathFinder):
         if fullname.split(".")[0] == missing:
             raise ModuleNotFoundError("No module named " + repr(fullname))
 sys.meta_path.insert(0, MissingDependency())
-sys.argv = ["scripts/ci_preflight.py", "plan", "--base", "7bd972e", "--head", "HEAD", "--output", sys.argv[2]]
+sys.argv = ["scripts/ci_preflight.py", "plan", "--base", "HEAD~1", "--head", "HEAD", "--output", sys.argv[2]]
 runpy.run_path(sys.argv[0], run_name="__main__")
 '''
     result = subprocess.run([str(isolated_python(("--only-group", "ci-plan"))), "-I", "-c", program, missing, str(tmp_path / "plan.json")],
-                            cwd=ROOT, capture_output=True, text=True)
+                            cwd=selector_repository, capture_output=True, text=True)
     assert result.returncode != 0
     assert f"ModuleNotFoundError: No module named '{missing}'" in result.stderr
     assert not (tmp_path / "plan.json").exists()

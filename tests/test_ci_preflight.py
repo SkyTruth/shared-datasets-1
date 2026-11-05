@@ -364,10 +364,16 @@ def fixture_repo(tmp_path):
         return subprocess.check_output([executable, "-C", str(root), "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", *args], env=environment, text=True).strip()
 
     run("init", "-b", "main")
+    # Use valid producer bytes: the selector now reads this prospective tree.
+    for name in (".github", "scripts", "terraform", "ingestion", "services", "catalog", "api", ".claude"):
+        shutil.copytree(ROOT / name, root / name,
+                        ignore=shutil.ignore_patterns(".terraform", "__pycache__", "node_modules"))
     for filename in CONTRACT_FILES:
         target = root / filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((ROOT / filename).read_text() if filename == ".github/workflows/ci.yml" else "fixture\n")
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / filename).read_bytes())
+    (root / preflight.INGESTION_ROLLOUT_HOLDS).write_text("{}\n")
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
@@ -392,7 +398,7 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     base = git("rev-parse", "HEAD")
     runtime = source / "ingestion/common/publication.py"
     runtime.parent.mkdir(parents=True, exist_ok=True)
-    runtime.write_text("shared runtime edit\n")
+    runtime.write_text("# shared runtime edit\n")
     git("add", ".")
     git("commit", "-m", "change shared ingestion")
     runtime_head = git("rev-parse", "HEAD")
@@ -429,7 +435,7 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
     for filename in ("scripts/slack_incidents.py", "tests/test_wdpa_incident_recovery.py"):
         target = source / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("automation fixture\n")
+        target.write_text("# automation fixture\n")
     git("add", ".")
     git("commit", "-m", "automation")
     validation, emitted = emit_plan(source, base, tmp_path)
@@ -620,7 +626,7 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
      ALWAYS | {"production-images", "browser"}, ["catalog_viewer"]),
     (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice"]),
-    (["docs/guide.md", "scripts/unproved.py"], set(SUITES), []),
+    (["docs/guide.md", "scripts/unproved.py"], ALWAYS, []),
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
     (["docs/new-tool.py"], set(SUITES), []),
     ([".claude/skills/new-tool.py"], set(SUITES), []),
@@ -635,7 +641,7 @@ def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path,
     for path in paths:
         target = source / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" else "changed fixture\n")
+        target.write_text((target.read_text() if target.exists() else "") + ("\n" if target.suffix == ".json" else "\n# fixture change\n"))
     if paths:
         run("add", ".")
         run("commit", "-m", "change")
@@ -1004,7 +1010,7 @@ def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
     base = git("rev-parse", "HEAD")
     plan = preflight.make_plan(source, base, base)
     action = source / ".github/actions/deployment-bootstrap/terraform/action.yml"
-    action.write_text("changed nested bootstrap\n")
+    action.write_text(action.read_text() + "\n# changed nested bootstrap\n")
     git("add", ".")
     git("commit", "-m", "change nested bootstrap")
     assert preflight.make_plan(source, base, "HEAD")["contract_digest"] != plan["contract_digest"]

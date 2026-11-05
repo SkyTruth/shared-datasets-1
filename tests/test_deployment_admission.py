@@ -34,19 +34,19 @@ def test_codeowners_covers_every_dependabot_dockerfile():
 
 @pytest.mark.parametrize('case,accepted', [
     ('approved', True), ('self', True), ('missing', False), ('stale', False),
-    ('dismissed', False), ('changes', False), ('foreign', False), ('moved', False), ('api-failure', False),
+    ('stale-executor', False), ('dismissed', False), ('changes', False), ('foreign', False), ('moved', False), ('api-failure', False),
 ])
 def test_premerge_acceptance_uses_the_same_exact_head_policy_in_clean_python(tmp_path, case, accepted):
     repo = {'id': 123, 'full_name': REPO, 'default_branch': 'main'}
     pr = {'number': 27, 'state': 'open', 'merged': False, 'draft': False,
           'user': {'login': 'jonaraphael' if case == 'self' else 'dependabot[bot]'},
-          'head': {'sha': 'c' * 40 if case == 'moved' else HEAD, 'repo': repo},
+          'head': {'sha': 'c' * 40 if case in {'moved', 'stale-executor'} else HEAD, 'repo': repo},
           'base': {'ref': 'main', 'repo': repo}}
     if case == 'foreign':
         pr['head']['repo'] = {**repo, 'id': 999, 'full_name': 'other/fork'}
     review = {'id': 1, 'pull_request_url': f'https://api.github.com/repos/{REPO}/pulls/27',
               'state': {'dismissed': 'DISMISSED', 'changes': 'CHANGES_REQUESTED'}.get(case, 'APPROVED'),
-              'user': {'login': 'jonaraphael'}, 'commit_id': 'a' * 40 if case == 'stale' else HEAD,
+              'user': {'login': 'jonaraphael'}, 'commit_id': 'a' * 40 if case == 'stale' else pr['head']['sha'],
               'submitted_at': '2026-11-04T00:00:00Z'}
     fixture = {f'repos/{REPO}': repo, f'repos/{REPO}/pulls/27': pr,
                f'repos/{REPO}/pulls/27/reviews?per_page=100': [[] if case == 'missing' else [review]]}
@@ -61,6 +61,8 @@ def test_premerge_acceptance_uses_the_same_exact_head_policy_in_clean_python(tmp
         env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
              'GITHUB_REPOSITORY': REPO, 'EXECUTOR_SHA': HEAD})
     assert (done.returncode == 0) is accepted, done.stdout + done.stderr
+    if case == 'stale-executor':
+        assert 'PR executor mismatch' in done.stderr
     if accepted:
         receipt = json.loads(done.stdout)
         assert receipt['executor_sha'] == HEAD and receipt['pr_number'] == 27

@@ -301,7 +301,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             if INGESTION_ROLLOUT_HOLDS in (plan.get("changed_paths") or []):
                 previous = json.loads(git(root, "show", f"{base}:{INGESTION_ROLLOUT_HOLDS}")) if git(root, "ls-tree", "--name-only", base, "--", INGESTION_ROLLOUT_HOLDS) else {}
             rollout_holds(json.loads((root / INGESTION_ROLLOUT_HOLDS).read_text()), previous=previous)
-        if documentation_only(plan.get("changed_paths")):
+        if documentation_only(plan.get("changed_paths"), root=root):
             add("git", "diff", "--check", base, head)
             return commands
         add("uv", "sync", "--locked", "--all-groups")
@@ -320,7 +320,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check")
         add("uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(output / "catalog-web"))
-        if documentation_only(plan.get("changed_paths")):
+        if documentation_only(plan.get("changed_paths"), root=root):
             return commands
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
@@ -478,7 +478,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
                         raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
             finally:
                 cancelled.set()
-        if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
+        if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths"), root=root):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
