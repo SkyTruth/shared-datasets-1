@@ -2,47 +2,17 @@ name: Ingestion / Sea ice daily deploy
 'on':
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
-      canary_run_date:
-        description: Optional NOAA filename search date (YYYY-MM-DD). The new-contract release date is its documented valid date, one day later.
-        required: false
-        type: string
-        default: ''
-      cancel_running_canary:
-        description: Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code.
-        required: false
-        type: boolean
-        default: false
-      resume_scheduler:
-        description: Resume sea-ice-daily after deploy, canary, and validation pass.
-        required: false
-        type: boolean
-        default: true
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
+      canary_run_date: {"description": "Optional NOAA filename search date (YYYY-MM-DD). The new-contract release date is its documented valid date, one day later.", "required": false, "type": "string", "default": ""}
+      cancel_running_canary: {"description": "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code.", "required": false, "type": "boolean", "default": false}
+      resume_scheduler: {"description": "Resume sea-ice-daily after deploy, canary, and validation pass.", "required": false, "type": "boolean", "default": true}
   workflow_call:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
 permissions:
   actions: read
   deployments: write

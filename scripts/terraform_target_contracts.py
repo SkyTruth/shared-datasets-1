@@ -20,6 +20,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
+from scripts.ingestion_targets import image_variables
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLER = './.github/workflows/prod-terraform-target-apply.yml'
@@ -31,9 +32,9 @@ EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:
     """One reviewed resource scope per stable, historically signed sync name."""
     value = json.loads((root / '.github/terraform-targets.json').read_text())
-    if set(value) - {'schema_version', 'targets', 'plan_scopes'} or value['schema_version'] != 1:
+    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes'} or value['schema_version'] != 1:
         raise ValueError('Unsupported Terraform target registry')
-    return value['targets'] if section == 'targets' else value.get('plan_scopes', {})
+    return value[section] if section == 'targets' else value.get(section, {})
 
 
 def plan_scope(workflow, scope, root=ROOT):
@@ -76,7 +77,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars',
     }}
     placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
-    variables = [*item.get('tf_vars', []), *(name + '_image=' + placeholder for name in ('wdpa_monthly', 'sea_ice_daily', 'eamlis_monthly'))]
+    variables = [*item.get('tf_vars', []), *(name + '=' + placeholder for name in image_variables('', placeholder))]
     result.update(caller_workflow=workflow, sync_name=sync_name, targets='\n'.join(resources),
                   allowed_exact='\n'.join(resources), refusal_prefix='Refusing ' + sync_name,
                   tf_vars=tf_vars if item.get('state_only') else '\n'.join(variables))

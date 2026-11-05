@@ -52,7 +52,7 @@ def test_viewer_preserves_protected_scopes_and_transports_only_prepared_image():
     from scripts.deployment_receipt_contracts import viewer_boundary
     assert viewer_boundary(workflow) == []
     names = list(deploy)
-    order = ['Require successful signed bootstrap', 'Terraform plan', 'Enforce catalog-viewer resource-change allowlist',
+    order = ['Require successful signed preparation', 'Terraform plan', 'Enforce catalog-viewer resource-change allowlist',
              'Verify permissions required by the saved viewer plan', 'Terraform apply']
     assert [names.index(name) for name in order] == sorted(names.index(name) for name in order)
 
@@ -74,3 +74,37 @@ def test_actual_viewer_allowlists_preserve_exact_scope(tmp_path, bootstrap, fore
         result = subprocess.run(['bash', '-e', '-c', steps[name]['run']], cwd=ROOT,
                                 env={**os.environ, 'RUNNER_TEMP': str(tmp_path)}, text=True, capture_output=True)
         assert (result.returncode == 0) == (not foreign or actions == ['no-op']), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('sync,event,claim,expected', [
+    (False, 'push', 'success', False), (True, 'push', 'success', True),
+    (False, 'workflow_dispatch', 'success', True), (True, 'push', 'failure', False),
+])
+def test_viewer_bootstrap_enters_state_queue_only_for_signed_iam_changes(sync, event, claim, expected):
+    from test_ci_deployments import condition_result
+    job = load_workflow(WORKFLOW)['jobs']['bootstrap']
+    assert condition_result(job, {'needs.prepare.result': 'success', 'needs.prepare.outputs.proceed': 'true',
+        'needs.prepare.outputs.claim_signed': claim, 'inputs.sync_iam': sync, 'github.event_name': event}) is expected
+
+
+@pytest.mark.parametrize('bootstrap,prepare,claim,expected', [
+    ('skipped', 'success', 'success', True), ('success', 'success', 'success', True),
+    ('failure', 'success', 'success', False), ('cancelled', 'success', 'success', False),
+    ('skipped', 'failure', 'success', False), ('skipped', 'success', 'failure', False),
+])
+def test_viewer_readiness_accepts_intentional_bootstrap_skip_and_rejects_failure(bootstrap, prepare, claim, expected):
+    from test_ci_deployments import condition_result
+    workflow = load_workflow(WORKFLOW)
+    assert condition_result(workflow['jobs']['ready'], {'needs.prepare.result': prepare,
+        'needs.prepare.outputs.deployment_id': '42', 'needs.prepare.outputs.claim_signed': claim,
+        'needs.bootstrap.result': bootstrap, 'github.event_name': 'push', 'inputs.sync_iam': False}) is expected
+    assert workflow['jobs']['verify']['if'] == "${{ always() && needs.prepare.outputs.deployment_id != '' }}"
+
+
+@pytest.mark.parametrize('sync,event', [(True, 'push'), (False, 'workflow_dispatch')])
+def test_viewer_required_bootstrap_cannot_be_bypassed_by_a_skipped_result(sync, event):
+    from test_ci_deployments import condition_result
+    job = load_workflow(WORKFLOW)['jobs']['ready']
+    assert not condition_result(job, {'needs.prepare.result': 'success',
+        'needs.prepare.outputs.deployment_id': '42', 'needs.prepare.outputs.claim_signed': 'success',
+        'needs.bootstrap.result': 'skipped', 'github.event_name': event, 'inputs.sync_iam': sync})

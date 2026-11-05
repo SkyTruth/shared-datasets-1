@@ -20,8 +20,10 @@ behavior; source-specific operations are linked below.
    existing publication claims and installed identity state.
 3. **Declare the deployment once.** Update `DEPLOY_TARGETS` in
    [`scripts/ingestion_targets.py`](../scripts/ingestion_targets.py) for workflow,
-   image variables, resource scope, runtime window, smoke, canary and verification
-   settings. Its `TARGETS` view includes only dataset publishers; telemetry must
+   resource scope, runtime window, canary mode and verification hook. The constructor
+   rejects incompatible publication/telemetry policies; image variables and caller
+   filenames derive from the target name. Native and synthetic image checks run
+   once in CI before retention. Its `TARGETS` view includes only dataset publishers; telemetry must
    not acquire publication requirements. Use a thin `<target>-deploy.yml` wrapper
    calling [`ingestion-deploy.yml`](../.github/workflows/ingestion-deploy.yml).
    See [registry ownership](deployment-contracts.md#target-registries) before

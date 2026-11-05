@@ -2,42 +2,16 @@ name: Ingestion / EAMLIS monthly deploy
 'on':
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
-      cancel_running_canary:
-        description: Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code.
-        required: false
-        type: boolean
-        default: false
-      canary_run_date:
-        description: Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish.
-        required: false
-        type: string
-        default: ''
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
+      cancel_running_canary: {"description": "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code.", "required": false, "type": "boolean", "default": false}
+      canary_run_date: {"description": "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish.", "required": false, "type": "string", "default": ""}
   workflow_call:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
 permissions:
   actions: read
   pull-requests: read

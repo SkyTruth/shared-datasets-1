@@ -35,20 +35,24 @@ its immutable digest. Missing, expired or mismatched evidence fails closed.
 resolved views. `DEPLOY_TARGETS` contains the five shared-executor callers:
 WDPA, MPAtlas, EAMLIS, sea ice and dataset usage. Execution, image-variable
 binding, CI selection and replay use this view. `TARGETS` contains the four
-`job-image` publication producers; publication rollout/freshness and asset
+publication producers; publication rollout/freshness and asset
 contracts use that narrower view. Telemetry has no release-index or feature-ID
 installation requirement.
 
-Registry fields own workflow names, image/config variables, resource scopes,
-runtime windows, smoke probes, canary limits/terminal phase, release checks and
-scheduler resume. Defaults resolve before GitHub output/environment transport.
+The eleven-field constructor validates publication/telemetry combinations once.
+Workflow and image-variable names derive from target names. Plan policies are
+`update`, `install`, `wdpa` or `usage`; canaries are terminal or deferred. Release
+checks follow the asset root, and scheduler resume is a reviewed verification
+hook. Each job resolves flat environment values from the trusted registry.
+Installed-image checks run once in CI before image retention.
 The usage target delegates its computed scope and special plan guard to
 [`dataset_usage_deploy.py`](../scripts/dataset_usage_deploy.py), preserving its
 reader-first activation and removal checks. Recovery resolves image variables
 before candidate checkout, including the original `dataset_usage_image`.
 
 [`.github/terraform-targets.json`](../.github/terraform-targets.json) owns stable
-synchronization names, exact IAM target scopes and viewer/CDN `plan_scopes`.
+synchronization names, exact IAM target scopes, viewer/CDN `plan_scopes` and
+named read-only `permission_probes`. Unknown permission targets fail closed.
 Execution, offline dependency checks, saved-plan guards and recovery read that
 same registry; names preserve historical signed hash identities. CI derives
 Terraform source consumers from these scopes rather than copying a path table.
@@ -83,16 +87,17 @@ outside its allowlist/permission sequence to bypass staleness.
 
 Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
-restores the receipt policy and both target registries from that immutable workflow SHA,
-and verifies the tested checkout before authentication. The Terraform service
+snapshots the restored entrypoints’ local import closure from that immutable SHA,
+then restores it, package initializers, receipt/auth actions and target registry. It
+verifies the tested checkout before authentication. The Terraform service
 account and `shared-datasets-production` environment remain unchanged. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.
 
 Viewer uses a separate prepare/bootstrap/ready/deploy/verify graph under
 `deployment-catalog-viewer`. Prepare pushes tested bytes before the state queue.
-Bootstrap acquires the queue for the signed claim and constrained IAM saved-plan
-apply, then releases it. Ready probes live dependencies outside the queue.
+Prepare also signs the deployment claim under the workflow’s target lock.
+Bootstrap runs and acquires the state queue only for `sync_iam` or manual recovery. Ready probes live dependencies outside the queue.
 Deploy reacquires it for the guarded runtime saved-plan apply. Verify checks the
 newest ready revision and exact tested digest after releasing the queue, and
 signs the terminal outcome even after apply failure. CDN likewise invalidates

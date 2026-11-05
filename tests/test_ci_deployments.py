@@ -445,8 +445,8 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
         end = next(i for i, step in enumerate(steps) if step.get("name") == "Terraform apply Secret Manager IAM bootstrap") + 1
         assert workflow["jobs"]["ready"]["needs"] == ["prepare", "bootstrap"]
         assert "Verify catalog-viewer live dependencies" in workflow_steps_by_name(workflow, "ready")
-        for step in steps[start:end]:
-            assert "(github.event_name == 'workflow_dispatch' || inputs.sync_iam)" in step["if"]
+        assert "(github.event_name == 'workflow_dispatch' || inputs.sync_iam)" in workflow['jobs']['bootstrap']['if']
+        assert all('if' not in step for step in steps[start:end])
         return
     jobs = workflow["jobs"]
     values = {"github.event_name": "push", "github.ref": "refs/heads/main", "inputs.sync_iam": False,

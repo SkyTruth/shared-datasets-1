@@ -378,7 +378,7 @@ def finish(args, api):
 def pending(api, repository):
     identifiers = []
     for target, config in INGESTION_CONFIGS.items():
-        if config["canary_timeout_phase"] != "verification_pending":
+        if config["canary_mode"] != "deferred":
             continue
         for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100"):
             record_payload(record)
@@ -411,8 +411,8 @@ def runtime_window(args):
     # First installation has no job/execution collection yet. A successful
     # regional inventory proves absence; permission/network errors still fail.
     config = INGESTION_CONFIGS[args.target]
-    inspect_executions = not config["window_in_plan"]
-    if config["first_install"]:
+    inspect_executions = not (config["plan_guard"] == "usage")
+    if (config["plan_guard"] == "install"):
         jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
                                                    "--project=shared-datasets-1", "--format=json"], timeout=60))
         require(isinstance(jobs, list), "invalid Cloud Run job inventory")
@@ -463,7 +463,7 @@ def observe(args, api):
             f"{repository}/.github/workflows/deployment-verification.yml@refs/heads/main", "untrusted terminal verifier")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in INGESTION_TARGETS and INGESTION_CONFIGS[payload["target"]]["canary_timeout_phase"] == "verification_pending",
+    require(payload.get("target") in INGESTION_TARGETS and INGESTION_CONFIGS[payload["target"]]["canary_mode"] == "deferred",
             "only detached executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])

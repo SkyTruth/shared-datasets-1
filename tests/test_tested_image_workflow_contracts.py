@@ -56,7 +56,9 @@ def image_contract(steps, target):
     assert 'docker tag "$TESTED_IMAGE_ID"' in runs[tagged[0]], "only the verified daemon image reference may be tagged"
     if target == "catalog-viewer":
         assert tag_step.get("env", {}).get("TESTED_IMAGE_CONFIG") == "${{ steps.tested-image.outputs.config_digest }}"
-        assert "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}" in runs[tagged[0]], "viewer claim must bind canonical config bytes"
+        claim = next(step for step in steps if 'deployment_revision.py start --workflow catalog-viewer-deploy.yml' in step.get('run', ''))
+        assert claim['env']['CATALOG_VIEWER_LOCAL_DIGEST'] == '${{ steps.tested-image.outputs.config_digest }}', "viewer claim must bind canonical config bytes"
+        assert '--artifact "catalog-viewer-image@${CATALOG_VIEWER_LOCAL_DIGEST}"' in claim['run']
     pushed = [index for index, run in enumerate(runs) if re.search(r"\bdocker\s+push\s", run)]
     assert len(pushed) == 1 and pushed[0] > tagged[0]
     push = steps[pushed[0]]

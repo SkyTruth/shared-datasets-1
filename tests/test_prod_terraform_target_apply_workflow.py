@@ -9,6 +9,7 @@ import sys
 import pytest
 import yaml
 from scripts.terraform_target_contracts import registry
+from scripts.ingestion_targets import image_variables
 from pathlib import Path
 
 from test_ingestion_deploy_workflow import shared_workflow
@@ -170,11 +171,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 'google_service_account_iam_member.mpatlas_deployer_act_as["job"]',
                 'google_service_account_iam_member.mpatlas_deployer_act_as["scheduler"]',
             },
-            expected_tf_vars={
-                "wdpa_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync",
-                "sea_ice_daily_image=unused-by-scheduled-ingestion-deploy-iam-sync",
-                "eamlis_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync",
-            },
+            expected_tf_vars={name + "=unused-by-scheduled-ingestion-deploy-iam-sync" for name in image_variables("", "")},
         )
 
     def test_translation_notice_bootstrap_precedes_secret_reads_and_job_deploys(self):
@@ -221,11 +218,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "google_service_account_iam_member.feature_preview_loader_github_wif",
                 "google_service_account_iam_member.feature_preview_service_self_sign_blob",
             },
-            expected_tf_vars={
-                "wdpa_monthly_image=unused-by-preview-terraform-iam-sync",
-                "sea_ice_daily_image=unused-by-preview-terraform-iam-sync",
-                "eamlis_monthly_image=unused-by-preview-terraform-iam-sync",
-            },
+            expected_tf_vars={name + "=unused-by-preview-terraform-iam-sync" for name in image_variables("", "")},
         )
 
     def test_preview_role_bootstrap_retains_existing_narrow_authority(self):
@@ -257,19 +250,11 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "google_storage_bucket.shared_bucket",
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
             },
-            expected_tf_vars={
-                "wdpa_monthly_image=unused-by-scratch-cleanup-iam-sync",
-                "sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync",
-                "eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync",
-            },
+            expected_tf_vars={name + "=unused-by-scratch-cleanup-iam-sync" for name in image_variables("", "")},
         )
 
     def test_artifact_registry_iam_sync_runs_bootstrap_then_writer(self):
-        tf_vars = {
-            "wdpa_monthly_image=unused-by-artifact-registry-iam-sync",
-            "sea_ice_daily_image=unused-by-artifact-registry-iam-sync",
-            "eamlis_monthly_image=unused-by-artifact-registry-iam-sync",
-        }
+        tf_vars = {name + "=unused-by-artifact-registry-iam-sync" for name in image_variables("", "")}
         assert_target_apply_caller(
             self,
             ARTIFACT_REGISTRY,

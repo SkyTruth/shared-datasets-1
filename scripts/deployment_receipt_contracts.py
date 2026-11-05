@@ -280,27 +280,31 @@ def terraform_boundary(workflow):
 
 
 def viewer_boundary(workflow):
-    """Release the state queue between IAM bootstrap, propagation and runtime apply."""
+    """Skip IAM-only queue admission while keeping signed runtime and failure outcomes."""
     jobs = workflow['jobs']
     if set(jobs) != {'prepare', 'bootstrap', 'ready', 'deploy', 'verify'}:
         return ['Viewer requires prepare/bootstrap/ready/deploy/verify jobs']
-    bootstrap, ready, deploy = (jobs[key] for key in ('bootstrap', 'ready', 'deploy'))
+    prepare, bootstrap, ready, deploy = (jobs[key] for key in ('prepare', 'bootstrap', 'ready', 'deploy'))
     lock = {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
-    if ([key for key, job in jobs.items() if 'concurrency' in job] != ['bootstrap', 'deploy']
+    if (workflow.get('concurrency') != {'group': 'deployment-catalog-viewer', 'queue': 'max', 'cancel-in-progress': False}
+            or [key for key, job in jobs.items() if 'concurrency' in job] != ['bootstrap', 'deploy']
             or any(jobs[key]['concurrency'] != lock for key in ('bootstrap', 'deploy'))
-            or bootstrap.get('needs') != 'prepare' or bootstrap.get('if') != "needs.prepare.outputs.proceed == 'true'"
-            or bootstrap.get('outputs') != {'deployment_id': '${{ steps.deployment.outputs.deployment_id }}', 'claim_signed': '${{ steps.claim-receipt.outcome }}'}
+            or bootstrap.get('needs') != 'prepare'
+            or bootstrap.get('if') != "${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true' && needs.prepare.outputs.claim_signed == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam) }}"
+            or prepare.get('outputs', {}).get('deployment_id') != '${{ steps.deployment.outputs.deployment_id }}'
+            or prepare.get('outputs', {}).get('claim_signed') != '${{ steps.claim-receipt.outcome }}'
             or ready.get('needs') != ['prepare', 'bootstrap']
-            or ready.get('if') != "needs.bootstrap.result == 'success' && needs.bootstrap.outputs.deployment_id != '' && needs.bootstrap.outputs.claim_signed == 'success'"
-            or deploy.get('needs') != ['prepare', 'bootstrap', 'ready'] or deploy.get('if') != "needs.ready.result == 'success'"):
-        return ['Viewer readiness must separate two serialized signed applies']
-    admission = {'APPLY_RESULT': '${{ needs.bootstrap.result }}', 'CLAIM_SIGNED': '${{ needs.bootstrap.outputs.claim_signed }}'}
+            or ready.get('if') != "${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.deployment_id != '' && needs.prepare.outputs.claim_signed == 'success' && (needs.bootstrap.result == 'success' || (needs.bootstrap.result == 'skipped' && github.event_name != 'workflow_dispatch' && !inputs.sync_iam)) }}"
+            or deploy.get('needs') != ['prepare', 'bootstrap', 'ready']
+            or deploy.get('if') != "${{ !cancelled() && needs.ready.result == 'success' }}"):
+        return ['Viewer readiness must separate optional IAM and signed runtime applies']
+    admission = {'APPLY_RESULT': '${{ needs.prepare.result }}', 'CLAIM_SIGNED': '${{ needs.prepare.outputs.claim_signed }}'}
     guards = [step for step in deploy['steps'] if step.get('env') == admission]
     if (len(guards) != 1 or not enabled(guards[0]) or 'if' in guards[0] or guards[0].get('continue-on-error')
             or guards[0].get('run') != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
             or any(mutations(step)[1] for step in deploy['steps'][:deploy['steps'].index(guards[0])])):
-        return ['Viewer runtime apply requires its successful signed bootstrap']
-    return verification_boundary(workflow, 'catalog-viewer-deploy.yml', 'bootstrap', ['prepare', 'bootstrap', 'deploy'], apply_parent='deploy')
+        return ['Viewer runtime apply requires its successful signed preparation']
+    return verification_boundary(workflow, 'catalog-viewer-deploy.yml', 'prepare', ['prepare', 'bootstrap', 'deploy'], apply_parent='deploy')
 
 
 def boundaries(root):
@@ -315,7 +319,7 @@ def boundaries(root):
             errors.extend(viewer_boundary(value))
         for job_id, job in value["jobs"].items():
             steps = list(expanded_steps(root, job))
-            inherited = filename == "ingestion-deploy.yml" and job_id == "verify" or filename == "catalog-viewer-deploy.yml" and job_id in {"deploy", "verify"}
+            inherited = filename == "ingestion-deploy.yml" and job_id == "verify" or filename == "catalog-viewer-deploy.yml" and job_id in {"bootstrap", "deploy", "verify"}
             rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):

@@ -348,9 +348,9 @@ def test_usage_deployment_is_protected_and_uses_tested_images_without_schedule_r
     shell = '\n'.join(step.get('run', '') for step in executor['jobs']['prepare']['steps'] + job['steps'])
     assert 'tested_image_authorization.py' in shell
     assert 'docker build ' not in shell
-    assert not TARGETS['dataset-usage']['resume_scheduler']
-    assert not TARGETS['dataset-usage']['validate_release']
-    assert not TARGETS['dataset-usage']['native_tools']
+    assert TARGETS['dataset-usage']['plan_guard'] == 'usage'
+    assert not TARGETS['dataset-usage']['asset_root']
+    assert not TARGETS['dataset-usage']['after_verify']
     assert 'dataset_usage_deploy.py --plan-json' in shell
     assert '--plan-json "$RUNNER_TEMP/ingestion.tfplan.json"' in shell
     assert 'deployment_revision.py start' in shell

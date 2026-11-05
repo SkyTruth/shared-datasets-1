@@ -3,11 +3,7 @@ name: Deployments / Read-only reconciliation
 on:
   workflow_dispatch:
     inputs:
-      deployment_id:
-        description: Failed or interrupted SDK, ingestion or registered Terraform deployment record to reconcile without mutation
-        required: true
-        type: string
-
+      deployment_id: {"description": "Failed or interrupted SDK, ingestion or registered Terraform deployment record to reconcile without mutation", "required": true, "type": "string"}
 permissions:
   contents: read
   actions: read

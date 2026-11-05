@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+from importlib import import_module
 from pathlib import Path
 import sys
 import subprocess
@@ -42,6 +43,8 @@ def sea_ice_build(workdir):
 
 
 def wdpa_build(work):
+    for module in ("ingestion.wdpa_monthly.automatic", "scripts.feature_metadata_localization", "scripts.translation_local_io"):
+        import_module(module)
     from ingestion.wdpa_monthly import translations
     from scripts.feature_metadata_translation_reuse import COLUMNS, build_memory
     source = work / "source.geojson"

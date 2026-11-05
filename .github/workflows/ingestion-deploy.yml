@@ -2,30 +2,13 @@ name: Ingestion / Shared deploy
 'on':
   workflow_call:
     inputs:
-      target:
-        required: true
-        type: string
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
-      cancel_running_canary:
-        type: boolean
-        default: false
-      canary_run_date:
-        type: string
-        default: ''
-      resume_scheduler:
-        type: boolean
-        default: true
+      target: {required: true, type: string}
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
+      cancel_running_canary: {"type": "boolean", "default": false}
+      canary_run_date: {"type": "string", "default": ""}
+      resume_scheduler: {"type": "boolean", "default": true}
 permissions:
   actions: read
   deployments: write
@@ -54,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     outputs:
-      config: ${{ steps.target.outputs.config }}
       ready: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
       image: ${{ steps.image.outputs.image }}
       config_digest: ${{ steps.tested-image.outputs.config_digest }}
@@ -65,9 +47,6 @@ jobs:
         ref: ${{ github.workflow_sha }}
         fetch-depth: 0
         persist-credentials: false
-    - name: Resolve registered ingestion target
-      id: target
-      run: python scripts/ingestion_targets.py
     - name: Authorize tested executor and retain trusted receipt policy
       uses: ./.github/actions/deployment-bootstrap
       with:
@@ -75,6 +54,9 @@ jobs:
         executor-sha: ${{ inputs.executor_sha }}
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
+    - name: Resolve registered ingestion target
+      id: target
+      run: python scripts/ingestion_targets.py
     - name: Check prior deployment before preparing image
       id: replay
       env:
@@ -82,14 +64,8 @@ jobs:
       run: |
         python scripts/deployment_revision.py check --target "$TARGET" --workflow "$WORKFLOW_FILE" \
           --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v2
-      with:
-        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-      if: steps.replay.outputs.proceed == 'true'
-    - name: Set up gcloud
-      uses: google-github-actions/setup-gcloud@v2
+    - name: Authenticate protected deployer
+      uses: ./.github/actions/deployment-auth
       if: steps.replay.outputs.proceed == 'true'
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -106,7 +82,7 @@ jobs:
       run: uv sync --locked --all-groups
       if: steps.replay.outputs.proceed == 'true'
     - name: Verify feature-ID publication state
-      if: steps.replay.outputs.proceed == 'true' && fromJSON(steps.target.outputs.config).rollout_gate
+      if: steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'
       run: |
         uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET"
     - name: Verify live deployment permissions
@@ -150,37 +126,6 @@ jobs:
         docker tag "$TESTED_IMAGE_ID" "$image_tag"
         echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
-    - name: Smoke-test native tools in image
-      env:
-        RASTER_TOOLS: ${{ fromJSON(steps.target.outputs.config).synthetic_smoke }}
-      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && fromJSON(steps.target.outputs.config).native_tools
-      run: |
-        set -euo pipefail
-        docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c \
-          'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version && command -v tippecanoe-decode'
-        if [[ "$RASTER_TOOLS" == true ]]; then
-          docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c 'gdal_calc.py --help && gdal_polygonize.py --help'
-        fi
-    - name: Smoke-test job import closure in image
-      env:
-        NATIVE_TOOLS: ${{ fromJSON(steps.target.outputs.config).native_tools }}
-        IMPORT_PROBE: ${{ fromJSON(steps.target.outputs.config).import_probe }}
-      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
-      run: |
-        set -euo pipefail
-        module="${TARGET//-/_}"
-        probe="import ingestion.${module}.run"
-        if [[ "$NATIVE_TOOLS" == true ]]; then
-          probe+="; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset"
-        fi
-        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c "$probe"
-        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c "$IMPORT_PROBE"
-    - name: Smoke-test synthetic sea-ice build path in image
-      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && fromJSON(steps.target.outputs.config).synthetic_smoke
-      run: |
-        docker run --platform linux/amd64 --rm \
-          --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/local_ingestion_smoke.py,dst=/app/scripts/local_ingestion_smoke.py,readonly" \
-          "$IMAGE_TAG" python scripts/local_ingestion_smoke.py --sea-ice-only --workdir /tmp/ims-synthetic
     - name: Push tested image and verify registry config
       env:
         TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
@@ -210,7 +155,6 @@ jobs:
       queue: max
       cancel-in-progress: false
     env:
-      TARGET_CONFIG: ${{ needs.prepare.outputs.config }}
       IMAGE: ${{ needs.prepare.outputs.image }}
       TESTED_IMAGE_CONFIG: ${{ needs.prepare.outputs.config_digest }}
     outputs:
@@ -233,13 +177,11 @@ jobs:
         executor-sha: ${{ inputs.executor_sha }}
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v2
-      with:
-        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-    - name: Set up gcloud
-      uses: google-github-actions/setup-gcloud@v2
+    - name: Resolve registered ingestion target
+      id: target
+      run: python scripts/ingestion_targets.py
+    - name: Authenticate protected deployer
+      uses: ./.github/actions/deployment-auth
     - name: Check runtime verification window
       id: window
       run: |
@@ -255,41 +197,27 @@ jobs:
       run: terraform -chdir=terraform/envs/prod init -input=false
       if: steps.window.outputs.ready == 'true'
     - name: Set up uv for telemetry plan validation
-      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'
       uses: astral-sh/setup-uv@v5
       with:
         version: 0.11.8
     - name: Terraform plan
-      env:
-        PLAN_GUARD: ${{ fromJSON(needs.prepare.outputs.config).plan_guard }}
-        IMAGE_CONFIG_VARIABLE: ${{ fromJSON(needs.prepare.outputs.config).image_config_variable }}
       run: |
-        set -euo pipefail
         if [[ "$PLAN_GUARD" == usage ]]; then uv sync --locked --all-groups; fi
-        args=(-input=false -out="$RUNNER_TEMP/ingestion.tfplan")
-        targets="$(python -c 'import json,os,subprocess; c=json.loads(os.environ["TARGET_CONFIG"]); print(subprocess.check_output(c["targets_command"], text=True).strip() if c["targets_command"] else "\n".join(c["targets"]))')"
-        while IFS= read -r target; do args+=("-target=$target"); done <<< "$targets"
-        while IFS= read -r variable; do args+=("-var=$variable=unused-by-$TARGET-deploy"); done < <(python -c 'from scripts.ingestion_targets import DEPLOY_TARGETS; print("\n".join(t["image_variable"] for t in DEPLOY_TARGETS.values()))')
-        image_variable="$(python -c 'import json,os; print(json.loads(os.environ["TARGET_CONFIG"])["image_variable"])')"
-        args+=("-var=$image_variable=$IMAGE")
-        if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("-var=$IMAGE_CONFIG_VARIABLE=$TESTED_IMAGE_CONFIG"); fi
-        bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan "${args[@]}"
+        python scripts/ingestion_targets.py plan
       if: steps.window.outputs.ready == 'true'
     - name: Export Terraform plan JSON
       run: |
         terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/ingestion.tfplan" > "$RUNNER_TEMP/ingestion.tfplan.json"
       if: steps.window.outputs.ready == 'true'
     - name: Enforce ingestion resource-change allowlist
-      env:
-        IMAGE_CONFIG_VARIABLE: ${{ fromJSON(needs.prepare.outputs.config).image_config_variable }}
       run: |
-        args=("$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes "--job-image-target=$TARGET"
-          "--expected-image=$IMAGE" "--refusal-prefix=Refusing $TARGET deploy")
-        if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("--expected-config=$TESTED_IMAGE_CONFIG"); fi
-        python scripts/terraform_plan_allowlist.py "${args[@]}"
-      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'job-image'
+        python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes \
+          --job-image-target "$TARGET" --expected-image "$IMAGE" --expected-config "$TESTED_IMAGE_CONFIG" \
+          --refusal-prefix "Refusing $TARGET deploy"
+      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD != 'usage'
     - name: Enforce usage telemetry, activation and cost boundaries
-      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
@@ -335,7 +263,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     env:
-      TARGET_CONFIG: ${{ needs.prepare.outputs.config }}
       IMAGE: ${{ needs.prepare.outputs.image }}
     steps:
     - name: Check out trusted verifier
@@ -351,19 +278,17 @@ jobs:
         executor-sha: ${{ inputs.executor_sha }}
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
+    - name: Resolve registered ingestion target
+      id: target
+      run: python scripts/ingestion_targets.py
     - name: Require successful signed apply
       env:
         APPLY_RESULT: ${{ needs.apply.result }}
         CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
       run: |
         test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v2
-      with:
-        workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-        service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-    - name: Set up gcloud
-      uses: google-github-actions/setup-gcloud@v2
+    - name: Authenticate protected deployer
+      uses: ./.github/actions/deployment-auth
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -400,8 +325,6 @@ jobs:
           exit 1
         fi
     - name: Execute ingestion canary
-      env:
-        CANARY_RUN_URL: ${{ fromJSON(needs.prepare.outputs.config).canary_run_url }}
       run: |
         set -euo pipefail
         if [[ -n "$CANARY_RUN_DATE" && ! "$CANARY_RUN_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -419,9 +342,6 @@ jobs:
         if [[ -z "$execution" ]]; then echo 'Canary returned no execution identity.' >&2; exit 1; fi
         echo "CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
     - name: Watch ingestion canary
-      env:
-        CANARY_ATTEMPTS: ${{ fromJSON(needs.prepare.outputs.config).canary_attempts }}
-        CANARY_TIMEOUT_PHASE: ${{ fromJSON(needs.prepare.outputs.config).canary_timeout_phase }}
       run: |
         set -euo pipefail
         for ((attempt=0; attempt<CANARY_ATTEMPTS; attempt++)); do
@@ -442,30 +362,20 @@ jobs:
           exit 1
         fi
     - name: Validate latest release contract
-      if: fromJSON(needs.prepare.outputs.config).validate_release
+      if: env.ASSET_ROOT != ''
       run: uv run --no-sync python scripts/ingestion_verification.py
     - name: Run asset bucket hygiene audit
-      if: fromJSON(needs.prepare.outputs.config).validate_release
+      if: env.ASSET_ROOT != ''
       run: |
         uv run --no-sync python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
           --bucket "$BUCKET" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
         uv run --no-sync python scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"
     - name: Verify usage scheduler
-      if: fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      if: env.PLAN_GUARD == 'usage'
       run: gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state,schedule,timeZone)'
     - name: Resume verified ingestion scheduler
-      if: fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler
-      run: |
-        set -euo pipefail
-
-        uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET" --require-published
-        gcloud scheduler jobs resume "$TARGET" \
-          --location="${REGION}" \
-          --project="${GOOGLE_CLOUD_PROJECT}"
-        gcloud scheduler jobs describe "$TARGET" \
-          --location="${REGION}" \
-          --project="${GOOGLE_CLOUD_PROJECT}" \
-          --format='value(state,schedule,timeZone)'
+      if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
+      run: bash -euo pipefail -c "$AFTER_VERIFY"
     - name: Record deployment outcome
       id: deployment-outcome
       env:
