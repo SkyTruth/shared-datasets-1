@@ -60,7 +60,8 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
   queue replaces pending jobs even when `cancel-in-progress` is false. Queue
   overflow is still canceled: report it and dispatch the affected workflow
   again from reviewed `main` after capacity is available.
-- Ingestion entrypoints call `ingestion-deploy.yml`: prepare images before the
+- `scripts/ingestion_targets.py` owns the versioned target contract.
+  Ingestion entrypoints call `ingestion-deploy.yml`: prepare images before the
   state queue, keep plan/allowlist/permissions/signed claim/apply in its `apply`
   job, then verify canaries outside that queue. Each target entrypoint holds
   its separate `ingestion-<target>` queue across the whole rollout to prevent
@@ -75,9 +76,11 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
   Non-lock failures must exit immediately; do not automatically regenerate or
   apply a new plan outside the existing allowlist validation sequence.
 - A deploy must not start a canary while an execution of the same job is
-  running. Skip by default and say so; a duplicate rebuilds an entire release
-  before discovering it is redundant. Cancel the in-flight run only via the
-  explicit `cancel_running_canary` input, when replacing known-bad code.
+  running. Defer before preparing or applying. If an execution starts after
+  apply, wait up to 62.5 minutes for it to drain, then fail visibly if still
+  active. Cancel only via explicit `cancel_running_canary`; wait for cancellation
+  to finish before launching the canary. The shared runtime-window command owns
+  this gate, including paused WDPA/EAMLIS schedules and explicit canary dates.
 
 ## Job boundaries
 

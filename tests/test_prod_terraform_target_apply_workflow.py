@@ -3,7 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from test_wdpa_monthly_deploy_workflow import shared_workflow
+from test_ingestion_deploy_workflow import shared_workflow
+from scripts.deployment_receipt_contracts import expanded_steps
 from workflow_helpers import (
     assert_target_apply_caller,
     load_workflow,
@@ -170,7 +171,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 jobs = load_workflow(REPO_ROOT / ".github/workflows" / name)["jobs"]
                 self.assertNotIn("iam", jobs)
                 self.assertEqual(jobs["deploy"]["uses"], "./.github/workflows/ingestion-deploy.yml")
-                steps = workflow_steps_by_name(shared_workflow(), "prepare")
+                steps = {step.get("name"): step for step in expanded_steps(REPO_ROOT, shared_workflow()["jobs"]["prepare"])}
                 self.assertIn("Verify live deployment permissions", steps)
                 self.assertIn("Verify tested main revision", steps)
 

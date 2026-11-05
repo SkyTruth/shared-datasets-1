@@ -238,7 +238,7 @@ def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attem
 @pytest.mark.parametrize("date", ["", "2026-10-01", "invalid; exit 0"])
 @pytest.mark.parametrize("exit_code", [0, 7])
 def test_real_canary_launch_marks_only_short_executions_and_propagates_failure(tmp_path, target, date, exit_code):
-    from test_wdpa_monthly_deploy_workflow import run_shell, shared_step
+    from test_ingestion_deploy_workflow import run_shell, shared_step
     launch = shared_step("verify", "Execute ingestion canary")
     recorder = f'''gcloud() {{
       printf "%s\\n" "$@" > "$COMMAND_LOG"
@@ -271,7 +271,7 @@ def test_real_canary_launch_marks_only_short_executions_and_propagates_failure(t
 @pytest.mark.parametrize("target", ["mpatlas-monthly", "sea-ice-daily", "eamlis-monthly", "wdpa-monthly"])
 @pytest.mark.parametrize("phase", ["verified", "failed", "wrong-image", "unknown"])
 def test_shared_canary_watcher_requires_terminal_success_of_exact_image(tmp_path, target, phase):
-    from test_wdpa_monthly_deploy_workflow import run_shell, shared_step
+    from test_ingestion_deploy_workflow import run_shell, shared_step
     image = "image@sha256:" + "a" * 64
     facts = {"spec": {"template": {"spec": {"containers": [{"image": image if phase != "wrong-image" else "wrong"}]}}},
              "status": {"completionTime": "now", "succeededCount": 1 if phase == "verified" else 0,

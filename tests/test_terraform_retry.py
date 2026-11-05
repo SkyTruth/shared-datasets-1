@@ -200,37 +200,5 @@ class WrapperIsUsedForProdMutationsTests(unittest.TestCase):
 
 
 
-class CanaryDuplicationGuardTests(unittest.TestCase):
-    """Run the shipped cross-target guard; cancellation stays explicit."""
-
-    def test_each_target_refuses_active_canary_unless_cancel_is_opted_in(self):
-        from test_wdpa_monthly_deploy_workflow import run_shell, shared_step, target_table
-        script = shared_step("verify", "Resolve in-flight canary")["run"]
-        recorder = '''gcloud() {
-          if [[ "$*" == *"executions list"* ]]; then printf 'existing-execution 1\\n';
-          elif [[ "$*" == *"executions cancel"* ]]; then echo "cancelled:$*";
-          else return 9; fi
-        }
-'''
-        for target in target_table():
-            for cancel in ("false", "true"):
-                with self.subTest(target=target, cancel=cancel), tempfile.TemporaryDirectory() as directory:
-                    result = run_shell(Path(directory), script, target=target,
-                                       extra={"CANCEL_RUNNING_CANARY": cancel}, prefix=recorder)
-                    self.assertEqual(result.returncode == 0, cancel == "true", result.stderr)
-                    self.assertEqual("cancelled:" in result.stdout, cancel == "true")
-                    if cancel == "false":
-                        self.assertIn("refusing a duplicate canary", result.stderr)
-
-    def test_every_wrapper_defaults_to_no_cancellation_and_guard_precedes_launch(self):
-        from test_wdpa_monthly_deploy_workflow import shared_workflow, target_table
-        from workflow_helpers import load_workflow, workflow_triggers
-        steps = shared_workflow()["jobs"]["verify"]["steps"]
-        names = [step.get("name") for step in steps]
-        self.assertLess(names.index("Resolve in-flight canary"), names.index("Execute ingestion canary"))
-        for target in target_table():
-            caller = load_workflow(REPO_ROOT / ".github/workflows" / (target + "-deploy.yml"))
-            self.assertIs(workflow_triggers(caller)["workflow_dispatch"]["inputs"]["cancel_running_canary"]["default"], False)
-
 if __name__ == "__main__":
     unittest.main()

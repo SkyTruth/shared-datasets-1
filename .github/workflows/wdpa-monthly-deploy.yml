@@ -59,4 +59,3 @@ jobs:
       source_run_attempt: ${{ inputs.source_run_attempt }}
       cancel_running_canary: ${{ inputs.cancel_running_canary || false }}
       canary_run_date: ${{ inputs.canary_run_date || '' }}
-    secrets: inherit

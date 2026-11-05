@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import re
+import json
 
 import yaml
 
 ACTION = "./.github/actions/deployment-receipt"
+BOOTSTRAP = "./.github/actions/deployment-bootstrap"
 WORKFLOWS = (
     "ingestion-deploy.yml",
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
@@ -20,6 +22,21 @@ NOTIFICATION_PERMISSIONS = {
     "attestations": "write", "id-token": "write",
 }
 NOTIFICATION_ATTEST = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+
+
+def expanded_steps(root, job):
+    for step in job.get("steps", []):
+        if step.get("uses") != BOOTSTRAP:
+            yield step
+            continue
+        action = yaml.safe_load((root / BOOTSTRAP.removeprefix("./") / "action.yml").read_text())
+        encoded = json.dumps(action["runs"]["steps"])
+        for key, value in step.get("with", {}).items():
+            encoded = encoded.replace("${{ inputs." + key + " }}", value)
+        for child in json.loads(encoded):
+            if "if" in step:
+                child["if"] = step["if"]
+            yield child
 
 
 def top_level_conjuncts(expression):
@@ -256,22 +273,28 @@ def ingestion_boundary(workflow):
     applies = [step for step in apply.get("steps", []) if mutations(step)[1]]
     if len(applies) != 1 or applies[0].get("if") != "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'":
         errors.append("ingestion-deploy.yml: saved-plan apply requires the exact signed claim barrier")
-    if verify.get("needs") != ["prepare", "apply"] or verify.get("if") != "${{ always() && needs.apply.outputs.deployment_id != '' }}":
-        errors.append("ingestion-deploy.yml: verify must record every claimed apply outcome, including failure")
+    return errors + verification_boundary(workflow, "ingestion-deploy.yml", "apply", ["prepare", "apply"])
+
+
+def verification_boundary(workflow, filename, parent, needs):
+    errors = []
+    verify = workflow["jobs"].get("verify", {})
+    if verify.get("needs") != needs or verify.get("if") != "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}":
+        errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
     guards = [step for step in verify.get("steps", []) if step.get("name") == "Require successful signed apply"]
     if len(guards) != 1 or guards[0].get("env") != {
-        "APPLY_RESULT": "${{ needs.apply.result }}", "CLAIM_SIGNED": "${{ needs.apply.outputs.claim_signed }}",
+        "APPLY_RESULT": "${{ needs." + parent + ".result }}", "CLAIM_SIGNED": "${{ needs." + parent + ".outputs.claim_signed }}",
     } or guards[0].get("run", "").strip() != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success' or "if" in guards[0] or guards[0].get("continue-on-error"):
-        errors.append("ingestion-deploy.yml: canary requires successful apply and exact signed claim")
+        errors.append(f"{filename}: canary requires successful apply and exact signed claim")
     else:
         steps = verify["steps"]
         if any(mutations(step)[1] for step in steps[:steps.index(guards[0])]):
-            errors.append("ingestion-deploy.yml: signed apply admission must precede canary")
+            errors.append(f"{filename}: signed apply admission must precede canary")
     outcomes = [step for step in verify.get("steps", []) if command(step, "finish")]
     if (len(outcomes) != 1 or outcomes[0].get("if") != "${{ always() }}"
-            or outcomes[0].get("env") != {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs.apply.outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}
+            or outcomes[0].get("env") != {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}
             or 'if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi' not in outcomes[0].get("run", "")):
-        errors.append("ingestion-deploy.yml: every claimed terminal outcome must be recorded even after failed apply")
+        errors.append(f"{filename}: every claimed terminal outcome must be recorded even after failed apply")
     return errors
 
 
@@ -283,9 +306,17 @@ def boundaries(root):
             errors.extend(sdk_candidate_read_only(value))
         if filename == "ingestion-deploy.yml":
             errors.extend(ingestion_boundary(value))
+        if filename == "dataset-usage-deploy.yml":
+            errors.extend(verification_boundary(value, filename, "deploy", "deploy"))
+            outputs = value["jobs"].get("deploy", {}).get("outputs", {})
+            if any(outputs.get(key) != expected for key, expected in {
+                "deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}",
+                "image": "${{ steps.image.outputs.image }}",
+            }.items()):
+                errors.append(f"{filename}: verify must inherit the exact signed claim and image")
         for job_id, job in value["jobs"].items():
             steps = job.get("steps", [])
-            inherited = filename == "ingestion-deploy.yml" and job_id == "verify"
+            inherited = filename in {"ingestion-deploy.yml", "dataset-usage-deploy.yml"} and job_id == "verify"
             rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):

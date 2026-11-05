@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,9 +23,10 @@ from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
+from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
 from scripts import cdn_plan_readiness as cdn
 
-DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
+DEPLOYS = {config["selection"].replace("_", "-"): target for target, config in INGESTION_CONFIGS.items()}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
     "prod-terraform-target-apply.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml",
@@ -220,7 +222,13 @@ def deployment_contract(root, target):
     for job in jobs.values():
         if job.get("environment") != "shared-datasets-production":
             errors.append(f"{name}: protected production job required")
-        by_name = {step.get("name"): step for step in job.get("steps", [])}
+        bootstraps = [step for step in job.get("steps", []) if step.get("uses") == receipts.BOOTSTRAP]
+        if len(bootstraps) != 1 or any(key in bootstraps[0] for key in ("if", "continue-on-error")) or bootstraps[0].get("with") != {
+            "workflow": "${{ env.WORKFLOW_FILE }}", "executor-sha": "${{ inputs.executor_sha }}",
+            "source-run-id": "${{ inputs.source_run_id }}", "source-run-attempt": "${{ inputs.source_run_attempt }}",
+        }:
+            errors.append(f"{name}: exact unconditional trusted bootstrap required")
+        by_name = {step.get("name"): step for step in receipts.expanded_steps(root, job)}
         checkout = by_name.get("Check out repository", {}).get("with", {})
         if checkout.get("ref") != "${{ inputs.executor_sha }}" or checkout.get("fetch-depth") != 0:
             errors.append(f"{name}: exact executor SHA and complete history required")
@@ -233,18 +241,18 @@ def deployment_contract(root, target):
         if any(item not in names for item in ordered) or [names.index(item) for item in ordered if item in names] != sorted(names.index(item) for item in ordered if item in names):
             errors.append(f"{name}: trusted bootstrap and retained verifier must precede candidate execution and authentication")
         restore = by_name.get(ordered[3], {})
-        if restore.get("env") != {"TRUSTED_WORKFLOW_SHA": "${{ github.workflow_sha }}"} or restore.get("run", "").strip() != (
-            'set -euo pipefail\n'
-            'git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \\\n'
-            '  scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \\\n'
-            '  .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"'
-        ) or "if" in restore:
+        tokens = shlex.split(restore.get("run", ""))
+        retained = {"scripts/deployment_revision.py", "scripts/deployment_emission.py", "scripts/ingestion_targets.py",
+                    "scripts/workflow_identity.py", "scripts/github_api_read.py", "scripts/install_deployment_verifier.py",
+                    ".github/actions/deployment-receipt"}
+        if (restore.get("env") != {"TRUSTED_WORKFLOW_SHA": "${{ github.workflow_sha }}"} or "if" in restore
+                or not retained <= set(tokens) or "git" not in tokens or "archive" not in tokens or "$TRUSTED_WORKFLOW_SHA" not in tokens):
             errors.append(f"{name}: immutable receipt verifier must survive older candidate checkout")
         for key in ("Verify executor before candidate checkout", "Verify tested main revision"):
             if ("if" in by_name.get(key, {}) or not receipts.command(by_name.get(key, {}), "verify")
                     or key == "Verify executor before candidate checkout" and "--bootstrap" not in by_name[key]["run"]):
                 errors.append(f"{name}: source verification cannot be disabled or bypassed")
-    steps = {s.get("name"): s for job in (jobs["prepare"], jobs["apply"]) for s in job["steps"]}
+    steps = {s.get("name"): s for job in (jobs["prepare"], jobs["apply"]) for s in receipts.expanded_steps(root, job)}
     order = list(steps)
     for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before preparing image", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
         if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):

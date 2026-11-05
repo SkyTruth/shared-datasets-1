@@ -8,7 +8,7 @@ import pytest
 
 from scripts import ci_contract, deployment_revision, terraform_plan_allowlist as allowlist
 from workflow_helpers import load_workflow
-from test_wdpa_monthly_deploy_workflow import target_table
+from test_ingestion_deploy_workflow import target_table
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB = "module.mpatlas_monthly_job.google_cloud_run_v2_job.this"

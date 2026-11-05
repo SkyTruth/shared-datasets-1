@@ -10,7 +10,7 @@ from scripts import publication_rollout_gate as gate
 from test_identity_reset import fixture, install_fixture, intent_for, executor
 from test_publication import MemoryStore, operation
 from workflow_helpers import load_workflow, workflow_steps_by_name
-from test_wdpa_monthly_deploy_workflow import shared_workflow, target_table
+from test_ingestion_deploy_workflow import shared_workflow, target_table
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -1,0 +1,71 @@
+name: Trusted deployment bootstrap
+description: Authorize tested main before candidate checkout and retain the immutable receipt policy
+inputs:
+  workflow:
+    description: Registered caller filename
+    required: true
+  executor-sha:
+    description: Exact tested main revision
+    required: true
+  source-run-id:
+    description: Successful main CI run
+    required: true
+  source-run-attempt:
+    description: Exact CI attempt
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Validate main ref
+    shell: bash
+    env:
+      WORKFLOW_FILE: ${{ inputs.workflow }}
+    run: |
+      set -euo pipefail
+      if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+            ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main" &&
+             "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+        echo "Execution must use this workflow or CI from main." >&2
+        exit 1
+      fi
+  - name: Install pinned durable receipt verifier
+    run: python scripts/install_deployment_verifier.py
+    shell: bash
+  - name: Verify executor before candidate checkout
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      WORKFLOW_FILE: ${{ inputs.workflow }}
+      EXECUTOR_SHA: ${{ inputs.executor-sha }}
+      SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source-run-attempt }}
+    run: |
+      python scripts/deployment_revision.py verify --bootstrap --workflow "$WORKFLOW_FILE" \
+        --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    shell: bash
+  - name: Check out repository
+    uses: actions/checkout@v4
+    with:
+      ref: ${{ inputs.executor-sha }}
+      fetch-depth: 0
+      persist-credentials: false
+  - name: Restore immutable receipt verifier after candidate checkout
+    env:
+      TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    run: |
+      set -euo pipefail
+      git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \
+        scripts/ingestion_targets.py scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
+        .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"
+    shell: bash
+  - name: Verify tested main revision
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WORKFLOW_FILE: ${{ inputs.workflow }}
+      EXECUTOR_SHA: ${{ inputs.executor-sha }}
+      SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source-run-attempt }}
+    run: |
+      python scripts/deployment_revision.py verify --workflow "$WORKFLOW_FILE" \
+        --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    shell: bash
