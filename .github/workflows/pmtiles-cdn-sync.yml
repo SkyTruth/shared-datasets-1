@@ -42,8 +42,16 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Validate main ref
+        env:
+          WORKFLOW_FILE: pmtiles-cdn-sync.yml
         run: |
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main" &&
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+            echo "Execution must use this workflow or CI from main." >&2
+            exit 1
+          fi
       - name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
