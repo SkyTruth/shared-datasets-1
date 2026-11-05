@@ -138,7 +138,6 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory, c
     ledger = DryLedger(api, run, directory, verification_cache=cache)
     states = ledger.load()
     require(all(state["identity"] == identity for state in states.values()), "Slack identity differs from registry")
-    targets = incidents.job_targets()
     safety_scopes = {"workflow:" + WORKFLOW.rsplit("/", 1)[-1],
                      incidents.scope_for_job(JOB, {}, WORKFLOW.rsplit("/", 1)[-1])[0]}
     safety_open = any(scope in safety_scopes and state["incident"]["resolution"] is None for scope, state in states.items())
@@ -148,7 +147,7 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory, c
             continue
         if source.get("path") == WORKFLOW and source.get("conclusion") == "success" and not safety_open:
             continue
-        observations.extend(incidents.source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": source}, targets))
+        observations.extend(incidents.source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": source}))
     observations = [item for item in observations if start <= incidents.instant(item["time"]) <= end]
     try:
         return not incidents.prepare(ledger, identity, observations)

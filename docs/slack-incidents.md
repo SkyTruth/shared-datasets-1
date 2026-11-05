@@ -80,7 +80,7 @@ publisher retains its own full source authorization checks.
 The scope includes the exact deployment target, or exact workflow and job when
 there is no registered deployment contract. IAM bootstrap and dependent sync
 are distinct targets. A bootstrap success cannot resolve a failed dependent
-sync. Job paths are derived from the checked-in reusable caller graph, including
+sync. Job paths are derived from each verified run’s immutable `head_sha` caller graph, including
 the original reviewed PR number for dataset mutation jobs. Unknown job paths
 remain separate incidents instead of guessing a target.
 

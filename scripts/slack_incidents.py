@@ -106,20 +106,21 @@ def validate_observation(value):
     return value
 
 
-def job_targets(root=ROOT):
-    """Derive complete registered job paths from the checked-in caller graph.
+def job_targets(root=ROOT, *, revision=None, workflow=None):
+    """Derive registered paths from a source revision, never execute its code.
 
     Resolving leaf names alone would conflate IAM bootstrap and sync or different
     ingestion targets. Unregistered jobs retain their own exact job scope.
     """
     # Preserve the exact historical mutating job scope for signed receipt recovery.
     # The retired workflow must not be loaded from today's caller graph.
+    require(revision is None or deployments.SHA.fullmatch(revision), "invalid source workflow revision")
     targets = {("wdpa-monthly-build.yml", "build"): "wdpa-monthly-build"}
     reverse = {workflow: target for target, workflow in deployments.TARGET_WORKFLOWS.items()}
 
     def walk(filename, prefix="", inherited=None, inputs=None, source=None):
         source = source or filename
-        document = yaml.safe_load((root / ".github/workflows" / filename).read_text())
+        document = yaml.safe_load(workflow_source(root, filename, revision) if revision else (root / ".github/workflows" / filename).read_text())
         for key, job in document["jobs"].items():
             name = job.get("name", key)
             for input_name, value in (inputs or {}).items():
@@ -142,6 +143,9 @@ def job_targets(root=ROOT):
             elif inherited and (filename, key) not in READ_ONLY_JOBS:
                 targets[(source, path)] = inherited
 
+    if workflow is not None:
+        walk(workflow, inherited=reverse.get(workflow))
+        return targets
     walk("ci.yml")
     for filename, target in reverse.items():
         if filename not in RETIRED_WORKFLOWS:
@@ -149,6 +153,12 @@ def job_targets(root=ROOT):
     for filename in set(deployments.TERRAFORM_WORKFLOWS.values()):
         walk(filename)
     return targets
+
+
+@cache
+def workflow_source(root, filename, revision):
+    require(re.fullmatch(r"[a-z0-9-]+\.yml", filename), "invalid source workflow path")
+    return subprocess.check_output(["git", "show", revision + ":.github/workflows/" + filename], cwd=root, text=True)
 
 
 def registered_name(name):
@@ -254,13 +264,15 @@ def observer_failure_proofs(api, failures):
     return proofs
 
 
-def source_observations(api, event, targets):
+def source_observations(api, event, targets=None):
     run = event["workflow_run"]
     if not alerts.verify_source_event(api, run):
         return []
     if run["conclusion"] not in alerts.FAILED_CONCLUSIONS | {"success"}:
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
+    if targets is None:
+        targets = job_targets(revision=run["head_sha"], workflow=alerts.WORKFLOW_PATHS[run["name"]])
     if alerts.catalog_probe_only(run, jobs):
         return []  # Neither a deployment failure nor evidence of recovery.
     if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
@@ -364,7 +376,7 @@ def replay_observations(api, targets, since, *, now=None, completed_until=None):
     for run in runs:
         if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
                 and run.get("head_branch") == "main" and run.get("head_repository", {}).get("full_name") == REPOSITORY):
-            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}, targets))
+            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}))
     return [item for item in observations if start <= instant(item["time"]) <= (completed_until or now)]
 
 
@@ -1145,7 +1157,7 @@ def main():
                 source = None
             else:
                 source = event["workflow_run"]
-                observations = source_observations(api, event, targets)
+                observations = source_observations(api, event)
             if (source and source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
                 # An idle input probe has no incident evidence. The

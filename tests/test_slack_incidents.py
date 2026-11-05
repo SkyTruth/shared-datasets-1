@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 from unittest import mock
 import urllib.error
@@ -818,7 +819,7 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     conclusion = scenario if scenario in {"failure", "timed_out", "startup_failure"} else "success"
     repository = {"id": 1, "full_name": incidents.REPOSITORY}
     source = {"id": 100, "run_attempt": 1, "name": name, "event": "push" if scenario == "empty-ci" else "schedule",
-              "workflow_id": 2, "path": ".github/workflows/" + filename, "head_sha": SHA,
+              "workflow_id": 2, "path": ".github/workflows/" + filename, "head_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=incidents.ROOT, text=True).strip(),
               "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
               "head_branch": "main", "head_repository": repository, "repository": repository}
     event_path = tmp_path / "event.json"
@@ -930,7 +931,7 @@ def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_pa
     timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     source = {"id": 100, "run_attempt": 1, "name": incidents.alerts.WORKFLOW_NAMES["deployment-verification.yml"][0],
               "event": "schedule", "workflow_id": 2, "path": ".github/workflows/deployment-verification.yml",
-              "head_sha": SHA, "conclusion": "success", "updated_at": timestamp, "created_at": timestamp,
+              "head_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=incidents.ROOT, text=True).strip(), "conclusion": "success", "updated_at": timestamp, "created_at": timestamp,
               "status": "completed", "head_branch": "main", "head_repository": repository, "repository": repository}
     ci = {**source, "id": 101, "workflow_id": 3, "path": ".github/workflows/ci.yml", "name": "CI", "event": "push"}
     worker = {**source, "id": 200, "workflow_id": 4, "path": incidents.WORKFLOW, "event": "workflow_run"}

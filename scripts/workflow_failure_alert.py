@@ -168,7 +168,7 @@ def resolve_legacy(api, slack, run_id, message_ts):
     event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
     incidents.require(jobs is not None and alert_for_run(event, jobs=jobs) is not None,
                       "source is not a current unattended failure")
-    targets = incidents.job_targets()
+    targets = incidents.job_targets(revision=run["head_sha"], workflow=WORKFLOW_PATHS[run["name"]])
     failures = [incidents.from_job(run, job, targets) for job in jobs
                 if job["conclusion"] in FAILED_CONCLUSIONS]
     incidents.require(failures, "source has no failed jobs")
