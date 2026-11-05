@@ -14,8 +14,10 @@ resource "google_iam_workload_identity_pool_provider" "github_readonly" {
 
   attribute_condition = join(" && ", [
     "assertion.repository == '${var.github_repository}'",
-    "assertion.ref == 'refs/heads/main'",
-    "${local.github_job_workflow_ref} in ${jsonencode([for workflow in local.github_workflow_identities.bucket_reader : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main"])}",
+    "(${join(" || ", [
+      "(assertion.ref == 'refs/heads/main' && ${local.github_job_workflow_ref} in ${jsonencode([for workflow in local.github_workflow_identities.bucket_reader : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main" if workflow != "dataset-breaking-change-alert.yml"])})",
+      "(assertion.event_name == 'pull_request' && assertion.ref.matches('^refs/pull/[0-9]+/merge$') && assertion.workflow_ref == ${local.github_job_workflow_ref} && assertion.workflow_ref == '${var.github_repository}/.github/workflows/dataset-breaking-change-alert.yml@' + assertion.ref)",
+    ])})",
   ])
 
   oidc {

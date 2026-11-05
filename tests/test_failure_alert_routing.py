@@ -304,7 +304,7 @@ def test_cloud_policy_covers_all_workers_and_suppresses_only_trusted_marked_exec
     filter_text = failure.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
     assert 'protoPayload.status.code>0' in filter_text
     assert '''NOT (
-  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${google_service_account.github_job["runtime"].email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
     assert "resource.labels.job_name" not in filter_text

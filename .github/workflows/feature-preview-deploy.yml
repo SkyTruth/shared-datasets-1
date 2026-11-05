@@ -2,6 +2,10 @@ name: Preview / Deploy feature branch
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: "Full branch or tag ref to deploy (refs/heads/... or refs/tags/...)"
+        type: string
+        required: true
       preview_data_mode:
         description: "Preview data handling"
         type: choice
@@ -40,23 +44,27 @@ jobs:
       group: feature-branch-preview
       cancel-in-progress: false
     env:
-      PREVIEW_REF: ${{ github.ref_name }}
-      PREVIEW_SOURCE_REF: ${{ github.ref }}
+      PREVIEW_REF: ${{ inputs.source_ref }}
       PREVIEW_DATA_MODE: ${{ github.event.inputs.preview_data_mode || 'preserve' }}
     steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/feature-preview-deploy.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - name: Check out preview control plane
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
       - name: Validate selected ref
         run: |
           set -euo pipefail
-          if [[ -z "${PREVIEW_SOURCE_REF}" || -z "${PREVIEW_REF}" ]]; then
-            echo "Select the branch or tag to deploy from the workflow branch dropdown." >&2
-            exit 1
-          fi
-          case "${PREVIEW_SOURCE_REF}" in
-            refs/heads/*|refs/tags/*) ;;
-            *)
-              echo "Only branch or tag refs are valid preview deploy sources; select a branch or tag." >&2
-              exit 1
-              ;;
+          case "${PREVIEW_REF}" in
+            refs/heads/*|refs/tags/*) git check-ref-format "${PREVIEW_REF}" ;;
+            *) echo "source_ref must be a full branch or tag ref." >&2; exit 1 ;;
           esac
           case "${PREVIEW_DATA_MODE}" in
             preserve|reset) ;;
@@ -66,14 +74,10 @@ jobs:
               ;;
           esac
           echo "Preview data mode: ${PREVIEW_DATA_MODE}"
-      - name: Check out preview control plane
-        uses: actions/checkout@v4
-        with:
-          ref: main
       - name: Check out selected feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ inputs.source_ref }}
           path: preview-source
       - name: Record checked-out SHA
         run: echo "PREVIEW_DEPLOY_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
@@ -98,20 +102,7 @@ jobs:
           preview_service_account="feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
           preview_loader_service_account="feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
           project_number="$(gcloud projects describe "${GOOGLE_CLOUD_PROJECT}" --format='value(projectNumber)')"
-          preview_loader_wif_member="principal://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/subject/repo:SkyTruth/shared-datasets-1:environment:shared-datasets-production"
-          missing_bootstrap=0
-          if ! gcloud iam service-accounts describe "${preview_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
-            echo "Missing preview service account: ${preview_service_account}" >&2
-            missing_bootstrap=1
-          fi
-          if ! gcloud iam service-accounts describe "${preview_loader_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
-            echo "Missing preview loader service account: ${preview_loader_service_account}" >&2
-            missing_bootstrap=1
-          fi
-          if [[ "${missing_bootstrap}" == "1" ]]; then
-            echo "Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first." >&2
-            exit 1
-          fi
+          preview_loader_wif_member="principalSet://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/attribute.preview/allowed"
           gcloud projects get-iam-policy "${GOOGLE_CLOUD_PROJECT}" --format=json > "${RUNNER_TEMP}/preview-project-iam.json"
           gcloud iam service-accounts get-iam-policy "${preview_service_account}" \
             --project="${GOOGLE_CLOUD_PROJECT}" \
@@ -133,18 +124,13 @@ jobs:
           preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
           preview_sign_blob_role = f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob"
           loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
-          def project_binding_exists(role, member):
-              return any(
-                  binding.get("role") == role and member in binding.get("members", [])
-                  for binding in project_policy.get("bindings", [])
-              )
           def service_account_binding_exists(policy, role, member):
               return any(
                   binding.get("role") == role and member in binding.get("members", [])
                   for binding in policy.get("bindings", [])
               )
           missing = []
-          if not project_binding_exists(preview_terraform_role, f"serviceAccount:{terraform_service_account}"):
+          if not service_account_binding_exists(project_policy, preview_terraform_role, f"serviceAccount:{terraform_service_account}"):
               missing.append("preview Terraform custom role binding")
           if not service_account_binding_exists(service_policy, preview_sign_blob_role, preview_service_member):
               missing.append("preview service self signBlob binding")

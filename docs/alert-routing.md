@@ -32,7 +32,7 @@ The Cloud Run policy retains the project/region-wide failure condition and
 exception requires both the authenticated execution creator in
 `protoPayload.response.metadata.annotations."run.googleapis.com/creator"` and the
 execution marker name in `protoPayload.response.spec.template.spec.containers.env`.
-The creator must equal the configured Terraform deployer. The marker is
+The creator must equal the registered runtime service account. The marker is
 `SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL`; its value links the owning GitHub run.
 Matching the name avoids incorrectly pairing values from different env entries.
 Marker presence is the contract: an empty or false-looking value is not an opt-out.
@@ -214,7 +214,9 @@ Schema snapshots under `_catalog/schema-snapshots/` advance only after compatibl
 or waived publication. Deltas log diagnostics; consumer advisories use the reviewed
 [breaking-change contract](../.github/dataset-plans/README.md#consumer-impact).
 The advisory runs only for PRs containing immutable dataset plans and independently
-checks plan, PR snapshot and schema; body edits remain covered.
+checks plan, PR snapshot and schema; body edits remain covered. Its read-only
+WIF route accepts only that exact workflow at a numeric PR merge ref; the
+trusted-base workflow gates same-repository PRs before requesting credentials.
 
 [Repository notices](../.claude/skills/repo-alert-commit-messages/SKILL.md) use
 fenced commit messages. GitHub webhooks use Actions secret

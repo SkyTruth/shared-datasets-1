@@ -22,8 +22,8 @@ are scoped to this bucket; it contains no canonical dataset releases.
 
 ## Deployment and state boundaries
 
-The protected workflow checks out `main` at the workspace root and checks out
-the selected workflow branch separately under `preview-source/`. It builds the
+The protected workflow runs from `main`, pins its control checkout to the workflow
+SHA, and checks out the explicit `source_ref` under `preview-source/`. It builds the
 preview service and preview catalog viewer images from the selected branch
 after verifying the protected preview IAM bootstrap, then plans and applies
 `preview-source/terraform/envs/preview` through the preview resource-change
@@ -36,10 +36,8 @@ saved destroy reset from the selected branch preview Terraform, then creates
 the new preview stack and publishes a catalog shell. In both modes, it prints the preview
 service and catalog viewer Cloud Run URLs.
 
-This split is intentional. The workflow branch dropdown provides the source and
-preview Terraform that are deployed into the preview slot, while stable
-production-scoped IAM bootstrap remains on `main` through the separate sync
-workflow.
+The `source_ref` input supplies preview code and Terraform; stable production IAM
+bootstrap remains on `main` through the separate sync workflow.
 
 The selected feature branch must include the baseline preview service source,
 catalog viewer source, catalog site generator, and preview Terraform with the
@@ -47,7 +45,7 @@ sidecar backend and Firestore retirement configuration. Feature branches should
 rebase or merge from `main` before using the preview workflow.
 
 To replace the preview with a different feature branch, run the same workflow
-again and select the new branch or tag in the workflow branch dropdown. There is
+again from `main` and supply the new full branch or tag ref as `source_ref`. There is
 only one active preview slot. Use `preserve` when you are iterating on preview
 service or catalog viewer code against already loaded test data. Use `reset`
 when you need to tear down the previous preview bucket,

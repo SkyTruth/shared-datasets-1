@@ -217,8 +217,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    ref with `preview_data_mode=preserve`:
 
 ```bash
-gh workflow run feature-preview-deploy.yml --ref "$PREVIEW_REF" \
-  -f preview_data_mode=preserve
+gh workflow run feature-preview-deploy.yml --ref main \
+  -f source_ref="$PREVIEW_REF" -f preview_data_mode=preserve
 ```
 
    Wait for the catalog collection, build, and publication steps to finish.
