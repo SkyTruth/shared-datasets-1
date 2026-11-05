@@ -113,7 +113,16 @@ class Services:
 
 
 @pytest.fixture
-def journey(tmp_path, monkeypatch, target):
+def journey(tmp_path, monkeypatch):
+    return create_journey(tmp_path, monkeypatch, 'sea-ice-daily')
+
+
+@pytest.fixture
+def target_journey(tmp_path, monkeypatch, target):
+    return create_journey(tmp_path, monkeypatch, target)
+
+
+def create_journey(tmp_path, monkeypatch, target):
     config = DEPLOY_TARGETS[target]
     source = "ingestion/" + target.replace("-", "_") + "/run.py"
     assert (ROOT / source).is_file()
@@ -156,9 +165,9 @@ def journey(tmp_path, monkeypatch, target):
 @pytest.mark.parametrize('target,defect', [(target, defect) for target in DEPLOY_TARGETS
     for defect in [None, 'gate', 'selection', 'image', 'allowlist', 'permission', 'claim', 'apply', 'verify', 'pending', 'terminal', 'history-race',
                    *(['activation'] if target == 'dataset-usage' else [])]])
-def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_terminal_receipt(journey, monkeypatch, target, defect):
+def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_terminal_receipt(target_journey, monkeypatch, target, defect):
     config = DEPLOY_TARGETS[target]
-    services, directory = journey
+    services, directory = target_journey
     sha = services.plan['tested_sha']
     if defect == 'gate':
         services.jobs[0]['conclusion'] = 'failure'
@@ -198,7 +207,7 @@ def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_te
             'type': 'google_cloud_scheduler_job', 'mode': 'managed',
             'change': {'actions': ['update'], 'before': {'project': 'shared-datasets-1', 'region': 'us-central1', 'name': target},
                 'after': {'project': 'shared-datasets-1', 'region': 'us-central1', 'name': target,
-                'paused': False if defect == 'activation' else not verified,
+                'paused': verified if defect == 'activation' else not verified,
                 'schedule': '0 9 * * *', 'time_zone': 'UTC', 'retry_config': [{'retry_count': 0}]}}})
     if defect == 'allowlist':
         plan['resource_changes'][0]['address'] = 'google_storage_bucket.unrelated'
