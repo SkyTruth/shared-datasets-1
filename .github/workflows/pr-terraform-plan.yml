@@ -1,0 +1,38 @@
+name: Infrastructure / Read-only PR plan
+on:
+  workflow_call:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  plan:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_CACHE_DIR: .uv-cache
+      TF_IN_AUTOMATION: '1'
+      TF_INPUT: '0'
+      TF_WORKSPACE: default
+      PRODUCTION_TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
+        with:
+          binaries: terraform
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-validation-plan-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan
+      - name: Sync locked planner dependencies before authentication
+        run: uv sync --locked --no-dev
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_PR_PLAN_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Check selected live plans without mutation or plan artifacts
+        run: uv run --no-sync python scripts/pr_terraform_plan.py run --plan "$RUNNER_TEMP/ci-plan/plan.json"
