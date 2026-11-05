@@ -37,6 +37,7 @@ MONITORED_WORKFLOWS = {
     "eamlis-monthly-deploy.yml",
     "mpatlas-monthly-deploy.yml",
     "operational-safety-check.yml",
+    "unattended-workflow-alert.yml",
     "pmtiles-cdn-sync.yml",
     "preview-terraform-iam-sync.yml",
     "prod-terraform-state-reconcile.yml",
@@ -53,7 +54,7 @@ MONITORED_WORKFLOWS = {
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
 OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
 UNATTENDED_DISPATCH_WORKFLOWS = OBSERVER_WORKFLOWS | {
-    name for path in {"operational-safety-check.yml", "catalog-web-deploy.yml"} for name in WORKFLOW_NAMES[path]
+    name for path in {"operational-safety-check.yml", "catalog-web-deploy.yml", "unattended-workflow-alert.yml", "catalog-viewer-deploy.yml"} for name in WORKFLOW_NAMES[path]
 }
 
 

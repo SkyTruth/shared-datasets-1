@@ -40,7 +40,7 @@ def test_replay_and_legacy_keep_historical_recovery_identity(target, caller, ent
     api.get.side_effect = lambda path: repository if path == 'repos/' + incidents.REPOSITORY else (
         {'id': 7, 'path': run['path']} if '/actions/workflows/' in path else copy.deepcopy(run))
     api.pages.side_effect = lambda path, **_: [run] if '/actions/runs?' in path else jobs
-    observations = incidents.replay_observations(api, incidents.job_targets(), '2026-11-03T00:00:00Z',
+    observations = incidents.replay_observations(api, '2026-11-03T00:00:00Z',
                                               now=datetime(2026,11,4,tzinfo=timezone.utc))
     failed = [item for item in observations if item['conclusion'] == 'failure']
     assert len(failed) == 1 and failed[0]['scope'] == 'deployment:' + target

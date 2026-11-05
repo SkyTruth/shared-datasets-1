@@ -53,6 +53,7 @@ class OperationalAPI:
         self.jobs, self.statuses = {}, {}
         self.sources, self.records, self.production_records, self.calls, self.posts = [], [], [], [], []
         self.fail_on = None
+        self.comparison = "diverged"
 
     def source(self, identifier, filename="bucket-hygiene-audit.yml", *, status="completed", conclusion="failure", attempt=1):
         return {"id": identifier, "run_attempt": attempt, "workflow_id": self.definitions[filename]["id"],
@@ -71,6 +72,7 @@ class OperationalAPI:
     def install_state(self, state):
         record = json.loads(json.dumps(signed_record()))
         record["payload"]["state"] = state
+        record["created_at"] = stamp(NOW - timedelta(hours=1))
         self.records = [record]
         self.statuses[record["id"]] = [{"id": 12, "state": "success", "description": "applied", "environment_url": "",
                                        "log_url": emissions.invocation(safety.REPOSITORY, 11, 1)}]
@@ -82,7 +84,9 @@ class OperationalAPI:
 
     def get(self, path):
         self._check("get", path)
-        if path == PREFIX:
+        if "/compare/" in path:
+            value = {"status": self.comparison}
+        elif path == PREFIX:
             value = self.repository
         elif "/actions/workflows/" in path:
             key = path.rsplit("/", 1)[-1]
@@ -95,7 +99,7 @@ class OperationalAPI:
 
     def pages(self, path, field=None):
         self._check("pages", path)
-        if "/actions/runs?" in path:
+        if "/actions/runs?" in path or "/runs?branch=main" in path:
             value = self.sources
         elif "/jobs?" in path:
             value = self.jobs[int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])]
@@ -130,7 +134,7 @@ def signed_transport(api):
 
 
 def dry(api, tmp_path, sources=()):
-    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path, None)
+    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path, None)[0]
 
 
 def test_inventory_retains_missed_final_events_and_source_attempt_changes():
@@ -385,7 +389,7 @@ def test_catalog_admission_rejects_forged_context_or_producer(dispatch_context, 
         job["steps"][0]["conclusion"] = "skipped"
     else:
         event["inputs"]["safety_run_id"] = "../200"
-    with pytest.raises(RuntimeError, match="OPERATIONAL_SAFETY"):
+    with pytest.raises(RuntimeError, match="OPERATIONAL_SAFETY|comparison commit unavailable"):
         safety.validate_safety_dispatch(api, event, environment, workflow=api.current["path"])
     assert api.posts == []
 
@@ -433,3 +437,161 @@ def test_batch_cli_authenticates_exact_inflight_probe_without_parent_wait(tmp_pa
     assert api.posts == []
     slack.post.assert_not_called()
     slack.update.assert_not_called()
+
+
+@pytest.mark.parametrize('filename', ['unattended-workflow-alert.yml', 'deployment-verification.yml', 'catalog-web-deploy.yml', 'catalog-viewer-deploy.yml'])
+def test_token_dispatched_failure_is_replayed_without_native_event(tmp_path, filename):
+    api = OperationalAPI()
+    api.definitions.setdefault(filename, {'id': 99, 'path': '.github/workflows/' + filename})
+    source = api.source(101, filename)
+    source['event'] = 'workflow_dispatch'
+    api.add_source(source)
+    assert dry(api, tmp_path, [source]) is False
+    assert api.posts == []
+
+
+@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (7,'success',True), (1,'failure',True), (7,None,False)])
+def test_pending_checks_back_off_unchanged_success_but_not_failure(age, conclusion, expected):
+    api = OperationalAPI()
+    source = api.source(101, 'deployment-verification.yml', status='completed' if conclusion else 'in_progress', conclusion=conclusion)
+    source['created_at'] = stamp(NOW-timedelta(hours=age))
+    assert safety.verification_due(api, [source], [], now=NOW) is expected
+    assert safety.verification_due(api, [], [], now=NOW)
+
+
+@pytest.mark.parametrize('count', [0, 1, 2])
+@pytest.mark.parametrize('previous', ['success', 'failure', 'skipped'])
+def test_reconciliation_escalates_on_third_consecutive_probe_only(count, previous):
+    api = OperationalAPI()
+    for identifier in range(100, 100+count):
+        run = api.source(identifier, 'operational-safety-check.yml')
+        api.add_source(run)
+        api.jobs[identifier][0].update(name=safety.JOB, steps=[{'name':'Request operational reconciliation', 'status':'completed', 'conclusion':previous}])
+    assert safety.reconciliation_stalled(api, api.current) is (count == 2 and previous != 'skipped')
+
+
+@pytest.mark.parametrize('age', [1, 25])
+def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_age(probe_inputs, monkeypatch, age):
+    api, client, directory, _, _ = probe_inputs
+    state = acked_job_state(api)
+    state['incident'].update(posts={'parent':{'state':'claimed','ts':None}}, permalink='', parent_view_sha256=None)
+    api.install_state(state)
+    api.records[0]['created_at'] = stamp(NOW - timedelta(hours=age))
+    with signed_transport(api):
+        result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert result == {'catalog':False, 'reconcile':False, 'verify':False, 'snapshot':False}
+    assert json.loads((directory/'claims.json').read_bytes()) == [{'incident':state['incident']['id'], 'since':api.records[0]['created_at']}]
+    (directory/'result.json').write_text(json.dumps(result))
+    for k,v in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
+                'GITHUB_WORKFLOW_REF':safety.REPOSITORY+'/'+safety.WORKFLOW+'@refs/heads/main',
+                'GITHUB_RUN_ID':'300','GITHUB_RUN_ATTEMPT':'1'}.items():
+        monkeypatch.setenv(k,v)
+    monkeypatch.setattr(incidents,'GitHub',lambda:api)
+    monkeypatch.setattr(catalog,'get_client',lambda:client)
+    monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
+    monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(directory)])
+    if age > 24:
+        with pytest.raises(RuntimeError, match='unconfirmed Slack claim >=24 h'):
+            safety.main()
+    else:
+        safety.main()
+    assert api.posts == []
+
+
+@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',62)])
+@pytest.mark.parametrize('status,reason', [('success',''), ('skipped','source fingerprint unchanged'), ('skipped','source unavailable')])
+def test_freshness_separates_unchanged_source_from_missing_data(cadence, days, status, reason):
+    payload = {'latest_release':{'date':stamp(NOW-timedelta(days=365))[:10]},
+               'latest_run':{'status':status,'reason':reason,'date':stamp(NOW-timedelta(days=days-1))[:10]}}
+    assert safety.fresh_activity(payload, cadence, now=NOW) is (status=='success' or reason=='source fingerprint unchanged')
+    payload['latest_run']['date'] = stamp(NOW-timedelta(days=days))[:10]
+    assert not safety.fresh_activity(payload, cadence, now=NOW)
+    payload['updated_at'] = stamp(NOW)  # Schema/metadata repair cannot reset freshness.
+    assert not safety.fresh_activity(payload, cadence, now=NOW)
+
+
+def test_freshness_reads_exact_generations_and_bounds_unapproved_pause():
+    calls=[]
+    class Client:
+        def bucket(self, name):
+            assert name == catalog.DEFAULT_BUCKET
+            return self
+        def blob(self, name):
+            slug=name.removeprefix(indexes.PREFIX).removesuffix('.json')
+            def download(**kwargs):
+                assert kwargs == {'if_generation_match':7}
+                calls.append(slug)
+                return json.dumps({'schema_version':1,'asset_slug':slug,'latest_release':{'date':stamp(NOW)[:10]}, 'releases':[]}).encode()
+            return SimpleNamespace(reload=lambda:None, size=100, generation='7', download_as_bytes=download)
+    def scheduler(job):
+        return {'name':f'projects/shared-datasets-1/locations/us-central1/jobs/{job}', 'state':'PAUSED',
+                'userUpdateTime':stamp(NOW-timedelta(hours=72))}
+    problems=safety.freshness(Client(), now=NOW, scheduler=scheduler)
+    assert len(problems)==5 and all('>=72 h' in item for item in problems)
+    assert len(calls)==5
+    pauses={job:{'owner':'jonaraphael','reason':'reviewed maintenance','until':stamp(NOW+timedelta(hours=1))} for job in safety.CRON_ASSETS}
+    assert safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses)==[]
+    pauses['dataset-usage']['until']=stamp(NOW-timedelta(seconds=1))
+    assert len(safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses))==1
+    with pytest.raises(RuntimeError, match='unavailable'):
+        safety.freshness(Client(), now=NOW, scheduler=lambda _: (_ for _ in ()).throw(RuntimeError('unavailable')))
+
+
+def test_pending_backoff_never_delays_new_execution_or_new_failure():
+    api=OperationalAPI()
+    source=api.source(101,'deployment-verification.yml',conclusion='success')
+    source['created_at']=stamp(NOW-timedelta(hours=1))
+    api.statuses[99]=[{'created_at':stamp(NOW-timedelta(hours=2))}]
+    assert not safety.verification_due(api,[source],[99],now=NOW)
+    api.statuses[99][0]['created_at']=stamp(NOW-timedelta(minutes=30))
+    assert safety.verification_due(api,[source],[99],now=NOW)
+    failed={**source,'id':102,'conclusion':'failure'}
+    assert safety.verification_due(api,[source,failed],[99],now=NOW)
+
+
+@pytest.mark.parametrize('filename,cpu_peak,memory_peak', [('eamlis_monthly',2.60,0.96),('mpatlas_monthly',2.32,3.36),('sea_ice_daily',0.92,0.16)])
+def test_resources_retain_twice_observed_monitoring_peak(filename,cpu_peak,memory_peak):
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    config=hcl2.loads((incidents.ROOT/'terraform/envs/prod'/f'{filename}.tf').read_text(), serialization_options=SerializationOptions(strip_string_quotes=True))
+    job=next(module[filename+'_job'] for module in config['module'] if filename+'_job' in module)
+    memory=job['memory']
+    gib=float(memory[:-2])/(1024 if memory.endswith('Mi') else 1)
+    assert int(job['cpu']) >= 2*cpu_peak and gib >= 2*memory_peak
+    assert gib >= {1:0.5,2:0.5,4:2,6:4,8:4}[int(job['cpu'])]
+
+
+def test_later_main_revision_accepts_only_ancestral_successful_probe_hint(dispatch_context):
+    api, environment, event=dispatch_context
+    previous=deployments.subprocess.check_output(['git','rev-parse','7bd972e'],cwd=incidents.ROOT,text=True).strip()
+    api.comparison='ahead'
+    api.runs[200]['head_sha']=previous
+    api.jobs[200][0]['head_sha']=previous
+    safety.validate_safety_dispatch(api,event,environment,workflow=api.current['path'])
+
+
+def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
+    checked=NOW-timedelta(hours=47)
+    payload={'updated_at':stamp(checked),'latest_run':{'date':stamp(checked)[:10],'status':'success'}}
+    assert safety.fresh_activity(payload,'daily',now=NOW)
+    assert not safety.fresh_activity(payload,'daily',now=NOW+timedelta(hours=1))
+
+
+def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch):
+    api=OperationalAPI()
+    source=api.source(101,'unattended-workflow-alert.yml')
+    source['event']='workflow_dispatch'
+    api.add_source(source)
+    (tmp_path/'result.json').write_text(json.dumps({'reconcile':False}))
+    (tmp_path/'claims.json').write_text('[]')
+    for key,value in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
+                      'GITHUB_WORKFLOW_REF':safety.REPOSITORY+'/'+safety.WORKFLOW+'@refs/heads/main',
+                      'GITHUB_RUN_ID':'300', 'GITHUB_RUN_ATTEMPT':'1', 'SHARED_DATASETS_SLACK_INCIDENTS_ENABLED':'false'}.items():
+        monkeypatch.setenv(key,value)
+    monkeypatch.setattr(incidents,'GitHub',lambda:api)
+    monkeypatch.setattr(catalog,'get_client',lambda:None)
+    monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
+    monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(tmp_path)])
+    with pytest.raises(RuntimeError,match='Failed dispatched run: https://github.com/.*/101'):
+        safety.main()
+    assert api.posts == []

@@ -83,7 +83,7 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     subscriptions = workflow_triggers(workflow)["workflow_run"]["workflows"]
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
-        if "schedule" in workflow_triggers(candidate):
+        if "schedule" in workflow_triggers(candidate) and path.name != "operational-safety-check.yml":
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)

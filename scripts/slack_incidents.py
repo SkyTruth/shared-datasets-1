@@ -361,8 +361,8 @@ def same_migrated_episode(original, current):
             and all(new["posts"].get(key) == post for key, post in old["posts"].items() if post["state"] == "delivered"))
 
 
-def replay_observations(api, targets, since, *, now=None, completed_until=None):
-    """Hourly observation catches bounded queue loss without another scheduler.
+def replay_observations(api, since, *, now=None, completed_until=None):
+    """Periodic observation catches bounded queue loss without another scheduler.
 
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
@@ -389,10 +389,10 @@ def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: N
     start, end = map(instant, match.groups())
     require(timedelta(0) < end - start <= timedelta(days=7) and end <= (now or datetime.now(timezone.utc)),
             "replay requires a closed past window of at most seven days")
-    observations, targets = [], job_targets()
+    observations = []
     while start < end:
         stop = min(start + timedelta(days=1), end)
-        observations.extend(replay_observations(ledger.api, targets, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
+        observations.extend(replay_observations(ledger.api, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
         start = stop
     return prepare(ledger, identity, observations, on_saved=on_saved)
 
@@ -1143,7 +1143,6 @@ def main():
             else:
                 records = reconcile(ledger, identity, inputs["incident_id"], inputs["operation"], inputs["delivery_result"], inputs.get("message_ts", ""))
         else:
-            targets = job_targets()
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")
             activated = instant(since)
             if run["event"] == "workflow_dispatch":
@@ -1153,7 +1152,7 @@ def main():
                 require(inputs["incident_id"] == "operational-batch" and not inputs.get("message_ts") and producer,
                         "batch requires an exact safety attempt, without delivery acknowledgement")
                 validate_safety_dispatch(api, {"inputs": {"safety_run_id": producer[1], "safety_run_attempt": producer[2]}}, workflow=WORKFLOW)
-                observations = replay_observations(api, targets, since)
+                observations = replay_observations(api, since)
                 source = None
             else:
                 source = event["workflow_run"]
@@ -1161,12 +1160,12 @@ def main():
             if (source and source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
                 # An idle input probe has no incident evidence. The
-                # safety probe still owns hourly replay and unrelated pending work.
+                # safety probe still owns periodic replay and unrelated pending work.
                 print("Prepared 0 incident transitions; scheduled catalog probe has no incident evidence.")
                 return
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if source and alerts.WORKFLOW_PATHS[source["name"]] == "deployment-verification.yml":
-                observations.extend(replay_observations(api, targets, since))
+                observations.extend(replay_observations(api, since))
             ledger.verification_cache = VerificationCache.restore(api, run, identity)
             records = prepare(ledger, identity, observations, on_saved=retain)
             ledger.verification_cache.save(args.work_dir)

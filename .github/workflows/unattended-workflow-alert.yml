@@ -34,7 +34,6 @@ on:
       - "Ingestion / WDPA monthly deploy"
       - "Ingestion / WDPA monthly build"
       - "MPAtlas monthly deploy"
-      - "Operations / Safety check"
       - "PMTiles CDN sync"
       - "Preview Terraform IAM sync"
       - "Prod Terraform state reconciliation"

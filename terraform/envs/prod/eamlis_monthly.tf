@@ -49,8 +49,8 @@ module "eamlis_monthly_job" {
   name                  = "eamlis-monthly"
   image                 = var.eamlis_monthly_image
   service_account_email = module.eamlis_job_service_account.email
-  cpu                   = "4"
-  memory                = "16Gi"
+  cpu                   = "6"
+  memory                = "4Gi"
   timeout               = "3600s"
   max_retries           = 0
 

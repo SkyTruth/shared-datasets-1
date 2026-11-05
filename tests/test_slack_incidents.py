@@ -1231,13 +1231,13 @@ def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name
     api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
     inside = observation(time="2026-10-06T13:00:00Z")
     with mock.patch.object(incidents, "source_observations", return_value=[observation(), inside, observation(time="2026-10-07T13:00:00Z")]):
-        assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [inside]
+        assert incidents.replay_observations(api, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [inside]
     path = api.pages.call_args.args[0]
     assert "2026-10-06T12%3A00%3A00Z..2026-10-07T12%3A00%3A00Z" in path and "branch=main" in path
     assert api.pages.call_args.kwargs == {"field": "workflow_runs"}
     api.pages.side_effect = deployments.DeploymentError("incomplete API enumeration")
     with pytest.raises(deployments.DeploymentError, match="incomplete"):
-        incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z")
+        incidents.replay_observations(api, "2026-10-06T08:00:00Z")
 
 
 def test_owner_cutover_replay_uses_existing_recovery_and_closed_daily_windows(tmp_path, monkeypatch):
@@ -1246,7 +1246,7 @@ def test_owner_cutover_replay_uses_existing_recovery_and_closed_daily_windows(tm
     with mock.patch.object(incidents, "replay_observations", return_value=[observation()]) as replay, \
             mock.patch.object(incidents, "prepare", return_value=[]) as prepare:
         assert incidents.replay_window(ledger, IDENTITY, operation, now=datetime(2026, 10, 9, tzinfo=timezone.utc)) == []
-    assert [(call.args[2], call.kwargs["now"].isoformat()) for call in replay.call_args_list] == [
+    assert [(call.args[1], call.kwargs["now"].isoformat()) for call in replay.call_args_list] == [
         ("2026-10-06T00:00:00Z", "2026-10-07T00:00:00+00:00"),
         ("2026-10-07T00:00:00Z", "2026-10-08T00:00:00+00:00"),
         ("2026-10-08T00:00:00Z", "2026-10-08T12:00:00+00:00"),
