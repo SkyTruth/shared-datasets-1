@@ -219,3 +219,40 @@ def test_repeated_deferral_preserves_original_lag_clock_but_open_window_retries(
     assert deployment.check(args, fixture.api) == {"proceed": str(not deferred).lower()}
     verified.assert_called_once()
     fixture.api.post.assert_not_called()
+
+
+def test_deferred_claim_cli_emits_receipt_without_site_packages(tmp_path):
+    # Replace remote admission/signature services; execute real CLI parsing,
+    # record construction, status creation and receipt/output serialization.
+    program = '''
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from scripts import deployment_revision as d
+d.check = lambda *_: {"proceed":"true"}
+d.emissions.verify_rehearsal = lambda *_: None
+class API:
+    def get(self, path):
+        return {"id":13,"run_attempt":2}
+    def post(self, path, payload):
+        if path.endswith("/deployments"):
+            Path(os.environ["RUNNER_TEMP"], "record.json").write_text(json.dumps(payload))
+            return {**payload,"id":42,"sha":payload["ref"]}
+        return {**payload,"id":43}
+d.GitHub = API
+sys.argv = ["deployment_revision.py", "start", "--deferred", "--target", "wdpa-monthly",
+    "--workflow", "wdpa-monthly-deploy.yml", "--executor-sha", "b"*40,
+    "--source-run-id", "13", "--source-run-attempt", "2", "--artifact", os.environ["IMAGE"]]
+d.main()
+'''
+    output = tmp_path / 'outputs'
+    result = subprocess.run([sys.executable, '-I', '-S', '-c', program, str(ROOT)],
+        capture_output=True, text=True, env={**os.environ, 'GITHUB_REPOSITORY': REPO,
+            'GITHUB_RUN_ID': '13', 'GITHUB_RUN_ATTEMPT': '2', 'RUNNER_TEMP': str(tmp_path),
+            'GITHUB_OUTPUT': str(output), 'IMAGE': IMAGE})
+    assert result.returncode == 0, result.stderr
+    values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+    assert values['proceed'] == 'false' and 'deployment_id' not in values
+    receipt = json.loads(Path(values['receipt_path']).read_text())
+    assert receipt['payload'] == json.loads((tmp_path / 'record.json').read_text())['payload']
+    assert receipt['status']['description'] == 'deferred' and receipt['status']['state'] == 'pending'
