@@ -51,7 +51,7 @@ module "eamlis_monthly_job" {
   service_account_email = module.eamlis_job_service_account.email
   cpu                   = "4"
   memory                = "16Gi"
-  timeout               = "14400s"
+  timeout               = "3600s"
   max_retries           = 0
 
   secret_env = {
