@@ -38,7 +38,8 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
     assert len(subscriptions) == len(set(subscriptions))
-    assert set(subscriptions) == set(alerts.WORKFLOW_PATHS)
+    polled_only = {name for filename in ("operational-safety-check.yml", "unattended-workflow-alert.yml") for name in WORKFLOW_NAMES[filename]}
+    assert set(subscriptions) == set(alerts.WORKFLOW_PATHS) - polled_only
     for job, expected in (("notify", set(WORKFLOW_NAMES["ci.yml"]) | (alerts.UNATTENDED_DISPATCH_WORKFLOWS & set(subscriptions))),
                           ("incidents", set(WORKFLOW_NAMES["ci.yml"]) | set(WORKFLOW_NAMES["deployment-verification.yml"]))):
         matched = re.findall(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.name\)",

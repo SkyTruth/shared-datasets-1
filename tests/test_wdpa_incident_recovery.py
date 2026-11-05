@@ -1,6 +1,7 @@
 """The real readiness-only incident recovers without a build or a new parent."""
 import copy
 import json
+import subprocess
 from unittest import mock
 
 import pytest
@@ -140,11 +141,12 @@ def observer_history(tmp_path, monkeypatch):
     fixture.setUp()
     api, repo = fixture.api, {"id": 17, "full_name": incidents.REPOSITORY}
     runs, jobs, production, statuses, records = {}, {}, {}, {}, []
+    observer_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=incidents.ROOT, text=True).strip()
     for index in range(4):
         identifier, run_id = index + 1, index + 100
         run = {"id": run_id, "run_attempt": 1, "workflow_id": 77,
                "name": "Deployments / Completion check", "path": ".github/workflows/deployment-verification.yml",
-               "event": "workflow_dispatch", "head_branch": "main", "head_sha": "f" * 40,
+               "event": "workflow_dispatch", "head_branch": "main", "head_sha": observer_sha,
                "status": "completed", "conclusion": "failure", "updated_at": "2026-11-03T12:01:00Z",
                "repository": repo, "head_repository": repo}
         job = {"id": 200 + index, "name": f"verify ({identifier})", "status": "completed",
