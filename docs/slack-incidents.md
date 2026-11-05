@@ -1,5 +1,8 @@
 # Slack incident lifecycle
 
+Follow [CI/deployment recovery](ci-recovery.md) for the ordered response. This
+reference owns incident identity, persistence, verification and Slack configuration.
+
 Operational failures share a stable `SD-` plus twelve hex characters incident ID.
 The first failure creates an **Open** parent; further attempts update its count and
 evidence. Verified recovery edits that parent green, without recovery parents or
@@ -14,11 +17,15 @@ The three-hour safety probe discovers GITHUB_TOKEN-dispatched failures, includin
 notification batches, for which GitHub emits no `workflow_run` event. Its rolling
 24-hour replay window dispatches only actionable transitions. Three actual
 consecutive reconciliation dispatches fail health; unchanged health findings never
-enter replay or that counter. Findings post directly on change plus daily reminders.
+enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
+owns scoped non-red reports, deduplication, reminders and missing-run detection.
 Infrastructure failures report and request completion verification without checkout.
 
-Pending checks back off six hours after unchanged success; failed checks remain
-eligible and active checks are not duplicated. Freshness/hold/pause checks and
+Each safety probe cheaply inspects the exact pending WDPA execution for terminal
+status before completion-observer backoff. Pending verification backs off at most
+three hours after an unchanged successful observer; failed checks stay eligible
+and active observers are not duplicated. This live hint only requests protected
+verification; it cannot authorize a terminal result. Freshness/hold/pause checks and
 72-hour expiry warnings follow [alert routing](alert-routing.md#scheduled-freshness-and-capacity).
 Failed reads or evidence never certify idle. Catalog refresh rechecks live inputs
 and exact passing main CI; pending CI defers it. A failed input probe with a proven

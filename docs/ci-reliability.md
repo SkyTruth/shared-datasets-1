@@ -1,7 +1,7 @@
 # CI and production execution contracts
 
-[CI preflight](ci-preflight.md) owns validation/reruns; [recovery](ci-recovery.md)
-owns failure handling. The [historical mapping](history/ci-failure-guardrails.md) retains audit evidence.
+[CI preflight](ci-preflight.md) owns validation; [recovery](ci-recovery.md)
+owns failure handling and bounded reruns. The [historical mapping](history/ci-failure-guardrails.md) retains audit evidence.
 Reviewed publication follows main-push `ci-ready`, using complete Git/PR discovery
 and same-repository merged PRs with immutable plans. Publisher/consumer checks bind
 original acceptance, head/merge, caller/attempt, executor, bytes and generations;
