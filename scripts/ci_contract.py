@@ -12,14 +12,13 @@ from fnmatch import fnmatchcase
 import hashlib
 import shlex
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.ingestion_targets import DEPLOY_TARGETS, TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
-from scripts.terraform_target_contracts import registry
+from scripts.terraform_target_contracts import registry, resource_index, scope_inputs
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest, dependency_graph, dependency_closure, repository_files
 
 
@@ -180,6 +179,7 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
     """Resolve deployments first, then their validation floor, exactly once."""
     if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
         raise ValueError("selection requires a changed-path list")
+    root = root or ROOT
     deployments = select_deployments(paths, **deployment_inputs)
     images = {DEPLOYMENT_IMAGES[target] for target in deployments if target in DEPLOYMENT_IMAGES}
     suites, tiers = set(ALWAYS), set()
@@ -191,6 +191,10 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
         for path in paths:
             inputs = dependency_inputs(base, root) if base and not ((root or ROOT) / path).exists() else dependency_inputs()
             tier, required = classify_change(path, inputs)
+            if path == ".github/workflows/ci.yml":
+                required = changed_ci_suites(base, root)
+                if "production-images" in required:
+                    images.update(BUILD_TARGETS)
             suites.update(required)
             tiers.add(tier)
             if tier in {"shared", "unknown"}:
@@ -247,48 +251,89 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
-@lru_cache(maxsize=1)
-def deployment_paths():
-    """Derive IaC source files from the same exact scopes used by executors."""
-    workflows = {row["workflow"]: name for name, row in registry(ROOT, section="deployments").items()}
-    sources = {}
-    for path in (ROOT / "terraform/envs/prod").glob("*.tf"):
-        for kind, first, second in re.findall(r'^(resource|module|data) "([^"\n]+)"(?: "([^"\n]+)")?\s*{', path.read_text(), re.M):
-            sources[(first + "." + second) if kind == "resource" else kind + "." + first + ("." + second if second else "")] = path.relative_to(ROOT).as_posix()
-    policy = json.loads((ROOT / "terraform/iam-plan-prerequisites.json").read_text())
+@lru_cache(maxsize=4)
+def deployment_paths(root=None):
+    """Workflow/action/script closure plus registered Terraform and image inputs."""
+    root = root or ROOT
+    files = {path.relative_to(root).as_posix(): path.read_bytes()
+             for directory in (".github", "scripts", "ingestion", "services", "catalog", "api")
+             for path in (root / directory).rglob("*")
+             if path.is_file() and not set(path.parts) & {"__pycache__", "node_modules", ".venv", ".terraform"}}
+    declarations = registry(root, section="deployments")
+    graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
+    # These entrypoints validate an already-selected rollout. Their imported
+    # policy changes invalidate CI evidence, not the resources being delivered.
+    boundaries = {
+        "scripts/deployment_revision.py": "Signed execution admission; never a deployment content producer",
+        "scripts/tested_image_authorization.py": "Checks retained image evidence; does not produce image bytes",
+        "scripts/install_deployment_verifier.py": "Installs the pinned historical receipt verifier",
+        "scripts/terraform_plan_allowlist.py": "Validates registered saved plans; no deployment content",
+        "scripts/terraform_target_contracts.py": "Exports the scopes already consumed below",
+        "scripts/deployment_permissions.py": "Checks effective authority; does not produce resource configuration",
+        "scripts/ingestion_targets.py": "Exports the target policy already consumed below",
+        "scripts/ingestion_verification.py": "Checks a published release after deployment",
+        "scripts/publication_rollout_gate.py": "Checks publication readiness; its source imports do not change the deployed image",
+        "scripts/dataset_usage_deploy.py": "Validates the registered telemetry scope; image COPY owns runtime dependencies",
+        "scripts/cdn_plan_readiness.py": "Checks tested image prerequisites without producing CDN resources",
+    }
+    for edges in graphs:
+        for name in boundaries:
+            edges[name] = set()
+    sources = {name for path, rows in resource_index(root).items()
+               if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
+    policy = json.loads((root / "terraform/iam-plan-prerequisites.json").read_text())
     for job, prerequisites in policy["jobs"].items():
         for resource in prerequisites:
-            if not any(resource == root or resource.startswith(root + ".") for root in sources):
+            if not any(resource == name or resource.startswith(name + ".") for name in sources):
                 raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
-    scopes = [(config["workflow"], config["targets"]) for config in DEPLOY_TARGETS.values()]
-    scopes += [(config["workflow"], config["resources"]) for config in registry(ROOT).values()]
-    scopes += [(workflow, [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})])
-               for workflow, rows in registry(ROOT, section="plan_scopes").items() for scope in rows.values()]
-    paths = {".github/workflows/" + workflow: {target} for workflow, target in workflows.items()}
-    for workflow, resources in scopes:
-        if workflow not in workflows:
-            continue  # Manual-only executors never become automatic deployments.
-        for resource in resources:
-            source = sources.get(".".join(resource.split(".")[:2]).split("[", 1)[0])
-            if source:
-                for path in (source, source.removesuffix(".tf") + "_variables.tf"):
-                    paths.setdefault(path, set()).add(workflows[workflow])
+    paths = {}
+    for target, row in declarations.items():
+        workflow = row["workflow"]
+        edges = graphs[any(config.get('prepare_monitoring_slack') for config in registry(root).values() if config['workflow'] == workflow)]
+        resources = [resource for config in DEPLOY_TARGETS.values() if config["workflow"] == workflow for resource in config["targets"]]
+        resources += [resource for config in registry(root).values() if config["workflow"] == workflow for resource in config["resources"]]
+        resources += [resource for scope in registry(root, section="plan_scopes").get(workflow, {}).values()
+                      for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
+        inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
+        if resources:
+            inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
+        if "image" in row:
+            inputs.update(dependency_inputs(root=root)[4][row["image"]])
+        exceptions = row.get("input_exceptions", {})
+        if any(not reason.strip() for reason in exceptions.values()):
+            raise ValueError(target + ": input exceptions require a reason")
+        for path in inputs | exceptions.keys():
+            paths.setdefault(path, set()).add(target)
     return paths
 
 
-def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=()):
+def changed_ci_suites(base, root):
+    """Diff job definitions; shared scheduling changes invalidate every suite."""
+    import yaml
+    path = ".github/workflows/ci.yml"
+    if base is None:
+        return set(SUITES)
+    before = yaml.safe_load(repository_files(base, root)[path])
+    after = yaml.safe_load((root / path).read_text())
+    if {key: value for key, value in before.items() if key != "jobs"} != {key: value for key, value in after.items() if key != "jobs"}:
+        return set(SUITES)
+    changed = {name for name in before["jobs"].keys() | after["jobs"].keys() if before["jobs"].get(name) != after["jobs"].get(name)}
+    if changed & {"geospatial-changes", "ci-ready"}:
+        return set(SUITES)
+    return (changed & set(SUITES)) | ({"sdk-node22", "sdk-node24"} if "sdk-validation" in changed else set())
+
+
+def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
-    declarations = registry(section="deployments")
+    declarations = registry(root, section="deployments")
     for path in paths or []:
         if classify_change(path)[0] == "documentation":
             continue
-        selected.update(deployment_paths().get(path, ()))
-        selected.update(name for name, row in declarations.items() if matches(path, row["inputs"]))
-        if path.startswith("scripts/"):
-            selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items() if matches(path, dependency_inputs()[4][image]))
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
+            continue
+        selected.update(target for pattern, targets in deployment_paths(root).items() if matches(path, {pattern}) for target in targets)
     if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
         selected.update(prerequisite for name in tuple(selected)
                         for prerequisite in declarations[name].get("terraform_prerequisites", ()))

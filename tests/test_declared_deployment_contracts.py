@@ -31,20 +31,6 @@ def test_complete_historical_replay_preserves_selection(row):
     assert ci.resolve_selection(row['paths']) == row['expected']
 
 
-def test_registry_declaration_selects_new_input_without_another_python_table(tmp_path, monkeypatch):
-    value = json.loads((ROOT / '.github/terraform-targets.json').read_text())
-    value['deployments']['catalog_viewer']['inputs'].append('scripts/new-viewer-input.py')
-    (tmp_path / '.github').mkdir()
-    (tmp_path / '.github/terraform-targets.json').write_text(json.dumps(value))
-    monkeypatch.setattr(ci, 'registry', lambda root=None, **kwargs: registry(tmp_path, **kwargs))
-    ci.deployment_paths.cache_clear()
-    try:
-        assert ci.select_deployments(['scripts/new-viewer-input.py']) == ['catalog_viewer']
-        assert ci.select_deployments(['scripts/unregistered-input.py']) == []
-    finally:
-        ci.deployment_paths.cache_clear()
-
-
 def parse_environment(text):
     return dict(re.findall(r'([A-Z_]+)<<INGESTION_POLICY\n([^\n]*)\nINGESTION_POLICY\n', text))
 

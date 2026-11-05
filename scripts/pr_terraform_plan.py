@@ -20,6 +20,8 @@ from scripts.ingestion_targets import DEPLOY_TARGETS
 from scripts.terraform_plan_allowlist import blocked_changes
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks, probe_call_checks, require
 from scripts.terraform_target_contracts import ROOT, address, plan_scope, registry
+from scripts.terraform_target_contracts import resource_index
+from scripts.tested_image_bundle import image_consumers
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 TF_COMMANDS = frozenset({"version", "init", "show", "plan"})
@@ -30,18 +32,8 @@ def scopes(plan, root=ROOT):
     deployments = registry(root, section="deployments")
     workflows = {deployments[name]["workflow"] for name in plan["deployments"]}
     changed = set(plan["changed_paths"] or [])
-    declarations = set()
-    for relative in changed:
-        path = root / relative
-        if relative.startswith("terraform/envs/prod/") and path.suffix == ".tf":
-            sources = [path.read_text()] if path.is_file() else []
-            if plan.get("base"):
-                before = subprocess.run(["git", "show", plan["base"] + ":" + relative], cwd=root, text=True, capture_output=True)
-                if before.returncode == 0:
-                    sources.append(before.stdout)
-            for source in sources:
-                declarations.update(a + "." + b if kind == "resource" else "module." + a
-                                    for kind, a, b in re.findall(r'^(resource|module) "([^"\n]+)"(?: "([^"\n]+)")?\s*{', source, re.M))
+    declarations = {name for revision in {None, plan.get("base")} for path, rows in resource_index(root, revision).items()
+                    if path in changed and Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
     result = []
     for name, item in registry(root).items():
         resources = item["resources"]
@@ -71,10 +63,14 @@ def scopes(plan, root=ROOT):
     return result
 
 
-def selected(plan):
+def selected(plan, root=ROOT):
     paths = plan["changed_paths"]
-    return paths is None or any(p.startswith("terraform/") and not p.endswith(".md")
-                               or p == ".github/terraform-targets.json" for p in paths)
+    candidate = paths is None or any(p.startswith("terraform/") and not p.endswith(".md")
+                                   or p == ".github/terraform-targets.json" for p in paths)
+    if candidate and not scopes(plan, root):
+        print("::notice::Terraform inputs have no registered production scope; live PR planning skipped. Static IaC checks still run.")
+        return False
+    return candidate
 
 
 def same_repo(event):
@@ -89,17 +85,15 @@ def terraform(command, *arguments, directory, environment=None):
                                env=environment, text=True, capture_output=True, timeout=900)
     # Neither Terraform diagnostics nor CalledProcessError may escape: both can
     # contain state, provider responses and arbitrary attribute values.
-    require(completed.returncode == 0, "PR Terraform " + command + " failed (attribute diagnostics withheld)")
+    if completed.returncode:
+        raise PlanFailure("Terraform " + command + " failed (attribute diagnostics withheld)")
     return completed.stdout
 
 
 def deployed_variables(state):
     """Read existing immutable images and non-secret settings without state writes."""
     values = {}
-    images = {c["targets"][0]: c["image_variable"] for c in DEPLOY_TARGETS.values() if c["targets"]}
-    images.update({"module.dataset_usage_job.google_cloud_run_v2_job.this": "dataset_usage_image",
-                   "google_cloud_run_v2_service.catalog_viewer": "catalog_viewer_image",
-                   "google_cloud_run_v2_service.monitoring_slack": "monitoring_slack_image"})
+    images = image_consumers()
 
     def walk(module):
         for row in module.get("resources", []):
@@ -160,14 +154,20 @@ class PolicyReader:
                 granted = (verdict.get("overallAccessState") == "CAN_ACCESS" and
                            verdict.get("allowPolicyExplanation", {}).get("allowAccessState") == "ALLOW_ACCESS_STATE_GRANTED")
                 print(permission, "granted" if granted else "missing or unknown")
-                require(granted,
-                        "production deploy identity lacks proven permission " + permission)
+                if not granted:
+                    raise PlanFailure("production deploy identity lacks proven permission " + permission
+                                      + " on " + full_resource(url, project_number))
+
+
+class PlanFailure(ValueError):
+    """Only intentionally value-free diagnostics may reach the PR log."""
 
 
 def run(plan, root=ROOT):
     require(os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and same_repo(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())),
             "PR plans require a same-repository pull_request")
-    require(selected(plan), "no Terraform inputs selected")
+    if not selected(plan, root):
+        return
     targets = scopes(plan, root)
     require(targets, "Terraform change has no registered plan scope")
     excluded = registry(root, section="pr_plan_exclusions")
@@ -193,24 +193,31 @@ def run(plan, root=ROOT):
     work.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=work) as temporary:
         for scope in targets:
-            path = Path(temporary) / "plan.tfplan"
-            variables_path = Path(temporary) / "variables.tfvars.json"
-            variables_path.write_text(json.dumps({**scope["variables"], **variables}))
-            for resource in scope["resources"]:
-                address(resource)
-            terraform("plan", "-lock=false", "-input=false", "-no-color", "-out=" + str(path),
-                      "-var-file=" + str(variables_path), *("-target=" + r for r in scope["resources"]),
-                      directory=prod, environment=environment)
-            saved = json.loads(terraform("show", "-json", str(path), directory=prod, environment=environment))
-            blocked = blocked_changes(saved, allowed_exact=scope["exact"], allowed_patterns=scope["patterns"],
-                                      block_deletes=scope["block_deletes"], delete_only=scope["delete_only"],
-                                      job_image=(scope["job_image"][0], variables[scope["job_image"][1]]) if scope["job_image"] else None,
-                                      expected_config=variables.get("wdpa_monthly_image_config_digest"))
-            require(not blocked, "PR saved plan violates registered resource/action scope")
-            required = plan_checks(saved, project_number=project_number)
-            reader.verify([*probe_call_checks(required), *scope["required"], *required], deployer, project_number)
-            for row in saved.get("resource_changes", []):
-                print(row["address"], "/".join(row["change"]["actions"]))
+            try:
+                path = Path(temporary) / "plan.tfplan"
+                variables_path = Path(temporary) / "variables.tfvars.json"
+                variables_path.write_text(json.dumps({**scope["variables"], **variables}))
+                for resource in scope["resources"]:
+                    address(resource)
+                terraform("plan", "-lock=false", "-input=false", "-no-color", "-out=" + str(path),
+                          "-var-file=" + str(variables_path), *("-target=" + r for r in scope["resources"]),
+                          directory=prod, environment=environment)
+                saved = json.loads(terraform("show", "-json", str(path), directory=prod, environment=environment))
+                blocked = blocked_changes(saved, allowed_exact=scope["exact"], allowed_patterns=scope["patterns"],
+                                          block_deletes=scope["block_deletes"], delete_only=scope["delete_only"],
+                                          job_image=(scope["job_image"][0], variables[scope["job_image"][1]]) if scope["job_image"] else None,
+                                          expected_config=variables.get("wdpa_monthly_image_config_digest"))
+                if blocked:
+                    resources = sorted({address(row["address"]) for row in saved.get("resource_changes", [])})
+                    raise PlanFailure("saved plan violates resource/action/image policy; resources " + ", ".join(resources))
+                required = plan_checks(saved, project_number=project_number)
+                reader.verify([*probe_call_checks(required), *scope["required"], *required], deployer, project_number)
+                for row in saved.get("resource_changes", []):
+                    print(row["address"], "/".join(row["change"]["actions"]))
+            except PlanFailure as error:
+                raise PlanFailure(scope["name"] + ": " + str(error)) from None
+            except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+                raise PlanFailure(scope["name"] + ": Terraform plan or permission validation failed; attribute diagnostics withheld") from None
 
 
 def main():
@@ -225,9 +232,10 @@ def main():
         return
     try:
         run(plan)
+    except PlanFailure as error:
+        parser.exit(1, str(error) + "\n")
     except (ValueError, KeyError, OSError, subprocess.SubprocessError):
-        # Even exception text can contain provider-returned secrets. All plan
-        # failures are fatal; the PR log contains only this fixed diagnostic.
+        # Unclassified external diagnostics can contain provider-returned secrets.
         parser.exit(1, "Read-only PR plan/allowlist/permission check failed; resource values withheld.\n")
 
 

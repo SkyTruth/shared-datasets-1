@@ -22,13 +22,27 @@ def repository_files(revision, root):
         return {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
 
 
-def dependency_graph(files):
+def dependency_graph(files, *, disabled_conditions=()):
     """Local imports, package initializers and literal executor/data references."""
     modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
                for name in files if name.endswith(".py")}
     modules.update({Path(name).stem: name for name in files if name.startswith("tests/") and name.count("/") == 1})
     edges = {}
     for name, source_text in files.items():
+        if name.endswith(('.yml', '.yaml', '.sh')):
+            text = source_text.decode() if isinstance(source_text, bytes) else source_text
+            if disabled_conditions and name.endswith(('.yml', '.yaml')):
+                import yaml
+                def prune(value):
+                    if isinstance(value, list):
+                        return [prune(row) for row in value if not isinstance(row, dict)
+                                or not any(condition in row.get('if', '') for condition in disabled_conditions)]
+                    return {key: prune(row) for key, row in value.items()} if isinstance(value, dict) else value
+                text = yaml.safe_dump(prune(yaml.safe_load(text)))
+            paths = set(re.findall(r'(?:\.github/[^\s\x22\x27]+\.(?:py|mjs)|(?:scripts|api)/[\w/.-]+\.(?:py|sh|mjs))', text))
+            for local in re.findall(r'uses:\s*\./([^\s]+)', text):
+                paths.add(local if local.endswith(('.yml', '.yaml')) else local + '/action.yml')
+            edges[name] = paths & files.keys()
         if not name.endswith(".py"):
             continue
         dependencies = set()
@@ -41,7 +55,8 @@ def dependency_graph(files):
                 prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
                 module = ".".join(filter(None, (prefix, node.module)))
                 names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in files and not node.value.endswith(".py"):
+            elif (isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in files
+                  and not node.value.endswith((".py", ".yml", ".yaml"))):
                 dependencies.add(node.value)
             elif isinstance(node, ast.Call):
                 function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
@@ -81,6 +96,27 @@ def image_recipes(root=ROOT):
         if configuration.is_file() and re.search(rf"\bimage\s*=\s*var\.{package}_image\b", configuration.read_text()):
             recipes[package.replace("_", "-")] = recipe.relative_to(root).as_posix()
     return recipes
+
+
+def image_consumers(root=ROOT):
+    """Resolve Terraform image variables to their actual job/service addresses."""
+    from scripts.terraform_target_contracts import resource_index
+    index = resource_index(root)
+    consumers = {}
+    for recipe in image_recipes(root).values():
+        package = Path(recipe).parent.name
+        path = f'terraform/envs/prod/{package}.tf'
+        for name, body in index[path].items():
+            if name.startswith('module.') and body.get('image') == '${var.' + package + '_image}':
+                source = (root / path).parent / body['source']
+                children = {child for file, rows in index.items() if (root / file).parent.resolve() == source.resolve()
+                            for child in rows if child.startswith('google_cloud_run_v2_job.')}
+                if len(children) != 1:
+                    raise ValueError(name + ': image consumer must contain one Cloud Run job')
+                consumers[name + '.' + children.pop()] = package + '_image'
+            elif name.startswith('google_cloud_run_v2_service.') and package + '_image' in json.dumps(body):
+                consumers[name] = package + '_image'
+    return consumers
 
 
 RECIPES = image_recipes()

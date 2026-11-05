@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -29,6 +30,55 @@ DATA = re.compile(r'^(?:module\.[A-Za-z0-9_-]+\.)*data\.')
 QUOTED = r'"(?:[^"\\]|\\.)+"'
 NODE = re.compile(r'^\s*(' + QUOTED + r')\s+\[label=')
 EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
+
+
+@lru_cache(maxsize=4)
+def resource_index(root=ROOT, revision=None):
+    """Parse declarations once; comments/indentation cannot manufacture owners."""
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    from scripts.tested_image_bundle import repository_files
+
+    files = ({path.relative_to(root).as_posix(): path.read_bytes() for path in (root / 'terraform').rglob('*.tf')
+              if '.terraform' not in path.parts} if revision is None else repository_files(revision, root))
+    result = {}
+    for path, raw in files.items():
+        if not path.startswith('terraform/') or not path.endswith('.tf'):
+            continue
+        document = hcl2.loads(raw.decode(), serialization_options=SerializationOptions(with_comments=False, strip_string_quotes=True))
+        declarations = {}
+        for kind in ('resource', 'data', 'module'):
+            for block in document.get(kind, []):
+                for first, body in block.items():
+                    for second, value in (body.items() if kind != 'module' else [(None, body)]):
+                        name = '.'.join(filter(None, (None if kind == 'resource' else kind, first, second)))
+                        if name in declarations:
+                            raise ValueError(path + ': duplicate Terraform declaration ' + name)
+                        declarations[name] = value
+        result[path] = declarations
+    return result
+
+
+def scope_inputs(resources, root=ROOT):
+    """Registered scopes own source files and their local module source trees."""
+    index = resource_index(root)
+    sources = {name: path for path, rows in index.items() if Path(path).parent.as_posix() == 'terraform/envs/prod' for name in rows}
+    selected = {sources[name] for resource in resources for name in sources
+                if address(resource) == name or address(resource).startswith(name + '.')}
+    pending = list(selected)
+    while pending:
+        path = pending.pop()
+        for name, body in index[path].items():
+            if name.startswith('module.'):
+                directory = ((root / path).parent / body['source']).resolve().relative_to(root.resolve()).as_posix()
+                selected.add(directory + '/')
+                for child in index:
+                    if Path(child).parent.as_posix() == directory and child not in selected:
+                        selected.add(child)
+                        pending.append(child)
+    return selected | {path.removesuffix('.tf') + '_variables.tf' for path in selected if path.endswith('.tf')}
+
+
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:
     """One reviewed resource scope per stable, historically signed sync name."""
     value = json.loads((root / '.github/terraform-targets.json').read_text())

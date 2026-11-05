@@ -33,7 +33,7 @@ jobs:
           name: ci-validation-plan-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-plan
       - name: Sync locked planner dependencies before authentication
-        run: uv sync --locked --no-dev
+        run: uv sync --locked
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER }}

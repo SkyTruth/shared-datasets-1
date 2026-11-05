@@ -39,11 +39,12 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
     assert len(subscriptions) == len(set(subscriptions))
     polled_only = {name for filename in ("operational-safety-check.yml", "unattended-workflow-alert.yml") for name in WORKFLOW_NAMES[filename]}
-    assert set(subscriptions) == set(alerts.WORKFLOW_PATHS) - polled_only
+    assert set(subscriptions) == {load_workflow(WORKFLOWS / filename)["name"] for filename in set(alerts.WORKFLOW_PATHS.values()) if filename not in {"operational-safety-check.yml", "unattended-workflow-alert.yml"} and (WORKFLOWS / filename).is_file()}
+    assert polled_only <= set(alerts.WORKFLOW_PATHS)  # Historical identities remain replayable.
     matched = re.findall(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.name\)",
                          observer["jobs"]["incidents"]["if"])
     assert {name for group in matched for name in json.loads(group)} == set(
-        WORKFLOW_NAMES["deployment-verification.yml"] + WORKFLOW_NAMES["ci.yml"])
+        (load_workflow(WORKFLOWS / filename)["name"] for filename in ("deployment-verification.yml", "ci.yml")))
     for filename, upstream in (("catalog-web-deploy.yml", ("release-index-rebuild.yml",)),):
         trigger = workflow_triggers(load_workflow(WORKFLOWS / filename))["workflow_run"]
         assert set(trigger["workflows"]) == {name for file in upstream for name in WORKFLOW_NAMES[file]}

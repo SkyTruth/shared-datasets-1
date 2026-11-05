@@ -79,6 +79,42 @@ else:
 '''
 
 
+MONITORING_PROBE = r'''import base64, json
+from types import SimpleNamespace
+from services.monitoring_slack import run as receiver
+incident = {"incident_id": "installed-probe", "scoping_project_id": receiver.PROJECT,
+            "state": "open", "policy_name": "Installed receiver <probe>"}
+def envelope(subscription):
+    return json.dumps({"subscription": subscription, "message": {"data": base64.b64encode(
+        json.dumps({"version": "1.2", "incident": incident}).encode()).decode()}})
+assert receiver.event(envelope(receiver.SUBSCRIPTION)) == incident
+assert "&lt;probe&gt;" in receiver.message(incident, False)["text"]
+assert "separate verification" in receiver.message(incident, True)["text"]
+try:
+    receiver.event(envelope("projects/foreign/subscriptions/foreign"))
+except ValueError:
+    pass
+else:
+    raise AssertionError("Installed receiver accepted a foreign subscription")
+state = SimpleNamespace(raw=None, generation=0, posts=[], updates=[])
+def save(key, record, generation):
+    assert key == incident["incident_id"] and generation == state.generation
+    state.raw, state.generation = json.dumps(record), generation + 1
+    return state.generation
+def post(payload):
+    assert json.loads(state.raw)["ts"] is None, "Receipt claim must precede delivery"
+    state.posts.append(payload)
+    return "1792830681.000001"
+store = SimpleNamespace(load=lambda key: (json.loads(state.raw) if state.raw else None, state.generation), save=save)
+slack = SimpleNamespace(post=post, update=lambda ts, payload: state.updates.append((ts, payload)))
+identity = {"channel": "C12345678", "team": "T12345678", "user": "U12345678"}
+for value in (incident, incident, {**incident, "state": "closed"}, incident):
+    receiver.deliver(value, store, slack, identity)
+assert len(state.posts) == 1 and len(state.updates) == 2
+assert json.loads(state.raw)["closed"] and state.updates[-1][0] == "1792830681.000001"
+'''
+
+
 def resolve_image(image):
     """Bind every installed-code check to one local immutable image identity."""
     image_id = subprocess.check_output(
@@ -138,11 +174,12 @@ def commands(target, executor, *, image_id=None):
     checks = registry(section="image_checks")[target]
     if not checks or set(checks) - {"host", "container"} or any(not rows or any(not args for args in rows) for rows in checks.values()):
         raise ValueError("Invalid registered installed image checks")
-    values = dict(python=sys.executable, image=tested_image, interpreter_probe=INTERPRETER_PROBE, native_probe=NATIVE_VERSION_PROBE)
+    values = dict(python=sys.executable, image=tested_image, interpreter_probe=INTERPRETER_PROBE,
+                  native_probe=NATIVE_VERSION_PROBE, monitoring_probe=MONITORING_PROBE)
     fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
     if any("{fixture}" in args for rows in checks.values() for args in rows):
         values["fixture"] = fixture.read_text()
-    files = dict(monitoring_probe=ROOT / "tests/test_monitoring_slack.py", usage_probe=ROOT / "scripts/dataset_usage_cold_start.py",
+    files = dict(usage_probe=ROOT / "scripts/dataset_usage_cold_start.py",
         fixture_script=ROOT / "scripts/installed_ingestion_fixture.py", smoke=ROOT / "scripts/local_ingestion_smoke.py")
     values.update({key: path.read_text() for key, path in files.items()
                    if any("{" + key + "}" in args for rows in checks.values() for args in rows)})
