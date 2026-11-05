@@ -128,7 +128,7 @@ def verify_record(api, repository, record, *, statuses=None):
     payload = verify_record_identity(api, repository, record)
     if statuses is None:
         statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
-    started = [status for status in statuses if status.get("description") == "started"]
+    started = [status for status in statuses if status.get("description") in {"started", "deferred"}]
     require(len(started) == 1, "record lacks an unambiguous protected initial emission")
     # If claim signing failed, the same protected execution can still sign its
     # failed/unknown outcome. That proves ownership of the exact record without
@@ -187,8 +187,9 @@ def status_log():
     return emissions.invocation(os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
 
 
-def post_status(api, repository, record, payload):
-    payload["log_url"] = status_log()
+def post_status(api, repository, record, phase, environment_url=""):
+    payload = {"state": emissions.PHASES[phase], "description": phase, "auto_inactive": False,
+               "environment_url": environment_url, "log_url": status_log()}
     status = api.post(f"repos/{repository}/deployments/{record['id']}/statuses", payload)
     emissions.emit(repository, record, {**payload, **status})
 
@@ -214,6 +215,10 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
+        if terminal and terminal[0].get("description") == "deferred" and terminal[0].get("state") == "pending":
+            require(artifact is None or record_payload(latest)["artifact"] == artifact,
+                    "same revision now produces different artifact bytes; reconcile before recovery")
+            return "superseded" if superseded else "proceed"
         accepted = {"verified"} if record_payload(latest)["target"] in INGESTION_TARGETS else {"applied", "verified"}
         require(terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted,
                 "this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
@@ -227,11 +232,8 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
 
 
 def git_ancestor(older, newer):
-    for revision in (older, newer):
-        result = subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], capture_output=True)
-        require(result.returncode == 0, "comparison commit unavailable; require full checkout history")
     result = subprocess.run(["git", "merge-base", "--is-ancestor", older, newer], capture_output=True)
-    require(result.returncode in (0, 1), "ancestry comparison failed")
+    require(result.returncode in (0, 1), "ancestry comparison failed; require full checkout history")
     return result.returncode == 0
 
 
@@ -281,19 +283,15 @@ def check(args, api):
     repository = verify_context(args, api)
     require(TARGET.fullmatch(args.target) and args.target in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS), "invalid deployment target")
     require((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS)[args.target] == args.workflow, "deployment target differs from its workflow contract")
-    environment = f"production-{args.target}"
-    records = api.pages(f"repos/{repository}/deployments?environment={environment}&per_page=100")
-    for record in records:
-        record_payload(record)
+    records = api.pages(f"repos/{repository}/deployments?environment=production-{args.target}&per_page=100")
+    decision = replay_decision(records, args.executor_sha, git_ancestor, lambda record: verified_statuses(api, repository, record), artifact=getattr(args, "artifact", None), target=args.target)
     # The serialized writer keeps revisions monotonic. Only records capable of
     # blocking replay or satisfying a no-op need expensive API provenance reads.
     decisive = [record for record in records if record["sha"] == args.executor_sha or not git_ancestor(record["sha"], args.executor_sha)]
     for record in decisive:
         verify_record(api, repository, record)
-    decision = replay_decision(records, args.executor_sha, git_ancestor, lambda record: verified_statuses(api, repository, record), artifact=getattr(args, "artifact", None), target=args.target)
     if decision == "superseded":
-        newer = [record for record in decisive if record["sha"] != args.executor_sha]
-        latest = max(newer, key=lambda record: record["id"])
+        latest = max((record for record in decisive if record["sha"] != args.executor_sha), key=lambda record: record["id"])
         message = f"Deployment skipped: tested revision {args.executor_sha} was superseded by a newer recorded attempt at {latest['sha']}."
         print("::notice::" + message)
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -301,6 +299,8 @@ def check(args, api):
             with Path(summary).open("a") as stream:
                 stream.write(message + " No deployment record or target state was changed.\n")
         return {"proceed": "false", "outcome": "superseded", "superseded_by_sha": latest["sha"]}
+    if getattr(args, "deferred", False) and any(record["sha"] == args.executor_sha for record in decisive):
+        return {"proceed": "false"}  # Keep the first signed deferral and its lag clock.
     if decision == "noop":
         print("A successful deployment of this exact revision already exists.")
         return {"proceed": "false"}
@@ -312,28 +312,29 @@ def start(args, api):
     if decision["proceed"] == "false":
         return decision
     repository = os.environ["GITHUB_REPOSITORY"]
-    environment = f"production-{args.target}"
     signer = receipt_signer(api, repository, args.target, int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
     try:
         emissions.verify_rehearsal(api, repository, signer)
     except emissions.EmissionError as error:
         raise DeploymentError(str(error)) from error
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", args.artifact), "deployment artifact must be an immutable image digest")
+    require(not getattr(args, "deferred", False) or args.target in INGESTION_TARGETS, "only ingestion rollouts can defer")
     targets = []
     if args.plan_json:
         plan = json.loads(Path(args.plan_json).read_text())
-        targets = [r["address"] for r in plan.get("resource_changes", []) if r.get("change", {}).get("actions") not in ([], ["no-op"], ["read"])]
+        targets = [r["address"] for r in plan.get("resource_changes", [])]
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
     record = api.post(f"repos/{repository}/deployments", {
-        "ref": args.executor_sha, "environment": environment,
+        "ref": args.executor_sha, "environment": f"production-{args.target}",
         "auto_merge": False, "required_contexts": [], "production_environment": True,
         "payload": {"schema": SCHEMA, "target": args.target, "ci_run_id": args.source_run_id, "ci_run_attempt": args.source_run_attempt,
                     "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
     })
-    post_status(api, repository, record, {"state": "in_progress", "description": "started", "auto_inactive": False, "environment_url": ""})
-    return {"proceed": "true", "deployment_id": str(record["id"])}
+    phase = "deferred" if getattr(args, "deferred", False) else "started"
+    post_status(api, repository, record, phase)
+    return {"proceed": "false"} if getattr(args, "deferred", False) else {"proceed": "true", "deployment_id": str(record["id"])}
 
 
 def finish(args, api):
@@ -341,13 +342,9 @@ def finish(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
-    environment_url = ""
-    if args.execution:
-        require(TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
-        environment_url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{args.execution}?project=shared-datasets-1"
-    post_status(api, repository, record, {
-        "environment_url": environment_url, "state": emissions.PHASES[args.phase], "description": args.phase, "auto_inactive": False,
-    })
+    require(not args.execution or TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
+    environment_url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{args.execution}?project=shared-datasets-1" if args.execution else ""
+    post_status(api, repository, record, args.phase, environment_url)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as stream:
@@ -392,8 +389,8 @@ def runtime_window(args):
     # First installation has no job/execution collection yet. A successful
     # regional inventory proves absence; permission/network errors still fail.
     config = INGESTION_CONFIGS[args.target]
-    inspect_executions = not (config["plan_guard"] == "usage")
-    if (config["plan_guard"] == "install"):
+    inspect_executions = config["plan_guard"] != "usage"
+    if config["plan_guard"] == "install":
         jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
                                                    "--project=shared-datasets-1", "--format=json"], timeout=60))
         require(isinstance(jobs, list), "invalid Cloud Run job inventory")
@@ -456,10 +453,7 @@ def observe(args, api):
     if phase == "verification_pending":
         print(f"Execution {match[1]} is pending; terminal verification remains incomplete.")
         return
-    post_status(api, repository, record, {
-        "state": emissions.PHASES[phase],
-        "description": phase, "auto_inactive": False, "environment_url": statuses[0]["environment_url"],
-    })
+    post_status(api, repository, record, phase, statuses[0]["environment_url"])
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
         stream.write(f"Canary `{match[1]}`: **{phase}**; image `{payload['artifact']}`; executor `{record['sha']}`.\n")
     require(phase == "verified", f"terminal canary outcome: {phase}")
@@ -526,16 +520,13 @@ def recover(args, api):
         require(other["id"] == record["id"] or (other["sha"] != record["sha"] and git_ancestor(other["sha"], record["sha"])), "a later attempt prevents reconciliation of this revision")
     if sdk:
         reconcile_sdk(record, payload, root)
-        post_status(api, repository, record, {"state": "success", "description": "verified", "auto_inactive": False, "environment_url": ""})
+        post_status(api, repository, record, "verified")
         print("Registry tarball equals the original tested package; SDK record reconciled without publication.")
         return
     plan = json.loads(Path(args.plan_json).read_text())
     require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
     if payload["target"] in TERRAFORM_WORKFLOWS:
-        post_status(api, repository, record, {
-            "state": "success", "description": "applied", "auto_inactive": False,
-            "environment_url": "",
-        })
+        post_status(api, repository, record, "applied")
         print("Original tested Terraform target scope has no changes; record reconciled without mutation.")
         return
     raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "describe", payload["target"], "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
@@ -546,10 +537,7 @@ def recover(args, api):
     require(matching, "no execution of the exact image proves runtime success")
     latest = max(matching, key=lambda entry: entry.get("metadata", {}).get("creationTimestamp", ""))
     require(terminal_execution(latest, image) == "verified", "latest exact-image execution is incomplete or failed; fix or use reviewed recovery")
-    post_status(api, repository, record, {
-        "state": "success", "description": "verified", "auto_inactive": False,
-        "environment_url": "",
-    })
+    post_status(api, repository, record, "verified")
     print("Original image, no-change target plan and terminal success reconciled; no production mutations performed.")
 
 def main():
@@ -567,6 +555,7 @@ def main():
             begin.add_argument("--target", required=True)
             begin.add_argument("--artifact", required=command == "start")
         if command == "start":
+            begin.add_argument("--deferred", action="store_true")
             begin.add_argument("--plan-json")
             begin.add_argument("--plan-scope")
     end = commands.add_parser("finish")

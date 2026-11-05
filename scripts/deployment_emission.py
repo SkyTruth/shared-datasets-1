@@ -26,7 +26,7 @@ from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
 PHASES = {
-    "started": "in_progress", "verification_pending": "in_progress",
+    "deferred": "pending", "started": "in_progress", "verification_pending": "in_progress",
     "applied": "success", "verified": "success", "failed": "failure", "unknown": "error",
 }
 OBSERVER = ".github/workflows/deployment-verification.yml"
@@ -159,7 +159,7 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
     if (run_id, attempt) == (payload["execution_run_id"], payload["execution_run_attempt"]):
         signer = original_signer
     else:
-        require(status["description"] != "started" and run.get("path") in {OBSERVER, RECOVERY}, "phase update came from an unrelated execution")
+        require(status["description"] not in {"started", "deferred"} and run.get("path") in {OBSERVER, RECOVERY}, "phase update came from an unrelated execution")
         signer = run["path"]
     repo = api.get(f"repos/{repository}")
     workflow = api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")

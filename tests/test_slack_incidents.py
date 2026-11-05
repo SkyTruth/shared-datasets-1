@@ -13,7 +13,6 @@ import urllib.error
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-import yaml
 
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
@@ -1428,24 +1427,17 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     assert "Data / Approved mutation" in incidents.alerts.WORKFLOW_PATHS  # Historical runs remain replayable.
 
 
-HISTORICAL_GRAPH_SHA = subprocess.check_output(['git', 'rev-parse', '7bd972e'], text=True).strip()
-
-
-def historical_workflow(filename):
-    return yaml.safe_load(subprocess.check_output(['git', 'show', HISTORICAL_GRAPH_SHA + ':.github/workflows/' + filename], text=True))
-
-
 @pytest.mark.parametrize('target,caller', [('wdpa-monthly','wdpa'), ('mpatlas-monthly','mpatlas'),
                                          ('eamlis-monthly','eamlis'), ('sea-ice-daily','sea-ice')])
 @pytest.mark.parametrize('entrypoint', ['ci', 'manual'])
-def test_replay_and_legacy_keep_historical_recovery_identity(target, caller, entrypoint):
+def test_replay_and_legacy_keep_historical_recovery_identity(target, caller, entrypoint, historical_graph):
     filename = target + '-deploy.yml'
-    name = historical_workflow(filename)['jobs']['deploy'].get('name', 'deploy')
+    name = historical_graph.documents[filename]['jobs']['deploy'].get('name', 'deploy')
     if entrypoint == 'ci':
-        name = historical_workflow('ci.yml')['jobs'][caller].get('name', caller) + ' / ' + name
+        name = historical_graph.documents['ci.yml']['jobs'][caller].get('name', caller) + ' / ' + name
         filename = 'ci.yml'
     repository = {'id': 17, 'full_name': incidents.REPOSITORY}
-    run = {'id': 41701840527, 'run_attempt': 1, 'head_sha': HISTORICAL_GRAPH_SHA, 'workflow_id': 7,
+    run = {'id': 41701840527, 'run_attempt': 1, 'head_sha': historical_graph.sha, 'workflow_id': 7,
            'name': incidents.alerts.WORKFLOW_NAMES[filename][0], 'path': '.github/workflows/' + filename,
            'head_branch': 'main', 'event': 'push' if entrypoint == 'ci' else 'workflow_run',
            'repository': repository, 'head_repository': repository, 'status': 'completed',
@@ -1476,10 +1468,10 @@ def test_replay_and_legacy_keep_historical_recovery_identity(target, caller, ent
     assert 'Verified ' + target + ' recovery' in json.dumps(slack.calls[-1])
 
 
-def test_source_graph_rejects_unknown_revision_and_unregistered_paths():
+def test_source_graph_rejects_unknown_revision_and_unregistered_paths(historical_graph):
     with pytest.raises(incidents.IncidentError, match='revision'):
         incidents.job_targets(revision='main', workflow='ci.yml')
     with pytest.raises(subprocess.CalledProcessError):
         incidents.job_targets(revision='f'*40, workflow='ci.yml')
-    targets = incidents.job_targets(revision=HISTORICAL_GRAPH_SHA, workflow='ci.yml')
+    targets = incidents.job_targets(revision=historical_graph.sha, workflow='ci.yml')
     assert incidents.scope_for_job('unknown / Deploy tested WDPA ingestion image', targets, 'ci.yml')[1] == 'job'

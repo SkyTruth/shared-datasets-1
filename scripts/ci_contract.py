@@ -134,7 +134,7 @@ def matches(path, inputs):
     return any((item == "/" or path.startswith(item)) if item.endswith("/") else fnmatchcase(path, item) for item in inputs)
 
 
-def classify_change(path: str, inputs=None) -> tuple[str, set[str]]:
+def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]]:
     """Runtime selection follows generated dependencies; unknown paths stay broad."""
     if (path in {
             "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
@@ -142,7 +142,7 @@ def classify_change(path: str, inputs=None) -> tuple[str, set[str]]:
             "scripts/production_image_contracts.py", "scripts/installed_ingestion_fixture.py", "scripts/tested_image_bundle.py",
         } or path.startswith("tests/fixtures/") and path.endswith(".md")):
         return "shared", set(SUITES)
-    images, native, browser, sources, _ = inputs or dependency_inputs()
+    images, native, browser, sources, _ = inputs or dependency_inputs(root=root)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}
         if path.startswith("catalog/") or any(matches(path, copied) for copied in images.values()):
@@ -164,15 +164,15 @@ def classify_change(path: str, inputs=None) -> tuple[str, set[str]]:
         suites.update({"sdk-node22", "sdk-node24", "browser"})
     if suites or path in sources or path.startswith(("ingestion/", "services/", "api/", "web/", "tests/browser/")):
         return "component", suites
-    if path.startswith(".github/") and ((ROOT / path).is_file() or path in sources):
+    if path.startswith(".github/") and ((root / path).is_file() or path in sources):
         return "component", suites
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
         return "infrastructure", suites
     return "unknown", set(SUITES)
 
 
-def documentation_only(paths: list[str] | None) -> bool:
-    return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
+def documentation_only(paths: list[str] | None, *, root=ROOT) -> bool:
+    return paths is not None and all(classify_change(path, root=root)[0] == "documentation" for path in paths)
 
 
 def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
@@ -180,8 +180,8 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
     if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
         raise ValueError("selection requires a changed-path list")
     root = root or ROOT
-    deployments = select_deployments(paths, **deployment_inputs)
-    images = {DEPLOYMENT_IMAGES[target] for target in deployments if target in DEPLOYMENT_IMAGES}
+    deployments = select_deployments(paths, root=root, **deployment_inputs)
+    images = {row["image"] for target, row in registry(root, section="deployments").items() if target in deployments and "image" in row}
     suites, tiers = set(ALWAYS), set()
     reason = "comparison history unavailable"
     if paths is None:
@@ -189,8 +189,8 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
         images.update(BUILD_TARGETS)
     else:
         for path in paths:
-            inputs = dependency_inputs(base, root) if base and not ((root or ROOT) / path).exists() else dependency_inputs()
-            tier, required = classify_change(path, inputs)
+            inputs = dependency_inputs(base if base and not (root / path).exists() else None, root)
+            tier, required = classify_change(path, inputs, root=root)
             if path == ".github/workflows/ci.yml":
                 required = changed_ci_suites(base, root)
                 if "production-images" in required:
@@ -259,7 +259,7 @@ def deployment_paths(root=None):
              for directory in (".github", "scripts", "ingestion", "services", "catalog", "api")
              for path in (root / directory).rglob("*")
              if path.is_file() and not set(path.parts) & {"__pycache__", "node_modules", ".venv", ".terraform"}}
-    declarations = registry(root, section="deployments")
+    declarations, scopes, syncs = (registry(root, section=section) for section in ("deployments", "plan_scopes", "targets"))
     graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
     # These entrypoints validate an already-selected rollout. Their imported
     # policy changes invalidate CI evidence, not the resources being delivered.
@@ -283,14 +283,14 @@ def deployment_paths(root=None):
     paths = {}
     for target, row in declarations.items():
         workflow = row["workflow"]
-        edges = graphs[any(config.get('prepare_monitoring_slack') for config in registry(root).values() if config['workflow'] == workflow)]
+        edges = graphs[any(config.get('prepare_monitoring_slack') for config in syncs.values() if config['workflow'] == workflow)]
         resources = [resource for config in DEPLOY_TARGETS.values() if config["workflow"] == workflow for resource in config["targets"]]
-        resources += [resource for config in registry(root).values() if config["workflow"] == workflow for resource in config["resources"]]
-        resources += [resource for scope in registry(root, section="plan_scopes").get(workflow, {}).values()
+        resources += [resource for config in syncs.values() if config["workflow"] == workflow for resource in config["resources"]]
+        resources += [resource for scope in scopes.get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
         inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
         if resources:
-            inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
+            inputs.update("terraform/envs/prod/" + name for name in ("main.tf", "production.auto.tfvars", "variables.tf", "versions.tf"))
         if "image" in row:
             inputs.update(dependency_inputs(root=root)[4][row["image"]])
         inputs.add(".github/terraform-targets.json")
@@ -320,13 +320,13 @@ def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), rel
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
     for path in paths or []:
-        if classify_change(path)[0] == "documentation":
+        if classify_change(path, root=root)[0] == "documentation":
             continue
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
             continue
         selected.update(target for pattern, targets in deployment_paths(root).items() if matches(path, {pattern}) for target in targets)
-    return [target for target in DEPLOYMENTS if target in selected and target not in ingestion_holds]
+    return [target for target in registry(root, section="deployments") if target in selected and target not in ingestion_holds]
 
 
 def contract_digest(root: Path) -> str:

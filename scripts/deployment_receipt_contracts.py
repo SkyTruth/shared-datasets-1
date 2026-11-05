@@ -224,8 +224,7 @@ def ingestion_boundary(workflow):
         return ["ingestion-deploy.yml: exact prepare/apply/verify graph required"]
     prepare, apply, verify = (jobs[key] for key in ("prepare", "apply", "verify"))
     errors = []
-    for job, condition in ((prepare, "steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'"),
-                           (apply, "steps.window.outputs.ready == 'true'")):
+    for job, condition in ((prepare, "steps.replay.outputs.proceed == 'true'"), (apply, None)):
         rehearsals = [step for step in job.get("steps", []) if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal"]
         if len(rehearsals) != 1 or rehearsals[0].get("if") != condition or rehearsals[0].get("continue-on-error"):
             errors.append("ingestion-deploy.yml: exact admitted rehearsal must gate staging and claim creation")

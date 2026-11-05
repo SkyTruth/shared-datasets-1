@@ -321,7 +321,7 @@ def test_sdk_caller_consumes_emitted_plan_selection_after_the_gate(tmp_path, sdk
     base = git("rev-parse", "HEAD")
     source = root / ("api/typescript/src/index.ts" if sdk_selected else "docs/example.md")
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("changed fixture\n")
+    source.write_text((source.read_text() if source.exists() else "") + "\n// fixture change\n")
     git("add", ".")
     git("commit", "-m", "SDK selection")
     plan, outputs = emit_plan(root, base, tmp_path)
@@ -464,7 +464,7 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
     for path in paths:
         destination = root / path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" else "changed fixture\n")
+        destination.write_text((destination.read_text() if destination.exists() else "") + "\n# fixture change\n")
     git("add", ".")
     git("commit", "--allow-empty", "-m", "selected changes")
     plan, outputs = emit_plan(root, base, tmp_path)
@@ -498,8 +498,8 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
         holds.write_text("{}\n")
     else:
         source = root / "ingestion/eamlis_monthly/run.py"
-        source.parent.mkdir(parents=True)
-        source.write_text("changed fixture\n")
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(source.read_text() + "\n# fixture change\n")
         target = "eamlis-monthly"
     git("add", ".")
     git("commit", "-m", "release")

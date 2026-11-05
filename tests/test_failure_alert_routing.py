@@ -11,8 +11,6 @@ from scripts import workflow_failure_alert as alerts
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
-# The legacy usage job names below belong to this immutable main workflow graph.
-LEGACY_USAGE_REVISION = "7bd972e6150a01ca3be538d1ca33bc543d6aa6f8"
 WORKFLOWS = ROOT / ".github/workflows"
 MARKER = "SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 
@@ -320,12 +318,12 @@ def test_cloud_policy_covers_all_workers_and_suppresses_only_trusted_marked_exec
 
 
 @pytest.mark.parametrize("failure", [None, "missing", "applied", "older", "divergent", "unsigned", "unregistered"])
-def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure):
+def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure, historical_graph):
     from scripts import slack_incidents as incidents
     from scripts import deployment_revision as deployments
     from scripts.slack_incident_api import Slack
 
-    run = event(name="CI", event="push", run_attempt=1, head_sha=LEGACY_USAGE_REVISION)["workflow_run"]
+    run = event(name="CI", event="push", run_attempt=1, head_sha=historical_graph.sha)["workflow_run"]
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
     run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
@@ -390,14 +388,14 @@ def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
     assert step["env"]["ORIGINAL_MESSAGE_TS"] == "${{ inputs.message_ts }}"
 
 
-def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(monkeypatch):
+def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(monkeypatch, historical_graph):
     from scripts import dataset_mutation_authorization as authorization
     from scripts import deployment_revision as deployments
     from scripts import deployment_emission as emissions
     from scripts.slack_incident_api import Slack
 
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
-    original = event(name="CI", event="push", run_attempt=1, head_sha=LEGACY_USAGE_REVISION)["workflow_run"]
+    original = event(name="CI", event="push", run_attempt=1, head_sha=historical_graph.sha)["workflow_run"]
     original.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     recovered = {**original, "id": 456, "head_sha": "b" * 40, "conclusion": "success"}
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",

@@ -131,7 +131,8 @@ Mutation authority does not establish runtime acceptance or installed state.
 
 ## Records, receipts and runtime outcomes
 
-Records bind tested revision, CI/execution attempts, artifact digest and saved-plan scope.
+Records bind tested revision, CI/execution attempts, artifact digest and the full planned
+resource scope, including unchanged addresses needed for canary reconciliation.
 Under the target lock, verified decisive records supersede older revisions without claims
 or mutation; even newer failed attempts block them. Divergence or incomplete/failed
 same-revision attempts require reconciliation. Successful identical revisions skip before
@@ -157,7 +158,10 @@ unsigned attempts block replay. Validation tokens stay read-only; writers need p
 production or main-only gates. SDK npm OIDC stays separate; record deletion needs explicit recovery.
 
 The runtime-window command defers prepare/apply for active executions and requires an
-explicit canary date for paused WDPA/EAMLIS schedules. Post-apply verification waits up
+explicit canary date for paused WDPA/EAMLIS schedules. Preparation first admits and pushes
+the tested image; closed prepare/apply windows retain a signed `deferred` pending record.
+Deferrals authorize no apply and may retry after receipt verification. The image-lag
+check includes them; a later deployment of that digest clears the finding. Post-apply verification waits up
 to 62.5 minutes for scheduled work. Explicit `cancel_running_canary` must drain first;
 inventory errors/timeouts fail visibly. Canaries save their asynchronous execution ID
 and poll that exact deployed image: short jobs wait 62.5 minutes beyond the one-hour
