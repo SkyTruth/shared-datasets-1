@@ -25,8 +25,6 @@ jobs:
       queue: max
       cancel-in-progress: false
     env:
-      GH_TOKEN: ${{ github.token }}
-      SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
       GOOGLE_CLOUD_PROJECT: shared-datasets-1
       SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
       SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "0"
@@ -65,12 +63,15 @@ jobs:
       - name: Check operational work
         id: probe
         env:
+          GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
           SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
         run: uv run --no-sync python scripts/operational_safety_check.py --work-dir "$RUNNER_TEMP/operational-safety"
       - name: Request catalog refresh
         if: ${{ steps.probe.outputs.catalog == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh workflow run catalog-web-deploy.yml --ref main -f safety_run_id="$GITHUB_RUN_ID" -f safety_run_attempt="$GITHUB_RUN_ATTEMPT"
       - name: Retain operational safety snapshot
         if: ${{ success() && steps.probe.outputs.snapshot == 'true' }}
@@ -82,16 +83,23 @@ jobs:
           retention-days: 1
       - name: Request execution verification
         if: ${{ steps.probe.outputs.verify == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh workflow run deployment-verification.yml --ref main
       - name: Request operational reconciliation
         if: ${{ always() && steps.probe.outputs.reconcile == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           gh workflow run unattended-workflow-alert.yml --ref main
           -f incident_id=operational-batch -f delivery_result=batch
           -f operation="safety:${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
       - name: Check freshness and stalled operations
         id: health
+        if: ${{ always() && !cancelled() && steps.trust.outcome == 'success' }}
         env:
+          GH_TOKEN: ${{ github.token }}
+          SAFETY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: uv run --no-sync python scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
       - name: Retain safety health report
@@ -104,13 +112,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Report safety failure directly
-        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.health.outcome != 'failure' || steps.health-report.outcome == 'failure') }}
+        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.probe.outcome != 'failure' || steps.health.outcome != 'success' || steps.health-report.outcome != 'success') }}
         env:
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
-          status=0
-          gh workflow run deployment-verification.yml --ref main || status=$?
           curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' \
             --data "{\"text\":\"Operational safety infrastructure failed: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
             "$SHARED_DATASETS_SLACK_WEBHOOK_URL"
-          exit "$status"

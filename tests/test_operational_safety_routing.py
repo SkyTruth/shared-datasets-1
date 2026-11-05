@@ -150,46 +150,8 @@ for (const {github, expected} of cases) {
                    text=True, check=True, capture_output=True)
 
 
-@pytest.mark.parametrize('enabled', ['true', 'false'])
-def test_health_step_executes_with_the_workflows_effective_incident_mode(tmp_path, enabled):
-    workflow = load_workflow(WORKFLOWS / SAFETY)
-    job = workflow['jobs']['safety']
-    step = workflow_steps_by_name(workflow, 'safety')['Check freshness and stalled operations']
-    runner = tmp_path / 'runner.py'
-    runner.write_text('''import sys
-from unittest.mock import Mock
-from scripts import operational_safety_check as safety, catalog_drift_guard as catalog, slack_incidents as incidents
-safety.subprocess.check_call = Mock()
-safety.context = lambda *_: {'id': 300}
-incidents.GitHub = Mock
-catalog.get_client = lambda: None
-safety.freshness = lambda *a, **k: []
-safety.policy_warnings = lambda *_: ([], [])
-safety.previous_health = lambda *_: {'problems': [], 'warnings': [], 'notified_at': None}
-def legacy(*a, **k):
-    print('LEGACY_POLLED')
-    return [], [], None, None
-safety.source_inventory = legacy
-sys.argv = sys.argv[4:]
-safety.main()
-''')
-    uv = tmp_path / 'uv'
-    uv.write_text(f'#!/bin/sh\nexec {os.sys.executable} {runner} "$@"\n')
-    uv.chmod(0o755)
-    directory = tmp_path / 'operational-safety'
-    directory.mkdir()
-    (directory / 'result.json').write_text('{"reconcile":false}')
-    (directory / 'claims.json').write_text('[]')
-    environment = {**workflow.get('env', {}), **job.get('env', {}), **step.get('env', {})}
-    environment = {key: enabled if value == '${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}' else value
-                   for key, value in environment.items()}
-    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], cwd=ROOT, check=True, text=True,
-        capture_output=True, env={**os.environ, **environment, 'PYTHONPATH': str(ROOT), 'RUNNER_TEMP': str(tmp_path),
-                                  'PATH': str(tmp_path) + os.pathsep + os.environ['PATH']})
-    assert ('LEGACY_POLLED' in result.stdout) is (enabled == 'false')
 
-
-def test_infrastructure_fallback_executes_without_checkout_even_when_dispatch_fails(tmp_path):
+def test_infrastructure_fallback_executes_without_checkout(tmp_path):
     step = workflow_steps_by_name(load_workflow(WORKFLOWS / SAFETY), 'safety')['Report safety failure directly']
     for command, body in [('gh', 'exit 1'), ('curl', 'printf "%s\\n" "$@" > "$CAPTURE"')]:
         path = tmp_path / command
@@ -199,5 +161,37 @@ def test_infrastructure_fallback_executes_without_checkout_even_when_dispatch_fa
         env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'], 'GITHUB_REPOSITORY': alerts.REPOSITORY,
              'GITHUB_RUN_ID': '123', 'SHARED_DATASETS_SLACK_WEBHOOK_URL': 'https://example.invalid',
              'CAPTURE': str(tmp_path / 'capture')})
-    assert result.returncode == 1
+    assert result.returncode == 0
     assert 'Operational safety infrastructure failed' in (tmp_path / 'capture').read_text()
+
+
+def test_privileged_token_is_step_scoped_and_probe_failure_uses_health_deduplication():
+    job = load_workflow(WORKFLOWS / SAFETY)['jobs']['safety']
+    assert 'GH_TOKEN' not in job.get('env', {})
+    steps = workflow_steps_by_name({'jobs': {'safety': job}}, 'safety')
+    expected = {'Check operational work', 'Check freshness and stalled operations', 'Request catalog refresh',
+                'Request execution verification', 'Request operational reconciliation'}
+    assert {step.get('name') for step in job['steps'] if 'GH_TOKEN' in step.get('env', {})} == expected
+    health = steps['Check freshness and stalled operations']
+    assert 'always()' in health['if']
+    assert health['env']['SAFETY_PROBE_OUTCOME'] == '${{ steps.probe.outcome }}'
+    fallback = steps['Report safety failure directly']
+    assert "steps.health.outcome != 'success'" in fallback['if']
+    assert "steps.health-report.outcome != 'success'" in fallback['if']
+
+
+@pytest.mark.parametrize('name', WORKFLOW_NAMES['ci.yml'])
+def test_failed_main_push_ci_event_reaches_incident_routing_immediately(name):
+    from test_failure_alert_routing import event, source_api
+    payload = event(name=name, event='push', head_sha='a' * 40, run_attempt=1)
+    api = source_api(payload['workflow_run'])
+    failed = {'id': 456, 'name': 'eamlis / Build image and apply', 'status': 'completed',
+              'conclusion': 'failure', 'completed_at': '2026-11-05T01:00:00Z'}
+    api.pages.return_value = [failed, {'name': 'ci-ready', 'status': 'completed', 'conclusion': 'success'}]
+    # Exercise the actual serialized event and same-attempt job transport, without the periodic probe.
+    payload = json.loads(json.dumps(payload))
+    observed = incidents.source_observations(api, payload, {})
+    assert len(observed) == 1 and observed[0]['job_id'] == 456
+    assert observed[0]['run_id'] == 123
+    api.pages.assert_called_once_with(
+        'repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100', field='jobs')

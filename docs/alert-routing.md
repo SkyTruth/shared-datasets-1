@@ -9,7 +9,8 @@ GitHub incident recovery follows the [Slack incident lifecycle](slack-incidents.
 additional failed attempts update the parent without automatic replies;
 verified recovery edits the original parent to **Resolved** and creates no reply
 or new channel message. That document owns configuration and reconciliation;
-the existing failure-only webhook remains active until incident mode is enabled.
+the bot is the sole workflow incident writer. The incoming webhook remains for
+safety findings and operational summaries.
 
 | Execution | Failure reporting |
 | --- | --- |
@@ -141,7 +142,10 @@ unchanged-source check-in within two days; monthly assets within 45 days (monthl
 WDPA checks days 1–10, allowing 31 days plus source/retry grace). Missing-source/decision skips do not reset data
 freshness. An old publication with a recent confirmed unchanged-source skip is
 healthy. Metadata-only index rewrites cannot reset the check-in date. The weekly
-bucket audit uses the same freshness rule.
+bucket audit uses the same freshness rule. The safety health report also requires
+a successful main completion of both `bucket-hygiene-audit.yml` and
+`scratch-cleanup-audit.yml` within nine days (weekly cadence plus two days of grace).
+Missing/failed audits cannot reset that clock; API failures remain visible.
 
 A Scheduler state other than `ENABLED` for at least 72 hours since
 `userUpdateTime` fails health unless `.github/scheduler-pauses.json` contains a
@@ -157,8 +161,10 @@ warn at least 72 hours before expiry and alert after expiry; expired holds conti
 blocking deployments without failing CI selection or `ci-ready`. Lint rejects malformed
 holds and changed holds that are already expired.
 
-Health findings and external health-read exceptions produce a scoped report
-without making the workflow red when reporting succeeds. The report deduplicates
+Probe failures, health findings and external health-read exceptions produce a scoped report
+without making health reporting red when delivery succeeds. A failed discovery
+step retains its native failed conclusion; its authenticated retained report owns
+deduplication, so periodic replay cannot create a second incident. The report deduplicates
 findings and sends on change plus daily reminders; identical findings neither
 dispatch incident replay nor count toward its three-dispatch escalation. Report
 upload/notification and infrastructure failures remain visible workflow failures.

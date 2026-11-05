@@ -7,6 +7,10 @@ on:
       - "Approved dataset mutation"
       - "Artifact Registry IAM sync"
       - "Bucket hygiene audit"
+      - "CI / Validate and deliver"
+      - "CI"
+      - "SDK / Publish TypeScript"
+      - "Publish TypeScript SDK"
       - "Catalog / PMTiles CDN sync"
       - "Catalog / Viewer deploy"
       - "Catalog / Web deploy"
@@ -68,37 +72,6 @@ permissions:
   actions: read
 
 jobs:
-  notify:
-    if: >-
-      vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
-      github.event.workflow_run.status == 'completed' &&
-      (
-        contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion)
-      ) &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      (
-        github.event.workflow_run.event == 'schedule' ||
-        github.event.workflow_run.event == 'workflow_run' ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation","Catalog / Web deploy","Catalog web deploy","Catalog / Viewer deploy","Catalog viewer deploy"]'), github.event.workflow_run.name))
-      )
-    runs-on: ubuntu-latest
-    steps:
-      # workflow_run is privileged: use trusted main code, never the source
-      # run's checkout, caches, or artifacts. Event text is parsed as data.
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Notify unattended failures
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
-        run: python scripts/workflow_failure_alert.py --event-path "$GITHUB_EVENT_PATH"
-
   incidents:
     name: Reconcile Slack incident status
     if: >-
@@ -116,6 +89,7 @@ jobs:
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           (
+            (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
             github.event.workflow_run.event == 'schedule' ||
             github.event.workflow_run.event == 'workflow_run' ||
             github.event.workflow_run.event == 'workflow_dispatch'
