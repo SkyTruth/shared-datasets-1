@@ -1119,7 +1119,7 @@ def main():
         def retain(record):
             partial.append(record)
             plan_path.write_text(json.dumps(partial, sort_keys=True) + "\n")
-        if run["event"] == "workflow_dispatch":
+        if run["event"] == "workflow_dispatch" and event["inputs"]["delivery_result"] != "batch":
             inputs = event["inputs"]
             if inputs["delivery_result"] == "seal-checkpoint":
                 require(not inputs.get("message_ts"), "checkpoint sealing does not acknowledge a Slack message")
@@ -1134,16 +1134,26 @@ def main():
             targets = job_targets()
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")
             activated = instant(since)
-            observations = source_observations(api, event, targets)
-            source = event["workflow_run"]
-            if (source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
+            if run["event"] == "workflow_dispatch":
+                from scripts.operational_safety_check import validate_safety_dispatch
+                inputs = event["inputs"]
+                producer = re.fullmatch(r"safety:([1-9][0-9]*)/([1-9][0-9]*)", inputs["operation"])
+                require(inputs["incident_id"] == "operational-batch" and not inputs.get("message_ts") and producer,
+                        "batch requires an exact safety attempt, without delivery acknowledgement")
+                validate_safety_dispatch(api, {"inputs": {"safety_run_id": producer[1], "safety_run_attempt": producer[2]}}, workflow=WORKFLOW)
+                observations = replay_observations(api, targets, since)
+                source = None
+            else:
+                source = event["workflow_run"]
+                observations = source_observations(api, event, targets)
+            if (source and source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
-                # An idle input probe has no incident evidence. The completion
-                # checker still owns hourly replay and unrelated pending work.
+                # An idle input probe has no incident evidence. The
+                # safety probe still owns hourly replay and unrelated pending work.
                 print("Prepared 0 incident transitions; scheduled catalog probe has no incident evidence.")
                 return
             observations = [item for item in observations if instant(item["time"]) >= activated]
-            if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
+            if source and alerts.WORKFLOW_PATHS[source["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, targets, since))
             ledger.verification_cache = VerificationCache.restore(api, run, identity)
             records = prepare(ledger, identity, observations, on_saved=retain)

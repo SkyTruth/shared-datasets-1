@@ -55,7 +55,9 @@ jobs:
   monitoring:
     if: github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id != ''
     runs-on: ubuntu-latest
-    environment: shared-datasets-production
+    environment:
+      name: shared-datasets-production
+      deployment: false
     timeout-minutes: 10
     permissions:
       contents: read

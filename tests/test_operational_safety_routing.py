@@ -19,16 +19,16 @@ WORKFLOWS = ROOT / ".github/workflows"
 SAFETY = "operational-safety-check.yml"
 
 
-def test_one_hourly_entrypoint_has_no_unconditional_downstream_subscription():
+def test_one_hourly_entrypoint_and_native_safety_failure_coverage():
     files = (SAFETY, "catalog-web-deploy.yml", "deployment-verification.yml")
     schedules = {name: workflow_triggers(load_workflow(WORKFLOWS / name)).get("schedule") for name in files}
     assert schedules == {SAFETY: [{"cron": "17 * * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
-    assert set(WORKFLOW_NAMES[SAFETY]).isdisjoint(subscriptions)
+    assert set(WORKFLOW_NAMES[SAFETY]) <= set(subscriptions)
     for filename in files[1:]:
         assert set(WORKFLOW_NAMES[filename]) <= set(subscriptions)
-    assert SAFETY in alerts.MONITORED_WORKFLOWS and SAFETY in alerts.REPLAY_ONLY_WORKFLOWS
+    assert SAFETY in alerts.MONITORED_WORKFLOWS
 
 
 def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
@@ -36,7 +36,7 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     assert set(workflow["jobs"]) == {"safety"}
     assert workflow_triggers(workflow)["workflow_dispatch"] is None
     job = workflow["jobs"]["safety"]
-    assert job["environment"] == "shared-datasets-production"
+    assert job["environment"] == {"name": "shared-datasets-production", "deployment": False}
     assert job["permissions"] == {"contents": "read", "actions": "write", "deployments": "read", "id-token": "write"}
     assert job["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"] == "0"
     steps = workflow_steps_by_name(workflow, "safety")
@@ -49,7 +49,6 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     assert probe["env"]["SHARED_DATASETS_SLACK_BOT_TOKEN"] == "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}"
     assert steps["Request catalog refresh"]["if"] == "${{ steps.probe.outputs.catalog == 'true' }}"
     recovery_if = steps["Request operational reconciliation"]["if"]
-    assert "always()" in recovery_if and "failure()" in recovery_if and "steps.trust.outcome == 'success'" in recovery_if
     assert "steps.probe.outputs.reconcile == 'true'" in recovery_if
     snapshot = steps["Retain operational safety snapshot"]
     assert snapshot["if"] == "${{ success() && steps.probe.outputs.snapshot == 'true' }}"
@@ -59,14 +58,14 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     assert not any("attest" in step.get("uses", "") for step in job["steps"])
 
 
-@pytest.mark.parametrize("missed", [[], [{"id": 99, "run_attempt": 1}, {"id": 100, "run_attempt": 2}]])
 @pytest.mark.parametrize("step_name,expected", [
     ("Request catalog refresh", ["workflow", "run", "catalog-web-deploy.yml", "--ref", "main",
                                  "-f", "safety_run_id=123", "-f", "safety_run_attempt=2"]),
-    ("Request operational reconciliation", ["workflow", "run", "deployment-verification.yml", "--ref", "main",
-                                            "-f", "safety_run_id=123", "-f", "safety_run_attempt=2"]),
+    ("Request execution verification", ["workflow", "run", "deployment-verification.yml", "--ref", "main"]),
+    ("Request operational reconciliation", ["workflow", "run", "unattended-workflow-alert.yml", "--ref", "main",
+         "-f", "incident_id=operational-batch", "-f", "delivery_result=batch", "-f", "operation=safety:123/2"]),
 ])
-def test_dispatch_executes_only_literal_main_workflow_routes(tmp_path, step_name, expected, missed):
+def test_dispatch_executes_only_literal_main_workflow_routes(tmp_path, step_name, expected):
     workflow = load_workflow(WORKFLOWS / SAFETY)
     step = workflow_steps_by_name(workflow, "safety")[step_name]
     capture = tmp_path / "arguments.json"
@@ -75,13 +74,8 @@ def test_dispatch_executes_only_literal_main_workflow_routes(tmp_path, step_name
     gh.chmod(0o755)
     subprocess.run(["bash", "-euo", "pipefail", "-c", step["run"]], check=True,
                    env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"], "CAPTURE": str(capture),
-                            "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "MISSED_HANDOFFS": json.dumps(missed)})
-    expected_calls = [expected]
-    if step_name == "Request operational reconciliation":
-        expected_calls.extend(["workflow", "run", "deployment-verification.yml", "--ref", "main",
-                               "-f", f"safety_run_id={parent['id']}", "-f", f"safety_run_attempt={parent['run_attempt']}"]
-                              for parent in missed)
-    assert [json.loads(line) for line in capture.read_text().splitlines()] == expected_calls
+                            "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"})
+    assert [json.loads(line) for line in capture.read_text().splitlines()] == [expected]
 
 
 def test_dispatched_catalog_rechecks_source_inputs_and_exact_ci_before_publication():
@@ -136,3 +130,30 @@ def test_safety_job_failure_and_recovery_keep_the_same_nonproduction_scope():
         {**job, "id": 457, "conclusion": "success", "completed_at": "2026-11-02T02:00:00Z"}, incidents.job_targets())
     state = incidents.fold(state, recovered, identity)
     assert state["incident"]["resolution"] == recovered
+
+
+def test_workflow_batches_successes_before_allocating_runner_and_preserves_failures():
+    workflow = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
+    cases = []
+    for name in alerts.WORKFLOW_PATHS:
+        for conclusion in alerts.FAILED_CONCLUSIONS | {"success", "skipped"}:
+            run = {"name": name, "status": "completed", "conclusion": conclusion,
+                   "head_branch": "main", "head_repository": {"full_name": alerts.REPOSITORY},
+                   "event": "push" if name in WORKFLOW_NAMES["ci.yml"] else "schedule"}
+            github = {"event_name": "workflow_run", "ref": "refs/heads/main",
+                      "repository": alerts.REPOSITORY, "event": {"workflow_run": run}}
+            expected = (conclusion in alerts.FAILED_CONCLUSIONS or
+                        conclusion == "success" and name in WORKFLOW_NAMES["deployment-verification.yml"])
+            cases.append({"github": github, "expected": expected})
+    expression = workflow["jobs"]["incidents"]["if"]
+    script = r"""
+const {expression, cases} = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const evaluate = new Function('github', 'vars', 'contains', 'fromJSON', `return (${expression});`);
+for (const {github, expected} of cases) {
+  const actual = evaluate(github, {SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: 'true'},
+    (values, value) => values.includes(value), JSON.parse);
+  if (actual !== expected) throw new Error(JSON.stringify({github, expected, actual}));
+}
+"""
+    subprocess.run(["node", "-e", script], input=json.dumps({"expression": expression, "cases": cases}),
+                   text=True, check=True, capture_output=True)

@@ -85,15 +85,7 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
         if "schedule" in workflow_triggers(candidate):
-            if path.name in alerts.REPLAY_ONLY_WORKFLOWS:
-                assert candidate["name"] not in subscriptions
-                steps = workflow_steps_by_name(candidate, "safety")
-                handoff = steps["Request operational reconciliation"]
-                assert "failure()" in handoff["if"] and "always()" in handoff["if"]
-                assert "gh workflow run deployment-verification.yml --ref main" in handoff["run"]
-                assert path.name in alerts.MONITORED_WORKFLOWS
-            else:
-                assert candidate["name"] in subscriptions, path.name
+            assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
     assert "CI" in subscriptions
@@ -450,125 +442,38 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     assert opener.call_args.args[0].full_url == "https://slack.com/api/chat.update"
 
 
-class NativeLegacyHandoff:
-    """API transport double; source verification and title parsing stay real."""
-
-    def __init__(self):
-        self.repository = {"id": 9, "full_name": alerts.REPOSITORY}
-        common = {"run_attempt": 1, "head_sha": "a" * 40, "head_branch": "main", "status": "completed",
-                  "repository": dict(self.repository), "head_repository": dict(self.repository)}
-        self.completion = {**common, "id": 123, "workflow_id": 7,
-                           "name": alerts.WORKFLOW_NAMES["deployment-verification.yml"][0],
-                           "path": ".github/workflows/deployment-verification.yml",
-                           "event": "workflow_dispatch", "conclusion": "success",
-                           "display_title": "Operational follow-up: safety 456/1"}
-        self.parent = {**common, "id": 456, "workflow_id": 8,
-                       "name": alerts.WORKFLOW_NAMES["operational-safety-check.yml"][0],
-                       "path": ".github/workflows/operational-safety-check.yml",
-                       "event": "schedule", "conclusion": "failure"}
-        self.reads = []
-
-    def get(self, path):
-        self.reads.append(path)
-        responses = {
-            f"repos/{alerts.REPOSITORY}": self.repository,
-            f"repos/{alerts.REPOSITORY}/actions/runs/123": self.completion,
-            f"repos/{alerts.REPOSITORY}/actions/runs/456": self.parent,
-            f"repos/{alerts.REPOSITORY}/actions/workflows/7": {
-                "id": 7, "path": ".github/workflows/deployment-verification.yml"},
-            f"repos/{alerts.REPOSITORY}/actions/workflows/8": {
-                "id": 8, "path": ".github/workflows/operational-safety-check.yml"},
-            f"repos/{alerts.REPOSITORY}/actions/workflows/operational-safety-check.yml": {
-                "id": 8, "path": ".github/workflows/operational-safety-check.yml"},
-        }
-        if path not in responses:
-            raise AssertionError("unexpected native read: " + path)
-        return json.loads(json.dumps(responses[path]))
+@pytest.mark.parametrize("mode", ["legacy", "incidents"])
+def test_native_safety_failure_needs_no_parent_handoff_or_timing_assumption(tmp_path, monkeypatch, mode):
+    from scripts import slack_incidents as incidents
+    payload = event(name="Operations / Safety check", event="schedule", head_sha="a" * 40, run_attempt=1)
+    run = payload["workflow_run"]
+    run["updated_at"] = "2026-11-04T18:19:00Z"
+    api = source_api(run)
+    api.pages.return_value = [{"id": 456, "name": "Check for operational work", "status": "completed",
+                              "conclusion": "failure", "completed_at": "2026-11-04T18:00:00Z"}]
+    # A parent may complete long after runner cleanup; only its native completed
+    # event is consumed. No follow-up, title parsing, polling or sleep is needed.
+    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
+        if mode == "legacy":
+            path = tmp_path / "event.json"
+            path.write_text(json.dumps(payload))
+            monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
+            alerts.main()
+            assert notify.call_args.kwargs["strict"] is True
+            assert "/actions/runs/123|" in notify.call_args.kwargs["body"]
+        else:
+            observed = incidents.source_observations(api, payload, {})
+            assert len(observed) == 1 and observed[0]["conclusion"] == "failure"
+            assert observed[0]["job_id"] == 456
 
 
-@pytest.fixture
-def native_legacy_handoff(tmp_path, monkeypatch):
-    api = NativeLegacyHandoff()
-    payload = json.loads(json.dumps({"repository": api.repository, "workflow_run": api.completion}))
-    path = tmp_path / "completion.json"
-    notify = mock.Mock()
-    monkeypatch.setattr(alerts, "GitHub", lambda: api)
-    monkeypatch.setattr(alerts, "notify", notify)
-
-    def invoke(*, dry_run=False):
-        path.write_text(json.dumps(payload))
-        arguments = ["alert", "--event-path", str(path)]
-        if dry_run:
-            arguments.append("--dry-run")
-        monkeypatch.setattr("sys.argv", arguments)
+@pytest.mark.parametrize("name", alerts.WORKFLOW_NAMES["deployment-verification.yml"])
+def test_successful_historical_followup_cannot_forward_or_invent_a_parent(tmp_path, monkeypatch, name):
+    payload = event(name=name, event="workflow_dispatch", conclusion="success", display_title="Operational follow-up: safety 999/1")
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(payload))
+    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
+    with mock.patch.object(alerts, "GitHub") as api, mock.patch.object(alerts, "notify") as notify:
         alerts.main()
-
-    return api, payload, notify, invoke
-
-
-def test_legacy_handoff_cli_links_original_native_safety_failure(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    invoke()
-    notify.assert_called_once()
-    alert = notify.call_args.kwargs
-    assert alert["strict"] is True and alert["status"] == "error"
-    assert "Operations / Safety check finished with failure." in alert["body"]
-    assert "/actions/runs/456|" in alert["body"] and "/actions/runs/123|" not in alert["body"]
-    assert f"repos/{alerts.REPOSITORY}/actions/workflows/7" in api.reads
-    assert f"repos/{alerts.REPOSITORY}/actions/workflows/8" in api.reads
-
-
-def test_legacy_handoff_dry_run_serializes_original_failure_without_sending(native_legacy_handoff, capsys):
-    _api, _payload, notify, invoke = native_legacy_handoff
-    invoke(dry_run=True)
+    api.assert_not_called()
     notify.assert_not_called()
-    alert = json.loads(capsys.readouterr().out)
-    assert alert["status"] == "error" and "/actions/runs/456|" in alert["body"]
-
-
-def test_successful_native_safety_parent_is_quiet(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.parent["conclusion"] = "success"
-    invoke()
-    notify.assert_not_called()
-
-
-@pytest.mark.parametrize("change", ["parent-repository", "parent-path", "parent-attempt",
-                                   "completion-repository", "completion-path"])
-def test_legacy_handoff_cli_rejects_forged_native_provenance(native_legacy_handoff, change):
-    api, _payload, notify, invoke = native_legacy_handoff
-    target = api.parent if change.startswith("parent-") else api.completion
-    if change.endswith("repository"):
-        target["head_repository"] = {"id": 9, "full_name": "Other/repository"}
-    elif change.endswith("path"):
-        target["path"] = ".github/workflows/ci.yml"
-    else:
-        target["run_attempt"] = 2
-    with pytest.raises((ValueError, RuntimeError)):
-        invoke()
-    notify.assert_not_called()
-
-
-def test_event_title_cannot_select_an_arbitrary_parent(native_legacy_handoff):
-    api, payload, notify, invoke = native_legacy_handoff
-    payload["workflow_run"]["display_title"] = "Operational follow-up: safety 999/1"
-    invoke()
-    notify.assert_called_once()
-    assert "/actions/runs/456|" in notify.call_args.kwargs["body"]
-    assert not any("/actions/runs/999" in path for path in api.reads)
-
-
-def test_event_title_without_matching_native_hint_cannot_manufacture_failure(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.completion["display_title"] = "Deployment completion check"
-    invoke()
-    notify.assert_not_called()
-    assert not any(path.endswith("/actions/runs/456") for path in api.reads)
-
-
-def test_obsolete_successful_completion_does_not_forward_a_parent(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.completion.update(run_attempt=2, status="in_progress", conclusion=None)
-    invoke()
-    notify.assert_not_called()
-    assert not any(path.endswith("/actions/runs/456") for path in api.reads)
