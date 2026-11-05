@@ -170,7 +170,7 @@ class IngestionTargetRecoveryTests(unittest.TestCase):
                 log = Path(directory) / 'args'
                 recorder = 'terraform() { :; }\nbash() { printf "%s\\n" "$@" > "$ARGS"; }\n'
                 result = subprocess.run(['bash', '-c', recorder + refresh], cwd=ROOT, capture_output=True, text=True,
-                    env={**os.environ, 'IMAGE_VARIABLES': values['image_variables'], 'TARGETS_JSON': values['targets'], 'ARGS': str(log), 'RUNNER_TEMP': directory})
+                    env={**os.environ, 'IMAGE_VARIABLES': values['image_variables'], 'TARGETS_JSON': values['targets'], 'ARGS': str(log), 'RUNNER_TEMP': directory, 'GITHUB_WORKSPACE': str(ROOT)})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 actual = log.read_text().splitlines()
                 self.assertIn('plan', actual)

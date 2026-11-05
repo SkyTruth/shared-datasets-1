@@ -38,19 +38,14 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
       - name: Resolve original tested deployment
         id: original
         run: python scripts/deployment_revision.py recovery-inputs --deployment-id "$DEPLOYMENT_ID"
-      - uses: actions/checkout@v4
-        if: steps.original.outputs.kind != 'sdk'
-        with:
-          ref: ${{ steps.original.outputs.executor_sha }}
-          fetch-depth: 0
-      - name: Check out original tested SDK without replacing the trusted reconciler
-        if: steps.original.outputs.kind == 'sdk'
+      - name: Read original executor without replacing the trusted reconciler
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.original.outputs.executor_sha }}
@@ -65,7 +60,7 @@ jobs:
         if: steps.original.outputs.kind != 'sdk'
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          service_account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
         if: steps.original.outputs.kind != 'sdk'
       - uses: hashicorp/setup-terraform@v3
@@ -79,23 +74,26 @@ jobs:
           IMAGE_VARIABLES: ${{ steps.original.outputs.image_variables }}
         run: |
           set -euo pipefail
-          terraform -chdir=terraform/envs/prod init -input=false
-          args=(-input=false -refresh=true -out="$RUNNER_TEMP/reconciliation.tfplan")
-          while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
-          while IFS= read -r variable; do args+=("-var=$variable"); done < <(python -c 'import json, os; print("\n".join(k + "=" + v for k, v in json.loads(os.environ["IMAGE_VARIABLES"]).items()))')
-          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan "${args[@]}"
-          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
+          terraform -chdir=original-executor/terraform/envs/prod init -input=false -lockfile=readonly
+          args=(-input=false -lock=false -refresh=true -out="$RUNNER_TEMP/reconciliation.tfplan")
+          while IFS= read -r target; do args+=("-target=$target"); done < <(python -I -S -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
+          while IFS= read -r variable; do args+=("-var=$variable"); done < <(python -I -S -c 'import json, os; print("\n".join(k + "=" + v for k, v in json.loads(os.environ["IMAGE_VARIABLES"]).items()))')
+          bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=original-executor/terraform/envs/prod plan "${args[@]}"
+          terraform -chdir=original-executor/terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
       - name: Reconcile complete target state and applicable runtime evidence
         id: deployment-outcome
         env:
           KIND: ${{ steps.original.outputs.kind }}
         run: |
           set -euo pipefail
+          args=(--deployment-id "$DEPLOYMENT_ID")
           if [[ "$KIND" == sdk ]]; then
-            python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --executor-dir "$GITHUB_WORKSPACE/original-executor"
+            args+=(--executor-dir "$GITHUB_WORKSPACE/original-executor")
           else
-            python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --plan-json "$RUNNER_TEMP/reconciliation.json"
+            args+=(--plan-json "$RUNNER_TEMP/reconciliation.json")
+            cd original-executor
           fi
+          python -I -S "$GITHUB_WORKSPACE/scripts/deployment_revision.py" reconcile "${args[@]}"
 
       - name: Attest reconciled deployment outcome
         if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
