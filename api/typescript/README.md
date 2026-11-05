@@ -604,12 +604,13 @@ the command prints the exact path. CI checks the PR's version increase and runs
 the SDK and package checks on Node 22 and 24; `ci-ready` requires both selected
 matrix results.
 
-Merging a versioned package change to `main` triggers release detection from the
-main-push CI completion. The listener verifies that exact `ci-ready` result,
+Merging a versioned package change to `main` runs release detection inside the
+main-push CI run, only when the resolved CI plan selected the SDK suites and
+`ci-ready` succeeded. The release job verifies that exact `ci-ready` result,
 checks the reviewed version, and publishes the retained Node 24 tarball bytes
-through npm's GitHub Actions OIDC handshake. Validation failures, cancellations,
-and obsolete completion events are no-ops; an unrelated deployment failure after
-passing validation keeps the tested package eligible. The read-only release
+through npm's GitHub Actions OIDC handshake. A manual dispatch of
+`publish-typescript-sdk.yml` with the tested `executor_sha`, `source_run_id` and
+`source_run_attempt` recovers a release whose publish step failed. The release
 workflow never edits versions, commits, or pushes. Commit-message bump trailers
 have no effect.
 
