@@ -20,7 +20,6 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
-from scripts.ingestion_targets import TARGETS as INGESTION_TARGETS
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLER = './.github/workflows/prod-terraform-target-apply.yml'
@@ -78,7 +77,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars',
     }}
     placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
-    variables = [*item.get('tf_vars', []), *(config['image_variable'] + '=' + placeholder for config in INGESTION_TARGETS.values())]
+    variables = [*item.get('tf_vars', []), *(name + '_image=' + placeholder for name in ('wdpa_monthly', 'sea_ice_daily', 'eamlis_monthly'))]
     result.update(caller_workflow=workflow, sync_name=sync_name, targets='\n'.join(resources),
                   allowed_exact='\n'.join(resources), refusal_prefix='Refusing ' + sync_name,
                   tf_vars=tf_vars if item.get('state_only') else '\n'.join(variables))
