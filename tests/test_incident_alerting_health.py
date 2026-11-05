@@ -16,7 +16,8 @@ from test_operational_safety_check import NOW, OperationalAPI
     ("", "configured-test-token", 1), (None, "configured-test-token", 1),
     ("true", "", 1), ("true", " \t", 1), ("false", "", 2),
 ])
-def test_alerting_configuration_is_reported_and_deduplicated(tmp_path, monkeypatch, enabled, token, findings):
+def test_alerting_configuration_is_reported_and_deduplicated(tmp_path, monkeypatch, no_ambient_credentials, enabled, token, findings):
+    monkeypatch.setattr('scripts.catalog_drift_guard.get_client', lambda: None)
     api = OperationalAPI()
     monkeypatch.setattr(safety, "GitHub", lambda: api)
     monkeypatch.setattr(safety, "context", lambda *_: api.current)

@@ -18,7 +18,9 @@ from workflow_helpers import load_workflow, workflow_steps_by_name
 
 
 @pytest.mark.parametrize('failure', ['dependencies', 'verifier', 'authentication'])
-def test_setup_outages_deduplicate_changes_and_daily_reminders_without_probe_dependencies(tmp_path, monkeypatch, failure):
+def test_setup_outages_deduplicate_changes_and_daily_reminders_without_probe_dependencies(tmp_path, monkeypatch, no_ambient_credentials, failure):
+    monkeypatch.setattr('scripts.catalog_drift_guard.get_client', lambda: None)
+    monkeypatch.setattr(safety, 'freshness', lambda *_args, **_kwargs: [])
     api = OperationalAPI()
     monkeypatch.setattr(safety, 'GitHub', lambda: api)
     monkeypatch.setattr(safety, 'context', lambda *_: api.current)

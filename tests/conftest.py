@@ -7,6 +7,17 @@ import pytest
 import yaml
 
 
+@pytest.fixture
+def no_ambient_credentials(monkeypatch):
+    import google.auth
+    from unittest.mock import Mock
+
+    credentials = Mock(side_effect=AssertionError("unexpected ambient cloud credential discovery"))
+    monkeypatch.setattr(google.auth, "default", credentials)
+    yield
+    credentials.assert_not_called()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def parsed_policy_documents():
     """Reuse pure parses across contracts, preserving independent mutable results.
