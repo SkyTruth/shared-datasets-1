@@ -74,7 +74,7 @@ def saved_plan_permission_contract(root, filenames=PLAN_PROBE_WORKFLOWS):
                     guard = bootstrap_guard.search(line)
                     if guard and receipts.enabled(step) and not step.get('continue-on-error'):
                         guarded.add(guard[1])
-                    if tested and target.search(line) and str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}:
+                    if tested and target.search(line) and receipts.enabled(step) and not step.get("continue-on-error"):
                         selected = target.search(line)[1]
                         # Cache invalidation is a post-apply operation and must
                         # remain in the CDN plan contract, even on no-change plans.

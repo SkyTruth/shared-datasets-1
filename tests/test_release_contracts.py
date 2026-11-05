@@ -206,6 +206,28 @@ class ReleaseContractTests(unittest.TestCase):
                 self.assertTrue(any("saved-plan permission probe" in error for error in contracts.check(self.root, {"iam"})))
                 path.write_text(original)
 
+    def test_nested_saved_plan_probe_must_fail_the_job_when_permission_is_missing(self):
+        path = self.root / '.github/workflows/ingestion-deploy.yml'
+        value = yaml.safe_load(path.read_text())
+        steps = value['jobs']['apply']['steps']
+        index = next(index for index, step in enumerate(steps)
+                     if 'deployment_permissions.py' in step.get('run', '') and '--plan-json' in step['run'])
+        nested = [steps[index]]
+        for depth in range(3):
+            action = self.root / f'.github/actions/plan-probe-{depth}/action.yml'
+            action.parent.mkdir()
+            action.write_text(yaml.safe_dump({'runs': {'using': 'composite', 'steps': nested}}))
+            nested = [{'uses': f'./.github/actions/plan-probe-{depth}'}]
+        steps[index] = nested[0]
+        path.write_text(yaml.safe_dump(value))
+        self.assertEqual(contracts.saved_plan_permission_contract(self.root), [])
+        for field in ({'continue-on-error': True}, {'if': False}):
+            with self.subTest(field=field):
+                steps[index] = {**nested[0], **field}
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('saved-plan permission probe' in item
+                                    for item in contracts.saved_plan_permission_contract(self.root)))
+
     def test_probe_of_another_plan_cannot_satisfy_monthly_apply(self):
         path = self.root / ".github/workflows/ingestion-deploy.yml"
         original = path.read_text()
