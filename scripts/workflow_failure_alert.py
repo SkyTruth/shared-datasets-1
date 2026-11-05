@@ -111,13 +111,12 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     }
 
 
-def source_identity(api: GitHub, run: dict, path: str) -> None:
+def source_identity(api: GitHub, run: dict, path: str, workflow: dict) -> None:
     """Authenticate an API run against its declared main workflow path."""
     if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
     if type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0 or not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha"))):
         raise ValueError("invalid source attempt or revision")
-    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{path.rsplit('/', 1)[-1]}")
     repository = api.get(f"repos/{REPOSITORY}")
     if (workflow.get("id") != run["workflow_id"]
             or workflow.get("path") != path or run.get("path") != path
@@ -137,7 +136,8 @@ def verify_source_event(api: GitHub, run: dict) -> bool:
     if run.get("name") not in WORKFLOW_PATHS:
         raise ValueError("unknown unattended workflow identity")
     authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
-    source_identity(api, authoritative, ".github/workflows/" + WORKFLOW_PATHS[run["name"]])
+    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{authoritative['workflow_id']}")
+    source_identity(api, authoritative, ".github/workflows/" + WORKFLOW_PATHS[run["name"]], workflow)
     if any(authoritative.get(key) != run.get(key) for key in ("id", "name", "head_sha", "event")):
         raise ValueError("failure event does not identify a trusted main source workflow")
     if authoritative["run_attempt"] > run["run_attempt"]:

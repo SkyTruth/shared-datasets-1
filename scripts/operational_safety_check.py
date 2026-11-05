@@ -112,7 +112,8 @@ def context(api, environment=os.environ, *, workflow=WORKFLOW):
     require(run.get("id") == identifier and run.get("run_attempt") == attempt
             and run["event"] in {"schedule", "workflow_dispatch"}
             and run["path"] == workflow, "invalid execution provenance")
-    alerts.source_identity(api, run, workflow)
+    definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
+    alerts.source_identity(api, run, workflow, definition)
     return run
 
 
@@ -124,7 +125,8 @@ def validate_safety_dispatch(api, event, environment=os.environ, *, workflow=".g
     require(all(re.fullmatch(r"[1-9][0-9]*", value) for value in values), "missing safety producer attempt")
     identifier, attempt = map(int, values)
     producer = api.get(f"repos/{REPOSITORY}/actions/runs/{identifier}")
-    alerts.source_identity(api, producer, WORKFLOW)
+    definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
+    alerts.source_identity(api, producer, WORKFLOW, definition)
     require(producer.get("id") == identifier and producer.get("run_attempt") == attempt
             and producer["path"] == WORKFLOW
             and (producer["head_sha"] == current["head_sha"] or api.get(

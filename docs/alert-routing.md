@@ -1,7 +1,6 @@
 # Operational alert routing
 
 Use [CI/deployment recovery](ci-recovery.md) for ordered incident handling.
-This reference owns alert selection, delivery paths and health policy.
 `workflow_failure_alert.WORKFLOW_EVENTS` owns producer/event routing for alerts
 and replay. Supervised runs stay quiet only while GitHub reports their failures.
 

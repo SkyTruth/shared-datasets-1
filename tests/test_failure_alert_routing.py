@@ -338,7 +338,7 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
               "created_at": "2026-10-22T22:05:00Z" if failure == "older" else "2026-10-25T12:00:00Z",
               "log_url": incidents.emissions.invocation(alerts.REPOSITORY, 456, 1)}
     api = mock.Mock()
-    api.get.side_effect = lambda path: ({"id": 7, "path": run["path"]} if path.endswith(("/workflows/7", "/workflows/ci.yml"))
+    api.get.side_effect = lambda path: ({"id": 7, "path": run["path"]} if path.endswith("/workflows/7")
                                       else repository if path == "repos/" + alerts.REPOSITORY else run)
     api.pages.side_effect = lambda path, **kwargs: (jobs if "/jobs?" in path else [status] if "/statuses?" in path else ([] if failure == "missing" else [record]))
 
