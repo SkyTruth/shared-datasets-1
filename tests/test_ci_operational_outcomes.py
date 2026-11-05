@@ -82,7 +82,8 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
 
 def test_successful_or_skipped_upstream_events_cannot_allocate_failure_alert_worker():
     workflow = load_workflow(ROOT / '.github/workflows/unattended-workflow-alert.yml')
-    condition = workflow['jobs']['notify']['if']
+    assert set(workflow['jobs']) == {'incidents'}
+    condition = workflow['jobs']['incidents']['if']
     match = re.search(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.conclusion\)", condition)
     assert match is not None
     import json
