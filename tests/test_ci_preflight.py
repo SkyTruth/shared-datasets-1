@@ -466,7 +466,7 @@ def fixture_repo(tmp_path):
 def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     source, git = fixture_repo(tmp_path)
     holds = source / preflight.INGESTION_ROLLOUT_HOLDS
-    holds.write_text(json.dumps({target: {"owner": "maintainer", "reason": "review pending", "expires_at": "2099-01-01T00:00:00Z"}
+    holds.write_text(json.dumps({target: {"owner": "jonaraphael", "reason": "review pending", "expires_at": "2099-01-01T00:00:00Z"}
                                  for target in INGESTION_DEPLOYMENTS}))
     git("add", ".")
     git("commit", "-m", "hold rollouts")
@@ -498,8 +498,8 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
 
 
 @pytest.mark.parametrize("invalid", [[], ["wdpa", "wdpa"], {"catalog_viewer": {}}, {"wdpa": {}},
-    {"wdpa": {"owner": "maintainer", "reason": "review", "expires_at": "2020-01-01T00:00:00Z"}},
-    {"wdpa": {"owner": "maintainer", "reason": "review", "expires_at": "2099-01-01T00:00:00"}}])
+    {"wdpa": {"owner": "outsider", "reason": "review", "expires_at": "2099-01-01T00:00:00Z"}},
+    {"wdpa": {"owner": "jonaraphael", "reason": "review", "expires_at": "2099-01-01T00:00:00"}}])
 def test_invalid_ingestion_rollout_hold_fails_plan(tmp_path, invalid):
     source, git = fixture_repo(tmp_path)
     base = git("rev-parse", "HEAD")
@@ -1067,3 +1067,26 @@ def test_non_documentation_changes_still_execute_python_validation(paths):
     validation = {**plan(), "changed_paths": paths}
     commands = [args for args, _ in preflight.suite_commands("tests", ROOT, validation, ROOT)]
     assert any("pytest" in args for args in commands)
+
+
+def test_expired_holds_do_not_change_ci_selection_or_ready_but_lint_rejects_new_expired_entries(tmp_path):
+    source, git = fixture_repo(tmp_path)
+    path = source / preflight.INGESTION_ROLLOUT_HOLDS
+    expired = {'wdpa': {'owner': 'jonaraphael', 'reason': 'existing hold', 'expires_at': '2020-01-01T00:00:00Z'}}
+    path.write_text(json.dumps(expired))
+    git('add', '.')
+    git('commit', '-m', 'historical hold')
+    base = git('rev-parse', 'HEAD')
+    (source / 'README.md').write_text('docs\n')
+    git('add', '.')
+    git('commit', '-m', 'docs')
+    selected = preflight.make_plan(source, base, 'HEAD')
+    assert preflight.suite_commands('lint', source, selected, tmp_path)
+    assert verify_results(selected, results_for(selected), jobs_for(selected))
+    expired['eamlis'] = expired['wdpa']
+    path.write_text(json.dumps(expired))
+    git('add', '.')
+    git('commit', '-m', 'add expired hold')
+    selected = preflight.make_plan(source, base, 'HEAD')
+    with pytest.raises(ValueError, match='already expired'):
+        preflight.suite_commands('lint', source, selected, tmp_path)
