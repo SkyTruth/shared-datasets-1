@@ -49,7 +49,7 @@ def test_monitoring_resolution_is_manual_owner_only_main_and_protected():
     job = workflow['jobs']['monitoring']
     assert job['if'] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id != ''"
     assert has_guarded_main_workflow_checkout(workflow, '.github/workflows/resolve-workflow-alert.yml')
-    assert job['environment'] == {'name': 'shared-datasets-production', 'deployment': False}
+    assert job['environment'] == 'shared-datasets-production'
     assert job['permissions'] == {'contents': 'read', 'id-token': 'write'}
     assert '${{ inputs.' not in job['steps'][-1]['run']
 

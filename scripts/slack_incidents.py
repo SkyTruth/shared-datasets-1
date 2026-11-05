@@ -273,7 +273,7 @@ def source_observations(api, event, targets=None):
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
     if targets is None:
         targets = job_targets(revision=run["head_sha"], workflow=alerts.WORKFLOW_PATHS[run["name"]])
-    if alerts.catalog_probe_only(run, jobs):
+    if alerts.safety_health_only(run, jobs) or alerts.catalog_probe_only(run, jobs):
         return []  # Neither a deployment failure nor evidence of recovery.
     if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
         if run["event"] != "push":

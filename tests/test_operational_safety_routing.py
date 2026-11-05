@@ -37,25 +37,15 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     assert set(workflow["jobs"]) == {"safety"}
     assert workflow_triggers(workflow)["workflow_dispatch"] is None
     job = workflow["jobs"]["safety"]
-    assert job["environment"] == {"name": "shared-datasets-production", "deployment": False}
+    assert job["environment"] == "shared-datasets-production"
     assert job["permissions"] == {"contents": "read", "actions": "write", "deployments": "read", "id-token": "write"}
     assert job["env"]["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"] == "0"
     steps = workflow_steps_by_name(workflow, "safety")
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
-    probe = steps["Check operational work"]
-    assert "operational_safety_check.py --work-dir" in probe["run"]
-    assert steps["Install pinned durable receipt verifier"]["run"] == "python scripts/install_deployment_verifier.py"
-    assert list(steps).index("Install pinned durable receipt verifier") < list(steps).index("Check operational work")
-    assert probe["env"]["SHARED_DATASETS_SLACK_BOT_TOKEN"] == "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}"
-    assert steps["Request catalog refresh"]["if"] == "${{ steps.probe.outputs.catalog == 'true' }}"
-    recovery_if = steps["Request operational reconciliation"]["if"]
-    assert "steps.probe.outputs.reconcile == 'true'" in recovery_if
-    snapshot = steps["Retain operational safety snapshot"]
-    assert snapshot["if"] == "${{ success() && steps.probe.outputs.snapshot == 'true' }}"
-    assert snapshot["with"] == {"name": "safety-snapshot-${{ github.run_id }}-${{ github.run_attempt }}",
-                                "path": "${{ runner.temp }}/operational-safety/cache.json",
-                                "if-no-files-found": "error", "retention-days": 1}
+    assert "Install pinned durable receipt verifier" in steps
+    assert steps["Retain operational safety snapshot"]["with"]["retention-days"] == 1
+    assert steps["Retain safety health report"]["with"]["retention-days"] == 3
     assert not any("attest" in step.get("uses", "") for step in job["steps"])
 
 
@@ -158,3 +148,55 @@ for (const {github, expected} of cases) {
 """
     subprocess.run(["node", "-e", script], input=json.dumps({"expression": expression, "cases": cases}),
                    text=True, check=True, capture_output=True)
+
+
+@pytest.mark.parametrize('enabled', ['true', 'false'])
+def test_health_step_executes_with_the_workflows_effective_incident_mode(tmp_path, enabled):
+    workflow = load_workflow(WORKFLOWS / SAFETY)
+    job = workflow['jobs']['safety']
+    step = workflow_steps_by_name(workflow, 'safety')['Check freshness and stalled operations']
+    runner = tmp_path / 'runner.py'
+    runner.write_text('''import sys
+from unittest.mock import Mock
+from scripts import operational_safety_check as safety, catalog_drift_guard as catalog, slack_incidents as incidents
+safety.context = lambda *_: {'id': 300}
+incidents.GitHub = Mock
+catalog.get_client = lambda: None
+safety.freshness = lambda *a, **k: []
+safety.policy_warnings = lambda *_: ([], [])
+safety.previous_health = lambda *_: {'problems': [], 'warnings': [], 'notified_at': None}
+def legacy(*a, **k):
+    print('LEGACY_POLLED')
+    return [], [], None, None
+safety.source_inventory = legacy
+sys.argv = sys.argv[4:]
+safety.main()
+''')
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\nexec {os.sys.executable} {runner} "$@"\n')
+    uv.chmod(0o755)
+    directory = tmp_path / 'operational-safety'
+    directory.mkdir()
+    (directory / 'result.json').write_text('{"reconcile":false}')
+    (directory / 'claims.json').write_text('[]')
+    environment = {**workflow.get('env', {}), **job.get('env', {}), **step.get('env', {})}
+    environment = {key: enabled if value == '${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}' else value
+                   for key, value in environment.items()}
+    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], cwd=ROOT, check=True, text=True,
+        capture_output=True, env={**os.environ, **environment, 'PYTHONPATH': str(ROOT), 'RUNNER_TEMP': str(tmp_path),
+                                  'PATH': str(tmp_path) + os.pathsep + os.environ['PATH']})
+    assert ('LEGACY_POLLED' in result.stdout) is (enabled == 'false')
+
+
+def test_infrastructure_fallback_executes_without_checkout_even_when_dispatch_fails(tmp_path):
+    step = workflow_steps_by_name(load_workflow(WORKFLOWS / SAFETY), 'safety')['Report safety failure directly']
+    for command, body in [('gh', 'exit 1'), ('curl', 'printf "%s\\n" "$@" > "$CAPTURE"')]:
+        path = tmp_path / command
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], cwd=tmp_path,
+        env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'], 'GITHUB_REPOSITORY': alerts.REPOSITORY,
+             'GITHUB_RUN_ID': '123', 'SHARED_DATASETS_SLACK_WEBHOOK_URL': 'https://example.invalid',
+             'CAPTURE': str(tmp_path / 'capture')})
+    assert result.returncode == 1
+    assert 'Operational safety infrastructure failed' in (tmp_path / 'capture').read_text()

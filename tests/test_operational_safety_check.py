@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ import test_deployment_revision as deployment_fixtures
 from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
 from scripts import deployment_emission as emissions, deployment_revision as deployments
 from scripts import operational_safety_check as safety, operational_snapshot as snapshots
-from scripts import slack_incidents as incidents
+from scripts import slack_incidents as incidents, slack_notify
 from scripts.incident_verification_cache import VerificationCache
 from scripts.workflow_identity import WORKFLOW_NAMES
 from test_deployment_emission import run as emitter_run, verified
@@ -30,6 +31,7 @@ START = NOW - timedelta(hours=24)
 @pytest.fixture(autouse=True)
 def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(slack_notify, "notify", mock.Mock())
 
 
 def stamp(value):
@@ -498,7 +500,7 @@ def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_
     assert api.posts == []
 
 
-@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',62)])
+@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',45)])
 @pytest.mark.parametrize('status,reason', [('success',''), ('skipped','source fingerprint unchanged'), ('skipped','source unavailable')])
 def test_freshness_separates_unchanged_source_from_missing_data(cadence, days, status, reason):
     payload = {'latest_release':{'date':stamp(NOW-timedelta(days=365))[:10]},
@@ -526,12 +528,12 @@ def test_freshness_reads_exact_generations_and_bounds_unapproved_pause():
     def scheduler(job):
         return {'name':f'projects/shared-datasets-1/locations/us-central1/jobs/{job}', 'state':'PAUSED',
                 'userUpdateTime':stamp(NOW-timedelta(hours=72))}
-    problems=safety.freshness(Client(), now=NOW, scheduler=scheduler)
+    problems=safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses={})
     assert len(problems)==5 and all('>=72 h' in item for item in problems)
     assert len(calls)==5
-    pauses={job:{'owner':'jonaraphael','reason':'reviewed maintenance','until':stamp(NOW+timedelta(hours=1))} for job in safety.CRON_ASSETS}
+    pauses={job:{'owner':'jonaraphael','reason':'reviewed maintenance','expires_at':stamp(NOW+timedelta(hours=1))} for job in safety.CRON_ASSETS}
     assert safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses)==[]
-    pauses['dataset-usage']['until']=stamp(NOW-timedelta(seconds=1))
+    pauses['dataset-usage']['expires_at']=stamp(NOW-timedelta(seconds=1))
     assert len(safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses))==1
     with pytest.raises(RuntimeError, match='unavailable'):
         safety.freshness(Client(), now=NOW, scheduler=lambda _: (_ for _ in ()).throw(RuntimeError('unavailable')))
@@ -595,3 +597,78 @@ def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch
     with pytest.raises(RuntimeError,match='Failed dispatched run: https://github.com/.*/101'):
         safety.main()
     assert api.posts == []
+
+
+def test_health_report_posts_changes_and_daily_reminders_without_changing_problem_identity(tmp_path, monkeypatch):
+    previous = {'problems': [], 'warnings': [], 'notified_at': None}
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    for hour, problems, sends in [(0, ['paused'], 1), (3, ['paused'], 1), (24, ['paused'], 2),
+                                  (25, ['expired', 'paused'], 3), (26, [], 3), (27, ['paused'], 4)]:
+        with pytest.raises(RuntimeError) if problems else nullcontext():
+            safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
+        previous = json.loads((tmp_path / 'health/cache.json').read_text())
+        assert previous['problems'] == sorted(problems)
+        assert slack_notify.notify.call_count == sends
+    assert 'paused' in slack_notify.notify.call_args.kwargs['body']
+
+
+def test_health_only_failures_never_create_reconciliation_work_but_infrastructure_failures_do(tmp_path):
+    api = OperationalAPI()
+    source = api.source(101, 'operational-safety-check.yml')
+    api.add_source(source)
+    api.jobs[101][0]['steps'] = [{'name': 'Check freshness and stalled operations', 'conclusion': 'failure'}]
+    assert dry(api, tmp_path, [source]) is True
+    api.jobs[101][0]['steps'] = [{'name': 'actions/checkout@v4', 'conclusion': 'failure'}]
+    assert dry(api, tmp_path, [source]) is False
+
+
+def test_expiry_warns_at_72_hours_and_alerts_afterwards_without_releasing_holds():
+    holds = json.loads((safety.ROOT / safety.INGESTION_ROLLOUT_HOLDS).read_text())
+    expiry = datetime.fromisoformat(next(iter(holds.values()))['expires_at'].replace('Z', '+00:00'))
+    assert len(safety.policy_warnings(expiry - timedelta(hours=75))[0]) == len(holds)
+    warnings, problems = safety.policy_warnings(expiry)
+    assert len(problems) == len(holds) and not warnings
+    assert set(safety.rollout_holds(holds, now=expiry + timedelta(days=99))) == set(holds)
+
+
+def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():
+    pauses = json.loads((safety.ROOT / '.github/scheduler-pauses.json').read_text())
+    activation = json.loads((safety.ROOT / 'catalog/dataset-usage-activation.json').read_text())
+    assert activation['sources']['gcs_usage']['verified_at'] is None
+    assert pauses['dataset-usage']['owner'] == 'jonaraphael'
+    expiry = datetime.fromisoformat(pauses['dataset-usage']['expires_at'].replace('Z', '+00:00'))
+    assert any('dataset-usage' in item for item in safety.policy_warnings(expiry - timedelta(hours=72))[0])
+
+
+@pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload'])
+def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(defect):
+    import hashlib
+    import io
+    import zipfile
+    from scripts.incident_verification_cache import canonical, CacheError
+    api = OperationalAPI()
+    producer = api.source(101, 'operational-safety-check.yml')
+    api.add_source(producer)
+    job = api.jobs[101][0]
+    job.update(name=safety.JOB, started_at=producer['created_at'], completed_at=producer['updated_at'],
+               steps=[{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'failure' if defect == 'upload' else 'success'}])
+    report = {'problems': ['paused'], 'warnings': [], 'notified_at': NOW.isoformat()}
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as stream:
+        stream.writestr('cache.json', canonical(report))
+    raw = archive.getvalue()
+    artifact = {'id': 9, 'name': 'safety-health-101-1', 'expired': False, 'size_in_bytes': len(raw),
+                'created_at': producer['updated_at'], 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(),
+                'workflow_run': {'id': 101, 'head_sha': api.head, 'head_branch': 'main'}}
+    if defect == 'digest':
+        artifact['digest'] = 'sha256:' + '0' * 64
+    if defect == 'attempt':
+        api.runs[101] = {**producer, 'run_attempt': 2}
+    pages = api.pages
+    api.pages = lambda path, field=None: [artifact] if '/artifacts?' in path else pages(path, field=field)
+    api.archive = lambda *_: raw
+    if defect:
+        with pytest.raises((RuntimeError, CacheError)):
+            safety.previous_health(api, api.current)
+    else:
+        assert safety.previous_health(api, api.current) == report

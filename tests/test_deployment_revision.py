@@ -441,7 +441,7 @@ class PendingDiscoveryBoundaryTests(unittest.TestCase):
         self.assertNotIn(installer, [step.get("run") for step in pending["steps"]])
         self.assertIn(installer, [step.get("run") for step in verify["steps"]])
         self.assertFalse(any("wait-for-safety" in step.get("run", "") for step in pending["steps"]))
-        self.assertEqual(verify["environment"], {"name": "shared-datasets-production", "deployment": False})
+        self.assertEqual(verify["environment"], "shared-datasets-production")
         self.assertEqual(verify["needs"], "pending")
 
     def test_observer_rejects_invalid_signature_before_runtime_read_or_status_write(self):
@@ -507,3 +507,20 @@ else:
                                      "TEST_SCHEDULER_STATE": state})
         assert result.returncode == 0, result.stderr
         assert output.read_text() == "ready=" + expected + "\n"
+
+
+def test_usage_replay_requires_verified_runtime_and_recovery_accepts_the_registered_collector(tmp_path):
+    import types
+    import pytest
+    record = ReplayTests.record(CURRENT)
+    record['environment'] = 'production-dataset-usage'
+    record['payload'].update(target='dataset-usage', targets=['module.dataset_usage_job.google_cloud_run_v2_job.this'])
+    with pytest.raises(d.DeploymentError, match='reconcile'):
+        d.replay_decision([record], CURRENT, ReplayTests.ancestor, lambda _: [{'state': 'success', 'description': 'applied'}])
+    assert d.replay_decision([record], CURRENT, ReplayTests.ancestor, lambda _: [{'state': 'success', 'description': 'verified'}]) == 'noop'
+    api = Mock()
+    api.get.return_value = record
+    environment = {'GITHUB_REPOSITORY': REPO, 'GITHUB_REF': 'refs/heads/main',
+                   'GITHUB_WORKFLOW_REF': REPO + '/.github/workflows/deployment-recovery.yml@refs/heads/main'}
+    with patch.dict(d.os.environ, environment), patch.object(d, 'verify_record', return_value=record['payload']), patch.object(d, 'verify_ci'):
+        assert d.recovery_record(types.SimpleNamespace(deployment_id=record['id']), api) == (record, record['payload'])

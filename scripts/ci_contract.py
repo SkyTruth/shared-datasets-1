@@ -38,21 +38,25 @@ INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 
 
-def rollout_holds(value, *, historical=False, now=None) -> tuple[str, ...]:
+def rollout_holds(value, *, historical=False, previous=None, now=None, targets=INGESTION_DEPLOYMENTS) -> tuple[str, ...]:
     # Old commits used bare target names. Only comparison baselines may read that
     # persisted format; all new plans require accountable, bounded holds.
     if historical and isinstance(value, list) and all(isinstance(row, str) for row in value):
         value = dict.fromkeys(value)
-    if not isinstance(value, dict) or not set(value) <= INGESTION_DEPLOYMENTS:
+    if not isinstance(value, dict) or not set(value) <= set(targets):
         raise ValueError("rollout holds must map scheduled deployment targets to owner, reason and expires_at")
     if not historical:
+        owners = {word.removeprefix("@") for line in (Path(__file__).resolve().parents[1] / ".github/CODEOWNERS").read_text().splitlines()
+                  if line.strip() and not line.lstrip().startswith("#") for word in line.split()[1:]}
         for target, hold in value.items():
             if (not isinstance(hold, dict) or set(hold) != {"owner", "reason", "expires_at"}
                     or any(not isinstance(item, str) or not item.strip() for item in hold.values())):
                 raise ValueError(f"{target}: rollout hold requires owner, reason and expires_at")
             expiry = datetime.fromisoformat(hold["expires_at"].replace("Z", "+00:00"))
-            if expiry.tzinfo is None or expiry <= (now or datetime.now(timezone.utc)):
-                raise ValueError(f"{target}: rollout hold expired or lacks a timezone")
+            if expiry.tzinfo is None or hold["owner"] not in owners:
+                raise ValueError(f"{target}: rollout hold requires a timezone and CODEOWNER")
+            if previous is not None and hold != (previous.get(target) if isinstance(previous, dict) else None) and expiry <= (now or datetime.now(timezone.utc)):
+                raise ValueError(f"{target}: changed rollout hold is already expired")
     return tuple(value)
 NATIVE_TESTS = (
     "tests/test_feature_metadata_localization.py",

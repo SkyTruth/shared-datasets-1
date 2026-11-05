@@ -45,18 +45,10 @@ successful workflow is not permitted to abandon a marked execution.
 
 ## WDPA execution-driven monitoring
 
-WDPA uses the same Cloud Run execution-failure and Scheduler dispatch-failure
-policies as the other ingestion jobs. Successes and meaningful skips update
-each asset's release index, which supplies the catalog's **Last check-in**.
-An old check-in while no update is scheduled is not an observer outage.
-The three-hour operational safety check discovers pending deployment records and
-requests the existing completion workflow only when work is needed; it does not
-launch a per-dataset observer while WDPA is idle.
-
-The retired `wdpa-execution-observer` infrastructure has no alert/writer
-exception and cannot be recreated by routine WDPA deployment. Its historical
-status object and receipts remain; the catalog no longer polls that object.
-Verify teardown through the protected retirement contract.
+WDPA retains Cloud Run execution/Scheduler failure coverage, generation-pinned
+check-ins and on-demand completion verification. Idle jobs need no separate observer.
+The retired `wdpa-execution-observer` has no alert/writer exception; retain historical
+objects/receipts and verify teardown through the protected retirement contract.
 
 ## Editable Monitoring messages
 
@@ -101,95 +93,70 @@ rollback. No failure conditions, grace windows or publication authority change.
 
 ## Identity decision threads
 
-Typed events on private `identity-decision-events` bind project, execution, asset,
-release, full captured hashes and case sets. Publishers must match configured
-asset/job pairs. Generation preconditions claim every parent/reply before posting;
-local diagnostics never post production messages. The private operations bucket
-retains approved decisions and `identity/events/<event-id>.json` receipts/links.
+Private `identity-decision-events` bind project/execution/asset/release, full hashes
+and case sets. Validate configured publisher/asset/job pairs and generation-claim
+every post/reply. Local diagnostics never post. Private operation receipts retain
+approved decisions and `identity/events/<event-id>.json` links.
 
 `feature-identity-review-ready-v1` attaches generation/size/checksum-bound WDPA
-review evidence to the same context. The authenticated catalog verifies the bundle
-before rendering. Receipts freeze the configured origin and pinned links, so late
-original events cannot downgrade the linked review. Old events/receipts remain
-readable. See [WDPA review evidence](wdpa-identity-review.md#review-from-the-alert).
+review evidence verified by the authenticated catalog. Freeze origin/pinned links;
+late events cannot downgrade review, and historical events stay readable. See
+[review evidence](wdpa-identity-review.md#review-from-the-alert).
 
-After curation merges, **Alerts / Identity decision reconciliation** verifies the
-exact accepted final PR head and runtime-legal choices. It replies in the original
-thread with choice, decision maker (`jonaraphael`), rationale and reviewed PR,
-without channel broadcast. Every case must be covered before **Decision recorded**;
-partial decisions leave other cases open. Preserve the original **Decision needed**
-body, cases, context and links; status is separate. Older shortened bot parents can
-be restored from their frozen event without another decision reply.
+After curation merges, the protected reconciler verifies exact accepted final-head
+PR bytes and runtime-legal choices. Preserve the original **Decision needed** body,
+cases, context and links; record choice, decision maker (`jonaraphael`), rationale
+and reviewed PR in its original thread without broadcast. Only complete case coverage
+permits **Decision recorded**; partial decisions stay open. Status is separate.
+Frozen events can restore shortened parents without another decision reply.
 
-Shared execution parents and historical decision-policy parents settle only when
-execution/asset/release identities match. Review acceptance establishes neither
-native Monitoring closure nor publication/execution recovery; late duplicates
-cannot reopen it. New workers wait for the selected protected transport sync.
-Shared decision receipts freeze complete cases before execution rendering;
-interrupted timestamp association reuses the already confirmed post.
-
-Uncertain legacy parent/reply claims require owner inspection of the `Identity
-decision Slack receipt` log and original thread before generation-safe repair.
-Existing `chat:write` suffices; no history/search access is added. Reviewed
-`.github/identity-decision-adoptions/` documents may bind inspected webhook parents
-and confirmed replies without duplication, carrying notification bookkeeping
-only. Legacy parents and delivery claims retain their existing safeguards.
+Shared/historical parents settle only on matching execution/asset/release identity.
+Approval cannot establish Monitoring closure or publication/execution recovery;
+late duplicates cannot reopen parents. Wait for protected transport sync, freeze
+complete cases before rendering and reuse confirmed timestamps after interruptions.
+Uncertain claims require owner inspection of the receipt log and original thread
+before generation-safe repair. Existing `chat:write` suffices. Reviewed
+`.github/identity-decision-adoptions/` may bind inspected legacy parents/replies
+without duplication; they grant bookkeeping only and preserve delivery safeguards.
 
 ## Execution and delivery verification
 
-WDPA's bounded watch retains Monitoring coverage. Do not suppress failures solely
-by creator, branch or trigger. Match a real failure's incident, transport receipt
-and Slack message; report delivery unverified without that evidence. Never fail
-production deliberately to test routing. The retired observer has no writer exception.
-
-## Deployment verification
-
-Use a reviewed PR and protected cron policy sync; inspect its saved allowlist plan.
-Compare deployed filters/channels with actual scheduled, synchronous and detached
-execution logs. Only the exact trusted marked synchronous failure may be excluded;
-missing metadata stays alertable. Waiting-command failures must fail GitHub;
-persistent templates must lack the supervision marker. Local tests do not prove
-live delivery/suppression. Existing executions gain no marker retroactively.
-
-Healthy events and recovery evidence are batched by the three-hour safety probe.
-Failures of native monitored completions retain immediate coverage; GITHUB_TOKEN
-follow-ups are also discovered by polling. Safety failures self-report without a
-`workflow_run` subscription. See [incident admission, signed recovery and uncertain
-delivery](slack-incidents.md) for the single authoritative lifecycle contract.
-Local routing tests do not establish live audit-payload or Slack delivery behavior.
+Use reviewed protected cron sync and inspect its saved allowlist plan. Compare live
+filters/channels with scheduled, synchronous and detached audit logs. Only the exact
+trusted marked synchronous failure may be excluded; missing metadata stays alertable.
+Waiting failures must fail GitHub, and persistent templates must lack the marker.
+Existing executions gain no marker retroactively. Match real incidents to transport
+receipts and Slack messages; local tests do not prove live delivery/suppression.
+Never fail production deliberately to test routing. See [incident admission and
+recovery](slack-incidents.md) for polling, signing and uncertain-delivery contracts.
 
 ## Scheduled freshness and capacity
 
 Every three-hour safety probe reads generation-pinned release indexes and each
 known ingestion Scheduler job. Daily assets need a successful release or meaningful
-unchanged-source check-in within two days; monthly assets within 62 days (twice the
-maximum calendar-month interval). Missing-source/decision skips do not reset data
+unchanged-source check-in within two days; monthly assets within 45 days (monthly jobs run on day 2;
+WDPA checks days 1–10, allowing 31 days plus source/retry grace). Missing-source/decision skips do not reset data
 freshness. An old publication with a recent confirmed unchanged-source skip is
 healthy. Metadata-only index rewrites cannot reset the check-in date. The weekly
 bucket audit uses the same freshness rule.
 
 A Scheduler state other than `ENABLED` for at least 72 hours since
-`userUpdateTime` fails health unless `APPROVED_PAUSES` in
-`scripts/operational_safety_check.py` contains a reviewed owner, reason and future
-UTC `until`. Deployment rollout holds do not authorize Scheduler pauses. Missing
+`userUpdateTime` fails health unless `.github/scheduler-pauses.json` contains a
+reviewed CODEOWNER, reason and future timezone-aware `expires_at` for that paused job. Deployment rollout holds do not authorize Scheduler pauses. Missing
 jobs and failed reads fail visibly. Pauses suppress the associated absence checks
 only through that expiry. The paused internal dataset-usage collector is checked
-even though it has no catalog release index.
+even though it has no catalog release index. Its registry entry records the deliberate
+pre-activation pause while `gcs_usage.verified_at` remains null. Holds and pauses
+warn at least 72 hours before expiry and alert after expiry; expired holds continue
+blocking deployments without failing CI selection or `ci-ready`. Lint rejects malformed
+holds and changed holds that are already expired. Health findings post on change
+and daily reminders; identical failures neither dispatch nor count toward escalation.
 
 Provision `google_project_iam_custom_role.operational_safety_reader` and its
 publisher binding through the protected monitoring sync **before enabling these
 checks**. It grants only `cloudscheduler.jobs.get`; the safety job retains its
 existing service account and protected environment. The sync target/allowlist must
 include both resources. No local production apply is permitted.
-
-The cadence change reduces scheduled safety runs from 24 to 8/day and removes
-24 skipped safety notification runs/day. At the baseline 148.5 runner-minutes for
-69 safety runs, safety alone projects from 51.7 to 17.2 runner-minutes/day before
-the additional small health reads. Healthy idle workers remain zero; incident
-batches and completion checks add demand-dependent work. These are projections,
-not measured post-deployment savings. Poll-only failures add <=3 h detection
-latency, within the freshness bounds; three consecutive reconciliation demands
-escalate by the third probe. Unchanged uncertain Slack claims escalate after 24 h.
 
 Read-only Monitoring evidence (2026-10-06 through 2026-11-05) bounded the highest
 occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:
@@ -200,13 +167,10 @@ occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:
 | MPAtlas | 40 | 2.32 vCPU | 3.36 GiB | 6 / 8 GiB |
 | Sea ice | 35 | 0.92 vCPU | 0.16 GiB | 2 / 512 MiB |
 
-All proposed limits exceed twice those observed bounds. The EAMLIS/MPAtlas CPU
-increase is required by that headroom rule; it is not a CPU-cost saving.
-[Cloud Run job limits](https://docs.cloud.google.com/run/docs/configuring/jobs/cpu)
-require at least 4 GiB for 6 vCPU. The samples cannot bound unobserved spikes or
-future source growth; compare new execution peaks after protected deployment.
-These are Terraform-only changes; no job, Scheduler, IAM or dataset was mutated
-while gathering this evidence.
+Limits retain twice observed headroom; EAMLIS/MPAtlas CPU increased, without CPU
+cost savings. [Cloud Run](https://docs.cloud.google.com/run/docs/configuring/jobs/cpu)
+requires 4 GiB for 6 vCPU. Samples cannot bound future growth; compare peaks after
+protected deployment. Evidence collection mutated no production resources.
 
 ## Monitoring configuration
 
