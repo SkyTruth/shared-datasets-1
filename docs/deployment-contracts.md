@@ -61,16 +61,15 @@ resulting suites and required `production_image_targets` unchanged to consumers.
 
 ## Serialization and protected execution
 
-Four publisher wrappers hold `ingestion-<target>` across prepare/apply/verify.
-Usage holds `deployment-dataset-usage` continuously across bootstrap and rollout.
-CI's read-only `dataset-usage` gate observes this attempt's attesting apply job;
+Publisher wrappers hold `ingestion-<target>` across prepare/apply/verify; usage holds
+`deployment-dataset-usage` across bootstrap/rollout. CI's read-only `dataset-usage` gate
+observes this attempt's attesting apply job;
 ingestion and cleanup IAM proceed while `dataset-usage-rollout` keeps the canary
 inside that target queue. Failed/deferred applies fail; skipped applies require
 signed no-op/supersession evidence. Only shared `apply` holds `prod-terraform-state`
 with `queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
-Every queue bounds its runners, including reusable leaves. State writers have
-30-minute caps, preparation 20, and short follow-ups 5–20; preview control
-allows 90, canonical promotion 120, and catalog publishing 45 minutes.
+Every queue bounds runners, including reusable leaves: state writers 30 minutes,
+preparation 20, follow-ups 5–20, preview 90, canonical promotion 120, catalog publishing 45.
 Canary verification allows 150 minutes for two 62.5-minute windows plus setup;
 the read-only apply gate allows four hours of queue contention (245-minute cap).
 
@@ -88,9 +87,8 @@ mutation. Only `plan` also retries recognized TLS/handshake timeouts and provide
 plans and lock-release errors fail immediately; apply transport errors never
 retry because writes may already have happened. Never regenerate an apply plan
 outside its allowlist/permission sequence to bypass staleness.
-HTTP permission reads retry transport/timeouts/5xx three times with 5/10-second
-delays; 4xx and malformed success responses fail immediately. WDPA's saved-plan
-guard derives literal CPU, memory and timeout from its Terraform module.
+HTTP permission reads retry transport/timeouts/5xx three times (5/10-second delays);
+4xx/malformed responses fail immediately. WDPA's saved-plan guard reads Terraform's CPU/memory/timeout.
 
 Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
@@ -101,30 +99,23 @@ remains required; Terraform and verification reads use separate identities. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.
 
-Viewer uses a separate prepare/bootstrap/ready/deploy/verify graph under
-`deployment-catalog-viewer`. Prepare pushes tested bytes before the state queue.
-Prepare also signs the deployment claim under the workflow’s target lock.
-Bootstrap runs and acquires the state queue only for `sync_iam` or manual recovery. Ready probes live dependencies outside the queue.
-Deploy reacquires it for the guarded runtime saved-plan apply. Verify checks the
-newest ready revision and exact tested digest after releasing the queue, and
-signs the terminal outcome even after apply failure. CDN likewise invalidates
-cache and polls routes after its signed apply releases the queue. Viewer/CDN
-probe missing operational permissions with bounded retries; no blind IAM sleep
-replaces those probes. Their specialized acceptance checks keep separate executors.
+Viewer retains `deployment-catalog-viewer` across prepare/bootstrap/ready/deploy/verify.
+Prepare pushes tested bytes outside the state queue and signs its claim under the target
+lock. Bootstrap queues only for `sync_iam` or manual recovery; readiness stays outside.
+Deploy queues the guarded saved-plan apply; verification checks newest ready revision/
+tested digest and signs even after failure outside the queue. CDN invalidation/route
+polling likewise follows signed apply outside the queue. Both use bounded permission
+probes instead of blind IAM sleeps; specialized acceptance keeps separate executors.
 
-The installed sea-ice probe uses `local_ingestion_smoke.py --sea-ice-only`;
-local profiling shares the same conversion. Installed probes run once in CI,
-with memory-backed `/tmp` and production resource limits as
-specified in [preflight](ci-preflight.md#image-execution-and-hosted-evidence).
-WDPA's worker validates the current month's two realms and compatibility sample
-before publishing exact staged bytes; October acceptance remains historical.
+[Preflight](ci-preflight.md#image-execution-and-hosted-evidence) owns once-per-CI installed
+probes with production limits and memory-backed `/tmp`; sea ice and local profiling share
+`local_ingestion_smoke.py --sea-ice-only`. WDPA validates both current-month realms and
+the compatibility sample before publishing staged bytes; October acceptance is historical.
 
-CI dispatches the top-level SDK publisher only after successful main `ci-ready`
-when the resolved plan selects SDK validation. It re-verifies the tested source
-and retains exact-source manual recovery. The
-[SDK release procedure](../api/typescript/README.md#maintainer-validation-and-releases)
-remains authoritative for package releases. Catalog web retains its separate
-dataset-mutation/release-index source authorization.
+Only successful main `ci-ready` selecting SDK validation dispatches the top-level publisher.
+It re-verifies tested source and supports exact-source manual recovery; the
+[SDK release procedure](../api/typescript/README.md#maintainer-validation-and-releases) governs releases.
+Catalog web retains separate dataset-mutation/release-index source authorization.
 
 Immediately before each apply, `deployment_permissions.py --target <target>
 --plan-json <plan.json>` checks every changed resource's actual action and
@@ -138,65 +129,53 @@ Mutation authority does not establish runtime acceptance or installed state.
 
 ## Records, receipts and runtime outcomes
 
-Deployment records bind tested revision, source CI attempt, execution run,
-artifact digest and saved-plan scope. Under target serialization, an older valid
-revision behind a newer attempt becomes an explicit `superseded` no-op after
-verifying every decisive record. It writes no claim and performs no mutation;
-a newer failed attempt still blocks older code. Divergent history and failed or
-incomplete same-revision attempts require reconciliation. Successful identical
-revisions skip before image loading/planning. Different same-code bytes require
-reconciliation, except reviewed catalog refreshes/index rebuilds and historical
-explicit WDPA scratch builds; their separate publication approval still applies.
-Ingestion success requires verified runtime evidence, not merely applied config.
+Records bind tested revision, CI/execution attempts, artifact digest and saved-plan scope.
+Under the target lock, verified decisive records supersede older revisions without claims
+or mutation; even newer failed attempts block them. Divergence or incomplete/failed
+same-revision attempts require reconciliation. Successful identical revisions skip before
+staging/planning. Different same-code bytes require reconciliation except reviewed catalog/
+index refreshes and historical WDPA scratch builds; separate publication approval remains.
 
-Actions-bot metadata and run URLs do not establish emission. Each claim/outcome
-has a canonical receipt binding record/status IDs, target, executor, source CI,
-artifact, scope and phase. The protected leaf attests those bytes. Checksum-pinned
-GitHub CLI 2.96.0 verifies Fulcio evidence for the repository ID, main ref, exact
-caller/leaf revisions, hosted runner and run ID/attempt. New ingestion receipts
-require the exact `ingestion-deploy.yml` leaf anywhere in the immutable flat or
-nested referenced-workflow graph, bound to head SHA and `refs/heads/main`.
-Historical wrapper signatures retain their exact original leaf policy; arbitrary
-reusable leaves remain unauthorized. Observers/reconcilers sign with their own
-exact protected identities. PR signatures cannot substitute for main receipts.
+Ingestion skips apply/canary only with no saved-plan resource/output/deferred changes,
+a live digest matching tested bytes, and the latest exact-image execution's success.
+The signed claim records `noop_execution`; the signed `verified` outcome retains its URL.
+Missing/failed executions keep the canary path; unreadable evidence fails closed.
+Signing failures retain signed failure handling. Applied config never proves runtime success.
 
-Durable Deployment API records reconstruct receipts by digest through the
-attestation API independently of ordinary Actions artifact retention. Each leaf
-first rehearses signing in its current run. Replay/rehearsal checks precede
-image staging; a verified signed claim precedes every production mutation.
-A failed claim may produce a signed failed/unknown outcome proving ownership,
-without authorizing mutation or success. If signing remains unavailable, the
-unsigned attempt blocks replay. Validation jobs have read-only receipt tokens;
-writers require protected production or explicit main-only caller boundaries.
-The SDK retains its npm OIDC publisher boundary. Administrative record deletion
-remains outside replay integrity and requires explicit recovery.
+Canonical receipts bind record/status IDs, target, executor, source CI, artifact, scope
+and phase. Actions-bot metadata/URLs alone prove nothing. Protected leaves attest bytes;
+checksum-pinned GitHub CLI 2.96.0 verifies Fulcio repository ID, main ref, exact caller/leaf
+revisions, hosted runner and run ID/attempt. Ingestion requires `ingestion-deploy.yml` in
+the immutable flat/nested graph bound to head SHA/main. Historical wrappers retain their
+original leaf policy; arbitrary leaves/PR signatures remain unauthorized. Observers and
+reconcilers use their exact protected identities.
 
-Before prepare/apply, active executions defer ingestion. Paused WDPA/EAMLIS
-schedules require an explicit canary date. If scheduled work starts after apply,
-verification waits up to 62.5 minutes before launching its canary. Cancellation
-requires explicit `cancel_running_canary` and must drain first. Inventory errors
-or timeouts fail visibly. The runtime-window command owns these rules.
+Durable API records reconstruct receipts by digest independently of artifact retention.
+Leaves rehearse signing before staging and verify signed claims before mutation. Signed
+failed/unknown outcomes can prove ownership after claim failure, never success/mutation;
+unsigned attempts block replay. Validation tokens stay read-only; writers need protected
+production or main-only gates. SDK npm OIDC stays separate; record deletion needs explicit recovery.
 
-Canaries save their asynchronous execution ID before polling terminal status of
-the exact deployed image. Short jobs wait 62.5 minutes, beyond their one-hour
-task timeout. WDPA watches ten minutes, then records `verification_pending`
-with its exact execution/image for the independent completion observer. Failure,
-unknown, applied, pending and verified are distinct; launch alone is not success.
-The verification job signs failure even after failed apply. Scheduler resume
-follows successful canary, release contract and asset hygiene checks. Completion
-observers and Cloud Run failure alerts remain active; terminal failure/unknown
-fails verification.
+The runtime-window command defers prepare/apply for active executions and requires an
+explicit canary date for paused WDPA/EAMLIS schedules. Post-apply verification waits up
+to 62.5 minutes for scheduled work. Explicit `cancel_running_canary` must drain first;
+inventory errors/timeouts fail visibly. Canaries save their asynchronous execution ID
+and poll that exact deployed image: short jobs wait 62.5 minutes beyond the one-hour
+task timeout; WDPA watches ten minutes then records `verification_pending` with exact
+execution/image for the independent observer. Launch alone is not success: failed,
+unknown, applied, pending and verified stay distinct. Verification signs failure even
+after failed apply. Scheduler resume follows canary, release and hygiene success.
+Completion observers/Cloud Run failure alerts stay active; terminal failure/unknown fails.
 
 ## Selective recovery
 
-Dispatch `deployment-recovery.yml` on main with the failed/interrupted record's
-`deployment_id`. It validates original authority, checks out the original tested
-executor, refreshes only the captured scope and requires a complete no-change
-plan. Ingestion also requires the original live digest and latest exact-image
-execution's terminal success. Registered IAM/monitoring targets require their
-original no-change scope. Later attempts, drift, partial applies, missing scope
-and failed executions block reconciliation; no apply or dataset writes occur.
-CDN, viewer and catalog records still need reviewed target-specific recovery.
+Dispatch `deployment-recovery.yml` on main with the failed/interrupted `deployment_id`.
+It validates original authority, checks out the tested executor, refreshes only captured
+scope and requires a complete no-change plan. Ingestion requires the original live
+digest and latest exact-image execution's terminal success; registered IAM/monitoring
+requires its original no-change scope. Later attempts, drift, partial applies, missing
+scope or failed executions block reconciliation; no apply/dataset writes occur.
+CDN/viewer/catalog still need reviewed target-specific recovery.
 
 SDK reconciliation retains the trusted checkout and reads the original executor
 separately. It verifies source CI, producing job, retained archive and package

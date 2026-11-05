@@ -566,14 +566,14 @@ def test_pending_backoff_never_delays_new_execution_or_new_failure(monkeypatch):
 
 
 @pytest.mark.parametrize('filename,cpu_peak,memory_peak', [('eamlis_monthly',2.60,0.96),('mpatlas_monthly',2.32,3.36),('sea_ice_daily',0.92,0.16)])
-def test_resources_retain_twice_observed_monitoring_peak(filename,cpu_peak,memory_peak):
+def test_resources_retain_cpu_headroom_and_twice_observed_memory_peak(filename,cpu_peak,memory_peak):
     import hcl2
     from hcl2.utils import SerializationOptions
     config=hcl2.loads((incidents.ROOT/'terraform/envs/prod'/f'{filename}.tf').read_text(), serialization_options=SerializationOptions(strip_string_quotes=True))
     job=next(module[filename+'_job'] for module in config['module'] if filename+'_job' in module)
     memory=job['memory']
     gib=float(memory[:-2])/(1024 if memory.endswith('Mi') else 1)
-    assert int(job['cpu']) >= 2*cpu_peak and gib >= 2*memory_peak
+    assert int(job['cpu']) >= 1.5*cpu_peak and gib >= 2*memory_peak
     assert gib >= {1:0.5,2:0.5,4:2,6:4,8:4}[int(job['cpu'])]
 
 

@@ -163,6 +163,7 @@ jobs:
     outputs:
       deployment_id: ${{ steps.revision.outputs.deployment_id }}
       claim_signed: ${{ steps.claim-receipt.outcome }}
+      noop: ${{ steps.revision.outputs.noop }}
     steps:
     - name: Validate main ref
       run: |
@@ -241,7 +242,7 @@ jobs:
         receipt-path: ${{ steps.revision.outputs.receipt_path }}
       if: steps.revision.outputs.proceed == 'true'
     - name: Terraform apply
-      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.revision.outputs.noop != 'true'
       run: |
         bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
     - name: Record applied deployment
@@ -249,7 +250,7 @@ jobs:
       if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
       env:
         GH_TOKEN: ${{ github.token }}
-      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase applied
+      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase "${{ steps.revision.outputs.noop == 'true' && 'verified' || 'applied' }}" --execution "${{ steps.revision.outputs.execution }}"
     - name: Attest applied deployment
       if: ${{ always() && steps.applied.outputs.receipt_path != '' }}
       uses: ./.github/actions/deployment-receipt
@@ -261,7 +262,7 @@ jobs:
     needs:
     - prepare
     - apply
-    if: ${{ always() && needs.apply.outputs.deployment_id != '' }}
+    if: ${{ always() && needs.apply.outputs.deployment_id != '' && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     environment: shared-datasets-production
