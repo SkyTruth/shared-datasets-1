@@ -1,9 +1,8 @@
 # Operational alert routing
 
 Use [CI/deployment recovery](ci-recovery.md) for ordered incident handling.
-This reference owns alert selection, delivery paths and health policy.
-Slack reports unattended failures. A supervised execution can be quiet only
-when its GitHub workflow waits for its result and reports failure itself.
+`workflow_failure_alert.WORKFLOW_EVENTS` owns producer/event routing for alerts
+and replay. Supervised runs stay quiet only while GitHub reports their failures.
 
 GitHub incident recovery follows the [Slack incident lifecycle](slack-incidents.md):
 additional failed attempts update the parent without automatic replies;
@@ -18,7 +17,7 @@ safety findings and operational summaries.
 | Synchronous EAMLIS/sea-ice/MPAtlas/dataset-usage deployment canary | GitHub |
 | Cloud Scheduler dispatch or unmarked Cloud Run execution | Monitoring Slack |
 | Detached WDPA worker canary | Monitoring Slack |
-| Scheduled GitHub maintenance or automatic catalog/CDN follow-up | GitHub and Slack |
+| Scheduled GitHub maintenance or automatic SDK/catalog/CDN follow-up | GitHub and Slack |
 | Explicit monitoring delivery test | Monitoring Slack |
 | EAMLIS source-quality hold | One persisted decision-alert attempt; delivery failure retains the hold and existing job-failure coverage |
 
@@ -161,18 +160,16 @@ warn at least 72 hours before expiry and alert after expiry; expired holds conti
 blocking deployments without failing CI selection or `ci-ready`. Lint rejects malformed
 holds and changed holds that are already expired.
 
-Probe failures, health findings and external health-read exceptions produce a scoped report
-without making health reporting red when delivery succeeds. A failed discovery
-step retains its native failed conclusion; its authenticated retained report owns
-deduplication, so periodic replay cannot create a second incident. The report deduplicates
-findings and sends on change plus daily reminders; identical findings neither
-dispatch incident replay nor count toward its three-dispatch escalation. Report
-upload/notification and infrastructure failures remain visible workflow failures.
+Setup/probe failures and health-read exceptions share one retained report with
+change-plus-daily reminders. The health reporter runs without installed probe
+dependencies or the pinned verifier. Native setup/probe failures remain red;
+an authenticated report suppresses duplicate replay. Failed delivery, upload or
+dispatch remains visible. Identical findings cannot advance stall escalation.
 
 Before relying on the checks, use the protected monitoring sync to provision
 `google_project_iam_custom_role.operational_safety_reader` and its publisher
-binding. The role grants exactly `cloudscheduler.jobs.get`, `run.executions.get`
-and `logging.logEntries.create`; the safety job retains its existing service
+binding. The role grants `cloudscheduler.jobs.get`, `run.executions.get`,
+`logging.logEntries.create` and `monitoring.timeSeries.list`; the safety job retains its existing service
 account and protected environment. The bootstrap scope includes both IAM
 resources; the cron-sync scope adds `google_logging_metric.operational_safety_heartbeat`
 and `google_monitoring_alert_policy.operational_safety_absent`.
@@ -180,8 +177,8 @@ and `google_monitoring_alert_policy.operational_safety_absent`.
 A completed health read writes the authenticated `operational-safety-heartbeat`
 log. Its log-based metric feeds an independent Cloud Monitoring absence policy
 with a seven-hour (`25200s`) window, covering missed/disabled GitHub safety runs.
-Verify the first heartbeat has established its time series before relying on
-absence detection; a policy with no initial series cannot prove the job is alive.
+Health queries the metric's recent time series and warns when none exists;
+a log write alone cannot establish absence detection before the first series.
 The policy follows `cron_alerts_enabled` and the configured cron notification
 channels. A health-read failure remains in the deduplicated report and emits no
 success heartbeat. Local tests cannot prove deployed IAM or alert delivery.

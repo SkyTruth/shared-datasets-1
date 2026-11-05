@@ -47,8 +47,10 @@ def test_supervised_or_nonfailure_runs_are_quiet(update):
     assert alerts.alert_for_run(event(**update)) is None
 
 
-def test_event_data_cannot_override_destination_or_inject_slack_mentions():
+def test_event_data_cannot_override_destination_or_inject_slack_mentions(monkeypatch):
     payload = event(name="<@U123> & <https://evil.test|click>", html_url="https://evil.test")
+    assert alerts.alert_for_run(payload) is None  # Unknown workflow identities cannot acquire alert ownership.
+    monkeypatch.setitem(alerts.WORKFLOW_PATHS, payload["workflow_run"]["name"], "bucket-hygiene-audit.yml")
     alert = alerts.alert_for_run(payload)
     assert "<@U123>" not in alert["body"]
     assert "&lt;@U123&gt;" in alert["body"]
@@ -176,7 +178,7 @@ def test_ci_alert_checks_source_identity_and_suppresses_obsolete_attempts():
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
 
 
-@pytest.mark.parametrize("name", sorted(alerts.OBSERVER_WORKFLOWS))
+@pytest.mark.parametrize("name", [name for path in ("deployment-verification.yml", "deployment-recovery.yml") for name in alerts.WORKFLOW_NAMES[path]])
 def test_failed_terminal_observation_and_explicit_reconciliation_remain_visible(name):
     payload = event(name=name, event="workflow_dispatch", head_sha="a" * 40, run_attempt=1)
     assert alerts.alert_for_run(payload) is not None

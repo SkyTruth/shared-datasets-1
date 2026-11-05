@@ -284,7 +284,7 @@ def source_observations(api, event, targets=None):
         successes = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
                      and job["name"] not in alerts.VALIDATION_JOBS and ("ci.yml", registered_name(job["name"])) not in targets]
         return [from_job(run, job, targets) for job in failures + successes]
-    if alerts.alert_for_run(event) is None and run["conclusion"] != "success":
+    if run["conclusion"] != "success" and (not alerts.unattended(run) or event["repository"]["full_name"] != REPOSITORY):
         return []  # Supervised manual failures keep existing GitHub-only routing.
     if alerts.WORKFLOW_PATHS[run["name"]] in {"bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"}:
         return [from_workflow(run)]
@@ -440,8 +440,7 @@ def terminal_success(api, scope, healthy=None, terminal_validation=None):
     # Expensive verification must not hide a status appended while it ran or
     # mint a checkpoint for history that was not fully validated.
     current = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
-    require(current == statuses, "deployment status history changed during terminal validation")
-    if not terminal:
+    if current != statuses or not terminal:
         return None, None
     return terminal_observation(scope, record, payload, statuses[0]), validation
 

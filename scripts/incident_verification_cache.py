@@ -53,6 +53,19 @@ def positive(value):
     return type(value) is int and value > 0
 
 
+def validate_context(policy, identity, *, since=False):
+    require(isinstance(policy, dict) and set(policy) == ({"head_sha", "gh_version", "since"} if since else {"head_sha", "gh_version"})
+            and isinstance(policy["head_sha"], str) and re.fullmatch(r"[0-9a-f]{40}", policy["head_sha"])
+            and isinstance(policy["gh_version"], str) and policy["gh_version"].startswith(f"gh version {verifier.VERSION} "),
+            "invalid saved verification policy")
+    if since:
+        timestamp(policy["since"])
+    require(isinstance(identity, dict) and set(identity) == {"team", "user", "channel"}
+            and all(isinstance(identity[key], str) and re.fullmatch(pattern, identity[key])
+                    for key, pattern in (("team", r"T[A-Z0-9]+"), ("user", r"U[A-Z0-9]+"), ("channel", r"[CG][A-Z0-9]+"))),
+            "invalid saved Slack identity")
+
+
 def artifact_name(run):
     require(positive(run.get("id")) and positive(run.get("run_attempt")), "invalid producer attempt")
     return f"notification-verification-{run['id']}-{run['run_attempt']}"
@@ -160,15 +173,7 @@ class VerificationCache:
             producer, data = retained
             require(isinstance(data, dict) and set(data) == {"schema", "producer", "policy", "identity", "entries"}
                     and data["schema"] == SCHEMA and data["producer"] == execution(producer), "verification artifact producer mismatch")
-            policy, saved_identity = data["policy"], data["identity"]
-            require(isinstance(policy, dict) and set(policy) == {"head_sha", "gh_version"}
-                    and isinstance(policy["head_sha"], str) and re.fullmatch(r"[0-9a-f]{40}", policy["head_sha"])
-                    and isinstance(policy["gh_version"], str) and policy["gh_version"].startswith(f"gh version {verifier.VERSION} "),
-                    "invalid saved verification policy")
-            require(isinstance(saved_identity, dict) and set(saved_identity) == {"team", "user", "channel"}
-                    and all(isinstance(saved_identity[key], str) and re.fullmatch(pattern, saved_identity[key])
-                            for key, pattern in (("team", r"T[A-Z0-9]+"), ("user", r"U[A-Z0-9]+"), ("channel", r"[CG][A-Z0-9]+"))),
-                    "invalid saved Slack identity")
+            validate_context(data["policy"], data["identity"])
             if data["policy"] != current.policy or data["identity"] != identity:
                 return current
             return cls(run, identity, gh_version=current.policy["gh_version"], entries=data["entries"])

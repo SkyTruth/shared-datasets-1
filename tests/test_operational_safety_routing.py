@@ -29,7 +29,7 @@ def test_three_hour_entrypoint_and_direct_safety_failure_coverage():
     assert "Report safety failure directly" in workflow_steps_by_name(load_workflow(WORKFLOWS / SAFETY), "safety")
     for filename in files[1:]:
         assert set(WORKFLOW_NAMES[filename]) <= set(subscriptions)
-    assert SAFETY in alerts.MONITORED_WORKFLOWS
+    assert SAFETY in alerts.WORKFLOW_EVENTS
 
 
 def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
