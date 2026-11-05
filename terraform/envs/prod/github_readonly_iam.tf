@@ -46,5 +46,10 @@ resource "google_storage_bucket_iam_member" "github_readonly_object_viewer" {
   role   = "roles/storage.objectViewer"
   member = module.github_readonly_service_account.member
 
+  condition {
+    title      = "advisory_and_audit_objects"
+    expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.canonical_mutation_publisher_condition}) || (${local.pending_publish_source_condition})"
+  }
+
   depends_on = [google_storage_bucket.shared_bucket]
 }

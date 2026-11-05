@@ -47,7 +47,7 @@ def auth_accounts(value, job):
 
 
 def declared_workflows():
-    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'runtime', 'heartbeat', 'reconciler', 'bucket_reader', 'pr_plan')}
+    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'runtime', 'heartbeat', 'reconciler', 'cleanup', 'bucket_reader', 'pr_plan')}
     for path in (ROOT / '.github/workflows').glob('*.yml'):
         value = load_workflow(path)
         for job in value['jobs'].values():
@@ -61,7 +61,7 @@ def declared_workflows():
                 elif account == 'feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com':
                     identity = 'preview'
                 else:
-                    identity = account.split('@')[0].removeprefix('shared-datasets-')
+                    identity = account.split('@')[0].removeprefix('shared-datasets-').replace('-', '_')
                 assert identity in found, (path.name, account)
                 found[identity].add(path.name)
     found['pr_plan_caller'] = {'ci.yml'}
@@ -119,7 +119,7 @@ def test_production_provider_requires_repo_environment_main_and_per_identity_lea
         assert required in condition
     assert 'merge(local.github_identity_attributes' in provider['attribute_mapping']
     source = (PROD / 'github_job_identities.tf').read_text()
-    assert '(has(assertion.job_workflow_ref) ? assertion.job_workflow_ref : assertion.workflow_ref)' in source
+    assert "('job_workflow_ref' in assertion ? assertion.job_workflow_ref : assertion.workflow_ref)" in source
     assert '@refs/heads/main' in source
     assert "? 'allowed' : 'denied'" in source
     assert 'assertion.workflow ==' not in source

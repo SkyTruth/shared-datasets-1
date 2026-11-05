@@ -10,7 +10,22 @@ Read [AGENTS.md](../AGENTS.md), the [deployment skill](../.claude/skills/deploy-
 6. **Observe the rollout.** Main `ci-ready` supplies exact tested images by digest; deployments never rebuild missing bytes. Finish registry/IAM bootstrap first. Follow [queue ownership](deployment-contracts.md#serialization-and-protected-execution): preparation and canaries stay outside the state queue. Usage holds one target queue through apply and canary verification. Its read-only `dataset-usage` gate derives the composed apply job name from the YAML caller chain and observes this exact attempt’s signed apply job so ingestion/cleanup IAM can proceed while `dataset-usage-rollout` retains the queue. Other ingestion wrappers retain combined rollout. Recovery/dispatch requires `executor_sha`, `source_run_id` and `source_run_attempt` from the exact successful main-push CI attempt. Deferred verification is not completion.
 7. **Report the outcome.** Use the captured canary execution, verify its [terminal outcome](deployment-contracts.md#records-receipts-and-runtime-outcomes) and release/latest contracts (or private usage report/activation), and preserve [failure coverage](alert-routing.md#execution-and-delivery-verification). Report image digest, resource actions, execution/result, changed remote paths and uncertainty. Use [recovery](ci-recovery.md) for failures.
 
+Deployment bootstrap looks up the merged PR for the exact executor SHA before
+candidate checkout or authentication. It requires `jonaraphael`'s effective
+approval of the final PR head, or records the existing restricted self-authored
+merge acceptance. Missing, ambiguous, stale, dismissed and unreadable acceptance
+fail closed; successful output records the PR and acceptance evidence. Direct
+main pushes cannot authorize a deployment. Callers need read access to PRs and
+reviews as well as the existing Actions provenance permissions.
+
 Production identities are registered in [`github-workflow-identities.json`](../terraform/envs/prod/github-workflow-identities.json): exact workflow filenames on main, `job_workflow_ref` for reusable jobs, `workflow_ref` otherwise, repository/environment constraints. The separate PR planner requires exact CI/planner refs; advisory PR bucket reads admit only the exact schema-alert leaf at a numeric merge ref after the same-repository gate. Artifact Registry IAM bootstrap provisions the identity manager and workflow identity scope before writer rollout. The authoritative Terraform WIF binding removes the shared environment subject grant.
+
+The bucket-reader identity can list object names and read published dataset/catalog
+objects and pending-publish sources, but cannot read `000-system/` objects,
+including production Terraform state. Scratch cleanup uses its own exact-leaf
+identity: bucket-scoped listing and conditional pending-publish/cleanup-marker
+writes, without canonical publisher authority. Apply workflow identity sync before
+running cleanup; no new repository authentication variables are needed.
 
 Observer identities cannot mutate resources, administer IAM, read state or access secret versions. Runtime handles image pushes, canaries, schedule control and invalidation; verification restores observer credentials afterward. Reconcilers have separate private incident-state authority; only the safety heartbeat identity emits heartbeat logs. Preserve signing and dataset approval boundaries.
 

@@ -1,7 +1,7 @@
 locals {
   github_workflow_identities = jsondecode(file("${path.module}/github-workflow-identities.json"))
   # Reusable jobs are authorized by the immutable leaf, never by their caller.
-  github_job_workflow_ref = "(has(assertion.job_workflow_ref) ? assertion.job_workflow_ref : assertion.workflow_ref)"
+  github_job_workflow_ref = "('job_workflow_ref' in assertion ? assertion.job_workflow_ref : assertion.workflow_ref)"
   github_identity_attributes = {
     for identity, workflows in local.github_workflow_identities : "attribute.${identity}" =>
     "${local.github_job_workflow_ref} in ${jsonencode([for workflow in workflows : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main"])} ? 'allowed' : 'denied'"
@@ -15,6 +15,7 @@ locals {
     observer   = local.observer_permissions
     heartbeat  = local.observer_permissions
     reconciler = ["run.services.get", "monitoring.alerts.get"]
+    cleanup    = ["storage.objects.list", "storage.objects.get", "storage.objects.create", "storage.objects.delete"]
     runtime = concat(local.observer_permissions, [
       "run.jobs.run", "run.jobs.runWithOverrides", "run.executions.cancel", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause",
       "compute.urlMaps.invalidateCache", "compute.globalOperations.get",
@@ -42,6 +43,13 @@ resource "google_project_iam_member" "github_job" {
   project  = var.project_id
   role     = google_project_iam_custom_role.github_job[each.key].name
   member   = "serviceAccount:${google_service_account.github_job[each.key].email}"
+  dynamic "condition" {
+    for_each = each.key == "cleanup" ? [true] : []
+    content {
+      title      = "scratch_bucket_listing"
+      expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.pending_publish_cleanup_condition})"
+    }
+  }
 }
 resource "google_service_account_iam_member" "github_job_wif" {
   for_each           = local.github_job_permissions
@@ -65,6 +73,7 @@ resource "google_service_account_iam_binding" "github_actions_terraform_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${var.github_actions_terraform_service_account_email}"
   role               = "roles/iam.workloadIdentityUser"
   members            = ["principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.terraform/allowed"]
+  depends_on         = [google_iam_workload_identity_pool_provider.github]
 }
 
 resource "google_project_iam_custom_role" "github_identity_manager" {

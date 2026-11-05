@@ -28,6 +28,12 @@ runs:
         echo "Execution must use this workflow or CI from main." >&2
         exit 1
       fi
+  - name: Verify owner acceptance before candidate checkout
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXECUTOR_SHA: ${{ inputs.executor-sha }}
+    run: python -I -S .github/actions/deployment-bootstrap/approval.py
+    shell: bash
   - name: Install pinned durable receipt verifier
     run: python scripts/install_deployment_verifier.py
     shell: bash

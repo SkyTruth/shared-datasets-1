@@ -20,6 +20,7 @@ CEL = Lark(r"""
 ?addition: access | addition "+" access -> add
 ?access: atom | access "." NAME -> field
        | access "." "matches" "(" choice ")" -> matches
+       | access "." "startsWith" "(" choice ")" -> starts_with
        | access "." "map" "(" NAME "," choice ")" -> map_values
 ?atom: "(" choice ")" | STRING -> string
      | "[" [choice ("," choice)*] "]" -> array
@@ -63,6 +64,8 @@ def cel(expression, claims):
                         for value in evaluate(args[0], scope)]
             case "matches":
                 return re.search(evaluate(args[1], scope), evaluate(args[0], scope)) is not None
+            case "starts_with":
+                return evaluate(args[0], scope).startswith(evaluate(args[1], scope))
             case "equal":
                 return evaluate(args[0], scope) == evaluate(args[1], scope)
             case "contains":
