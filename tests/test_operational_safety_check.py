@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -32,6 +31,7 @@ START = NOW - timedelta(hours=24)
 def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
+    monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
 
 
 def stamp(value):
@@ -492,11 +492,9 @@ def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_
     monkeypatch.setattr(catalog,'get_client',lambda:client)
     monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
     monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(directory)])
-    if age > 24:
-        with pytest.raises(RuntimeError, match='unconfirmed Slack claim >=24 h'):
-            safety.main()
-    else:
-        safety.main()
+    safety.main()
+    problems = json.loads((directory/'health/cache.json').read_bytes())['problems']
+    assert any('unconfirmed Slack claim >=24 h' in item for item in problems) is (age > 24)
     assert api.posts == []
 
 
@@ -539,11 +537,12 @@ def test_freshness_reads_exact_generations_and_bounds_unapproved_pause():
         safety.freshness(Client(), now=NOW, scheduler=lambda _: (_ for _ in ()).throw(RuntimeError('unavailable')))
 
 
-def test_pending_backoff_never_delays_new_execution_or_new_failure():
+def test_pending_backoff_never_delays_new_execution_or_new_failure(monkeypatch):
     api=OperationalAPI()
+    monkeypatch.setattr(safety.subprocess, 'check_output', lambda *_a, **_k: '{"status":{}}')
     source=api.source(101,'deployment-verification.yml',conclusion='success')
     source['created_at']=stamp(NOW-timedelta(hours=1))
-    api.statuses[99]=[{'created_at':stamp(NOW-timedelta(hours=2))}]
+    api.statuses[99]=[{'created_at':stamp(NOW-timedelta(hours=2)), 'environment_url': 'https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-abcde?project=shared-datasets-1'}]
     assert not safety.verification_due(api,[source],[99],now=NOW)
     api.statuses[99][0]['created_at']=stamp(NOW-timedelta(minutes=30))
     assert safety.verification_due(api,[source],[99],now=NOW)
@@ -579,11 +578,18 @@ def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
     assert not safety.fresh_activity(payload,'daily',now=NOW+timedelta(hours=1))
 
 
-def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize('filename,trigger', [('unattended-workflow-alert.yml','workflow_dispatch'), ('ci.yml','push'), ('publish-typescript-sdk.yml','workflow_run')])
+@pytest.mark.parametrize('later_success', [False, True])
+def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch, filename, trigger, later_success):
     api=OperationalAPI()
-    source=api.source(101,'unattended-workflow-alert.yml')
-    source['event']='workflow_dispatch'
+    api.definitions.setdefault(filename, {'id': 99, 'path': '.github/workflows/' + filename})
+    source=api.source(101,filename)
+    source['event']=trigger
     api.add_source(source)
+    if filename == 'ci.yml':
+        api.jobs[101].append({'name':'ci-ready', 'status':'completed', 'conclusion':'success'})
+    if later_success:
+        api.add_source({**source, 'id': 102, 'conclusion': 'success'})
     (tmp_path/'result.json').write_text(json.dumps({'reconcile':False}))
     (tmp_path/'claims.json').write_text('[]')
     for key,value in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
@@ -594,8 +600,8 @@ def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch
     monkeypatch.setattr(catalog,'get_client',lambda:None)
     monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
     monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(tmp_path)])
-    with pytest.raises(RuntimeError,match='Failed dispatched run: https://github.com/.*/101'):
-        safety.main()
+    safety.main()
+    assert 'Failed unattended run: https://github.com/SkyTruth/shared-datasets-1/actions/runs/101' in json.loads((tmp_path/'health/cache.json').read_text())['problems']
     assert api.posts == []
 
 
@@ -604,20 +610,61 @@ def test_health_report_posts_changes_and_daily_reminders_without_changing_proble
     monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
     for hour, problems, sends in [(0, ['paused'], 1), (3, ['paused'], 1), (24, ['paused'], 2),
                                   (25, ['expired', 'paused'], 3), (26, [], 3), (27, ['paused'], 4)]:
-        with pytest.raises(RuntimeError) if problems else nullcontext():
-            safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
+        safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
         previous = json.loads((tmp_path / 'health/cache.json').read_text())
         assert previous['problems'] == sorted(problems)
         assert slack_notify.notify.call_count == sends
     assert 'paused' in slack_notify.notify.call_args.kwargs['body']
+    assert previous['scope'] == slack_notify.notify.call_args.kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly']), safety.subprocess.CalledProcessError(1, ['gcloud', 'logging', 'write'])])
+def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp_path, monkeypatch, failure):
+    api = OperationalAPI()
+    for key, value in {'GITHUB_REPOSITORY': safety.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
+                       'GITHUB_WORKFLOW_REF': safety.REPOSITORY + '/' + safety.WORKFLOW + '@refs/heads/main',
+                       'GITHUB_RUN_ID': '300', 'GITHUB_RUN_ATTEMPT': '1'}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(incidents, 'GitHub', lambda: api)
+    monkeypatch.setattr(catalog, 'get_client', lambda: None)
+    monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
+    monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
+    if isinstance(failure, safety.subprocess.CalledProcessError) and 'logging' in failure.cmd:
+        monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
+        safety.subprocess.check_call.side_effect = failure
+        (tmp_path/'result.json').write_text('{"reconcile":false}')
+        (tmp_path/'claims.json').write_text('[]')
+    monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
+    safety.main()
+    report = json.loads((tmp_path/'health/cache.json').read_text())
+    assert report['scope'] == safety.HEALTH_SCOPE
+    assert report['problems'] == sorted(['hold expired', f'Health check incomplete: {type(failure).__name__}: {failure}'])
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: report)
+    safety.main()
+    assert slack_notify.notify.call_count == 1
+
+
+@pytest.mark.parametrize('terminal', [{}, {'completionTime': stamp(NOW)}, {'failedCount': 1}, {'cancelledCount': 1}])
+def test_pending_completion_is_probed_before_backoff_and_retry_is_capped(monkeypatch, terminal):
+    api = OperationalAPI()
+    source = api.source(101, 'deployment-verification.yml', conclusion='success')
+    source['created_at'] = stamp(NOW - timedelta(hours=1))
+    api.statuses[99] = [{'created_at': stamp(NOW - timedelta(hours=2)), 'environment_url': 'https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-abcde?project=shared-datasets-1'}]
+    probe = mock.Mock(return_value=json.dumps({'status': terminal}))
+    monkeypatch.setattr(safety.subprocess, 'check_output', probe)
+    assert safety.verification_due(api, [source], [99], now=NOW) is bool(terminal)
+    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=2))
+    assert probe.call_count == 2 and 'wdpa-monthly-abcde' in probe.call_args.args[0]
 
 
 def test_health_only_failures_never_create_reconciliation_work_but_infrastructure_failures_do(tmp_path):
     api = OperationalAPI()
     source = api.source(101, 'operational-safety-check.yml')
     api.add_source(source)
-    api.jobs[101][0]['steps'] = [{'name': 'Check freshness and stalled operations', 'conclusion': 'failure'}]
+    api.jobs[101][0]['steps'] = [{'name': 'Check freshness and stalled operations', 'conclusion': 'failure'}, {'name': 'Retain safety health report', 'conclusion': 'success'}]
     assert dry(api, tmp_path, [source]) is True
+    api.jobs[101][0]['steps'].pop()
+    assert dry(api, tmp_path, [source]) is False
     api.jobs[101][0]['steps'] = [{'name': 'actions/checkout@v4', 'conclusion': 'failure'}]
     assert dry(api, tmp_path, [source]) is False
 
@@ -628,7 +675,7 @@ def test_expiry_warns_at_72_hours_and_alerts_afterwards_without_releasing_holds(
     assert len(safety.policy_warnings(expiry - timedelta(hours=75))[0]) == len(holds)
     warnings, problems = safety.policy_warnings(expiry)
     assert len(problems) == len(holds) and not warnings
-    assert set(safety.rollout_holds(holds, now=expiry + timedelta(days=99))) == set(holds)
+    assert set(safety.validate_suspensions(holds, now=expiry + timedelta(days=99))) == set(holds)
 
 
 def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():
@@ -638,6 +685,21 @@ def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():
     assert pauses['dataset-usage']['owner'] == 'jonaraphael'
     expiry = datetime.fromisoformat(pauses['dataset-usage']['expires_at'].replace('Z', '+00:00'))
     assert any('dataset-usage' in item for item in safety.policy_warnings(expiry - timedelta(hours=72))[0])
+
+
+def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
+    import hcl2
+    from workflow_helpers import load_workflow
+    workflow = load_workflow(safety.ROOT/'.github/workflows/operational-safety-check.yml')
+    job = workflow['jobs']['safety']
+    assert 'SHARED_DATASETS_SLACK_WEBHOOK_URL' not in job['env']
+    assert {step.get('name') for step in job['steps'] if 'SHARED_DATASETS_SLACK_WEBHOOK_URL' in step.get('env', {})} == {'Check freshness and stalled operations', 'Report safety failure directly'}
+    config = hcl2.loads((safety.ROOT/'terraform/envs/prod/monitoring.tf').read_text(), serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
+    resources = {name: values for group in config['resource'] for entries in group.values() for name, values in entries.items()}
+    absence = resources['operational_safety_absent']['conditions'][0]['condition_absent'][0]
+    assert absence['duration'] == '25200s' and 'operational_safety_heartbeat' in absence['filter']
+    assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
+    assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 
 
 @pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload'])

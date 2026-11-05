@@ -26,7 +26,6 @@ jobs:
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
-      SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
       SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
       GOOGLE_CLOUD_PROJECT: shared-datasets-1
       SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
@@ -62,6 +61,7 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
       - name: Check operational work
         id: probe
         env:
@@ -89,9 +89,10 @@ jobs:
           gh workflow run unattended-workflow-alert.yml --ref main
           -f incident_id=operational-batch -f delivery_result=batch
           -f operation="safety:${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
-      - uses: google-github-actions/setup-gcloud@v2
       - name: Check freshness and stalled operations
         id: health
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: uv run --no-sync python scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
       - name: Retain safety health report
         id: health-report
@@ -104,6 +105,8 @@ jobs:
           retention-days: 3
       - name: Report safety failure directly
         if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.health.outcome != 'failure' || steps.health-report.outcome == 'failure') }}
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
           status=0
           gh workflow run deployment-verification.yml --ref main || status=$?

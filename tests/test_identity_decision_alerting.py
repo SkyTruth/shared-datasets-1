@@ -122,8 +122,9 @@ class AlertPolicyTests(unittest.TestCase):
         permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.DOTALL)
         self.assertIsNotNone(permissions)
         self.assertEqual(
-            set(re.findall(r'^\s*"([^"]+)"', permissions.group(1), re.MULTILINE)),
+            set(re.findall(r'"([^"]+)"', permissions.group(1))),
             {
+                "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update", "logging.logMetrics.delete",
                 "logging.notificationRules.create",
                 "logging.notificationRules.delete",
                 "monitoring.alertPolicies.create",

@@ -44,13 +44,10 @@ class ManualWorkflowTests(unittest.TestCase):
                 self.assertEqual(len(proofs), 1)
                 self.assertLess(bootstrap, proofs[0])
                 self.assertLess(proofs[0], candidate)
+                self.assertNotIn("if", steps[proofs[0]])
                 if filename == "publish-typescript-sdk.yml":
-                    # Verified obsolete CI events finish as no-ops; candidate
-                    # checkout must have exactly the same admission gate.
-                    self.assertEqual(steps[proofs[0]]["if"], "steps.source.outputs.source_eligible == 'true'")
-                    self.assertEqual(steps[candidate]["if"], steps[proofs[0]]["if"])
-                else:
-                    self.assertNotIn("if", steps[proofs[0]])
+                    self.assertEqual(job['if'], "needs.candidate.outputs.release_needed == 'true'")
+
 
     def test_missing_optional_or_wrongly_typed_manual_identity_cannot_pass(self):
         complete = {"on": {"workflow_dispatch": {"inputs": {name: {"required": True, "type": "string"} for name in ("executor_sha", "source_run_id", "source_run_attempt")}}}}

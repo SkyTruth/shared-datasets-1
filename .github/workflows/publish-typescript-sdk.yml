@@ -2,7 +2,7 @@ name: SDK / Publish TypeScript
 
 on:
   workflow_dispatch:
-    inputs:
+    inputs: &sdk-inputs
       executor_sha:
         description: Exact tested main revision for selective recovery
         required: true
@@ -15,10 +15,8 @@ on:
         description: Exact successful ci-ready attempt
         required: true
         type: string
-  workflow_run:
-    workflows: ["CI / Validate and deliver", "CI"]
-    branches: [main]
-    types: [completed]
+  workflow_call:
+    inputs: *sdk-inputs
 
 permissions:
   contents: read
@@ -29,33 +27,20 @@ permissions:
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
   NODE_VERSION: "24.13.1"
-  EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
-  SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
-  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt || github.event.workflow_run.run_attempt }}
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
 
 jobs:
   candidate:
-    if: >-
-      ${{ github.repository == 'SkyTruth/shared-datasets-1' && github.ref == 'refs/heads/main' &&
-          ((github.event_name == 'workflow_dispatch') ||
-           (github.event.workflow_run.event == 'push' &&
-            github.event.workflow_run.head_branch == 'main' &&
-            github.event.workflow_run.head_repository.full_name == github.repository)) }}
+    if: github.repository == 'SkyTruth/shared-datasets-1' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       release_needed: ${{ steps.candidate.outputs.release_needed }}
     steps:
-      - name: Require trusted main workflow
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main ]]; then echo "Production requires main" >&2; exit 1; fi
-          case "$GITHUB_WORKFLOW_REF" in
-            "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main") ;;
-            *) echo "Untrusted production caller" >&2; exit 1 ;;
-          esac
-
-      - name: Check out trusted deployment verifier
+      - &trusted-checkout
+        name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
@@ -63,8 +48,6 @@ jobs:
           persist-credentials: false
 
 
-      - name: Install pinned durable receipt verifier
-        run: python scripts/install_deployment_verifier.py
       - name: Admit verified CI completion
         id: source
         env:
@@ -73,21 +56,14 @@ jobs:
           python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
             --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
-      - name: Verify trusted tested source authority
+      - name: Authorize and restore trusted executor
         if: steps.source.outputs.source_eligible == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml \
-            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
-      - name: Check out exact tested revision
-        if: steps.source.outputs.source_eligible == 'true'
-        uses: actions/checkout@v4
+        uses: ./.github/actions/deployment-bootstrap
         with:
-          ref: ${{ env.EXECUTOR_SHA }}
-          fetch-depth: 0
-          persist-credentials: false
+          workflow: publish-typescript-sdk.yml
+          executor-sha: ${{ env.EXECUTOR_SHA }}
+          source-run-id: ${{ env.SOURCE_RUN_ID }}
+          source-run-attempt: ${{ env.SOURCE_RUN_ATTEMPT }}
       - name: Check already completed SDK publication
         if: steps.source.outputs.source_eligible == 'true'
         id: replay
@@ -137,26 +113,12 @@ jobs:
             *) echo "Untrusted production caller" >&2; exit 1 ;;
           esac
 
-      - name: Check out trusted deployment verifier
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
+      - *trusted-checkout
 
 
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
-      - name: Admit verified CI completion
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
-            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
       - name: Verify trusted tested source authority
-        if: steps.source.outputs.source_eligible == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -164,14 +126,12 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Check out exact tested revision
-        if: steps.source.outputs.source_eligible == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ env.EXECUTOR_SHA }}
           fetch-depth: 0
           persist-credentials: false
       - name: Check already completed SDK publication
-        if: steps.source.outputs.source_eligible == 'true'
         id: replay
         env:
           GH_TOKEN: ${{ github.token }}

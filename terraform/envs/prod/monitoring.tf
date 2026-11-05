@@ -424,16 +424,52 @@ EOT
 }
 
 # The safety probe retains its publisher identity. This adds only the single
-# Scheduler read it needs; the protected monitoring sync must provision it first.
+# Scheduler/execution reads and heartbeat write; protected monitoring sync provisions these first.
 resource "google_project_iam_custom_role" "operational_safety_reader" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalSafetyReader"
   title       = "Shared datasets operational safety reader"
-  permissions = ["cloudscheduler.jobs.get"]
+  permissions = ["cloudscheduler.jobs.get", "run.executions.get", "logging.logEntries.create"]
 }
 
 resource "google_project_iam_member" "operational_safety_reader" {
   project = var.project_id
   role    = google_project_iam_custom_role.operational_safety_reader.name
   member  = module.shared_datasets_publisher_service_account.member
+}
+
+resource "google_logging_metric" "operational_safety_heartbeat" {
+  project = var.project_id
+  name    = "operational-safety-heartbeat"
+  filter  = "logName=\"projects/${var.project_id}/logs/operational-safety-heartbeat\" AND resource.type=\"global\" AND jsonPayload.workflow=\"operational-safety-check.yml\""
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+}
+
+resource "google_monitoring_alert_policy" "operational_safety_absent" {
+  project               = var.project_id
+  display_name          = "Shared datasets operational safety heartbeat missing"
+  combiner              = "OR"
+  enabled               = var.cron_alerts_enabled
+  notification_channels = local.cron_alert_notification_channels
+  conditions {
+    display_name = "No safety check completed for seven hours"
+    condition_absent {
+      filter   = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\" AND resource.type=\"global\""
+      duration = "25200s"
+      aggregations {
+        alignment_period   = "3600s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+      trigger { count = 1 }
+    }
+  }
+  documentation {
+    content   = "No authenticated operational-safety-check.yml heartbeat for seven hours. Inspect GitHub scheduling, disabled workflows, authentication and the health-report upload. This policy is evaluated independently by Cloud Monitoring; enable it only after the first heartbeat has established its time series."
+    mime_type = "text/markdown"
+  }
+  alert_strategy { auto_close = "86400s" }
+  depends_on = [terraform_data.cron_alert_channel_configured, google_pubsub_topic_iam_member.monitoring_slack_publisher]
 }

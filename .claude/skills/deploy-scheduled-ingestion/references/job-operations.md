@@ -46,6 +46,10 @@ the schedule. Missing or unexpected Scheduler state fails the gate.
 
 ## eamlis-monthly schedule control and teardown
 
+Record the pause in `.github/scheduler-pauses.json` in a reviewed change, keyed
+by the Scheduler job name, with CODEOWNER `owner`, `reason`, and a bounded UTC
+`expires_at`. Remove the entry when resuming; expired pauses alert daily.
+
 Immediate stop:
 
 ```bash
@@ -58,6 +62,10 @@ Pausing the scheduler stops future automatic monthly runs without deleting the
 Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
 
 ## sea-ice-daily schedule control and teardown
+
+Record the pause in `.github/scheduler-pauses.json` in a reviewed change, keyed
+by the Scheduler job name, with CODEOWNER `owner`, `reason`, and a bounded UTC
+`expires_at`. Remove the entry when resuming; expired pauses alert daily.
 
 Pause future scheduled runs through the protected workflow:
 
@@ -113,6 +121,10 @@ protected scratch-cleanup retirement. WDPA deployment cannot recreate them.
 WDPA uses shared worker/Scheduler alerts and per-asset release-index check-ins.
 
 ## wdpa-monthly schedule control and teardown
+
+Record the pause in `.github/scheduler-pauses.json` in a reviewed change, keyed
+by the Scheduler job name, with CODEOWNER `owner`, `reason`, and a bounded UTC
+`expires_at`. Remove the entry when resuming; expired pauses alert daily.
 
 Immediate stop:
 
