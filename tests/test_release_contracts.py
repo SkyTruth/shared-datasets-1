@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import unittest
@@ -24,6 +25,12 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_current_reviewed_contracts_pass_without_live_credentials(self):
         self.assertEqual(contracts.check(self.root, {"wdpa", "eamlis", "sea-ice", "wdpa-processing"}), [])
+
+    def test_release_barriers_do_not_depend_on_step_display_names(self):
+        for filename in ("ingestion-deploy.yml", "pmtiles-cdn-sync.yml"):
+            path = self.root / ".github/workflows" / filename
+            path.write_text(re.sub(r"(?m)^(\s*)- name: .*", r"\1- name: Renamed step", path.read_text()))
+        self.assertEqual(contracts.check(self.root, set(contracts.DEPLOYS)), [])
 
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
@@ -130,7 +137,7 @@ class ReleaseContractTests(unittest.TestCase):
     def test_removed_disabled_late_or_foreign_plan_role_guard_is_not_ready(self):
         path = self.root / '.github/workflows/pmtiles-cdn-sync.yml'
         original = path.read_text()
-        for mutation in ('removed', 'disabled', 'late', 'foreign-plan', 'missing-target', 'foreign-export'):
+        for mutation in ('removed', 'disabled', 'late', 'foreign-plan', 'missing-target', 'foreign-export', 're-export'):
             with self.subTest(mutation=mutation):
                 value = yaml.safe_load(original)
                 steps = value['jobs']['sync']['steps']
@@ -142,6 +149,9 @@ class ReleaseContractTests(unittest.TestCase):
                 elif mutation == 'late':
                     steps.remove(guard)
                     steps.append(guard)
+                elif mutation == 're-export':
+                    exported = next(step for step in steps if 'show -json' in step.get('run', ''))
+                    steps.insert(steps.index(guard) + 1, exported.copy())
                 elif mutation == 'foreign-plan':
                     guard['run'] = guard['run'].replace('pmtiles-managed-folder-bootstrap', 'unrelated')
                 elif mutation == 'foreign-export':
@@ -248,34 +258,36 @@ class ReleaseContractTests(unittest.TestCase):
                     self.assertTrue(any("operational image permission probe" in error for error in contracts.check(self.root, {"iam"})))
             path.write_text(original)
 
-    def test_shallow_mutable_checkout_rejected(self):
-        path = self.root / ".github/actions/deployment-bootstrap/action.yml"
-        path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor-sha }}", "ref: main"))
-        self.assertTrue(any("complete history" in item for item in contracts.deployment_contract(self.root, "wdpa")))
-
-    def test_candidate_cannot_replace_the_trusted_bootstrap(self):
+    def test_trusted_bootstrap_bindings_and_checkout_cannot_be_disabled(self):
         path = self.root / ".github/workflows/ingestion-deploy.yml"
-        path.write_text(path.read_text().replace("ref: ${{ github.workflow_sha }}", "ref: ${{ inputs.executor_sha }}"))
-        self.assertTrue(any("trusted main workflow" in item for item in contracts.deployment_contract(self.root, "wdpa")))
-
-    def test_shared_runner_cannot_disable_or_replace_immutable_receipt_verifier(self):
-        action_path = self.root / ".github/actions/deployment-bootstrap/action.yml"
-        action_original = action_path.read_text()
-        for mutation in ("removed", "disabled", "candidate-sha", "scripts/ingestion_targets.py", ".github/terraform-targets.json"):
+        original = yaml.safe_load(path.read_text())
+        for mutation in ("checkout", "removed", "disabled", "candidate-sha", "late"):
             with self.subTest(mutation=mutation):
-                action = yaml.safe_load(action_original)
-                steps = action["runs"]["steps"]
-                restore = next(step for step in steps if step.get("name") == "Restore immutable receipt verifier after candidate checkout")
-                if mutation == "removed":
-                    steps.remove(restore)
+                value = json.loads(json.dumps(original))
+                steps = value["jobs"]["prepare"]["steps"]
+                bootstrap = next(step for step in steps if step.get("uses") == contracts.receipts.BOOTSTRAP)
+                if mutation == "checkout":
+                    steps[0]["with"]["ref"] = "${{ inputs.executor_sha }}"
+                elif mutation == "removed":
+                    steps.remove(bootstrap)
                 elif mutation == "disabled":
-                    restore["if"] = False
-                elif mutation == "candidate-sha":
-                    restore["env"]["TRUSTED_WORKFLOW_SHA"] = "${{ inputs.executor_sha }}"
+                    bootstrap["if"] = False
+                elif mutation == "late":
+                    steps.remove(bootstrap)
+                    steps.append(bootstrap)
                 else:
-                    restore['run'] = restore['run'].replace(mutation, '')
-                action_path.write_text(yaml.safe_dump(action))
-                self.assertTrue(any("verifier" in error for error in contracts.deployment_contract(self.root, "wdpa")))
+                    bootstrap["with"]["executor-sha"] = "main"
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(contracts.deployment_contract(self.root, "wdpa"))
+
+    def test_shared_action_declares_unconditional_exact_checkouts_and_restore(self):
+        source = ROOT / ".github/actions/deployment-bootstrap/action.yml"
+        steps = yaml.safe_load(source.read_text())["runs"]["steps"]
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"], {"ref": "${{ inputs.executor-sha }}", "fetch-depth": 0, "persist-credentials": False})
+        restore = next(step for step in steps if "TRUSTED_WORKFLOW_SHA" in step.get("env", {}))
+        self.assertEqual(restore["env"]["TRUSTED_WORKFLOW_SHA"], "${{ github.workflow_sha }}")
+        self.assertTrue(all("if" not in step and not step.get("continue-on-error") for step in steps))
 
     def test_each_wrapper_must_resolve_its_registered_target_and_exact_source(self):
         for target, slug in contracts.DEPLOYS.items():

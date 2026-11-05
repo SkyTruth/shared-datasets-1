@@ -7,13 +7,15 @@ import pytest
 
 from scripts.terraform_plan_permissions import static_checks
 from scripts.ci_preflight import suite_commands
+from scripts.ingestion_targets import TARGETS
 from test_ci_preflight import ROOT, fixture_repo
 
 
 @pytest.mark.parametrize('defect', [None, 'unlisted', 'unsupported', 'permission', 'module', 'deleted'])
 @pytest.mark.parametrize('contract', ['inline', 'terraform', 'ingestion'])
-def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect, contract):
+def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypatch, defect, contract):
     root, git = fixture_repo(tmp_path)
+    (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {}}))
     workflows = root / '.github/workflows'
     (workflows / 'ci.yml').write_text('jobs:\n  artifact-registry-iam:\n    uses: ./.github/workflows/sync.yml\n')
     address = 'google_project_iam_custom_role.publisher'
@@ -36,7 +38,7 @@ def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect, c
             '    with:\n      sync_name: Fixture sync\n      caller_workflow: sync.yml\n')
         (workflows / 'prod-terraform-target-apply.yml').write_text('jobs: {}\n')
     elif contract == 'ingestion':
-        (root / 'scripts/ingestion_targets.py').write_text('TARGETS = ' + repr({'eamlis-monthly': {'targets': [address]}}))
+        monkeypatch.setitem(TARGETS['eamlis-monthly'], 'targets', [address])
         (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/ingestion-deploy.yml\n'
             '    with:\n      target: eamlis-monthly\n')
         (workflows / 'ingestion-deploy.yml').write_text('jobs: {}\n')
@@ -61,9 +63,10 @@ def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect, c
         changed = static_checks(root, base, 'HEAD')
         assert address in changed
         # The real CLI returns before asking for a token or invoking gcloud.
-        result = subprocess.run([sys.executable, str(ROOT / 'scripts/deployment_permissions.py'),
-                                 '--static-base', base], cwd=root, capture_output=True, text=True)
-        assert result.returncode == 0, result.stderr
+        if contract != 'ingestion':  # The subprocess has the real, unmodified registry.
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/deployment_permissions.py'),
+                                     '--static-base', base], cwd=root, capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
     commands = suite_commands('lint', ROOT,
         {'base': base, 'tested_sha': 'HEAD', 'changed_paths': ['terraform/envs/prod/artifact_registry_iam.tf']}, tmp_path)
     assert any('--static-base' in argv for argv, _ in commands)

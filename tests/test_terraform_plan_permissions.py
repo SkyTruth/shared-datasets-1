@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from scripts import deployment_permissions as live
-from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks
+from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, RESOURCE_KINDS, plan_checks
 
 NUMBER = "123456789"
 ACCOUNT = f"catalog-viewer@{PROJECT}.iam.gserviceaccount.com"
@@ -36,6 +36,21 @@ def permissions(value, target=None):
 
 
 class SavedPlanPermissionTests(unittest.TestCase):
+    def test_declared_classes_reach_real_operation_validators_without_source_introspection(self):
+        value = {"project": PROJECT, "location": "us-central1", "region": "us-central1", "name": "fixture",
+                 "role_id": "fixture", "account_id": "fixture", "service_account_id": ACCOUNT,
+                 "bucket": "fixture-bucket", "managed_folder": "fixture/", "secret_id": "fixture", "repository": "fixture",
+                 "workload_identity_pool_id": "fixture", "workload_identity_pool_provider_id": "fixture",
+                 "id": f"projects/{PROJECT}/locations/global/buckets/fixture/views/fixture", "type": "custom.googleapis.com/fixture",
+                 "cloud_run_service_name": "fixture", "service": "pubsub.googleapis.com", "topic": f"projects/{PROJECT}/topics/fixture",
+                 "template": [{"service_account": ACCOUNT, "template": [{"service_account": ACCOUNT}]}]}
+        retirement = {"google_iam_workload_identity_pool_provider", "google_logging_log_view", "google_monitoring_metric_descriptor"}
+        for kind in sorted(RESOURCE_KINDS):
+            with self.subTest(kind=kind):
+                address = "terraform_data.cron_alert_channel_configured" if kind == "terraform_data" else None
+                fields = {key: field for key, field in value.items() if kind != "google_compute_url_map" or key != "service"}
+                checks(plan(row(kind, ["delete" if kind in retirement else "create"], fields, address=address)))
+
     def test_existing_url_map_update_requires_actual_map_and_backend_authority(self):
         value = {"project": PROJECT, "name": "shared-datasets-pmtiles-cdn", "default_service":
                  f"https://www.googleapis.com/compute/v1/projects/{PROJECT}/global/backendBuckets/shared-datasets"}
