@@ -133,6 +133,47 @@ def test_every_workflow_python_step_imports_in_its_declared_environment(isolated
         assert result.returncode == 0, f"{source}\n{result.stderr}"
 
 
+def test_every_production_image_command_executes_in_empty_hosted_interpreter(isolated_python):
+    program = '''
+import sys
+sys.path.insert(0, sys.argv[1])
+from scripts.production_image_contracts import BUILD_TARGETS, commands
+for target in BUILD_TARGETS:
+    assert len(commands(target, "a" * 40)) > 1, target
+assert "hcl2" not in sys.modules and "yaml" not in sys.modules
+'''
+    result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT)],
+                            cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_health_main_reports_missing_probe_dependencies_in_empty_interpreter(isolated_python, tmp_path):
+    program = '''
+import json, os, sys
+from unittest.mock import Mock
+from pathlib import Path
+sys.path.insert(0, sys.argv.pop(1))
+from scripts import operational_safety_check as s, slack_notify
+s.GitHub = Mock()
+s.context = Mock(return_value={"id": 1})
+s.policy_warnings = Mock(return_value=([], []))
+s.audit_freshness = Mock(return_value=[])
+s.deployed_image_lag = Mock(return_value=[])
+s.previous_health = Mock(return_value={"problems":[], "warnings":[], "notified_at":None})
+slack_notify.notify = Mock()
+s.subprocess.check_call = Mock()
+s.main()
+report = json.loads((Path(sys.argv[-1]) / "health/cache.json").read_text())
+assert any("(freshness): ModuleNotFoundError" in p for p in report["problems"])
+slack_notify.notify.assert_called_once()
+s.subprocess.check_call.assert_not_called()
+'''
+    result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT),
+        '--health', '--work-dir', str(tmp_path)], cwd=ROOT,
+        env={**os.environ, 'SAFETY_PROBE_OUTCOME': 'skipped'}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("base", ["HEAD", "7bd972e"])
 def test_hosted_selectors_execute_with_actual_workflow_dependency_flags(isolated_python, tmp_path, base):
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())

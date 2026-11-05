@@ -22,9 +22,14 @@ def test_every_runner_job_has_a_timeout(path, name, job):
     assert type(job.get('timeout-minutes')) is int and 0 < job['timeout-minutes'] <= 360, f'{path.name}/{name}'
 
 
-def test_dependabot_requests_the_deployment_owner():
+def test_codeowners_covers_every_dependabot_dockerfile():
     config = yaml.safe_load((ROOT / '.github/dependabot.yml').read_text())
-    assert all('jonaraphael' in item['reviewers'] for item in config['updates'])
+    owners = (ROOT / '.github/CODEOWNERS').read_text().splitlines()
+    assert '* @jonaraphael' in owners
+    for item in config['updates']:
+        assert 'reviewers' not in item
+        for directory in item['directories']:
+            assert (ROOT / directory.lstrip('/') / 'Dockerfile').is_file()
 
 
 @pytest.mark.parametrize('case,accepted', [

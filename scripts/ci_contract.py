@@ -293,6 +293,7 @@ def deployment_paths(root=None):
             inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
         if "image" in row:
             inputs.update(dependency_inputs(root=root)[4][row["image"]])
+        inputs.add(".github/terraform-targets.json")
         inputs.difference_update(name for name, item in exceptions.items() if item["kind"] == "exclude")
         for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
             paths.setdefault(path, set()).add(target)

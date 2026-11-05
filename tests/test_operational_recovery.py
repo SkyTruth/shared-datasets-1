@@ -97,6 +97,43 @@ def test_heartbeat_follows_health_delivery(tmp_path, monkeypatch, delivered):
         assert events == ["delivery"]
 
 
+@pytest.mark.parametrize('failed', ['policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series'])
+def test_health_reader_failure_preserves_other_reads_and_delivered_heartbeat(tmp_path, monkeypatch, failed):
+    health_cli(tmp_path, monkeypatch)
+    readers = {}
+    for name in ('policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series'):
+        readers[name] = mock.Mock(side_effect=RuntimeError('reader unavailable') if name == failed else None,
+                                  return_value=([], []) if name == 'policy_warnings' else [])
+        monkeypatch.setattr(safety, name, readers[name])
+    events = []
+    monkeypatch.setattr(slack_notify, 'notify', lambda **_k: events.append('delivery'))
+    monkeypatch.setattr(safety.subprocess, 'check_call', lambda *_a, **_k: events.append('heartbeat'))
+    safety.main()
+    assert all(reader.call_count == 1 for reader in readers.values())
+    report = json.loads((tmp_path / 'health/cache.json').read_text())
+    assert len(report['problems']) == 1 and failed in report['problems'][0]
+    assert events == ['delivery', 'heartbeat']
+
+
+def test_safety_signed_lag_reader_has_hosted_verifier_and_read_permissions():
+    from workflow_helpers import load_workflow
+    from scripts.terraform_target_contracts import resource_index
+    job = load_workflow(safety.ROOT / '.github/workflows/operational-safety-check.yml')['jobs']['safety']
+    assert job['permissions']['attestations'] == 'read'
+    steps = job['steps']
+    verifier = next(i for i, step in enumerate(steps) if step.get('id') == 'verifier')
+    health = next(i for i, step in enumerate(steps) if step.get('id') == 'health')
+    assert verifier < health and steps[verifier]['run'] == 'python scripts/install_deployment_verifier.py'
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    local, = hcl2.loads((safety.ROOT / 'terraform/envs/prod/github_job_identities.tf').read_text(),
+                       serialization_options=SerializationOptions(strip_string_quotes=True))['locals']
+    assert 'run.jobs.get' in local['observer_permissions']
+    assert local['github_job_permissions']['heartbeat'] == '${local.observer_permissions}'
+    declarations = resource_index()["terraform/envs/prod/github_job_identities.tf"]
+    assert declarations['google_project_iam_member.github_job']['member'] == 'serviceAccount:${google_service_account.github_job[each.key].email}'
+
+
 @pytest.mark.parametrize("enabled,since,text", [("false", stamp(NOW), "disabled"), ("true", "", "SINCE")])
 def test_incident_configuration_finding_is_delivered(tmp_path, monkeypatch, enabled, since, text):
     health_cli(tmp_path, monkeypatch)

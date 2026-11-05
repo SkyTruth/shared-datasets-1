@@ -626,10 +626,12 @@ def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
     monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
     monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
+    (tmp_path / 'result.json').write_text('{"reconcile":false}')
+    (tmp_path / 'claims.json').write_text('[]')
     safety.main()
     report = json.loads((tmp_path/'health/cache.json').read_text())
     assert report['scope'] == safety.HEALTH_SCOPE
-    assert report['problems'] == sorted(['hold expired', f'Health check incomplete: {type(failure).__name__}: {failure}'])
+    assert report['problems'] == sorted(['hold expired', f'Health check incomplete (freshness): {type(failure).__name__}: {failure}'])
     monkeypatch.setattr(safety, 'previous_health', lambda *_: report)
     safety.main()
     assert slack_notify.notify.call_count == 1

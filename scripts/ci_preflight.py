@@ -331,6 +331,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
         add("uv", "run", "--no-sync", "python", ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py", "--local-only", "--format", "markdown", "--fail-on-findings")
         add("uv", "run", "--no-sync", "python", "scripts/check_identity_resolutions.py", "--offline")
+        add("terraform", "-chdir=terraform/envs/prod", "init", "-backend=false", "-input=false", "-lockfile=readonly")
         add("uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"

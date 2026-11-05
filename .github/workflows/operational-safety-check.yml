@@ -16,6 +16,7 @@ jobs:
       contents: read
       actions: write
       deployments: read
+      attestations: read
       id-token: write
     concurrency:
       group: operational-safety-check

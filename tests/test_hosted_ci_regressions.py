@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from scripts import terraform_target_contracts as contracts, wdpa_processing_gate as wdpa
-from workflow_helpers import load_workflow
+from scripts import ci_preflight, terraform_target_contracts as contracts, wdpa_processing_gate as wdpa
+from workflow_helpers import load_workflow, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,9 +31,12 @@ def test_cron_failure_filter_runtime_identity_is_a_declared_prerequisite():
 
 def test_tests_job_initializes_its_own_pinned_providers_before_pytest():
     steps = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['tests']['steps']
-    index = next(i for i, s in enumerate(steps) if 'run-suite' in s.get('run', ''))
+    commands = [args for args, _ in ci_preflight.suite_commands('tests', ROOT,
+        {'base': 'HEAD', 'tested_sha': 'HEAD', 'changed_paths': ['scripts/ci_preflight.py']}, ROOT / '.ignored-output')]
+    index = next(i for i, args in enumerate(commands) if 'pytest' in args)
     expected = ['terraform', '-chdir=terraform/envs/prod', 'init', '-backend=false', '-input=false', '-lockfile=readonly']
-    assert any(shlex.split(s.get('run', '')) == expected for s in steps[:index])
+    assert expected in commands[:index]
+    assert not any(shlex.split(s.get('run', '')) == expected for s in steps)
 
 
 def test_wdpa_digest_uses_only_inputs_installed_by_its_dockerfile(tmp_path, monkeypatch):
@@ -55,9 +58,15 @@ def test_wdpa_digest_uses_only_inputs_installed_by_its_dockerfile(tmp_path, monk
 
 def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    job = jobs['tests']
+    job = jobs['owner-acceptance']
     step = next(s for s in job['steps'] if s.get('name') == 'Owner approval of this exact head required before merge')
     assert job['permissions'] == {'contents': 'read', 'pull-requests': 'read'}
+    assert job['timeout-minutes'] <= 5
+    assert 'owner-acceptance' in jobs['ci-ready']['needs']
+    assert workflow_triggers(load_workflow(ROOT / '.github/workflows/ci.yml'))['pull_request']['types'] == [
+        'opened', 'synchronize', 'reopened', 'ready_for_review']
+    assert any(s.get('env', {}).get('RESULT') == '${{ needs.owner-acceptance.result }}'
+               and 'success' in s.get('run', '') for s in jobs['ci-ready']['steps'])
     assert jobs['pr-terraform-plan']['needs'] == job['needs'] == 'geospatial-changes'
     for clause in ("github.event_name == 'pull_request'", 'github.event.pull_request.head.repo.full_name == github.repository',
                    '!github.event.pull_request.draft', "github.event.pull_request.user.login != 'jonaraphael'"):
@@ -70,7 +79,7 @@ def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
 @pytest.mark.parametrize('selection,approval,expected', [([], 9, 0), (['sea_ice'], 0, 0),
     (['sea_ice'], 1, 1), (['sea_ice'], 2, 2), ('malformed', 0, None), (None, 0, 2)])
 def test_premerge_acceptance_shell_rejects_missing_plan_or_approval(tmp_path, selection, approval, expected):
-    step = next(s for s in load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['tests']['steps']
+    step = next(s for s in load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['owner-acceptance']['steps']
                 if s.get('name') == 'Owner approval of this exact head required before merge')
     if selection is not None:
         plan = tmp_path / 'ci-plans/ci-validation-plan-attempt1/plan.json'

@@ -33,7 +33,7 @@ def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_hol
         'scripts/deployment_revision.py', 'scripts/deployment_emission.py', 'scripts/tested_image_bundle.py',
         '.github/actions/deployment-auth/action.yml', '.github/actions/deployment-bootstrap/action.yml',
         '.github/actions/deployment-bootstrap/approval.py', '.github/actions/deployment-receipt/action.yml',
-        '.github/terraform-targets.json', 'terraform/envs/prod/variables.tf', 'scripts/terraform_target_contracts.py',
+        'scripts/terraform_target_contracts.py',
         'scripts/terraform_plan_allowlist.py', '.github/actions/deployment-bootstrap/restore.py',
         'scripts/install_deployment_verifier.py')],
     ('scripts/tested_image_authorization.py', {'sea_ice', 'catalog_viewer', 'cron_alert_policy'}),
@@ -50,6 +50,20 @@ def test_executor_machinery_selects_one_representative_per_shared_executor(path,
         assert 'production-images' in plan['suites']
         assert 'sea-ice-daily' in plan['production_image_targets']
     assert 'sea_ice' not in select_deployments([path], ingestion_holds=('sea_ice',))
+
+
+@pytest.mark.parametrize('variable', re.findall(r'^variable "([^"]+)"',
+    (ROOT / 'terraform/envs/prod/variables.tf').read_text(), re.M))
+def test_each_variable_change_keeps_every_potential_consumer(variable):
+    # Conservative file selection covers every default, including defaults used
+    # by IAM scopes. No variable is executor-only content.
+    assert variable
+    assert set(select_deployments(['terraform/envs/prod/variables.tf'])) == set(DEPLOYMENTS)
+
+
+@pytest.mark.parametrize('target', DEPLOYMENTS)
+def test_each_registry_target_change_selects_its_owner(target):
+    assert target in select_deployments(['.github/terraform-targets.json'])
 
 
 @pytest.mark.parametrize('target,path', [

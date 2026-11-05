@@ -444,30 +444,42 @@ def main():
         warnings = []
         problems = incident_problems()
         probe_outcome = os.environ.get("SAFETY_PROBE_OUTCOME", "success")
-        complete = False
-        try:
-            warnings, policy_problems = policy_warnings(now)
-            problems += policy_problems
-            problems += audit_freshness(api, now=now)
-            require(probe_outcome != "skipped", "Operational setup failed before discovery: " + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps"))
-            problems += deployed_image_lag(api, now=now)
+        def dataset_freshness():
             from scripts import catalog_drift_guard as catalog
-            problems += freshness(catalog.get_client(), now=now, scheduler=scheduler)
+            return freshness(catalog.get_client(), now=now, scheduler=scheduler)
+
+        def reconciliation_problems():
+            findings = []
             result = json.loads((args.work_dir / "result.json").read_text()) if probe_outcome == "success" else {"reconcile": False}
             if result["reconcile"] and reconciliation_stalled(api, run):
-                problems.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
+                findings.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
             for claim in (json.loads((args.work_dir / "claims.json").read_text()) if probe_outcome == "success" and not incident_problems() else []):
                 if now - native.timestamp(claim["since"]) >= timedelta(hours=24):
-                    problems.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
-            if probe_outcome == "success":
-                warnings += heartbeat_series(now)
-                complete = True
-        except Exception as error:  # External health reads fail into the same scoped, deduplicated report.
-            problems.append(f"Health check incomplete: {type(error).__name__}: {error}")
+                    findings.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
+            return findings
+
+        readers = [
+            ("policy_warnings", lambda: policy_warnings(now)),
+            ("audit_freshness", lambda: ([], audit_freshness(api, now=now))),
+            ("deployed_image_lag", lambda: ([], deployed_image_lag(api, now=now))),
+            ("freshness", lambda: ([], dataset_freshness())),
+            ("reconciliation", lambda: ([], reconciliation_problems())),
+        ]
+        if probe_outcome == "success":
+            readers.append(("heartbeat_series", lambda: (heartbeat_series(now), [])))
+        for name, reader in readers:
+            try:
+                reader_warnings, reader_problems = reader()
+                warnings += reader_warnings
+                problems += reader_problems
+            except Exception as error:  # Each external reader owns its failure finding.
+                problems.append(f"Health check incomplete ({name}): {type(error).__name__}: {error}")
+        if probe_outcome == "skipped":
+            problems.append("Operational setup failed before discovery: " + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps"))
         if probe_outcome != "success":
             problems.append(f"Operational discovery {probe_outcome}; inspect Check operational work")
         report_health(api, run, args.work_dir, problems, warnings, now)
-        if complete:
+        if probe_outcome == "success":
             subprocess.check_call(["gcloud", "logging", "write", "operational-safety-heartbeat", '{"workflow":"operational-safety-check.yml"}',
                 "--payload-type=json", "--severity=INFO", "--project=shared-datasets-1"])
         return

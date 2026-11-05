@@ -17,7 +17,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.terraform_target_contracts import registry, resource_index
+from scripts.terraform_target_contracts import registry
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
@@ -141,16 +141,25 @@ def verify_viewer_image(image):
 def resource_limits(target):
     """Read the declared job/service limits; reject nonliteral configured values."""
     package = target.replace("-", "_")
-    declarations = resource_index(ROOT)[f"terraform/envs/prod/{package}.tf"]
+    text = (ROOT / f"terraform/envs/prod/{package}.tf").read_text()
+    text = re.sub(r'/\*.*?\*/|(?m:^[ \t]*(?:#|//)[^\n]*$)', '', text, flags=re.S)
     if target in {"catalog-viewer", "monitoring-slack"}:
-        container = declarations[f"google_cloud_run_v2_service.{package}"]["template"][0]["containers"][0]
-        values = container["resources"][0].get("limits", {}) if "resources" in container else {"cpu": "1", "memory": "512Mi"}
+        block = re.search(rf'^([ \t]*)resource "google_cloud_run_v2_service" "{package}" {{(.*?)^\1}}', text, re.S | re.M)[2]
+        limits = re.search(r'limits\s*=\s*{([^}]+)}', block, re.S)
+        if limits is None and re.search(r'\bresources\s*{', block):
+            raise ValueError(f"{target}: configured production limits must be literal")
+        # Cloud Run service defaults when Terraform omits resources entirely.
+        block = limits[1] if limits else 'cpu = "1"\nmemory = "512Mi"'
     else:
-        values = declarations[f"module.{package}_job"]
-    if not isinstance(values, dict) or any(not isinstance(values.get(key), str) or re.fullmatch(pattern, values[key]) is None
-           for key, pattern in (("cpu", r"[0-9]+(?:\.[0-9]+)?"), ("memory", r"[0-9]+(?:\.[0-9]+)?(?:Mi|Gi)"))):
-        raise ValueError(f"{target}: production cpu/memory limits must be literal")
-    # CFS quotas preserve production caps even when CI has fewer CPUs.
+        block = re.search(rf'^([ \t]*)module "{package}_job" {{(.*?)^\1}}', text, re.S | re.M)[2]
+    values = {}
+    for key in ("cpu", "memory"):
+        match = re.search(rf'(?:^|,)\s*{key}\s*=\s*"([0-9]+(?:\.[0-9]+)?(?:Mi|Gi)?)"(?=\s*(?:,|$))', block, re.M)
+        if match is None:
+            raise ValueError(f"{target}: production {key} limit must be a literal")
+        values[key] = match[1]
+    # CFS quotas preserve the configured cap even on a smaller CI host. Docker
+    # rejects --cpus above daemon capacity before the container can start.
     return ["--cpu-period", "100000", "--cpu-quota", str(int(Decimal(values["cpu"]) * 100000)),
             "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
 
