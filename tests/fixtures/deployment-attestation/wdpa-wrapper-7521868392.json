@@ -1,0 +1,303 @@
+{
+  "captured_on": "2026-11-05",
+  "source": "https://github.com/SkyTruth/shared-datasets-1/deployments/7521868392",
+  "verified_with": "gh 2.96.0 attestation verify; exact wrapper signer, source and main ref; deny self-hosted runners",
+  "record": {
+    "id": 7521868392,
+    "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+    "ref": "4c4184693752ae7e4810cc871eca03d65f372db1",
+    "environment": "production-wdpa-monthly",
+    "payload": {
+      "schema": "shared-datasets-deployment-v1",
+      "target": "wdpa-monthly",
+      "ci_run_id": 41653631612,
+      "ci_run_attempt": 1,
+      "artifact": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-monthly@sha256:020bb9264a7a10bf67b12dcab264ccfd9658f4e39ba6ae67132827be7eb3e86d",
+      "targets": [
+        "module.wdpa_monthly_job.google_cloud_run_v2_job.this"
+      ],
+      "execution_run_id": 41656494930,
+      "execution_run_attempt": 1
+    },
+    "creator": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    }
+  },
+  "status": {
+    "id": 21262456550,
+    "state": "in_progress",
+    "description": "started",
+    "environment_url": "",
+    "log_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1",
+    "created_at": "2026-11-03T14:46:11Z"
+  },
+  "api": {
+    "repos/SkyTruth/shared-datasets-1": {
+      "id": 1213606315,
+      "full_name": "SkyTruth/shared-datasets-1"
+    },
+    "repos/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1": {
+      "id": 41656494930,
+      "run_attempt": 1,
+      "workflow_id": 324595809,
+      "path": ".github/workflows/wdpa-monthly-deploy.yml",
+      "event": "workflow_dispatch",
+      "head_branch": "main",
+      "head_sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+      "referenced_workflows": [],
+      "repository": {
+        "id": 1213606315,
+        "full_name": "SkyTruth/shared-datasets-1"
+      },
+      "head_repository": {
+        "id": 1213606315,
+        "full_name": "SkyTruth/shared-datasets-1"
+      }
+    },
+    "repos/SkyTruth/shared-datasets-1/actions/runs/41653631612/attempts/1": {
+      "id": 41653631612,
+      "run_attempt": 1,
+      "workflow_id": 269337203,
+      "path": ".github/workflows/ci.yml",
+      "event": "push",
+      "head_branch": "main",
+      "head_sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+      "referenced_workflows": [
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/repo-functionality-alert.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/catalog-web-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/eamlis-monthly-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/catalog-viewer-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/publish-dataset.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/pmtiles-cdn-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/scratch-cleanup-iam-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/prod-terraform-target-apply.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/cron-alert-policy-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/mpatlas-monthly-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/artifact-registry-iam-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/preview-terraform-iam-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/sea-ice-daily-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/dataset-usage-deploy.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/identity-decision-reconcile.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        },
+        {
+          "path": "SkyTruth/shared-datasets-1/.github/workflows/scheduled-ingestion-deploy-iam-sync.yml@4c4184693752ae7e4810cc871eca03d65f372db1",
+          "sha": "4c4184693752ae7e4810cc871eca03d65f372db1",
+          "ref": "refs/heads/main"
+        }
+      ],
+      "repository": {
+        "id": 1213606315,
+        "full_name": "SkyTruth/shared-datasets-1"
+      },
+      "head_repository": {
+        "id": 1213606315,
+        "full_name": "SkyTruth/shared-datasets-1"
+      }
+    },
+    "repos/SkyTruth/shared-datasets-1/actions/workflows/ci.yml": {
+      "id": 269337203,
+      "path": ".github/workflows/ci.yml"
+    },
+    "repos/SkyTruth/shared-datasets-1/actions/workflows/wdpa-monthly-deploy.yml": {
+      "id": 324595809,
+      "path": ".github/workflows/wdpa-monthly-deploy.yml"
+    },
+    "repos/SkyTruth/shared-datasets-1/actions/runs/41653631612/attempts/1/jobs?per_page=100": [
+      {
+        "name": "ci-ready",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "repos/SkyTruth/shared-datasets-1/deployments/7521868392/statuses?per_page=100": [
+      {
+        "id": 21298495740,
+        "state": "success",
+        "description": "verified",
+        "environment_url": "https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-bschh?project=shared-datasets-1",
+        "log_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41738263689/attempts/1",
+        "created_at": "2026-11-03T23:20:51Z"
+      },
+      {
+        "id": 21263316372,
+        "state": "in_progress",
+        "description": "verification_pending",
+        "environment_url": "https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-bschh?project=shared-datasets-1",
+        "log_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1",
+        "created_at": "2026-11-03T14:57:12Z"
+      },
+      {
+        "id": 21262456550,
+        "state": "in_progress",
+        "description": "started",
+        "environment_url": "",
+        "log_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1",
+        "created_at": "2026-11-03T14:46:11Z"
+      }
+    ]
+  },
+  "verification": [
+    {
+      "verificationResult": {
+        "mediaType": "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+        "signature": {
+          "certificate": {
+            "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+            "subjectAlternativeName": "https://github.com/SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml@refs/heads/main",
+            "issuer": "https://token.actions.githubusercontent.com",
+            "githubWorkflowTrigger": "workflow_dispatch",
+            "githubWorkflowSHA": "4c4184693752ae7e4810cc871eca03d65f372db1",
+            "githubWorkflowName": "Ingestion / WDPA monthly deploy",
+            "githubWorkflowRepository": "SkyTruth/shared-datasets-1",
+            "githubWorkflowRef": "refs/heads/main",
+            "buildSignerURI": "https://github.com/SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml@refs/heads/main",
+            "buildSignerDigest": "4c4184693752ae7e4810cc871eca03d65f372db1",
+            "runnerEnvironment": "github-hosted",
+            "sourceRepositoryURI": "https://github.com/SkyTruth/shared-datasets-1",
+            "sourceRepositoryDigest": "4c4184693752ae7e4810cc871eca03d65f372db1",
+            "sourceRepositoryRef": "refs/heads/main",
+            "sourceRepositoryIdentifier": "1213606315",
+            "sourceRepositoryOwnerURI": "https://github.com/SkyTruth",
+            "sourceRepositoryOwnerIdentifier": "2915622",
+            "buildConfigURI": "https://github.com/SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml@refs/heads/main",
+            "buildConfigDigest": "4c4184693752ae7e4810cc871eca03d65f372db1",
+            "buildTrigger": "workflow_dispatch",
+            "runInvocationURI": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1",
+            "sourceRepositoryVisibilityAtSigning": "public"
+          }
+        },
+        "verifiedTimestamps": [
+          {
+            "type": "Tlog",
+            "uri": "https://rekor.sigstore.dev",
+            "timestamp": "2026-11-03T09:46:13-05:00"
+          }
+        ],
+        "verifiedIdentity": {
+          "subjectAlternativeName": {
+            "subjectAlternativeName": "",
+            "regexp": "^https://github.com/SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml"
+          },
+          "issuer": {
+            "issuer": "",
+            "regexp": ".*"
+          },
+          "runnerEnvironment": "github-hosted"
+        },
+        "statement": {
+          "_type": "https://in-toto.io/Statement/v1",
+          "subject": [
+            {
+              "name": "record-7521868392-status-21262456550.json",
+              "digest": {
+                "sha256": "967085dc917d5fb73033b83b7d9ff62beab3e2660b10d6a38687cb6e98715f95"
+              }
+            }
+          ],
+          "predicateType": "https://slsa.dev/provenance/v1",
+          "predicate": {
+            "buildDefinition": {
+              "buildType": "https://actions.github.io/buildtypes/workflow/v1",
+              "externalParameters": {
+                "workflow": {
+                  "path": ".github/workflows/wdpa-monthly-deploy.yml",
+                  "ref": "refs/heads/main",
+                  "repository": "https://github.com/SkyTruth/shared-datasets-1"
+                }
+              },
+              "internalParameters": {
+                "github": {
+                  "event_name": "workflow_dispatch",
+                  "repository_id": "1213606315",
+                  "repository_owner_id": "2915622",
+                  "runner_environment": "github-hosted"
+                }
+              },
+              "resolvedDependencies": [
+                {
+                  "digest": {
+                    "gitCommit": "4c4184693752ae7e4810cc871eca03d65f372db1"
+                  },
+                  "uri": "git+https://github.com/SkyTruth/shared-datasets-1@refs/heads/main"
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "https://github.com/SkyTruth/shared-datasets-1/.github/workflows/wdpa-monthly-deploy.yml@refs/heads/main"
+              },
+              "metadata": {
+                "invocationId": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/41656494930/attempts/1"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

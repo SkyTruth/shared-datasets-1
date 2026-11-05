@@ -43,6 +43,7 @@ TERRAFORM_WORKFLOWS = {
 }
 INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
 INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class DeploymentError(RuntimeError):
@@ -74,19 +75,30 @@ class GitHub:
         return json.loads(subprocess.check_output(["gh", "api", "--method", "POST", path, "--input", "-"], input=json.dumps(payload).encode()))
 
 
+def verify_run(api, repository, run, *, paths, events, repo=None, workflow=None,
+               reason="untrusted deployment execution workflow/event"):
+    """Validate an API run's repository, workflow and main provenance once."""
+    repo = repo if repo is not None else api.get(f"repos/{repository}")
+    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository, "repository identity mismatch")
+    require(run.get("path") in paths and run.get("event") in events and run.get("head_branch") == "main", reason)
+    workflow = workflow if workflow is not None else api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")
+    require(type(workflow.get("id")) is int and workflow["id"] > 0
+            and workflow["id"] == run.get("workflow_id") and workflow.get("path") == run["path"], "workflow identity mismatch")
+    require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"]
+                for key in ("repository", "head_repository")), "execution repository mismatch")
+    return repo
+
+
 def verify_ci(api, repository, executor, run_id, attempt):
     require(SHA.fullmatch(executor), "executor must be a complete SHA")
     require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0, "source run and attempt must be positive integers")
     repo = api.get(f"repos/{repository}")
     workflow = api.get(f"repos/{repository}/actions/workflows/ci.yml")
-    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository, "repository identity mismatch")
-    require(type(workflow.get("id")) is int and workflow["id"] > 0 and workflow.get("path") == ".github/workflows/ci.yml", "CI workflow identity mismatch")
     run = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
+    verify_run(api, repository, run, paths={".github/workflows/ci.yml"}, events={"push"}, repo=repo, workflow=workflow,
+               reason="source must be the repository CI workflow on main push")
     require(run.get("id") == run_id and run.get("run_attempt") == attempt, "CI run attempt mismatch")
-    require(run.get("workflow_id") == workflow["id"] and run.get("path") == ".github/workflows/ci.yml", "source must be the repository CI workflow")
-    require(run.get("event") == "push" and run.get("head_branch") == "main", "source must be a main push")
     require(run.get("head_sha") == executor, "executor differs from tested CI revision")
-    require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "source CI repository mismatch")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "jobs")
     ready = [job for job in jobs if job.get("name") == "ci-ready"]
     require(len(ready) == 1 and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success", "ci-ready is missing, ambiguous, cancelled or unsuccessful")
@@ -121,11 +133,7 @@ def verify_record_identity(api, repository, record):
     allowed_events = {"push", "workflow_dispatch", "workflow_run"}
     if payload["target"] == "catalog-web" and execution.get("path") == ".github/workflows/catalog-web-deploy.yml" and execution.get("head_sha") == record["sha"]:
         allowed_events.add("schedule")
-    require(execution.get("path") in allowed_callers and execution.get("event") in allowed_events
-            and execution.get("head_branch") == "main", "record originates from an untrusted execution")
-    workflow = api.get(f"repos/{repository}/actions/workflows/{execution['path'].rsplit('/', 1)[-1]}")
-    require(workflow.get("id") == execution.get("workflow_id") and workflow.get("path") == execution["path"], "record execution workflow mismatch")
-    require(all(execution.get(key, {}).get("id") == repo.get("id") and execution.get(key, {}).get("full_name") == repository for key in ("repository", "head_repository")), "record execution repository mismatch")
+    verify_run(api, repository, execution, paths=allowed_callers, events=allowed_events, repo=repo)
     if execution["event"] == "push":
         require(execution.get("head_sha") == record["sha"] and payload["execution_run_id"] == payload["ci_run_id"] and payload["execution_run_attempt"] == payload["ci_run_attempt"], "record is not its tested push attempt")
     return payload
@@ -256,15 +264,10 @@ def verify_context(args, api):
     allowed_callers = {".github/workflows/ci.yml", allowed_path}
     if args.workflow == "catalog-web-deploy.yml":
         allowed_callers.add(".github/workflows/publish-dataset.yml")
-    require(current.get("path") in allowed_callers, "untrusted deployment caller")
     allowed_events = {"push", "workflow_dispatch", "workflow_run"}
     if args.workflow == "catalog-web-deploy.yml" and current.get("path") == allowed_path and current.get("head_sha") == args.executor_sha:
         allowed_events.add("schedule")
-    require(current.get("event") in allowed_events and current.get("head_branch") == "main", "untrusted deployment event")
-    repo = api.get(f"repos/{repository}")
-    workflow = api.get(f"repos/{repository}/actions/workflows/{current['path'].rsplit('/', 1)[-1]}")
-    require(current.get("workflow_id") == workflow.get("id") and workflow.get("path") == current["path"], "deployment workflow identity mismatch")
-    require(all(current.get(key, {}).get("full_name") == repository and current.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "deployment repository mismatch")
+    repo = verify_run(api, repository, current, paths=allowed_callers, events=allowed_events)
     if current.get("event") == "push":
         require(current.get("path") == ".github/workflows/ci.yml" and current.get("head_sha") == args.executor_sha,
                 "automatic deployment must execute its current tested main push")
@@ -358,13 +361,12 @@ def finish(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
-    state = {"applied": "success", "verified": "success", "verification_pending": "in_progress", "failed": "failure", "unknown": "error"}[args.phase]
     environment_url = ""
     if args.execution:
         require(TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
         environment_url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{args.execution}?project=shared-datasets-1"
     post_status(api, repository, record, {
-        "environment_url": environment_url, "state": state, "description": args.phase, "auto_inactive": False,
+        "environment_url": environment_url, "state": emissions.PHASES[args.phase], "description": args.phase, "auto_inactive": False,
     })
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -374,20 +376,38 @@ def finish(args, api):
 
 
 
+def apply_job_path(target, root=None):
+    """Resolve Actions' composed display name from the registered caller chain."""
+    import yaml
+    root = root or ROOT
+    names = []
+    for filename, leaf in (("ci.yml", INGESTION_CONFIGS[target]["workflow"]),
+                           (INGESTION_CONFIGS[target]["workflow"], "ingestion-deploy.yml"),
+                           ("ingestion-deploy.yml", None)):
+        jobs = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"]
+        matches = [(key, job) for key, job in jobs.items()
+                   if job.get("uses") == "./.github/workflows/" + leaf] if leaf else [("apply", jobs["apply"])]
+        require(len(matches) == 1, "ambiguous apply workflow chain")
+        key, job = matches[0]
+        names.append(job.get("name", key))
+    return " / ".join(names)
+
+
 def wait_applied(args, api, *, attempts=1440, pause=time.sleep):
     """Observe the attesting apply job while its wrapper retains target ownership."""
     repository = verify_context(args, api)
+    applied_name = apply_job_path(args.target)
     path = f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"
     for attempt in range(attempts):
         jobs = api.pages(path, "jobs")
-        applied = [job for job in jobs if job["name"] == "dataset-usage-rollout / deploy / Apply ingestion Terraform"]
+        applied = [job for job in jobs if job["name"] == applied_name]
         require(len(applied) <= 1, "ambiguous usage apply job")
         if applied and applied[0]["status"] == "completed":
             result = applied[0]["conclusion"]
             require(result == "success" or result == "skipped" and check(args, api)["proceed"] == "false",
                     "usage apply did not succeed or prove a verified no-op/supersession")
             return
-        require(not any(job["name"].startswith("dataset-usage-rollout /") and job.get("conclusion") in {"failure", "cancelled", "timed_out"} for job in jobs), "usage rollout failed before apply completion")
+        require(not any(job["name"].startswith(applied_name.split(" / ")[0] + " / ") and job.get("conclusion") in {"failure", "cancelled", "timed_out"} for job in jobs), "usage rollout failed before apply completion")
         if attempt + 1 < attempts:
             pause(10)
     raise DeploymentError("usage apply did not complete within the bounded wait")
@@ -625,27 +645,18 @@ def main():
             recovery.add_argument("--plan-json")
             recovery.add_argument("--executor-dir")
     args = parser.parse_args()
+    api = GitHub()
     try:
-        if args.command == "wait-applied":
-            wait_applied(args, GitHub())
-        elif args.command == "window":
+        if args.command == "window":
             runtime_window(args)
-        elif args.command in {"recovery-inputs", "reconcile"}:
-            recover(args, GitHub())
         elif args.command == "pending":
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                stream.write("records=" + json.dumps(pending(GitHub(), os.environ["GITHUB_REPOSITORY"])) + "\n")
-        elif args.command == "observe":
-            observe(args, GitHub())
-        elif args.command == "verify":
-            verify_context(args, GitHub())
-        elif args.command in {"check", "start"}:
-            outputs = start(args, GitHub()) if args.command == "start" else check(args, GitHub())
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                for key, value in outputs.items():
-                    stream.write(f"{key}={value}\n")
+            outputs = {"records": json.dumps(pending(api, os.environ["GITHUB_REPOSITORY"]))}
         else:
-            finish(args, GitHub())
+            outputs = {"wait-applied": wait_applied, "recovery-inputs": recover, "reconcile": recover,
+                       "observe": observe, "verify": verify_context, "check": check, "start": start, "finish": finish}[args.command](args, api)
+        if args.command in {"pending", "check", "start"}:
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+                stream.writelines(f"{key}={value}\n" for key, value in outputs.items())
     except DeploymentError as exc:
         parser.exit(1, f"DEPLOYMENT_NOT_READY: {exc}\n")
 

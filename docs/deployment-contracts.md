@@ -55,7 +55,7 @@ synchronization names, exact IAM target scopes, viewer/CDN/usage `plan_scopes` a
 named read-only `permission_probes`. Unknown permission targets fail closed.
 Execution, offline dependency checks, saved-plan guards and recovery read that
 same registry; names preserve historical signed hash identities. CI derives
-Terraform source consumers from these scopes rather than copying a path table.
+Terraform source consumers from these scopes. The registry’s `selection_exceptions` table owns traversal boundaries, excluded validators and reasoned per-deployment input additions. WDPA processing limits come from the same parsed HCL index.
 The [resolved CI plan](ci-preflight.md#selection-and-offline-checks) carries the
 resulting suites and required `production_image_targets` unchanged to consumers.
 
@@ -63,7 +63,7 @@ resulting suites and required `production_image_targets` unchanged to consumers.
 
 Four publisher wrappers hold `ingestion-<target>` across prepare/apply/verify.
 Usage holds `deployment-dataset-usage` continuously across bootstrap and rollout.
-CI's read-only `dataset-usage` gate observes this attempt's attesting apply job;
+CI's read-only `dataset-usage` gate derives the composed apply job name from the CI, wrapper and executor YAML, then observes this attempt's attesting apply job;
 ingestion and cleanup IAM proceed while `dataset-usage-rollout` keeps the canary
 inside that target queue. Failed/deferred applies fail; skipped applies require
 signed no-op/supersession evidence. Only shared `apply` holds `prod-terraform-state`

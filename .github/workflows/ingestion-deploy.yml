@@ -186,11 +186,15 @@ jobs:
     - name: Terraform init
       run: terraform -chdir=terraform/envs/prod init -input=false
       if: steps.window.outputs.ready == 'true'
-    - name: Set up uv for telemetry plan validation
-      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: 3.12.12
+    - name: Set up uv for plan validation
+      if: steps.window.outputs.ready == 'true'
       uses: astral-sh/setup-uv@v5
       with:
         version: 0.11.8
+        enable-cache: true
     - name: Terraform plan
       run: |
         if [[ "$PLAN_GUARD" == usage ]]; then uv sync --locked --all-groups; fi
@@ -202,7 +206,7 @@ jobs:
       if: steps.window.outputs.ready == 'true'
     - name: Enforce ingestion resource-change allowlist
       run: |
-        python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes \
+        uv run --frozen python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes \
           --job-image-target "$TARGET" --expected-image "$IMAGE" --expected-config "$TESTED_IMAGE_CONFIG" \
           --refusal-prefix "Refusing $TARGET deploy"
       if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD != 'usage'
