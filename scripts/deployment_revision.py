@@ -345,15 +345,28 @@ def start(args, api):
         targets = [r["address"] for r in plan.get("resource_changes", []) if r.get("change", {}).get("actions") not in ([], ["no-op"], ["read"])]
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
+    execution = ""
+    if (args.target in INGESTION_TARGETS and args.plan_json and plan.get("resource_changes") and not targets and not plan.get("deferred_changes")
+            and all(row["change"]["actions"] == ["no-op"] for row in plan.get("resource_changes", []))
+            and all(row["actions"] == ["no-op"] for row in plan.get("output_changes", {}).values())):
+        live = subprocess.check_output(["gcloud", "run", "jobs", "describe", args.target, "--region=us-central1",
+            "--project=shared-datasets-1", "--format=value(spec.template.spec.template.spec.containers[0].image)"], text=True, timeout=60).strip()
+        if live == args.artifact:
+            latest = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
+                "--region=us-central1", "--project=shared-datasets-1", "--limit=1", "--sort-by=~metadata.creationTimestamp", "--format=json"], text=True, timeout=60))
+            if latest and terminal_execution(latest[0], args.artifact) == "verified":
+                execution = latest[0]["metadata"]["name"].rsplit("/", 1)[-1]
+                targets = [row["address"] for row in plan["resource_changes"]]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
     record = api.post(f"repos/{repository}/deployments", {
         "ref": args.executor_sha, "environment": environment,
         "auto_merge": False, "required_contexts": [], "production_environment": True,
         "payload": {"schema": SCHEMA, "target": args.target, "ci_run_id": args.source_run_id, "ci_run_attempt": args.source_run_attempt,
-                    "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
+                    "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                    **({"noop_execution": execution} if execution else {})},
     })
     post_status(api, repository, record, {"state": "in_progress", "description": "started", "auto_inactive": False, "environment_url": ""})
-    return {"proceed": "true", "deployment_id": str(record["id"])}
+    return {"proceed": "true", "deployment_id": str(record["id"]), "noop": str(bool(execution)).lower(), "execution": execution}
 
 
 def finish(args, api):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from functools import cache
 import json
 import os
@@ -10,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit, unquote
 import urllib.request
 
@@ -19,8 +21,7 @@ from scripts.deployment_permissions import checks
 from scripts.ingestion_targets import DEPLOY_TARGETS
 from scripts.terraform_plan_allowlist import blocked_changes
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks, probe_call_checks, require
-from scripts.terraform_target_contracts import ROOT, address, plan_scope, registry
-from scripts.terraform_target_contracts import resource_index
+from scripts.terraform_target_contracts import ROOT, address, plan_scope, registry, resource_index
 from scripts.tested_image_bundle import image_consumers
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
@@ -75,8 +76,7 @@ def selected(plan, root=ROOT):
 
 def same_repo(event):
     pr = event.get("pull_request", {})
-    return (pr.get("head", {}).get("repo", {}).get("full_name") == REPOSITORY
-            and pr.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY)
+    return all(pr.get(side, {}).get("repo", {}).get("full_name") == REPOSITORY for side in ("head", "base"))
 
 
 def terraform(command, *arguments, directory, environment=None):
@@ -139,24 +139,32 @@ class PolicyReader:
     def read(self, url, body=None):
         request = urllib.request.Request(url, data=body.encode() if body is not None else None,
                                          headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.load(response)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    return json.load(response)
+            except (urllib.error.URLError, TimeoutError) as error:
+                if attempt == 2 or isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600:
+                    detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else "transport timeout/unavailable"
+                    raise PlanFailure("policy read " + detail + ": " + url) from None
+                time.sleep(5 * (attempt + 1))
 
     def verify(self, required, deployer, project_number):
         for url, permissions in required:
             for permission in permissions:
-                # Troubleshooter is read-only and handles inherited bindings,
-                # conditional grants and deny policies.
-                # UNKNOWN/permission-denied responses never imply access.
+                resource = full_resource(url, project_number)
                 body = json.dumps({"accessTuple": {"principal": deployer,
-                    "fullResourceName": full_resource(url, project_number), "permission": permission}})
-                verdict = self.read("https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", body)
+                    "fullResourceName": resource, "permission": permission}})
+                try:
+                    verdict = self.read("https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", body)
+                except PlanFailure as error:
+                    raise PlanFailure(permission + " on " + resource + ": " + str(error)) from None
                 granted = (verdict.get("overallAccessState") == "CAN_ACCESS" and
                            verdict.get("allowPolicyExplanation", {}).get("allowAccessState") == "ALLOW_ACCESS_STATE_GRANTED")
                 print(permission, "granted" if granted else "missing or unknown")
                 if not granted:
                     raise PlanFailure("production deploy identity lacks proven permission " + permission
-                                      + " on " + full_resource(url, project_number))
+                                      + " on " + resource)
 
 
 class PlanFailure(ValueError):
@@ -169,7 +177,6 @@ def run(plan, root=ROOT):
     if not selected(plan, root):
         return
     targets = scopes(plan, root)
-    require(targets, "Terraform change has no registered plan scope")
     excluded = registry(root, section="pr_plan_exclusions")
     for scope in targets:
         if scope["name"] in excluded:
@@ -178,8 +185,7 @@ def run(plan, root=ROOT):
     if not targets:
         return
     prod = root / "terraform/envs/prod"
-    version = json.loads(terraform("version", "-json", directory=prod))
-    require(version["terraform_version"] == TOOLCHAIN["terraform"], "PR Terraform version differs from pin")
+    require(json.loads(terraform("version", "-json", directory=prod))["terraform_version"] == TOOLCHAIN["terraform"], "PR Terraform version differs from pin")
     # Do not use PR-authored TF_CLI_ARGS or TF_LOG to leak the state to logs.
     environment = {key: value for key, value in os.environ.items() if not key.startswith(("TF_VAR_", "TF_CLI_ARGS", "TF_LOG"))}
     terraform("init", "-input=false", "-lockfile=readonly", directory=prod, environment=environment)
@@ -189,11 +195,9 @@ def run(plan, root=ROOT):
     project_number = reader.read("https://cloudresourcemanager.googleapis.com/v1/projects/" + PROJECT)["projectNumber"]
     deployer = os.environ["PRODUCTION_TERRAFORM_SERVICE_ACCOUNT"]
     require(re.fullmatch(r"[a-z0-9-]+@" + PROJECT + r"\.iam\.gserviceaccount\.com", deployer), "invalid production deploy identity")
-    work = Path(os.environ["RUNNER_TEMP"]) / "pr-terraform"
-    work.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=work) as temporary:
-        for scope in targets:
-            try:
+    def execute(scope):
+        try:
+            with tempfile.TemporaryDirectory(prefix="pr-terraform-", dir=os.environ["RUNNER_TEMP"]) as temporary:
                 path = Path(temporary) / "plan.tfplan"
                 variables_path = Path(temporary) / "variables.tfvars.json"
                 variables_path.write_text(json.dumps({**scope["variables"], **variables}))
@@ -208,16 +212,18 @@ def run(plan, root=ROOT):
                                           job_image=(scope["job_image"][0], variables[scope["job_image"][1]]) if scope["job_image"] else None,
                                           expected_config=variables.get("wdpa_monthly_image_config_digest"))
                 if blocked:
-                    resources = sorted({address(row["address"]) for row in saved.get("resource_changes", [])})
-                    raise PlanFailure("saved plan violates resource/action/image policy; resources " + ", ".join(resources))
+                    raise PlanFailure("saved plan violates resource/action/image policy; resources " + ", ".join(
+                        sorted({address(row["address"]) for row in saved.get("resource_changes", [])})))
                 required = plan_checks(saved, project_number=project_number)
                 reader.verify([*probe_call_checks(required), *scope["required"], *required], deployer, project_number)
                 for row in saved.get("resource_changes", []):
-                    print(row["address"], "/".join(row["change"]["actions"]))
-            except PlanFailure as error:
-                raise PlanFailure(scope["name"] + ": " + str(error)) from None
-            except (ValueError, KeyError, OSError, subprocess.SubprocessError):
-                raise PlanFailure(scope["name"] + ": Terraform plan or permission validation failed; attribute diagnostics withheld") from None
+                    print(scope["name"], row["address"], "/".join(row["change"]["actions"]))
+        except PlanFailure as error:
+            raise PlanFailure(scope["name"] + ": " + str(error)) from None
+        except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+            raise PlanFailure(scope["name"] + ": Terraform plan or permission validation failed; attribute diagnostics withheld") from None
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(execute, targets))
 
 
 def main():

@@ -47,7 +47,7 @@ module "mpatlas_monthly_job" {
   name                  = "mpatlas-monthly"
   image                 = var.mpatlas_monthly_image
   service_account_email = module.mpatlas_job_service_account.email
-  cpu                   = "6"
+  cpu                   = "4"
   memory                = "8Gi"
   timeout               = "3600s"
   max_retries           = 0

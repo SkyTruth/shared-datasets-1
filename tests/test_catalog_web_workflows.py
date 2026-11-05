@@ -247,7 +247,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             {"group": "release-index-rebuild-${{ inputs.asset_slug }}", "cancel-in-progress": False},
         )
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ github.workflow_sha }}")
-        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
+        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 1)
         self.assertEqual(
             env["PUBLISHER_SERVICE_ACCOUNT"],
             "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
