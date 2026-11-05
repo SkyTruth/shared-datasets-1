@@ -197,7 +197,8 @@ class TargetApplyCallerTests(unittest.TestCase):
                 self.assertNotIn("iam", jobs)
                 self.assertEqual(jobs["deploy"]["uses"], "./.github/workflows/ingestion-deploy.yml")
                 steps = {step.get("name"): step for step in expanded_steps(REPO_ROOT, shared_workflow()["jobs"]["prepare"])}
-                self.assertIn("Verify live deployment permissions", steps)
+                apply = {step.get("name"): step for step in expanded_steps(REPO_ROOT, shared_workflow()["jobs"]["apply"])}
+                self.assertIn("Verify complete saved-plan mutation permissions", apply)
                 self.assertIn("Verify tested main revision", steps)
 
 
@@ -268,6 +269,8 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_targets={
                 "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
                 "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+                "google_project_iam_custom_role.github_identity_manager",
+                "google_project_iam_member.github_identity_manager",
             },
             expected_tf_vars=tf_vars,
         )
@@ -278,7 +281,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             push_paths=None,
             job_name="writer",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
-            expected_needs="bootstrap",
+            expected_needs=["bootstrap", "identities"],
             sync_name="Artifact Registry writer binding sync",
             refusal_prefix="Refusing automatic Artifact Registry IAM writer sync",
             expected_targets={

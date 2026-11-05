@@ -40,22 +40,6 @@ runs:
       executor-sha: ${{ inputs.executor-sha }}
       source-run-id: ${{ inputs.source-run-id }}
       source-run-attempt: ${{ inputs.source-run-attempt }}
-  - name: Validate Terraform auth configuration
-    env:
-      TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.workload-identity-provider }}
-      TERRAFORM_SERVICE_ACCOUNT: ${{ inputs.service-account }}
-    run: |
-      set -euo pipefail
-
-      if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-        echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-        exit 1
-      fi
-      if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-        echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-        exit 1
-      fi
-    shell: bash
   - name: Resolve registered Terraform target
     env:
       INPUT_TF_VARS: ${{ inputs.tf-vars }}
@@ -77,15 +61,13 @@ runs:
       python scripts/deployment_revision.py check --target "$target" --workflow "$CALLER_WORKFLOW" \
         --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
     shell: bash
-  - name: Authenticate to Google Cloud
+  - name: Authenticate protected deployer
     if: ${{ steps.replay.outputs.proceed == 'true' }}
-    uses: google-github-actions/auth@v2
+    uses: ./.github/actions/deployment-auth
+    env:
+      TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.workload-identity-provider }}
     with:
-      workload_identity_provider: ${{ inputs.workload-identity-provider }}
-      service_account: ${{ inputs.service-account }}
-  - name: Set up gcloud
-    if: ${{ steps.replay.outputs.proceed == 'true' }}
-    uses: google-github-actions/setup-gcloud@v2
+      service-account: ${{ inputs.service-account }}
   - name: Verify prerequisite deployment permissions
     if: ${{ steps.replay.outputs.proceed == 'true' }}
     run: python scripts/deployment_permissions.py --target "$READINESS_TARGET"

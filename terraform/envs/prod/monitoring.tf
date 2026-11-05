@@ -423,19 +423,18 @@ EOT
   ]
 }
 
-# The existing publisher reads Scheduler/executions/heartbeat series and writes
-# the heartbeat; protected monitoring sync provisions this role first.
+# Only the dedicated safety workflow identity may emit the heartbeat.
 resource "google_project_iam_custom_role" "operational_safety_reader" {
   project     = var.project_id
   role_id     = "sharedDatasetsOperationalSafetyReader"
   title       = "Shared datasets operational safety reader"
-  permissions = ["cloudscheduler.jobs.get", "run.executions.get", "logging.logEntries.create", "monitoring.timeSeries.list"]
+  permissions = ["logging.logEntries.create"]
 }
 
 resource "google_project_iam_member" "operational_safety_reader" {
   project = var.project_id
   role    = google_project_iam_custom_role.operational_safety_reader.name
-  member  = module.shared_datasets_publisher_service_account.member
+  member  = "serviceAccount:${google_service_account.github_job["heartbeat"].email}"
 }
 
 resource "google_logging_metric" "operational_safety_heartbeat" {

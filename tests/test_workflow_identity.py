@@ -49,13 +49,13 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
         assert set(trigger["workflows"]) == {name for file in upstream for name in WORKFLOW_NAMES[file]}
 
 
-def test_readonly_workflow_names_continue_matching_the_existing_oidc_policy():
-    # Renaming these labels requires a separately protected IAM migration first.
+def test_readonly_workflow_files_match_the_oidc_policy_independently_of_labels():
     policy = (ROOT / "terraform/envs/prod/github_readonly_iam.tf").read_text()
-    allowed = set(re.findall(r"assertion.workflow == '([^']+)'", policy))
-    assert allowed == {load_workflow(WORKFLOWS / filename)["name"] for filename in (
+    assert 'assertion.workflow ==' not in policy
+    allowed = set(json.loads((ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())['bucket_reader'])
+    assert allowed == set((
         "bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml",
-    )}
+    ))
 
 
 @pytest.mark.parametrize("name", WORKFLOW_NAMES["ci.yml"])

@@ -124,8 +124,9 @@ def assert_protected_terraform_sync(
         testcase.assertNotIn(f"-target={resource}", plan_run)
         testcase.assertNotIn(f'"{resource}"', enforce_run)
 
-    testcase.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", all_runs)
-    testcase.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", all_runs)
+    configured = steps["Require a configured protected identity"]
+    testcase.assertEqual(configured["run"], 'test -n "$ACCOUNT" && test -n "$PROVIDER"')
+    testcase.assertEqual(configured["env"]["PROVIDER"], '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}')
     testcase.assertNotIn(
         "vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER",
         all_runs,

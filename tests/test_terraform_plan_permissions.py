@@ -54,7 +54,7 @@ def test_project_operation_table_retains_action_restrictions(kind):
     value = {"project": PROJECT, "secret_id": "fixture", "workload_identity_pool_id": "fixture",
              "workload_identity_pool_provider_id": "fixture"}
     with pytest.raises(ValueError, match="unsupported"):
-        checks(plan(row(kind, ["update" if kind != "google_monitoring_notification_channel" else "delete"], value)))
+        checks(plan(row(kind, ["create" if kind == "google_iam_workload_identity_pool_provider" else "update" if kind != "google_monitoring_notification_channel" else "delete"], value)))
 
 
 class SavedPlanPermissionTests(unittest.TestCase):

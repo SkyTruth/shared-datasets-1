@@ -21,7 +21,14 @@ def test_terraform_bootstrap_declares_caller_inputs_and_ignores_conflicting_ambi
               'workload-identity-provider': 'reviewed-provider', 'service-account': 'reviewed-account'}
     steps = list(expanded_steps(ROOT, {'steps': [{'uses': caller['uses'], 'with': inputs}]}))
     auth = next(s for s in steps if str(s.get('uses', '')).startswith('google-github-actions/auth@'))
-    assert auth['with'] == {'workload_identity_provider': 'reviewed-provider', 'service_account': 'reviewed-account'}
+    assert auth['with'] == {'workload_identity_provider': '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}',
+                           'service_account': '${{ inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT }}'}
+    from workflow_helpers import load_workflow
+    bootstrap = load_workflow(ROOT / '.github/actions/deployment-bootstrap/terraform/action.yml')
+    scoped = next(s for s in bootstrap['runs']['steps'] if s.get('uses') == './.github/actions/deployment-auth')
+    # Explicit composite inputs outrank a caller's conflicting ambient settings.
+    assert scoped['env']['TERRAFORM_WORKLOAD_IDENTITY_PROVIDER'] == '${{ inputs.workload-identity-provider }}'
+    assert scoped['with']['service-account'] == '${{ inputs.service-account }}'
     resolve = next(s for s in steps if s.get('name') == 'Resolve registered Terraform target')
     result = subprocess.run(['bash', '-eu', '-c', resolve['run']], cwd=ROOT, capture_output=True, text=True,
         env={**os.environ, 'GITHUB_ENV': str(tmp_path / 'env'), 'SYNC_NAME': 'foreign', 'CALLER_WORKFLOW': 'foreign.yml', **resolve['env']})

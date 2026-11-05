@@ -1,6 +1,6 @@
 """Project-local reset preconditions; existing administrators remain trusted.
 
-The protected deployment identity reads job status. The existing publisher
+The protected observer identity reads job status. The existing publisher
 writes the reviewed reset. No IAM policies or organization access are needed.
 """
 
@@ -12,7 +12,7 @@ PROJECT = "shared-datasets-1"
 BUCKET = "skytruth-shared-datasets-1"
 REGION = "us-central1"
 PUBLISHER_ACCOUNT = f"shared-datasets-publisher@{PROJECT}.iam.gserviceaccount.com"
-DEPLOYER_ACCOUNT = f"shared-datasets-terraform@{PROJECT}.iam.gserviceaccount.com"
+DEPLOYER_ACCOUNT = f"shared-datasets-observer@{PROJECT}.iam.gserviceaccount.com"
 ASSET_JOBS = {"wdpa-marine": "wdpa-monthly", "wdpa-terrestrial": "wdpa-monthly",
               "ims-sea-ice-extent": "sea-ice-daily"}
 

@@ -6,7 +6,9 @@
       "readiness_target": "iam-bootstrap",
       "resources": [
         "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-        "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager"
+        "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+        "google_project_iam_custom_role.github_identity_manager",
+        "google_project_iam_member.github_identity_manager"
       ],
       "post_apply_wait_seconds": 30
     },
@@ -24,9 +26,7 @@
         "google_project_service.monitoring_slack_pubsub",
         "google_project_iam_custom_role.monitoring_alert_policy_manager",
         "google_project_iam_member.github_actions_monitoring_alert_policy_manager",
-        "google_project_iam_custom_role.monitoring_incident_reader",
-        "google_project_iam_custom_role.operational_safety_reader",
-        "google_project_iam_member.operational_safety_reader"
+        "google_project_iam_custom_role.monitoring_incident_reader"
       ],
       "block_deletes": true,
       "post_apply_wait_seconds": 30
@@ -284,6 +284,41 @@
       ],
       "block_deletes": true,
       "image_placeholder": "unused-by-state-read-iam-sync"
+    },
+    "GitHub workflow identity sync": {
+      "workflow": "artifact-registry-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_iam_workload_identity_pool_provider.github",
+        "google_iam_workload_identity_pool_provider.github_readonly",
+        "google_service_account_iam_binding.github_actions_terraform_wif",
+        "google_service_account_iam_member.shared_datasets_publisher_github_wif",
+        "google_service_account_iam_member.github_readonly_wif",
+        "google_service_account.github_job[\"observer\"]",
+        "google_project_iam_custom_role.github_job[\"observer\"]",
+        "google_project_iam_member.github_job[\"observer\"]",
+        "google_service_account_iam_member.github_job_wif[\"observer\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"observer\"]",
+        "google_service_account.github_job[\"runtime\"]",
+        "google_project_iam_custom_role.github_job[\"runtime\"]",
+        "google_project_iam_member.github_job[\"runtime\"]",
+        "google_service_account_iam_member.github_job_wif[\"runtime\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"runtime\"]",
+        "google_service_account.github_job[\"heartbeat\"]",
+        "google_project_iam_custom_role.github_job[\"heartbeat\"]",
+        "google_project_iam_member.github_job[\"heartbeat\"]",
+        "google_service_account_iam_member.github_job_wif[\"heartbeat\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"heartbeat\"]",
+        "google_service_account.github_job[\"reconciler\"]",
+        "google_project_iam_custom_role.github_job[\"reconciler\"]",
+        "google_project_iam_member.github_job[\"reconciler\"]",
+        "google_service_account_iam_member.github_job_wif[\"reconciler\"]",
+        "google_project_iam_custom_role.operational_safety_reader",
+        "google_project_iam_member.operational_safety_reader",
+        "google_service_account_iam_member.feature_preview_loader_github_wif",
+        "google_storage_bucket_iam_member.monitoring_slack_recovery"
+      ],
+      "block_deletes": false
     }
   },
   "plan_scopes": {
@@ -380,48 +415,619 @@
     }
   },
   "permission_probes": {
-    "iam-bootstrap": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"]]],
-    "terraform-state-read": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["compute.globalAddresses.get", "compute.regionNetworkEndpointGroups.get", "compute.sslCertificates.get", "compute.targetHttpProxies.get", "iam.workloadIdentityPoolProviders.get"]]],
-    "artifact-registry": [["https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions", ["artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"]]],
-    "artifact-registry-images": [["https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions", ["artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts", "artifactregistry.repositories.uploadArtifacts", "artifactregistry.dockerimages.get", "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update"]]],
-    "monitoring-slack-secret": [["https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/shared-datasets-slack-bot-token:testIamPermissions", ["secretmanager.versions.add"]]],
-    "monitoring-alerts": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update", "logging.logMetrics.delete", "logging.notificationRules.create", "logging.notificationRules.delete", "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete", "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update", "monitoring.notificationChannels.get", "monitoring.notificationChannels.list"]]],
-    "preview-service-account-iam": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list"]], ["https://iam.googleapis.com/v1/projects/shared-datasets-1/locations/global/workloadIdentityPools/github:testIamPermissions", ["iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules"]]],
-    "bucket-iam": [["https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.buckets.getIamPolicy&permissions=storage.buckets.setIamPolicy", ["storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy"]]],
-    "pmtiles-cdn": [["https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.managedFolders.create&permissions=storage.managedFolders.get&permissions=storage.managedFolders.list&permissions=storage.managedFolders.getIamPolicy&permissions=storage.managedFolders.setIamPolicy", ["storage.buckets.get", "storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.list", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy"]]],
-    "pmtiles-cdn-bootstrap": ["iam-bootstrap", ["https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.buckets.getIamPolicy&permissions=storage.buckets.setIamPolicy&permissions=storage.buckets.update", ["storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy", "storage.buckets.update"]]],
-    "catalog-viewer": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["run.services.get", "run.services.update", "run.services.getIamPolicy", "run.services.setIamPolicy", "run.operations.get"]], ["https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key:testIamPermissions", ["secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy"]]],
-    "translation-bootstrap": [["https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/shared-datasets-slack-webhook-url:testIamPermissions", ["secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy"]]],
-    "ingestion-iam": ["iam-bootstrap", "bucket-iam", "translation-bootstrap", ["https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/jobs/eamlis-monthly:testIamPermissions", ["run.jobs.getIamPolicy", "run.jobs.setIamPolicy"]]],
-    "job-runtime": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["run.jobs.get", "run.jobs.update", "run.jobs.run", "run.jobs.runWithOverrides", "run.executions.get", "run.executions.list", "run.operations.get"]]],
-    "mpatlas-monthly": ["job-runtime"],
-    "eamlis-monthly": ["job-runtime", "translation-bootstrap"],
-    "wdpa-monthly": ["job-runtime", "translation-bootstrap"],
-    "wdpa-monthly-build": ["job-runtime"],
-    "sea-ice-daily": ["job-runtime"],
-    "dataset-usage": ["job-runtime"]
+    "iam-bootstrap": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "iam.roles.get",
+          "iam.roles.create",
+          "iam.roles.update",
+          "resourcemanager.projects.getIamPolicy",
+          "resourcemanager.projects.setIamPolicy"
+        ]
+      ]
+    ],
+    "terraform-state-read": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "compute.globalAddresses.get",
+          "compute.regionNetworkEndpointGroups.get",
+          "compute.sslCertificates.get",
+          "compute.targetHttpProxies.get",
+          "iam.workloadIdentityPoolProviders.get"
+        ]
+      ]
+    ],
+    "artifact-registry": [
+      [
+        "https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions",
+        [
+          "artifactregistry.repositories.getIamPolicy",
+          "artifactregistry.repositories.setIamPolicy"
+        ]
+      ]
+    ],
+    "artifact-registry-images": [
+      [
+        "https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions",
+        [
+          "artifactregistry.repositories.get",
+          "artifactregistry.repositories.downloadArtifacts",
+          "artifactregistry.repositories.uploadArtifacts",
+          "artifactregistry.dockerimages.get",
+          "artifactregistry.tags.get",
+          "artifactregistry.tags.create",
+          "artifactregistry.tags.update"
+        ]
+      ]
+    ],
+    "monitoring-slack-secret": [
+      [
+        "https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/shared-datasets-slack-bot-token:testIamPermissions",
+        [
+          "secretmanager.versions.add"
+        ]
+      ]
+    ],
+    "monitoring-alerts": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "logging.logMetrics.create",
+          "logging.logMetrics.get",
+          "logging.logMetrics.list",
+          "logging.logMetrics.update",
+          "logging.notificationRules.create",
+          "logging.notificationRules.delete",
+          "monitoring.alertPolicies.create",
+          "monitoring.alertPolicies.delete",
+          "monitoring.alertPolicies.get",
+          "monitoring.alertPolicies.list",
+          "monitoring.alertPolicies.update",
+          "monitoring.notificationChannels.get",
+          "monitoring.notificationChannels.list"
+        ]
+      ]
+    ],
+    "preview-service-account-iam": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "iam.serviceAccounts.create",
+          "iam.serviceAccounts.get",
+          "iam.serviceAccounts.getIamPolicy",
+          "iam.serviceAccounts.setIamPolicy",
+          "iam.roles.get",
+          "resourcemanager.projects.get",
+          "serviceusage.services.list"
+        ]
+      ],
+      [
+        "https://iam.googleapis.com/v1/projects/shared-datasets-1/locations/global/workloadIdentityPools/github:testIamPermissions",
+        [
+          "iam.workloadIdentityPools.get",
+          "iam.workloadIdentityPools.getAttestationRules"
+        ]
+      ]
+    ],
+    "bucket-iam": [
+      [
+        "https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.buckets.getIamPolicy&permissions=storage.buckets.setIamPolicy",
+        [
+          "storage.buckets.get",
+          "storage.buckets.getIamPolicy",
+          "storage.buckets.setIamPolicy"
+        ]
+      ]
+    ],
+    "pmtiles-cdn": [
+      [
+        "https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.managedFolders.create&permissions=storage.managedFolders.get&permissions=storage.managedFolders.list&permissions=storage.managedFolders.getIamPolicy&permissions=storage.managedFolders.setIamPolicy",
+        [
+          "storage.buckets.get",
+          "storage.managedFolders.create",
+          "storage.managedFolders.get",
+          "storage.managedFolders.list",
+          "storage.managedFolders.getIamPolicy",
+          "storage.managedFolders.setIamPolicy"
+        ]
+      ]
+    ],
+    "pmtiles-cdn-bootstrap": [
+      "iam-bootstrap",
+      [
+        "https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.buckets.getIamPolicy&permissions=storage.buckets.setIamPolicy&permissions=storage.buckets.update",
+        [
+          "storage.buckets.get",
+          "storage.buckets.getIamPolicy",
+          "storage.buckets.setIamPolicy",
+          "storage.buckets.update"
+        ]
+      ]
+    ],
+    "catalog-viewer": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "run.services.get",
+          "run.services.update",
+          "run.services.getIamPolicy",
+          "run.services.setIamPolicy",
+          "run.operations.get"
+        ]
+      ],
+      [
+        "https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key:testIamPermissions",
+        [
+          "secretmanager.secrets.get",
+          "secretmanager.secrets.getIamPolicy",
+          "secretmanager.secrets.setIamPolicy"
+        ]
+      ]
+    ],
+    "translation-bootstrap": [
+      [
+        "https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/shared-datasets-slack-webhook-url:testIamPermissions",
+        [
+          "secretmanager.secrets.get",
+          "secretmanager.secrets.getIamPolicy",
+          "secretmanager.secrets.setIamPolicy"
+        ]
+      ]
+    ],
+    "ingestion-iam": [
+      "iam-bootstrap",
+      "bucket-iam",
+      "translation-bootstrap",
+      [
+        "https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/jobs/eamlis-monthly:testIamPermissions",
+        [
+          "run.jobs.getIamPolicy",
+          "run.jobs.setIamPolicy"
+        ]
+      ]
+    ],
+    "job-runtime": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "run.jobs.get",
+          "run.jobs.update",
+          "run.jobs.run",
+          "run.jobs.runWithOverrides",
+          "run.executions.get",
+          "run.executions.list",
+          "run.operations.get"
+        ]
+      ]
+    ],
+    "mpatlas-monthly": [
+      "job-runtime"
+    ],
+    "eamlis-monthly": [
+      "job-runtime",
+      "translation-bootstrap"
+    ],
+    "wdpa-monthly": [
+      "job-runtime",
+      "translation-bootstrap"
+    ],
+    "wdpa-monthly-build": [
+      "job-runtime"
+    ],
+    "sea-ice-daily": [
+      "job-runtime"
+    ],
+    "dataset-usage": [
+      "job-runtime"
+    ],
+    "catalog-viewer-observe": [
+      [
+        "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+        [
+          "run.services.get",
+          "secretmanager.secrets.get"
+        ]
+      ]
+    ]
   },
   "deployments": {
-    "mpatlas": {"workflow": "mpatlas-monthly-deploy.yml", "inputs": [".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py", ".github/actions/deployment-bootstrap/action.yml", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "ingestion/common/", "ingestion/__init__.py", "ingestion/mpatlas_monthly/", "terraform/envs/prod/mpatlas_monthly*"], "image": "mpatlas-monthly", "terraform_prerequisites": ["cron_alert_policy", "ingestion_iam", "artifact_registry_iam"]},
-    "eamlis": {"workflow": "eamlis-monthly-deploy.yml", "inputs": [".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py", ".github/actions/deployment-bootstrap/action.yml", "catalog/ingestion-quality.json", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "ingestion/common/", "ingestion/__init__.py", "ingestion/eamlis_monthly/", "terraform/envs/prod/eamlis_monthly*"], "image": "eamlis-monthly", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam"]},
-    "wdpa": {"workflow": "wdpa-monthly-deploy.yml", "inputs": [".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py", ".github/actions/deployment-bootstrap/action.yml", "catalog/wdpa-processing-acceptance.json", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "ingestion/common/", "ingestion/__init__.py", "catalog/feature-identity-resolutions/", "ingestion/wdpa_monthly/", "terraform/envs/prod/wdpa_monthly*"], "image": "wdpa-monthly", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam"]},
-    "sea_ice": {"workflow": "sea-ice-daily-deploy.yml", "inputs": [".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py", ".github/actions/deployment-bootstrap/action.yml", "docs/assets/ims-sea-ice-extent.md", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "ingestion/common/", "ingestion/__init__.py", "catalog/feature-identity-resolutions/", "ingestion/sea_ice_daily/", "terraform/envs/prod/sea_ice_daily*"], "image": "sea-ice-daily", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam"]},
-    "ingestion_iam": {"workflow": "scheduled-ingestion-deploy-iam-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", ".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"]},
-    "pmtiles_cdn": {"workflow": "pmtiles-cdn-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", "scripts/pmtiles_cdn_sync.py", "terraform/modules/pmtiles-cdn/", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"]},
-    "catalog_viewer": {"workflow": "catalog-viewer-deploy.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", "catalog/categories.yaml", "terraform/envs/prod/main.tf", "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/", "services/__init__.py", "services/http_base.py", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"], "image": "catalog-viewer", "terraform_prerequisites": ["dataset_usage", "artifact_registry_iam"]},
-    "dataset_usage": {"workflow": "dataset-usage-deploy.yml", "inputs": [".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py", ".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", "terraform/envs/prod/shared_bucket_public.tf", "scripts/dataset_usage_deploy.py", "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/", "pyproject.toml", "uv.lock", "ingestion/dataset_usage/", "terraform/envs/prod/dataset_usage*"], "image": "dataset-usage", "terraform_prerequisites": ["artifact_registry_iam"]},
-    "artifact_registry_iam": {"workflow": "artifact-registry-iam-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", ".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"]},
-    "preview_terraform_iam": {"workflow": "preview-terraform-iam-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", ".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"]},
-    "scratch_cleanup_iam": {"workflow": "scratch-cleanup-iam-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", ".github/workflows/prod-terraform-target-apply.yml", "catalog/categories.yaml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"]},
-    "cron_alert_policy": {"workflow": "cron-alert-policy-sync.yml", "inputs": [".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-bootstrap/terraform/action.yml", ".github/terraform-targets.json", "scripts/terraform_target_contracts.py", ".github/workflows/prod-terraform-target-apply.yml", "catalog/categories.yaml", "scripts/monitoring_slack_prepare.py", "services/monitoring_slack/", "ingestion/common/__init__.py", "ingestion/common/decision_events.py", "terraform/envs/prod/canonical_mutation_iam.tf", "pyproject.toml", "uv.lock", "ingestion/__init__.py", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"], "image": "monitoring-slack", "terraform_prerequisites": ["artifact_registry_iam"]}
+    "mpatlas": {
+      "workflow": "mpatlas-monthly-deploy.yml",
+      "inputs": [
+        ".github/workflows/ingestion-deploy.yml",
+        "scripts/ingestion_targets.py",
+        "scripts/ingestion_verification.py",
+        ".github/actions/deployment-bootstrap/action.yml",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/common/",
+        "ingestion/__init__.py",
+        "ingestion/mpatlas_monthly/",
+        "terraform/envs/prod/mpatlas_monthly*",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "mpatlas-monthly",
+      "terraform_prerequisites": [
+        "cron_alert_policy",
+        "ingestion_iam",
+        "artifact_registry_iam"
+      ]
+    },
+    "eamlis": {
+      "workflow": "eamlis-monthly-deploy.yml",
+      "inputs": [
+        ".github/workflows/ingestion-deploy.yml",
+        "scripts/ingestion_targets.py",
+        "scripts/ingestion_verification.py",
+        ".github/actions/deployment-bootstrap/action.yml",
+        "catalog/ingestion-quality.json",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/common/",
+        "ingestion/__init__.py",
+        "ingestion/eamlis_monthly/",
+        "terraform/envs/prod/eamlis_monthly*",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "eamlis-monthly",
+      "terraform_prerequisites": [
+        "ingestion_iam",
+        "artifact_registry_iam"
+      ]
+    },
+    "wdpa": {
+      "workflow": "wdpa-monthly-deploy.yml",
+      "inputs": [
+        ".github/workflows/ingestion-deploy.yml",
+        "scripts/ingestion_targets.py",
+        "scripts/ingestion_verification.py",
+        ".github/actions/deployment-bootstrap/action.yml",
+        "catalog/wdpa-processing-acceptance.json",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/common/",
+        "ingestion/__init__.py",
+        "catalog/feature-identity-resolutions/",
+        "ingestion/wdpa_monthly/",
+        "terraform/envs/prod/wdpa_monthly*",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "wdpa-monthly",
+      "terraform_prerequisites": [
+        "ingestion_iam",
+        "artifact_registry_iam"
+      ]
+    },
+    "sea_ice": {
+      "workflow": "sea-ice-daily-deploy.yml",
+      "inputs": [
+        ".github/workflows/ingestion-deploy.yml",
+        "scripts/ingestion_targets.py",
+        "scripts/ingestion_verification.py",
+        ".github/actions/deployment-bootstrap/action.yml",
+        "docs/assets/ims-sea-ice-extent.md",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/common/",
+        "ingestion/__init__.py",
+        "catalog/feature-identity-resolutions/",
+        "ingestion/sea_ice_daily/",
+        "terraform/envs/prod/sea_ice_daily*",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "sea-ice-daily",
+      "terraform_prerequisites": [
+        "ingestion_iam",
+        "artifact_registry_iam"
+      ]
+    },
+    "ingestion_iam": {
+      "workflow": "scheduled-ingestion-deploy-iam-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        ".github/workflows/prod-terraform-target-apply.yml",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ]
+    },
+    "pmtiles_cdn": {
+      "workflow": "pmtiles-cdn-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        "scripts/pmtiles_cdn_sync.py",
+        "terraform/modules/pmtiles-cdn/",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ]
+    },
+    "catalog_viewer": {
+      "workflow": "catalog-viewer-deploy.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        "catalog/categories.yaml",
+        "terraform/envs/prod/main.tf",
+        "terraform/envs/prod/canonical_mutation_iam.tf",
+        "catalog/dataset-usage.json",
+        "catalog/dataset-usage-activation.json",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "api/python/src/",
+        "services/catalog_viewer/",
+        "services/feature_preview_service/",
+        "services/__init__.py",
+        "services/http_base.py",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "catalog-viewer",
+      "terraform_prerequisites": [
+        "dataset_usage",
+        "artifact_registry_iam"
+      ]
+    },
+    "dataset_usage": {
+      "workflow": "dataset-usage-deploy.yml",
+      "inputs": [
+        ".github/workflows/ingestion-deploy.yml",
+        "scripts/ingestion_targets.py",
+        "scripts/ingestion_verification.py",
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        "terraform/envs/prod/shared_bucket_public.tf",
+        "scripts/dataset_usage_deploy.py",
+        "catalog/dataset-usage.json",
+        "catalog/dataset-usage-activation.json",
+        "terraform/modules/cloud_run_job/",
+        "terraform/modules/scheduler_job/",
+        "terraform/modules/service_account/",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/dataset_usage/",
+        "terraform/envs/prod/dataset_usage*",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "dataset-usage",
+      "terraform_prerequisites": [
+        "artifact_registry_iam"
+      ]
+    },
+    "artifact_registry_iam": {
+      "workflow": "artifact-registry-iam-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        ".github/workflows/prod-terraform-target-apply.yml",
+        "terraform/envs/prod/main.tf",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/",
+        "terraform/envs/prod/github-workflow-identities.json"
+      ]
+    },
+    "preview_terraform_iam": {
+      "workflow": "preview-terraform-iam-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        ".github/workflows/prod-terraform-target-apply.yml",
+        "terraform/envs/prod/main.tf",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ]
+    },
+    "scratch_cleanup_iam": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        ".github/workflows/prod-terraform-target-apply.yml",
+        "catalog/categories.yaml",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ]
+    },
+    "cron_alert_policy": {
+      "workflow": "cron-alert-policy-sync.yml",
+      "inputs": [
+        ".github/actions/deployment-bootstrap/action.yml",
+        ".github/actions/deployment-bootstrap/terraform/action.yml",
+        ".github/terraform-targets.json",
+        "scripts/terraform_target_contracts.py",
+        ".github/workflows/prod-terraform-target-apply.yml",
+        "catalog/categories.yaml",
+        "scripts/monitoring_slack_prepare.py",
+        "services/monitoring_slack/",
+        "ingestion/common/__init__.py",
+        "ingestion/common/decision_events.py",
+        "terraform/envs/prod/canonical_mutation_iam.tf",
+        "pyproject.toml",
+        "uv.lock",
+        "ingestion/__init__.py",
+        "terraform/envs/prod/variables.tf",
+        "terraform/envs/prod/versions.tf",
+        ".github/actions/deployment-auth/"
+      ],
+      "image": "monitoring-slack",
+      "terraform_prerequisites": [
+        "artifact_registry_iam"
+      ]
+    }
   },
   "image_checks": {
-    "catalog-viewer": {"host": [["{python}", "scripts/production_image_contracts.py", "--viewer-image", "{image}"]]},
-    "dataset-usage": {"container": [["{image}", "--print-policy-hash"], ["--entrypoint", "python", "{image}", "-c", "{usage_probe}"]]},
-    "eamlis-monthly": {"container": [["{image}", "python", "-c", "{interpreter_probe}"], ["{image}", "python", "-c", "{native_probe}"], ["{image}", "python", "-c", "{fixture_script}", "eamlis-monthly", "{fixture}"]]},
-    "monitoring-slack": {"container": [["--entrypoint", "/app/.venv/bin/python", "{image}", "-c", "{monitoring_probe}"]]},
-    "mpatlas-monthly": {"container": [["{image}", "python", "-c", "{interpreter_probe}"], ["{image}", "python", "-c", "{native_probe}"], ["{image}", "python", "-c", "{fixture_script}", "mpatlas-monthly", "{fixture}"]]},
-    "sea-ice-daily": {"container": [["{image}", "python", "-c", "{interpreter_probe}"], ["{image}", "python", "-c", "{native_probe}"], ["{image}", "python", "-c", "{smoke}", "--workdir", "/tmp/shared-datasets-1/_scratch/installed-fixture", "--sea-ice-only"]]},
-    "wdpa-monthly": {"container": [["{image}", "python", "-c", "{interpreter_probe}"], ["{image}", "python", "-c", "{native_probe}"], ["{image}", "python", "scripts/wdpa_input_memory_probe.py", "--help"], ["{image}", "python", "scripts/local_ingestion_smoke.py", "--workdir", "/tmp/shared-datasets-1/_scratch/installed-fixture"]]}
+    "catalog-viewer": {
+      "host": [
+        [
+          "{python}",
+          "scripts/production_image_contracts.py",
+          "--viewer-image",
+          "{image}"
+        ]
+      ]
+    },
+    "dataset-usage": {
+      "container": [
+        [
+          "{image}",
+          "--print-policy-hash"
+        ],
+        [
+          "--entrypoint",
+          "python",
+          "{image}",
+          "-c",
+          "{usage_probe}"
+        ]
+      ]
+    },
+    "eamlis-monthly": {
+      "container": [
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{interpreter_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{native_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{fixture_script}",
+          "eamlis-monthly",
+          "{fixture}"
+        ]
+      ]
+    },
+    "monitoring-slack": {
+      "container": [
+        [
+          "--entrypoint",
+          "/app/.venv/bin/python",
+          "{image}",
+          "-c",
+          "{monitoring_probe}"
+        ]
+      ]
+    },
+    "mpatlas-monthly": {
+      "container": [
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{interpreter_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{native_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{fixture_script}",
+          "mpatlas-monthly",
+          "{fixture}"
+        ]
+      ]
+    },
+    "sea-ice-daily": {
+      "container": [
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{interpreter_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{native_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{smoke}",
+          "--workdir",
+          "/tmp/shared-datasets-1/_scratch/installed-fixture",
+          "--sea-ice-only"
+        ]
+      ]
+    },
+    "wdpa-monthly": {
+      "container": [
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{interpreter_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "-c",
+          "{native_probe}"
+        ],
+        [
+          "{image}",
+          "python",
+          "scripts/wdpa_input_memory_probe.py",
+          "--help"
+        ],
+        [
+          "{image}",
+          "python",
+          "scripts/local_ingestion_smoke.py",
+          "--workdir",
+          "/tmp/shared-datasets-1/_scratch/installed-fixture"
+        ]
+      ]
+    }
   }
 }

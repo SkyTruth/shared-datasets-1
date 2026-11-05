@@ -18,7 +18,7 @@ from services.monitoring_slack import decisions
 
 REPOSITORY = decisions.REPOSITORY
 WORKFLOW = ".github/workflows/identity-decision-reconcile.yml"
-ACCOUNT = "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com"
+ACCOUNT = "shared-datasets-reconciler@shared-datasets-1.iam.gserviceaccount.com"
 PROTOCOL = "feature-identity-decisions-v1"
 
 

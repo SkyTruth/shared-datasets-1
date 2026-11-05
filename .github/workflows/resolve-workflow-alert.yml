@@ -1,5 +1,4 @@
 name: Alerts / Legacy workflow resolution
-
 on:
   workflow_dispatch:
     inputs:
@@ -15,13 +14,11 @@ on:
         description: Monitoring incident ID instead of run_id/message_ts; must already be CLOSED
         required: false
         type: string
-
 permissions:
   contents: read
   actions: read
   deployments: read
   attestations: read
-
 jobs:
   resolve:
     if: github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id == ''
@@ -51,7 +48,6 @@ jobs:
           ORIGINAL_RUN_ID: ${{ inputs.run_id }}
           ORIGINAL_MESSAGE_TS: ${{ inputs.message_ts }}
         run: uv run --no-sync python scripts/workflow_failure_alert.py --resolve-run-id "$ORIGINAL_RUN_ID" --message-ts "$ORIGINAL_MESSAGE_TS"
-
   monitoring:
     if: github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id != ''
     runs-on: ubuntu-latest
@@ -80,7 +76,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          service_account: shared-datasets-reconciler@shared-datasets-1.iam.gserviceaccount.com
       - name: Read authoritative closure and edit the recorded parent
         env:
           INCIDENT_ID: ${{ inputs.monitoring_incident_id }}

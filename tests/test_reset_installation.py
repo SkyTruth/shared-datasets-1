@@ -298,7 +298,7 @@ class ResetAuthorizationTests(unittest.TestCase):
         self.assertNotIn("--check-only", steps["Recheck live controls and install reset"]["run"])
 
         self.assertEqual(job["concurrency"]["group"], "prod-terraform-state")
-        control = steps["Authenticate existing deployer for job checks"]
+        control = steps["Authenticate observer for job checks"]
         self.assertEqual(control["with"]["service_account"], controls.DEPLOYER_ACCOUNT)
         self.assertFalse(control["with"]["export_environment_variables"])
         self.assertEqual(steps["Recheck live controls and install reset"]["env"]["RESET_CONTROL_CREDENTIALS"],

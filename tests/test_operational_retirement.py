@@ -135,8 +135,9 @@ def test_retirement_permission_reads_reject_foreign_identity_and_non_deletion(ki
     with pytest.raises(ValueError, match='foreign|outside production'):
         plan_checks({'format_version': '1.2', 'resource_changes': [row]}, project_number=NUMBER)
     row = copy.deepcopy(next(row for row in json.loads(FIXTURE.read_text())['resource_changes'] if row['type'] == kind))
-    row['change'].update(actions=['update'], after=row['change']['before'])
-    with pytest.raises(ValueError, match='only retired|unsupported google_iam_workload_identity_pool_provider action: update'):
+    action = 'create' if kind == 'google_iam_workload_identity_pool_provider' else 'update'
+    row['change'].update(actions=[action], after=row['change']['before'])
+    with pytest.raises(ValueError, match='only retired|unsupported google_iam_workload_identity_pool_provider action: create'):
         plan_checks({'format_version': '1.2', 'resource_changes': [row]}, project_number=NUMBER)
 
 

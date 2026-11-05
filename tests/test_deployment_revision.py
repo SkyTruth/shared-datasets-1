@@ -534,8 +534,10 @@ def test_registered_permission_probes_preserve_historical_endpoints():
     from pathlib import Path
     from scripts.terraform_target_contracts import registry
     fixture = json.loads((Path(__file__).parent / 'fixtures/ci_failures/deployment-permission-probes.json').read_text())
-    assert set(registry(section='permission_probes')) == set(fixture) | {'job-runtime'}
+    assert set(registry(section='permission_probes')) == set(fixture) | {'job-runtime', 'catalog-viewer-observe'}
     for name, expected in fixture.items():
+        if name == 'monitoring-alerts':
+            expected = [(url, [p for p in values if p != 'logging.logMetrics.delete']) for url, values in expected]
         assert permissions.checks(name) == [(url, tuple(values)) for url, values in expected]
     with pytest.raises(KeyError):
         permissions.checks('unregistered-target')

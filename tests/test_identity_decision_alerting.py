@@ -124,7 +124,7 @@ class AlertPolicyTests(unittest.TestCase):
         self.assertEqual(
             set(re.findall(r'"([^"]+)"', permissions.group(1))),
             {
-                "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update", "logging.logMetrics.delete",
+                "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update",
                 "logging.notificationRules.create",
                 "logging.notificationRules.delete",
                 "monitoring.alertPolicies.create",

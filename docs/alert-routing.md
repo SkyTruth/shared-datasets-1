@@ -167,11 +167,11 @@ an authenticated report suppresses duplicate replay. Failed delivery, upload or
 dispatch remains visible. Identical findings cannot advance stall escalation.
 
 Before relying on the checks, use the protected monitoring sync to provision
-`google_project_iam_custom_role.operational_safety_reader` and its publisher
-binding. The role grants `cloudscheduler.jobs.get`, `run.executions.get`,
-`logging.logEntries.create` and `monitoring.timeSeries.list`; the safety job retains its existing service
-account and protected environment. The bootstrap scope includes both IAM
-resources; the cron-sync scope adds `google_logging_metric.operational_safety_heartbeat`
+the workflow identities and `google_project_iam_custom_role.operational_safety_reader`.
+Only `shared-datasets-heartbeat` receives its `logging.logEntries.create` grant;
+its separate read role permits the safety probes, including heartbeat series reads. The publisher cannot emit
+heartbeats. The resources scope provisions these identities before cron-sync adds
+`google_logging_metric.operational_safety_heartbeat`
 and `google_monitoring_alert_policy.operational_safety_absent`.
 
 A completed health read writes the authenticated `operational-safety-heartbeat`

@@ -69,13 +69,13 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    state on failure and retry the owned publication rather than reset IDs.
 
 The installer shares the `prod-terraform-state` workflow queue with deployments.
-It reads scheduler/execution status as the existing `shared-datasets-terraform`
+It reads scheduler/execution status as `shared-datasets-observer`
 identity and writes objects as the existing `shared-datasets-publisher` identity.
 Both authenticate through their existing protected-environment federation.
-The protected IAM-sync workflow grants `cloudscheduler.jobs.pause` and
-`run.jobs.runWithOverrides` to the existing deployment role. WDPA's runtime
+The protected IAM-sync workflow grants schedule control and canary execution
+to the runtime identity. WDPA's runtime
 receives read-only access to the single approved supplement object, not the
-surrounding scratch prefix. No new identity or organization permission is needed.
+surrounding scratch prefix. No organization permission is needed.
 Schedule control, reset installation, and deployment share the same queue.
 
 This is an operational cutover under the project's existing administrator trust
