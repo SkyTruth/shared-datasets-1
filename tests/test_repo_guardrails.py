@@ -269,15 +269,16 @@ class RepoGuardrailsTests(unittest.TestCase):
             self.assertIn("new_publisher", errors[0])
 
     def test_usage_workflow_requires_its_saved_plan_resource_guard(self):
-        source = repo_guardrails.REPO_ROOT/".github/workflows/dataset-usage-deploy.yml"
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = root/".github/workflows/dataset-usage-deploy.yml"
-            path.parent.mkdir(parents=True)
-            path.write_text(source.read_text())
-            self.assertEqual(repo_guardrails.check_workflow_boundaries(root), [])
-            path.write_text(source.read_text().replace("scripts/dataset_usage_deploy.py --plan-json", "scripts/dataset_usage_deploy.py --targets"))
-            self.assertTrue(any("missing resource-change allowlist" in error for error in repo_guardrails.check_workflow_boundaries(root)))
+        from scripts import release_contracts as contracts
+        load = contracts.workflow
+        shared = load(repo_guardrails.REPO_ROOT, 'ingestion-deploy.yml')
+        def workflow(root, name):
+            return shared if name == 'ingestion-deploy.yml' else load(root, name)
+        with mock.patch.object(contracts, 'workflow', side_effect=workflow):
+            self.assertEqual(contracts.deployment_contract(repo_guardrails.REPO_ROOT, 'dataset-usage'), [])
+            guard = next(s for s in shared['jobs']['apply']['steps'] if 'scripts/dataset_usage_deploy.py --plan-json' in s.get('run', ''))
+            guard['run'] = guard['run'].replace('--plan-json', '--targets')
+            self.assertTrue(any('telemetry saved-plan guard' in error for error in contracts.deployment_contract(repo_guardrails.REPO_ROOT, 'dataset-usage')))
 
     def test_secret_scanner_flags_tracked_private_key_content(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -153,7 +153,7 @@ jobs:
     - name: Smoke-test native tools in image
       env:
         RASTER_TOOLS: ${{ fromJSON(steps.target.outputs.config).synthetic_smoke }}
-      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && fromJSON(steps.target.outputs.config).native_tools
       run: |
         set -euo pipefail
         docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c \
@@ -163,13 +163,17 @@ jobs:
         fi
     - name: Smoke-test job import closure in image
       env:
+        NATIVE_TOOLS: ${{ fromJSON(steps.target.outputs.config).native_tools }}
         IMPORT_PROBE: ${{ fromJSON(steps.target.outputs.config).import_probe }}
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
       run: |
         set -euo pipefail
         module="${TARGET//-/_}"
-        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c \
-          "import ingestion.${module}.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset"
+        probe="import ingestion.${module}.run"
+        if [[ "$NATIVE_TOOLS" == true ]]; then
+          probe+="; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset"
+        fi
+        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c "$probe"
         docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c "$IMPORT_PROBE"
     - name: Smoke-test synthetic sea-ice build path in image
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && fromJSON(steps.target.outputs.config).synthetic_smoke
@@ -250,14 +254,22 @@ jobs:
     - name: Terraform init
       run: terraform -chdir=terraform/envs/prod init -input=false
       if: steps.window.outputs.ready == 'true'
+    - name: Set up uv for telemetry plan validation
+      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: 0.11.8
     - name: Terraform plan
       env:
+        PLAN_GUARD: ${{ fromJSON(needs.prepare.outputs.config).plan_guard }}
         IMAGE_CONFIG_VARIABLE: ${{ fromJSON(needs.prepare.outputs.config).image_config_variable }}
       run: |
         set -euo pipefail
+        if [[ "$PLAN_GUARD" == usage ]]; then uv sync --locked --all-groups; fi
         args=(-input=false -out="$RUNNER_TEMP/ingestion.tfplan")
-        while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json,os; print("\n".join(json.loads(os.environ["TARGET_CONFIG"])["targets"]))')
-        while IFS= read -r variable; do args+=("-var=$variable=unused-by-$TARGET-deploy"); done < <(python -c 'from scripts.ingestion_targets import TARGETS; print("\n".join(t["image_variable"] for t in TARGETS.values()))')
+        targets="$(python -c 'import json,os,subprocess; c=json.loads(os.environ["TARGET_CONFIG"]); print(subprocess.check_output(c["targets_command"], text=True).strip() if c["targets_command"] else "\n".join(c["targets"]))')"
+        while IFS= read -r target; do args+=("-target=$target"); done <<< "$targets"
+        while IFS= read -r variable; do args+=("-var=$variable=unused-by-$TARGET-deploy"); done < <(python -c 'from scripts.ingestion_targets import DEPLOY_TARGETS; print("\n".join(t["image_variable"] for t in DEPLOY_TARGETS.values()))')
         image_variable="$(python -c 'import json,os; print(json.loads(os.environ["TARGET_CONFIG"])["image_variable"])')"
         args+=("-var=$image_variable=$IMAGE")
         if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("-var=$IMAGE_CONFIG_VARIABLE=$TESTED_IMAGE_CONFIG"); fi
@@ -275,7 +287,15 @@ jobs:
           "--expected-image=$IMAGE" "--refusal-prefix=Refusing $TARGET deploy")
         if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("--expected-config=$TESTED_IMAGE_CONFIG"); fi
         python scripts/terraform_plan_allowlist.py "${args[@]}"
-      if: steps.window.outputs.ready == 'true'
+      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'job-image'
+    - name: Enforce usage telemetry, activation and cost boundaries
+      if: steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        retirement_args=()
+        if [[ ! -f terraform/envs/prod/dataset_usage_legacy.tf ]]; then retirement_args+=(--retire-legacy); fi
+        uv run --no-sync python scripts/dataset_usage_deploy.py --plan-json "$RUNNER_TEMP/ingestion.tfplan.json" --image "$IMAGE" "${retirement_args[@]}"
     - name: Verify complete saved-plan mutation permissions
       run: |
         python scripts/deployment_permissions.py --target "$TARGET" --plan-json "$RUNNER_TEMP/ingestion.tfplan.json"
@@ -430,7 +450,10 @@ jobs:
         uv run --no-sync python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
           --bucket "$BUCKET" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
         uv run --no-sync python scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"
-    - name: Resume sea-ice-daily scheduler
+    - name: Verify usage scheduler
+      if: fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'
+      run: gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state,schedule,timeZone)'
+    - name: Resume verified ingestion scheduler
       if: fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler
       run: |
         set -euo pipefail

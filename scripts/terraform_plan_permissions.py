@@ -470,7 +470,7 @@ def static_checks(root, base, head):
     from scripts.ci_contract import select_deployments
     from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
-    from scripts.ingestion_targets import TARGETS
+    from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 
     def git(*args):
         return subprocess.check_output(['git', '-C', str(root), *args], text=True)

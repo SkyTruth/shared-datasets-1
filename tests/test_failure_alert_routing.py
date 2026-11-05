@@ -2,7 +2,6 @@
 
 import io
 import json
-import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +11,8 @@ from scripts import workflow_failure_alert as alerts
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
+# The legacy usage job names below belong to this immutable main workflow graph.
+LEGACY_USAGE_REVISION = "7bd972e6150a01ca3be538d1ca33bc543d6aa6f8"
 WORKFLOWS = ROOT / ".github/workflows"
 MARKER = "SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 
@@ -302,12 +303,12 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     if path.name == "ingestion-deploy.yml":
                         assert step["name"] == "Execute ingestion canary"
                         assert step['env']['CANARY_RUN_URL'] == '${{ fromJSON(needs.prepare.outputs.config).canary_run_url }}'
-                        from scripts.ingestion_targets import TARGETS
+                        from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
                         assert {name for name, config in TARGETS.items() if not config['canary_run_url']} == {'wdpa-monthly'}
                         assert "Watch ingestion canary" in workflow_steps_by_name(workflow, "verify")
                     else:
                         assert "--wait" in run and "--async" not in run
-    assert set(marked_steps) == {"Execute ingestion canary", "Execute bounded usage canary"}
+    assert set(marked_steps) == {"Execute ingestion canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -340,7 +341,7 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
     from scripts import deployment_revision as deployments
     from scripts.slack_incident_api import Slack
 
-    run = event(name="CI", event="push", run_attempt=1, head_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())["workflow_run"]
+    run = event(name="CI", event="push", run_attempt=1, head_sha=LEGACY_USAGE_REVISION)["workflow_run"]
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
     run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
@@ -412,7 +413,7 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     from scripts.slack_incident_api import Slack
 
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
-    original = event(name="CI", event="push", run_attempt=1, head_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())["workflow_run"]
+    original = event(name="CI", event="push", run_attempt=1, head_sha=LEGACY_USAGE_REVISION)["workflow_run"]
     original.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     recovered = {**original, "id": 456, "head_sha": "b" * 40, "conclusion": "success"}
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",

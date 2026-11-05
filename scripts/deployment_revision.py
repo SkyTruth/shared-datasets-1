@@ -22,14 +22,13 @@ from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
 from scripts.github_api_read import read
 from scripts.terraform_target_contracts import registry
-from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS, image_variables
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image_variables
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
     "monitoring-slack": "cron-alert-policy-sync.yml",
-    "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly-build": "wdpa-monthly-build.yml",
     "typescript-sdk": "publish-typescript-sdk.yml",
     "pmtiles-cdn": "pmtiles-cdn-sync.yml",
@@ -226,8 +225,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = INGESTION_TARGETS | {"dataset-usage"}
-        accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
+        accepted = {"verified"} if record_payload(latest)["target"] in INGESTION_TARGETS else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             if target == "wdpa-monthly-build":
                 # A new scratch build is an explicit invocation, even at the same
@@ -382,7 +380,9 @@ def finish(args, api):
 
 def pending(api, repository):
     identifiers = []
-    for target in ("wdpa-monthly",):
+    for target, config in INGESTION_CONFIGS.items():
+        if config["canary_timeout_phase"] != "verification_pending":
+            continue
         for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100"):
             record_payload(record)
             statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
@@ -413,15 +413,15 @@ def runtime_window(args):
     require(args.target in INGESTION_TARGETS, "invalid runtime verification target")
     # First installation has no job/execution collection yet. A successful
     # regional inventory proves absence; permission/network errors still fail.
-    if args.target == "mpatlas-monthly":
+    config = INGESTION_CONFIGS[args.target]
+    inspect_executions = not config["window_in_plan"]
+    if config["first_install"]:
         jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
                                                    "--project=shared-datasets-1", "--format=json"], timeout=60))
         require(isinstance(jobs, list), "invalid Cloud Run job inventory")
-        installed = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
-    else:
-        installed = True
+        inspect_executions = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
     paused = False
-    if INGESTION_CONFIGS[args.target]["paused_gate"]:
+    if config["paused_gate"]:
         state = subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", args.target, "--location=us-central1",
                                          "--project=shared-datasets-1", "--format=value(state)"], text=True, timeout=60).strip()
         require(state in {"ENABLED", "PAUSED"}, "unknown scheduler state prevents runtime verification")
@@ -434,7 +434,7 @@ def runtime_window(args):
         executions = json.loads(subprocess.check_output([
             "gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
             "--region=us-central1", "--project=shared-datasets-1", "--format=json",
-        ], timeout=60)) if installed else []
+        ], timeout=60)) if inspect_executions else []
         require(isinstance(executions, list), "invalid Cloud Run execution inventory")
         active = [entry for entry in executions if not entry.get("status", {}).get("completionTime")]
         # Preparation/application may admit explicit cancellation. Verification
@@ -466,7 +466,8 @@ def observe(args, api):
             f"{repository}/.github/workflows/deployment-verification.yml@refs/heads/main", "untrusted terminal verifier")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") == "wdpa-monthly", "only detached WDPA executions need terminal observation")
+    require(payload.get("target") in INGESTION_TARGETS and INGESTION_CONFIGS[payload["target"]]["canary_timeout_phase"] == "verification_pending",
+            "only detached executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     statuses = verified_statuses(api, repository, record)
@@ -493,7 +494,7 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in INGESTION_TARGETS | {"dataset-usage", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
+    require(payload.get("target") in INGESTION_TARGETS | {"typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")

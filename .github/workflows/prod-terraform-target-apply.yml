@@ -74,6 +74,9 @@ jobs:
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
         tf-vars: ${{ inputs.tf_vars }}
+        sync-name: ${{ inputs.sync_name }}
+        workload-identity-provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+        service-account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
     - name: Verify run-bound signing capability without mutation
       if: ${{ steps.replay.outputs.proceed == 'true' }}
       uses: ./.github/actions/deployment-receipt
@@ -151,6 +154,9 @@ jobs:
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
         tf-vars: ${{ inputs.tf_vars }}
+        sync-name: ${{ inputs.sync_name }}
+        workload-identity-provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+        service-account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
     - name: Verify run-bound signing capability without mutation
       if: ${{ steps.replay.outputs.proceed == 'true' }}
       uses: ./.github/actions/deployment-receipt

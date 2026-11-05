@@ -36,7 +36,7 @@ class ReceiptContractTests(unittest.TestCase):
         shutil.copytree(Path(__file__).resolve().parents[1] / '.github/actions', self.root / '.github/actions')
         for name in contracts.WORKFLOWS:
             value = leaf(name)
-            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml"}:
+            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml", "catalog-viewer-deploy.yml"}:
                 source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
                 value = yaml.safe_load(source.read_text())
             self.write(name, value)
@@ -49,7 +49,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(contracts.permissions(self.root), [])
 
     def test_nested_composites_keep_input_transport_gates_and_receipt_barriers(self):
-        filename = 'catalog-viewer-deploy.yml'
+        filename = 'catalog-web-deploy.yml'
         value = leaf(filename)
         steps = value['jobs']['deploy']['steps']
         steps[0]['with']['signer-workflow'] = '${{ inputs.signer }}'
@@ -167,6 +167,30 @@ class ReceiptContractTests(unittest.TestCase):
                 mutate(value["jobs"])
                 self.write(name, value)
                 self.assertTrue(contracts.boundaries(self.root))
+
+    def test_viewer_rejects_disconnected_bootstrap_and_failed_apply_bypasses(self):
+        name = 'catalog-viewer-deploy.yml'
+        original = yaml.safe_load((self.workflows / name).read_text())
+        for defect in ('signature', 'lock', 'readiness', 'admission', 'ignored', 'outcome', 'skip-failure'):
+            with self.subTest(defect=defect):
+                value = copy.deepcopy(original)
+                jobs = value['jobs']
+                if defect == 'signature':
+                    jobs['bootstrap']['outputs']['claim_signed'] = '${{ steps.other.outcome }}'
+                elif defect == 'lock':
+                    jobs['ready']['concurrency'] = jobs['deploy']['concurrency']
+                elif defect == 'readiness':
+                    jobs['deploy']['needs'].remove('ready')
+                elif defect in {'admission', 'ignored'}:
+                    guard = next(s for s in jobs['deploy']['steps'] if s.get('name') == 'Require successful signed bootstrap')
+                    guard.update({'if': False} if defect == 'admission' else {'continue-on-error': True})
+                elif defect == 'outcome':
+                    jobs['verify']['steps'].pop()
+                else:
+                    jobs['verify']['if'] = 'success()'
+                self.write(name, value)
+                self.assertTrue(contracts.boundaries(self.root))
+        self.write(name, original)
 
 
     def test_unknown_outcome_requires_always_signing_of_its_own_file(self):

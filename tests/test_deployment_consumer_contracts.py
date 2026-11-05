@@ -55,12 +55,12 @@ def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, jo
     assert '--bootstrap' in steps[proof]['run']
     assert names.index(proof) < names.index(checkout)
     assert workflow['env']['BOOTSTRAP_WORKFLOW_SHA'] == '${{ github.workflow_sha }}'
-    guard = actual_steps[guard_index]['run']
+    guard = steps[guard_name]['run'] if filename == 'catalog-viewer-deploy.yml' else actual_steps[guard_index]['run']
     cases = [('refs/heads/main', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', True), ('refs/pull/10/merge', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', False), ('refs/heads/main', 'evil/fork/.github/workflows/ci.yml@refs/heads/main', False), ('refs/heads/main', 'SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/feature', False)]
     if filename in {'pmtiles-cdn-sync.yml', 'catalog-viewer-deploy.yml'}:
         cases.append(('refs/heads/main', 'SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/main', True))
     for ref, caller, valid in cases:
-        result = subprocess.run(['bash', '-c', guard], env={**os.environ, 'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1', 'GITHUB_REF': ref, 'GITHUB_WORKFLOW_REF': caller}, capture_output=True)
+        result = subprocess.run(['bash', '-c', guard], env={**os.environ, 'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1', 'GITHUB_REF': ref, 'GITHUB_WORKFLOW_REF': caller, **(steps[guard_name].get('env', {}) if filename == 'catalog-viewer-deploy.yml' else {})}, capture_output=True)
         assert (result.returncode == 0) is valid
 
 
@@ -80,7 +80,7 @@ def test_bundle_fingerprint_changes_with_bytes_names_and_refuses_symlinks(tmp_pa
         fingerprint([folder])
 
 
-@pytest.mark.parametrize('filename,job,mutation,record', [('pmtiles-cdn-sync.yml', 'sync', 'Terraform apply PMTiles managed-folder IAM bootstrap', 'Record serialized CDN deployment attempt'), ('catalog-viewer-deploy.yml', 'deploy', 'Terraform apply Secret Manager IAM bootstrap', 'Record serialized viewer deployment attempt'), ('catalog-web-deploy.yml', 'deploy', 'Publish catalog web bundle', 'Record serialized catalog deployment attempt')])
+@pytest.mark.parametrize('filename,job,mutation,record', [('pmtiles-cdn-sync.yml', 'sync', 'Terraform apply PMTiles managed-folder IAM bootstrap', 'Record serialized CDN deployment attempt'), ('catalog-viewer-deploy.yml', 'bootstrap', 'Terraform apply Secret Manager IAM bootstrap', 'Record serialized viewer deployment attempt'), ('catalog-web-deploy.yml', 'deploy', 'Publish catalog web bundle', 'Record serialized catalog deployment attempt')])
 def test_first_mutation_requires_record_under_noncancelling_serialization(filename, job, mutation, record):
     workflow = load_workflow(ROOT / '.github/workflows' / filename)
     steps = workflow_steps_by_name(workflow, job)
@@ -109,13 +109,21 @@ def test_missing_required_evidence_cannot_be_omitted_from_fingerprint(tmp_path):
 @pytest.mark.parametrize('filename,job,allowlist,check,mutation,plan,target,guard', [
     ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles managed-folder IAM bootstrap allowlist', 'Verify permissions required by the saved CDN bootstrap plan', 'Record serialized CDN deployment attempt', 'pmtiles-managed-folder-bootstrap.tfplan.json', 'pmtiles-cdn-bootstrap', 'replay'),
     ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles resource-change allowlist', 'Verify permissions required by the saved CDN plan', 'Terraform apply', 'pmtiles-cdn-sync.tfplan.json', 'pmtiles-cdn', 'deployment'),
-    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce Secret Manager IAM bootstrap allowlist', 'Verify permissions required by the saved viewer bootstrap plan', 'Terraform apply Secret Manager IAM bootstrap', 'catalog-viewer-secret-manager-iam-bootstrap.tfplan.json', 'iam-bootstrap', 'deployment'),
-    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce catalog-viewer resource-change allowlist', 'Verify permissions required by the saved viewer plan', 'Terraform apply', 'catalog-viewer.tfplan.json', 'catalog-viewer', 'deployment'),
+    ('catalog-viewer-deploy.yml', 'bootstrap', 'Enforce Secret Manager IAM bootstrap allowlist', 'Verify permissions required by the saved viewer bootstrap plan', 'Terraform apply Secret Manager IAM bootstrap', 'catalog-viewer-secret-manager-iam-bootstrap.tfplan.json', 'iam-bootstrap', 'deployment'),
+    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce catalog-viewer resource-change allowlist', 'Verify permissions required by the saved viewer plan', 'Terraform apply', 'catalog-viewer.tfplan.json', 'catalog-viewer', 'bootstrap'),
 ])
 def test_actual_saved_plan_permissions_are_verified_before_mutation(filename, job, allowlist, check, mutation, plan, target, guard):
     steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows' / filename), job)
     names = list(steps)
     assert names.index(allowlist) < names.index(check) < names.index(mutation)
+    if guard == 'bootstrap':
+        admission = steps['Require successful signed bootstrap']
+        assert admission['env'] == {'APPLY_RESULT': '${{ needs.bootstrap.result }}', 'CLAIM_SIGNED': '${{ needs.bootstrap.outputs.claim_signed }}'}
+        assert admission['run'] == 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
+        assert names.index('Require successful signed bootstrap') < names.index(check)
+        assert 'if' not in steps[check] and 'if' not in steps[mutation]
+        assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']
+        return
     expected_guard = f"steps.{guard}.outputs.proceed == 'true'"
     if guard == 'deployment':
         expected_guard += " && steps.claim-receipt.outcome == 'success'"

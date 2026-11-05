@@ -11,7 +11,7 @@ from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, select_
 from scripts.ci_contract import select_production_images
 from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
-from workflow_helpers import load_workflow, workflow_triggers
+from workflow_helpers import load_workflow, workflow_triggers, workflow_steps_by_name
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -409,9 +409,11 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
     assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}
     if target == "catalog-viewer":
-        steps = workflow["jobs"]["deploy"]["steps"]
+        steps = workflow["jobs"]["bootstrap"]["steps"]
         start = next(i for i, step in enumerate(steps) if step.get("name") == "Verify existing project IAM bootstrap authority")
-        end = next(i for i, step in enumerate(steps) if step.get("name") == "Verify catalog-viewer live dependencies")
+        end = next(i for i, step in enumerate(steps) if step.get("name") == "Terraform apply Secret Manager IAM bootstrap") + 1
+        assert workflow["jobs"]["ready"]["needs"] == ["prepare", "bootstrap"]
+        assert "Verify catalog-viewer live dependencies" in workflow_steps_by_name(workflow, "ready")
         for step in steps[start:end]:
             assert "(github.event_name == 'workflow_dispatch' || inputs.sync_iam)" in step["if"]
         return
@@ -419,7 +421,7 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     values = {"github.event_name": "push", "github.ref": "refs/heads/main", "inputs.sync_iam": False,
               "needs.bootstrap.result": "skipped", "needs.resources.result": "skipped"}
     assert condition_result(jobs["bootstrap"], values) is False
-    consumer = jobs["prepare" if target == "dataset-usage" else "sync"]
+    consumer = jobs["deploy" if target == "dataset-usage" else "sync"]
     assert condition_result(consumer, values) is True
     values["inputs.sync_iam"] = True
     assert condition_result(jobs["bootstrap"], values) is True

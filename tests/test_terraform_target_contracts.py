@@ -29,13 +29,13 @@ def test_declared_inline_scopes_pass_real_saved_plan_guards_and_foreign_resource
     resources.update(prefix + '.' + child for item in scopes.values() for prefix, child in item.get('modules', {}).items())
     value = yaml.safe_load((ROOT / '.github/workflows' / filename).read_text())
     guards = [step['run'] for job in value['jobs'].values() for step in job.get('steps', [])
-              if 'allowed_exact' in step.get('run', '') and "<<'PY'" in step['run']]
+              if ('allowed_exact' in step.get('run', '') and "<<'PY'" in step['run']) or '--registered-scope' in step.get('run', '')]
     for resource in sorted(resources | {'google_storage_bucket.foreign'}):
         address = resource + '["fixture"]' if resource.endswith('catalog_viewer_accessors') else resource
         plan = {'resource_changes': [{'address': address, 'change': {'actions': ['update']}}]}
         results = []
         for script in guards:
-            path = shlex.split(script.splitlines()[0])[2].replace('${RUNNER_TEMP}', str(tmp_path))
+            path = shlex.split(script.splitlines()[0])[2].replace('${RUNNER_TEMP}', str(tmp_path)).replace('$RUNNER_TEMP', str(tmp_path))
             Path(path).write_text(json.dumps(plan))
             results.append(subprocess.run(['bash', '-e', '-c', script], cwd=ROOT,
                 env={**os.environ, 'RUNNER_TEMP': str(tmp_path)}, capture_output=True).returncode)

@@ -22,10 +22,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.ingestion_targets import TARGETS
+from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+from scripts.terraform_target_contracts import plan_scope
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
-JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items()}
+JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items() if config["plan_guard"] == "job-image"}
 
 
 def split_lines(value: str) -> list[str]:
@@ -54,6 +55,8 @@ def wdpa_errors(after, expected_image, expected_config):
     return errors
 
 
+IMAGE_VALIDATORS = {"wdpa": wdpa_errors}
+
 def blocked_changes(
     plan: dict,
     *,
@@ -65,6 +68,7 @@ def blocked_changes(
     expected_config: str | None = None,
 ) -> list[str]:
     blocked = []
+    config = next(config for target, config in TARGETS.items() if JOB_IMAGE_TARGETS.get(target) == job_image[0]) if job_image else None
     for resource in plan.get("resource_changes", []):
         actions = resource.get("change", {}).get("actions", [])
         if actions in IGNORED_ACTIONS:
@@ -73,11 +77,11 @@ def blocked_changes(
         if (delete_only and actions != ["delete"]
                 or block_deletes and "delete" in actions
                 or address not in allowed_exact and not any(pattern.match(address) for pattern in allowed_patterns)
-                or job_image is not None and job_image[0] == JOB_IMAGE_TARGETS["wdpa-monthly"] and actions != ["update"]):
+                or config is not None and config["scope_update_only"] and actions != ["update"]):
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
         if job_image is not None and address == job_image[0]:
-            if actions != ["update"] and not (address == JOB_IMAGE_TARGETS["mpatlas-monthly"] and actions == ["create"]):
+            if actions not in [[action] for action in config["image_actions"]]:
                 blocked.append(f"{'/'.join(actions)} {address}")
                 continue
             after = resource.get("change", {}).get("after", {})
@@ -85,8 +89,8 @@ def blocked_changes(
             image = containers[0].get("image") if containers else None
             if image != job_image[1]:
                 blocked.append(f"unexpected image for {address}: {image!r}")
-            if address == JOB_IMAGE_TARGETS["wdpa-monthly"]:
-                blocked.extend(wdpa_errors(after, job_image[1], expected_config))
+            if config["processing_contract"]:
+                blocked.extend(IMAGE_VALIDATORS[config["processing_contract"]](after, job_image[1], expected_config))
     return blocked
 
 
@@ -95,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("plan_json", help="Path to `terraform show -json` output for the plan.")
     parser.add_argument("--allowed-exact", help="Newline-separated resource addresses; image targets supply their closed scope.")
     parser.add_argument("--allowed-patterns", default="", help="Newline-separated allowed address regexes.")
+    parser.add_argument("--registered-scope", nargs=2, metavar=("WORKFLOW", "SCOPE"), help="Use the reviewed workflow resource scope.")
     action_policy = parser.add_mutually_exclusive_group()
     action_policy.add_argument("--block-deletes", action="store_true", help="Refuse deletes and replacements, even for allowlisted addresses.")
     action_policy.add_argument("--delete-only", action="store_true", help="Permit only deletion of allowlisted retired resources.")
@@ -107,17 +112,22 @@ def main(argv: list[str] | None = None) -> int:
     allowed_exact = set(split_lines(args.allowed_exact or ""))
     allowed_patterns = [re.compile(pattern) for pattern in split_lines(args.allowed_patterns)]
     job_image = None
-    if args.job_image_target is not None:
+    if args.registered_scope:
+        if args.allowed_exact is not None or args.allowed_patterns or args.job_image_target or args.expected_image:
+            parser.error("--registered-scope cannot override its registered resource scope")
+        allowed_exact, allowed_patterns = plan_scope(*args.registered_scope)
+    elif args.job_image_target is not None:
         if not args.expected_image:
             parser.error("--job-image-target requires a nonempty --expected-image")
-        if args.job_image_target == "wdpa-monthly" and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_config or ""):
+        config = TARGETS[args.job_image_target]
+        if config["image_config_variable"] and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_config or ""):
             parser.error("WDPA requires --expected-config with its tested config digest")
         address = JOB_IMAGE_TARGETS[args.job_image_target]
         scope = set(TARGETS[args.job_image_target]["targets"])
         if (args.allowed_exact is not None and allowed_exact != scope) or allowed_patterns:
             parser.error("--job-image-target requires its exact resource scope and no allowed patterns")
-        if args.job_image_target == "mpatlas-monthly" and not args.block_deletes:
-            parser.error("the MPAtlas image target requires --block-deletes")
+        if config["require_block_deletes"] and not args.block_deletes:
+            parser.error("the image target requires --block-deletes")
         allowed_exact = scope
         job_image = (address, args.expected_image)
     elif args.expected_image is not None:

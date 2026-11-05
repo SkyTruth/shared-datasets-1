@@ -13,6 +13,15 @@ inputs:
   source-run-attempt:
     description: Exact successful CI attempt
     required: true
+  sync-name:
+    description: Registered synchronization bound to the caller
+    required: true
+  workload-identity-provider:
+    description: Terraform WIF provider
+    required: true
+  service-account:
+    description: Terraform deployment identity
+    required: true
   tf-vars:
     description: Recorded variables for state-only reconciliation
     required: false
@@ -32,6 +41,9 @@ runs:
       source-run-id: ${{ inputs.source-run-id }}
       source-run-attempt: ${{ inputs.source-run-attempt }}
   - name: Validate Terraform auth configuration
+    env:
+      TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.workload-identity-provider }}
+      TERRAFORM_SERVICE_ACCOUNT: ${{ inputs.service-account }}
     run: |
       set -euo pipefail
 
@@ -47,12 +59,17 @@ runs:
   - name: Resolve registered Terraform target
     env:
       INPUT_TF_VARS: ${{ inputs.tf-vars }}
+      SYNC_NAME: ${{ inputs.sync-name }}
+      CALLER_WORKFLOW: ${{ inputs.workflow }}
     run: python scripts/terraform_target_contracts.py --sync-name "$SYNC_NAME" --workflow "$CALLER_WORKFLOW"
     shell: bash
   - name: Check prior deployment before replanning
     id: replay
     env:
       GH_TOKEN: ${{ github.token }}
+      SYNC_NAME: ${{ inputs.sync-name }}
+      CALLER_WORKFLOW: ${{ inputs.workflow }}
+      EXECUTOR_SHA: ${{ inputs.executor-sha }}
       SOURCE_RUN_ID: ${{ inputs.source-run-id }}
       SOURCE_RUN_ATTEMPT: ${{ inputs.source-run-attempt }}
     run: |
@@ -64,8 +81,8 @@ runs:
     if: ${{ steps.replay.outputs.proceed == 'true' }}
     uses: google-github-actions/auth@v2
     with:
-      workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-      service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      workload_identity_provider: ${{ inputs.workload-identity-provider }}
+      service_account: ${{ inputs.service-account }}
   - name: Set up gcloud
     if: ${{ steps.replay.outputs.proceed == 'true' }}
     uses: google-github-actions/setup-gcloud@v2

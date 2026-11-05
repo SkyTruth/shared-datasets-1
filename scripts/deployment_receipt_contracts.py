@@ -5,14 +5,14 @@ import re
 import json
 
 import yaml
-from scripts.ingestion_targets import TARGETS
+from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 
 ACTION = "./.github/actions/deployment-receipt"
 BOOTSTRAP = "./.github/actions/deployment-bootstrap"
 WORKFLOWS = (
     "ingestion-deploy.yml",
     "prod-terraform-target-apply.yml", *(config["workflow"] for config in TARGETS.values()),
-    "dataset-usage-deploy.yml", "pmtiles-cdn-sync.yml",
+    "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
     "deployment-verification.yml", "deployment-recovery.yml",
 )
@@ -238,13 +238,13 @@ def ingestion_boundary(workflow):
     return errors + verification_boundary(workflow, "ingestion-deploy.yml", "apply", ["prepare", "apply"])
 
 
-def verification_boundary(workflow, filename, parent, needs):
+def verification_boundary(workflow, filename, parent, needs, *, apply_parent=None):
     errors = []
     verify = workflow["jobs"].get("verify", {})
     if verify.get("needs") != needs or verify.get("if") != "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}":
         errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
     admission = {
-        "APPLY_RESULT": "${{ needs." + parent + ".result }}", "CLAIM_SIGNED": "${{ needs." + parent + ".outputs.claim_signed }}",
+        "APPLY_RESULT": "${{ needs." + (apply_parent or parent) + ".result }}", "CLAIM_SIGNED": "${{ needs." + parent + ".outputs.claim_signed }}",
     }
     guards = [step for step in verify.get("steps", []) if admission.items() <= step.get("env", {}).items()]
     if len(guards) != 1 or "run" not in guards[0] or "if" in guards[0] or guards[0].get("continue-on-error"):
@@ -279,6 +279,30 @@ def terraform_boundary(workflow):
     return []
 
 
+def viewer_boundary(workflow):
+    """Release the state queue between IAM bootstrap, propagation and runtime apply."""
+    jobs = workflow['jobs']
+    if set(jobs) != {'prepare', 'bootstrap', 'ready', 'deploy', 'verify'}:
+        return ['Viewer requires prepare/bootstrap/ready/deploy/verify jobs']
+    bootstrap, ready, deploy = (jobs[key] for key in ('bootstrap', 'ready', 'deploy'))
+    lock = {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+    if ([key for key, job in jobs.items() if 'concurrency' in job] != ['bootstrap', 'deploy']
+            or any(jobs[key]['concurrency'] != lock for key in ('bootstrap', 'deploy'))
+            or bootstrap.get('needs') != 'prepare' or bootstrap.get('if') != "needs.prepare.outputs.proceed == 'true'"
+            or bootstrap.get('outputs') != {'deployment_id': '${{ steps.deployment.outputs.deployment_id }}', 'claim_signed': '${{ steps.claim-receipt.outcome }}'}
+            or ready.get('needs') != ['prepare', 'bootstrap']
+            or ready.get('if') != "needs.bootstrap.result == 'success' && needs.bootstrap.outputs.deployment_id != '' && needs.bootstrap.outputs.claim_signed == 'success'"
+            or deploy.get('needs') != ['prepare', 'bootstrap', 'ready'] or deploy.get('if') != "needs.ready.result == 'success'"):
+        return ['Viewer readiness must separate two serialized signed applies']
+    admission = {'APPLY_RESULT': '${{ needs.bootstrap.result }}', 'CLAIM_SIGNED': '${{ needs.bootstrap.outputs.claim_signed }}'}
+    guards = [step for step in deploy['steps'] if step.get('env') == admission]
+    if (len(guards) != 1 or not enabled(guards[0]) or 'if' in guards[0] or guards[0].get('continue-on-error')
+            or guards[0].get('run') != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
+            or any(mutations(step)[1] for step in deploy['steps'][:deploy['steps'].index(guards[0])])):
+        return ['Viewer runtime apply requires its successful signed bootstrap']
+    return verification_boundary(workflow, 'catalog-viewer-deploy.yml', 'bootstrap', ['prepare', 'bootstrap', 'deploy'], apply_parent='deploy')
+
+
 def boundaries(root):
     errors = []
     for filename in WORKFLOWS:
@@ -287,17 +311,11 @@ def boundaries(root):
             errors.extend(sdk_candidate_read_only(value))
         if filename == "ingestion-deploy.yml":
             errors.extend(ingestion_boundary(value))
-        if filename == "dataset-usage-deploy.yml":
-            errors.extend(verification_boundary(value, filename, "deploy", "deploy"))
-            outputs = value["jobs"].get("deploy", {}).get("outputs", {})
-            if any(outputs.get(key) != expected for key, expected in {
-                "deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}",
-                "image": "${{ steps.image.outputs.image }}",
-            }.items()):
-                errors.append(f"{filename}: verify must inherit the exact signed claim and image")
+        if filename == "catalog-viewer-deploy.yml":
+            errors.extend(viewer_boundary(value))
         for job_id, job in value["jobs"].items():
             steps = list(expanded_steps(root, job))
-            inherited = filename in {"ingestion-deploy.yml", "dataset-usage-deploy.yml"} and job_id == "verify"
+            inherited = filename == "ingestion-deploy.yml" and job_id == "verify" or filename == "catalog-viewer-deploy.yml" and job_id in {"deploy", "verify"}
             rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):
