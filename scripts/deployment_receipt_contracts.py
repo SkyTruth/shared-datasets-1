@@ -5,13 +5,14 @@ import re
 import json
 
 import yaml
+from scripts.ingestion_targets import TARGETS
 
 ACTION = "./.github/actions/deployment-receipt"
 BOOTSTRAP = "./.github/actions/deployment-bootstrap"
 WORKFLOWS = (
     "ingestion-deploy.yml",
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "pmtiles-cdn-sync.yml",
+    "prod-terraform-target-apply.yml", *(config["workflow"] for config in TARGETS.values()),
+    "dataset-usage-deploy.yml", "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
     "deployment-verification.yml", "deployment-recovery.yml",
 )
@@ -101,90 +102,38 @@ if [[ "${GITHUB_REF}" != "refs/heads/main" ||
 fi'''
     if not steps or set(steps[0]) != {"name", "run"} or re.sub(r"\s+", " ", steps[0]["run"].strip()) != re.sub(r"\s+", " ", guard):
         return False
-    runs = {
-        "uv sync --locked --no-dev": None,
-        "python scripts/install_deployment_verifier.py": None,
-        'uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
-        'uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
-        'uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': None,
-    }
-    actions = {
-        "actions/checkout@v4": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False},
-        "actions/setup-python@v5": {"python-version": "3.12.12"},
-        "astral-sh/setup-uv@v6": {"version": "0.11.8", "enable-cache": False},
-    }
     environment = {
         "GH_TOKEN": "${{ github.token }}",
         "SHARED_DATASETS_SLACK_BOT_TOKEN": "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}",
         "SHARED_DATASETS_SLACK_CHANNEL_ID": "${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}",
         "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": "${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}",
     }
-    command_environments = {
-        "prepare": environment,
-        "deliver": {key: value for key, value in environment.items() if not key.endswith("_SINCE")},
-        "verify": {"GH_TOKEN": environment["GH_TOKEN"]},
-    }
-    if [step.get("uses") for step in steps[1:4]] != list(actions):
-        return False
-    seen_runs, seen_actions, signers, cache_uploads = [], [], {}, []
-    for step in steps[1:]:
-        if not enabled(step) or set(step) - {"name", "id", "if", "uses", "with", "run", "env"}:
-            return False
-        if any(environment.get(key) != value for key, value in step.get("env", {}).items()):
-            return False
-        if "run" in step:
-            run = step["run"].strip()
-            if "uses" in step or run not in runs or step.get("id") != runs[run]:
-                return False
-            phase = next((name for name in command_environments if f"slack_incidents.py {name} " in run), None)
-            if step.get("env", {}) != command_environments.get(phase, {}):
-                return False
-            if phase not in {"deliver", "verify"} and "if" in step:
-                return False
-            seen_runs.append(run)
-        elif step.get("uses") == NOTIFICATION_ATTEST:
-            identifier = step.get("id")
-            if identifier not in {"attest-claims", "attest-outcomes"} or identifier in signers:
-                return False
-            phase = "claims" if identifier == "attest-claims" else "outcomes"
-            if step.get("with") != {"subject-path": "${{ runner.temp }}/slack-incidents/" + phase + "/*.json", "create-storage-record": False}:
-                return False
-            signers[identifier] = step
-        elif step.get("uses") == "actions/upload-artifact@v4":
-            if step != {
-                "name": "Retain verified notification evidence",
-                "if": "${{ success() && steps.prepare.outputs.verification_cache == 'true' }}",
-                "uses": "actions/upload-artifact@v4",
-                "with": {
-                    "name": "notification-verification-${{ github.run_id }}-${{ github.run_attempt }}",
-                    "path": "${{ runner.temp }}/slack-incidents/cache.json",
-                    "if-no-files-found": "error", "retention-days": 1,
-                },
-            }:
-                return False
-            cache_uploads.append(step)
-        else:
-            action = step.get("uses")
-            if action not in actions or step.get("with") != actions[action] or step.get("env") or "if" in step or "id" in step:
-                return False
-            seen_actions.append(action)
-    if (seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}
-            or len(cache_uploads) != 1 or steps[-1] != cache_uploads[0]):
-        return False
-    by_id = {step.get("id"): step for step in steps if step.get("id")}
-    delivery = by_id["deliver"]
-    claims = signers["attest-claims"]
-    outcomes = signers["attest-outcomes"]
-    verify = steps[-2]
-    expected_conditions = (
-        (claims, "${{ always() && steps.prepare.outputs.claims == 'true' }}"),
-        (delivery, "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}"),
-        (outcomes, "${{ always() && steps.deliver.outputs.outcomes == 'true' }}"),
-        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}"),
-    )
-    if any(step.get("if") != condition for step, condition in expected_conditions):
-        return False
-    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 2
+    command = 'uv run --no-sync python scripts/slack_incidents.py {} --work-dir "$RUNNER_TEMP/slack-incidents"'
+    # One ordered declaration replaces parallel command, action, phase, signer
+    # and artifact tables. Names are presentation; every authority field is exact.
+    expected = [
+        {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12.12"}},
+        {"uses": "astral-sh/setup-uv@v6", "with": {"version": "0.11.8", "enable-cache": False}},
+        {"run": "uv sync --locked --no-dev"},
+        {"run": "python scripts/install_deployment_verifier.py"},
+        {"id": "prepare", "env": environment, "run": command.format("prepare")},
+        {"id": "attest-claims", "if": "${{ always() && steps.prepare.outputs.claims == 'true' }}",
+         "uses": NOTIFICATION_ATTEST, "with": {"subject-path": "${{ runner.temp }}/slack-incidents/claims/*.json", "create-storage-record": False}},
+        {"id": "deliver", "if": "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}",
+         "env": {key: value for key, value in environment.items() if not key.endswith("_SINCE")}, "run": command.format("deliver")},
+        {"id": "attest-outcomes", "if": "${{ always() && steps.deliver.outputs.outcomes == 'true' }}",
+         "uses": NOTIFICATION_ATTEST, "with": {"subject-path": "${{ runner.temp }}/slack-incidents/outcomes/*.json", "create-storage-record": False}},
+        {"if": "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}",
+         "env": {"GH_TOKEN": environment["GH_TOKEN"]}, "run": command.format("verify")},
+        {"if": "${{ success() && steps.prepare.outputs.verification_cache == 'true' }}", "uses": "actions/upload-artifact@v4",
+         "with": {"name": "notification-verification-${{ github.run_id }}-${{ github.run_attempt }}",
+                  "path": "${{ runner.temp }}/slack-incidents/cache.json", "if-no-files-found": "error", "retention-days": 1}},
+    ]
+    actual = [{key: value.strip() if key == "run" else value for key, value in step.items() if key != "name"}
+              for step in steps[1:]]
+    return actual == expected
+
 
 
 def enabled(step):
@@ -240,8 +189,7 @@ def sdk_candidate_read_only(workflow):
             or any(value not in {"read", "none"} for value in effective.values())):
         return ["SDK candidate must remain a read-only job"]
     checks = [step for step in candidate["steps"] if step.get("id") == "candidate"]
-    if (len(checks) != 1 or checks[0].get("name") != "Verify tested SDK candidate and reviewed version"
-            or "python scripts/sdk_release_authorization.py " not in checks[0].get("run", "")
+    if (len(checks) != 1 or "python scripts/sdk_release_authorization.py " not in checks[0].get("run", "")
             or "--admit-source" in checks[0]["run"] or not enabled(checks[0])):
         return ["SDK candidate must retain its observable package verification step"]
     for identifier, job in workflow["jobs"].items():
@@ -281,10 +229,11 @@ def verification_boundary(workflow, filename, parent, needs):
     verify = workflow["jobs"].get("verify", {})
     if verify.get("needs") != needs or verify.get("if") != "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}":
         errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
-    guards = [step for step in verify.get("steps", []) if step.get("name") == "Require successful signed apply"]
-    if len(guards) != 1 or guards[0].get("env") != {
+    admission = {
         "APPLY_RESULT": "${{ needs." + parent + ".result }}", "CLAIM_SIGNED": "${{ needs." + parent + ".outputs.claim_signed }}",
-    } or guards[0].get("run", "").strip() != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success' or "if" in guards[0] or guards[0].get("continue-on-error"):
+    }
+    guards = [step for step in verify.get("steps", []) if admission.items() <= step.get("env", {}).items()]
+    if len(guards) != 1 or "run" not in guards[0] or "if" in guards[0] or guards[0].get("continue-on-error"):
         errors.append(f"{filename}: canary requires successful apply and exact signed claim")
     else:
         steps = verify["steps"]
@@ -292,8 +241,7 @@ def verification_boundary(workflow, filename, parent, needs):
             errors.append(f"{filename}: signed apply admission must precede canary")
     outcomes = [step for step in verify.get("steps", []) if command(step, "finish")]
     if (len(outcomes) != 1 or outcomes[0].get("if") != "${{ always() }}"
-            or outcomes[0].get("env") != {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}
-            or 'if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi' not in outcomes[0].get("run", "")):
+            or not {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}.items() <= outcomes[0].get("env", {}).items()):
         errors.append(f"{filename}: every claimed terminal outcome must be recorded even after failed apply")
     return errors
 

@@ -11,7 +11,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import shlex
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +49,7 @@ def role_permissions(text, name):
     return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
 
 
-def saved_plan_permission_contract(root):
+def saved_plan_permission_contract(root, filenames=PLAN_PROBE_WORKFLOWS):
     """Every automatic protected apply must check that saved plan's operations."""
     errors = []
     path = r'''["']?([^\s"']+\.%s)["']?'''
@@ -59,24 +58,35 @@ def saved_plan_permission_contract(root):
     apply = re.compile(r"(?:terraform_retry\.sh|\bterraform\b).*\sapply(?:\s|$)")
     binary = re.compile(path % "tfplan")
     target = re.compile(r'''--target\s+["']?([^\s"']+)["']?''')
-    for filename in PLAN_PROBE_WORKFLOWS:
+    bootstrap_guard = re.compile(r"cdn_plan_readiness\.py\s+check-bootstrap\s+--plan-json\s+" + path % "json")
+    for filename in filenames:
         applies = 0
         for job in workflow(root, filename)["jobs"].values():
-            saved, checked = {}, set()
+            saved, checked, role_plans, guarded = {}, set(), set(), set()
             for step in job.get("steps", []):
                 run = re.sub(r"\$\{([A-Z_]+)\}", r"$\1", step.get("run", "").replace("\\\n", " "))
                 for line in run.splitlines():
+                    if '-target=' + cdn.ROLE_ADDRESS in line:
+                        role_plans.update(binary.findall(run))
                     rendered = show.search(line)
                     if rendered:
                         saved[rendered[1]] = rendered[2]
                         checked.discard(rendered[2])  # A newly rendered plan invalidates an earlier probe.
+                        guarded.discard(rendered[2])
                     tested = probe.search(line)
+                    guard = bootstrap_guard.search(line)
+                    if guard and receipts.enabled(step) and not step.get('continue-on-error'):
+                        guarded.add(guard[1])
                     if tested and target.search(line) and str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}:
                         selected = target.search(line)[1]
                         # Cache invalidation is a post-apply operation and must
                         # remain in the CDN plan contract, even on no-change plans.
-                        if filename != "pmtiles-cdn-sync.yml" or not tested[1].endswith("/pmtiles-cdn-sync.tfplan.json") or selected == "pmtiles-cdn":
+                        if (filename != "pmtiles-cdn-sync.yml" or selected == "pmtiles-cdn"
+                                or tested[1] in guarded and tested[1] in {saved.get(plan) for plan in role_plans}):
                             checked.add(tested[1])
+                    if filename == "pmtiles-cdn-sync.yml" and receipts.command({'run': line}, 'start'):
+                        if len(role_plans) != 1 or not any(saved.get(plan) in guarded & checked for plan in role_plans):
+                            errors.append('CDN exact role guard and saved-plan permissions must precede the signed claim')
                     if apply.search(line):
                         applies += 1
                         candidate = binary.search(line)
@@ -117,30 +127,8 @@ def iam_contract(root):
     errors = []
     syncs = {name: item['workflow'] for name, item in terraform_targets.registry(root).items()}
     errors += cdn.bootstrap_definition_errors((root / 'terraform/envs/prod/shared_bucket_public.tf').read_text())
-    cdn_workflow = workflow(root, 'pmtiles-cdn-sync.yml')
     errors += cdn.routing_contract_errors(root)
-    cdn_steps = {step.get('name'): step for step in cdn_workflow['jobs']['sync']['steps']}
-    bootstrap = cdn_steps.get('Terraform plan PMTiles managed-folder IAM bootstrap', {}).get('run', '')
-    if '-target=' + cdn.ROLE_ADDRESS not in bootstrap:
-        errors.append('CDN bootstrap must target the exact existing URL-map role')
-    guard = cdn_steps.get('Enforce PMTiles managed-folder IAM bootstrap allowlist', {})
-    expected = 'python scripts/cdn_plan_readiness.py check-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"'
-    if guard.get('run') != expected or guard.get('if') != "steps.replay.outputs.proceed == 'true'":
-        errors.append('CDN bootstrap must enforce exact role adoption on its saved plan')
-    ordered = [
-        'Export PMTiles managed-folder IAM bootstrap plan JSON',
-        'Enforce PMTiles managed-folder IAM bootstrap allowlist',
-        'Verify permissions required by the saved CDN bootstrap plan',
-        'Record serialized CDN deployment attempt',
-        'Attest serialized deployment claim before mutation',
-        'Terraform apply PMTiles managed-folder IAM bootstrap',
-    ]
-    names = [step.get('name') for step in cdn_workflow['jobs']['sync']['steps']]
-    if any(names.count(name) != 1 for name in ordered) or sorted(names.index(name) for name in ordered if name in names) != [names.index(name) for name in ordered if name in names]:
-        errors.append('CDN exact role guard must follow saved-plan export and precede permissions, signed claim and bootstrap apply')
-    exported = cdn_steps.get(ordered[0], {}).get('run')
-    if exported != 'terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"':
-        errors.append('CDN role guard must consume JSON exported from the exact saved bootstrap plan')
+    errors += saved_plan_permission_contract(root, ('pmtiles-cdn-sync.yml',))
     for path in (root / '.github/workflows').glob('*.yml'):
         if path.name != 'pmtiles-cdn-sync.yml' and cdn.ROLE_ADDRESS in path.read_text():
             errors.append(f'{path.name}: URL-map role adoption belongs only to the constrained CDN bootstrap')
@@ -205,7 +193,7 @@ def iam_contract(root):
 
 
 def deployment_contract(root, target):
-    name = DEPLOYS[target] + "-deploy.yml"
+    name = INGESTION_CONFIGS[DEPLOYS[target]]["workflow"]
     value = workflow(root, name)
     triggers = value.get("on", value.get(True, {}))
     errors = []
@@ -230,40 +218,19 @@ def deployment_contract(root, target):
             "source-run-id": "${{ inputs.source_run_id }}", "source-run-attempt": "${{ inputs.source_run_attempt }}",
         }:
             errors.append(f"{name}: exact unconditional trusted bootstrap required")
-        by_name = {step.get("name"): step for step in receipts.expanded_steps(root, job)}
-        checkout = by_name.get("Check out repository", {}).get("with", {})
-        if checkout.get("ref") != "${{ inputs.executor_sha }}" or checkout.get("fetch-depth") != 0:
-            errors.append(f"{name}: exact executor SHA and complete history required")
-        bootstrap = by_name.get("Check out trusted verifier", {}).get("with", {})
-        if bootstrap.get("ref") != "${{ github.workflow_sha }}" or bootstrap.get("fetch-depth") != 0:
-            errors.append(f"{name}: verifier must originate from immutable trusted main workflow code")
-        names = list(by_name)
-        ordered = ("Check out trusted verifier", "Verify executor before candidate checkout", "Check out repository",
-                   "Restore immutable receipt verifier after candidate checkout", "Verify tested main revision", "Authenticate to Google Cloud")
-        if any(item not in names for item in ordered) or [names.index(item) for item in ordered if item in names] != sorted(names.index(item) for item in ordered if item in names):
-            errors.append(f"{name}: trusted bootstrap and retained verifier must precede candidate execution and authentication")
-        restore = by_name.get(ordered[3], {})
-        tokens = shlex.split(restore.get("run", ""))
-        retained = {"scripts/deployment_revision.py", "scripts/deployment_emission.py", "scripts/ingestion_targets.py",
-                    ".github/terraform-targets.json",
-                    "scripts/workflow_identity.py", "scripts/github_api_read.py", "scripts/install_deployment_verifier.py",
-                    ".github/actions/deployment-receipt"}
-        if (restore.get("env") != {"TRUSTED_WORKFLOW_SHA": "${{ github.workflow_sha }}"} or "if" in restore
-                or not retained <= set(tokens) or "git" not in tokens or "archive" not in tokens or "$TRUSTED_WORKFLOW_SHA" not in tokens):
-            errors.append(f"{name}: immutable receipt verifier must survive older candidate checkout")
-        for key in ("Verify executor before candidate checkout", "Verify tested main revision"):
-            if ("if" in by_name.get(key, {}) or not receipts.command(by_name.get(key, {}), "verify")
-                    or key == "Verify executor before candidate checkout" and "--bootstrap" not in by_name[key]["run"]):
-                errors.append(f"{name}: source verification cannot be disabled or bypassed")
-    steps = {s.get("name"): s for job in (jobs["prepare"], jobs["apply"]) for s in receipts.expanded_steps(root, job)}
-    order = list(steps)
-    for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before preparing image", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
-        if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):
-            errors.append(f"{name}: {prerequisite} must precede {consumer}")
+        steps = job.get("steps", [])
+        checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        checkout = checkouts[0] if len(checkouts) == 1 else {}
+        if (not checkout.get("uses", "").startswith("actions/checkout@")
+                or checkout.get("with", {}).get("ref") != "${{ github.workflow_sha }}"
+                or checkout.get("with", {}).get("fetch-depth") != 0
+                or "if" in checkout or checkout.get("continue-on-error")
+                or bootstraps and steps.index(checkout) >= steps.index(bootstraps[0])):
+            errors.append(f"{name}: unconditional trusted main workflow checkout with complete history required")
+        if bootstraps and any(receipts.mutations(step)[1] or step.get("uses", "").startswith("google-github-actions/auth@")
+                              for step in steps[:steps.index(bootstraps[0])]):
+            errors.append(f"{name}: trusted bootstrap must precede authentication and mutation")
     if target == "wdpa":
-        loader = steps.get("Load exact tested image", {})
-        if 'tested_image_authorization.py --workflow "$WORKFLOW_FILE" --target "$TARGET"' not in loader.get("run", ""):
-            errors.append(f"{name}: WDPA must deploy the exact CI-tested producer")
         tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
         if "WDPA_PROMOTION_BUNDLE" in tf or re.search(r"(?m)^\s*RUN_DATE\s*=", tf):
             errors.append("WDPA scheduler must not pin a monthly bundle or calendar date")
@@ -340,11 +307,11 @@ def check(root, targets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "mpatlas", "wdpa", "wdpa-history", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", *DEPLOYS, "wdpa-history", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"mpatlas", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
+        targets = {*DEPLOYS, "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

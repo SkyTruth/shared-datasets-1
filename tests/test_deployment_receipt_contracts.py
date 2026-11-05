@@ -46,6 +46,18 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(contracts.boundaries(self.root), [])
         self.assertEqual(contracts.permissions(self.root), [])
 
+    def test_step_labels_and_equivalent_shell_do_not_define_receipt_authority(self):
+        name = "ingestion-deploy.yml"
+        value = yaml.safe_load((self.workflows / name).read_text())
+        for job in value["jobs"].values():
+            for index, step in enumerate(job.get("steps", [])):
+                step["name"] = f"Renamed step {index}"
+                if "run" in step:
+                    step["run"] = step["run"].replace('test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success',
+                                                       '[[ "$APPLY_RESULT" == success && "$CLAIM_SIGNED" == success ]]')
+        self.write(name, value)
+        self.assertEqual(contracts.boundaries(self.root), [])
+
     def test_removed_disabled_late_or_wrong_signer_rehearsals_fail(self):
         name = "wdpa-monthly-deploy.yml"
         for change in ("removed", "disabled", "late", "wrong-signer"):
@@ -160,6 +172,8 @@ class ReceiptContractTests(unittest.TestCase):
 
     def test_exact_main_notification_writer_preserves_production_boundaries(self):
         value = self.notification()
+        for step in value["jobs"]["incidents"]["steps"]:
+            step["name"] = "Renamed notification step"
         self.assertTrue(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "incidents", value, value["jobs"]["incidents"]))
         self.write(contracts.NOTIFICATION_WORKFLOW, value)
         self.assertEqual(contracts.permissions(self.root), [])
