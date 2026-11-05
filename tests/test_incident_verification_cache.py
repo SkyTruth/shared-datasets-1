@@ -160,8 +160,24 @@ def unavailable(_):
     raise RuntimeError("original attestation unavailable")
 
 
-def test_native_artifact_roundtrip_reuses_success_but_rereads_every_live_input(retained, tmp_path):
+def test_new_immutable_receipt_is_verified_once_per_batch_but_changed_bytes_are_rechecked(retained):
+    api, _, verify = retained
+    cache = caches.VerificationCache(api.current, IDENTITY, gh_version=GH_VERSION)
+    receipt = emissions.receipt(incidents.REPOSITORY, api.record, api.statuses[0])
+    result = verified(receipt, emitter=api.emitter, signer=incidents.WORKFLOW)
+    with mock.patch.object(emissions, "verified_output", return_value=json.dumps(result)) as crypto:
+        assert cache.verify(api, api.record, api.statuses, IDENTITY, verify) is False
+        assert cache.verify(api, serialized(api.record), serialized(api.statuses), IDENTITY, unavailable) is True
+        assert crypto.call_count == 1
+    api.statuses[0]["environment_url"] = "https://example.test/changed"
+    with pytest.raises(RuntimeError, match="original attestation unavailable"):
+        cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
+
+
+@pytest.mark.parametrize("event", ["workflow_run", "workflow_dispatch"])
+def test_native_artifact_roundtrip_reuses_success_but_rereads_every_live_input(retained, tmp_path, event):
     api, _, _ = retained
+    api.producer["event"] = event
     cache = restored(api)
     api.reads.clear()
     with mock.patch.object(emissions, "verified_output", side_effect=RuntimeError("old attestation unavailable")) as crypto:
@@ -242,7 +258,7 @@ def test_missing_or_expired_retention_is_a_normal_cold_path(retained, reason):
 @pytest.mark.parametrize("change", ["digest", "json", "member", "extra-member", "producer-payload", "artifact-run",
                                      "job-failed", "job-skipped", "job-run", "job-attempt", "job-sha",
                                      "prepare-skipped", "upload-skipped", "producer-failed", "producer-skipped",
-                                     "producer-branch", "producer-event", "producer-dispatch", "producer-workflow", "producer-repository"])
+                                     "producer-branch", "producer-event", "producer-untrusted-event", "producer-workflow", "producer-repository"])
 def test_selected_artifact_requires_native_digest_exact_producer_and_successful_export(retained, change):
     api, path, _ = retained
     if change == "digest":
@@ -267,8 +283,8 @@ def test_selected_artifact_requires_native_digest_exact_producer_and_successful_
         api.producer["head_branch"] = "feature/untrusted"
     elif change == "producer-event":
         api.producer["event"] = "pull_request"
-    elif change == "producer-dispatch":
-        api.producer["event"] = "workflow_dispatch"
+    elif change == "producer-untrusted-event":
+        api.producer["event"] = "pull_request"
     elif change == "producer-workflow":
         api.producer["path"] = ".github/workflows/ci.yml"
     elif change == "producer-repository":

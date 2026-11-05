@@ -31,42 +31,43 @@ receive the new rendering on their next reconciliation. Historical reply records
 remain readable and uncertain sends retain their owner-reconciliation barrier.
 Confirming an old reply was not delivered never authorizes a replacement reply.
 
-The `Alerts / Workflow health and Slack reconciliation` workflow runs on both successful
-and failed workflow completions. Its presence in Actions does not mean a failure
-occurred or a Slack message was sent. `Operations / Safety check` is the single
-hourly timer for catalog freshness and incident/completion catch-up. It requests
-`Deployments / Completion check` only when reconciliation is needed;
-that completion triggers the incident replay described below. Historical
-runs under its former name, `Deployment terminal verification`, remain recognized
-under the same workflow and incident identity. Pending discovery only reads
-GitHub deployment metadata; the protected observer retains the pinned receipt
-verifier and verifies signatures before observing an execution or writing status.
+The `Alerts / Workflow health and Slack reconciliation` workflow receives native
+completed events for every monitored cron and deploy, including the safety check.
+Failures allocate an immediate worker. Successful completions allocate no worker
+except `Deployments / Completion check`, which batches recovery evidence.
+`Operations / Safety check` retains its hourly timer and 24-hour catch-up window.
+It requests completion checks only for pending executions, and directly dispatches
+an authenticated incident batch when replay finds incident work;
+healthy-watermark progress alone and unchanged owner-blocked sends do not request
+another worker. The probe still reports uncertain sends for owner reconciliation.
+Its authenticated snapshot checks live input changes before certifying idle.
 
-Repo-triggered catalog refreshes run as reusable jobs in the existing main CI
-run, selected after passing `ci-ready`. They no longer create a separate catalog
-completion event after every successful main CI. The parent CI completion still
-reports publisher failures against `deployment:catalog-web`; recovery still
-requires its signed terminal deployment record. Release-index rebuild follow-ups
-remain immediate. The safety timer requests the existing catalog workflow only
-when its live comparison finds work; neither catalog nor completion has its own
-cron trigger.
+The completion workflow reads pending deployment records directly. It never waits
+for a safety parent to finish: native completed events independently carry safety
+failures, even if GitHub marks a run complete long after runner cleanup. Historical
+completion names remain recognized under the same workflow and incident identity.
+Pending discovery only reads GitHub metadata; the observer verifies signed
+receipts before reading an execution or writing its terminal status. Its success
+can also start the existing incident worker's full 24-hour replay. Direct batches
+verify the exact safety attempt, revision and successful discovery step without
+waiting for its parent completion. Each new immutable
+notification receipt is verified once per batch; reuse rereads all mutable
+provenance and invalidates on changed bytes, code, verifier or Slack identity.
 
-The catalog input probe is read-only. An unchanged comparison skips the
-catalog deployment job. If only that probe fails (for example, an unavailable
-credential service) and authoritative same-attempt jobs prove the publisher was
-skipped, it remains a failed Actions check without opening or resolving a Slack
-incident. An allocated publisher failure still alerts. Historical catalog runs
-without this probe retain their original failure and recovery evidence.
+Safety, completion observation and manual Monitoring closure use
+`shared-datasets-production` with `deployment: false`. They retain their existing
+identity bindings and environment protection rules while avoiding automatic
+production deployment records; signed terminal and incident records still exist.
+See [GitHub's environment contract](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments).
 
-A successful automatic catalog probe with no incident observations also skips
-global incident reconciliation. The worker first verifies the source workflow,
-repository and attempt, then reads its authoritative jobs to prove the publisher
-was skipped. An obsolete source attempt is already a no-op. The short worker
-still appears in Actions; it does not load notification checkpoints or probe
-unrelated deployments. Publisher completions and failed probes retain normal
-reconciliation. The safety timer retains hourly detection of missed events,
-pending deliveries and recovery evidence, with the full 24-hour catch-up in the
-existing incident worker when needed.
+Repo-triggered catalog refreshes run as reusable jobs in main CI after passing
+`ci-ready`. Its completion reports publisher failures against
+`deployment:catalog-web`; recovery requires the signed terminal deployment record.
+Release-index rebuild follow-ups remain immediate. The safety timer requests the
+existing catalog workflow when its live comparison finds work; catalog and
+completion have no cron triggers. An unchanged catalog probe skips publication.
+A failed probe with a provably skipped publisher stays in Actions; allocated
+publisher failures retain Slack coverage. Failed API reads never certify idle.
 
 When inputs changed, the dispatched probe also checks passing main CI for its
 exact revision before selecting the publisher. Pending CI defers the refresh
@@ -124,10 +125,11 @@ matching terminal record cannot resolve a deployment incident.
 Audit/workflow startup incidents use successful completion of the same trusted
 workflow. Other job incidents require the same exact job within that workflow.
 Historical `deployment-verification.yml` completion-job incidents also accept a
-newer signed WDPA runtime recovery when the exact original job successfully
-attested a signed failed WDPA execution. The resolver verifies every retained
-failure, the failed deployment revisions and their ancestry to the latest
-`verified` WDPA deployment. It retains the original incident ID, scope, parent,
+newer signed runtime recovery for the exact target whose failed execution the
+original job successfully attested. Incident reconciliation and legacy resolution
+share the deployment recovery registry and failure-proof verifier. Every retained
+failure must match that target, its original signed receipt and ancestry to the
+latest `verified` deployment. It retains the original incident ID, scope, parent,
 failure history and delivery claims in the signed ledger. Verification errors,
 failed attestation and mixed unresolved failures retain their alerts. The normal
 notification workflow performs this reconciliation using existing evidence.
@@ -257,9 +259,9 @@ parent still requires owner inspection before any parent update or new send.
 ## Incremental verification
 
 The safety timer can remain idle only after the real incident preparation logic
-has completed without requesting a ledger write, with no pending WDPA records,
-deferred observations, uncertain posts or parent repairs. It records the exact
-API read transcript from that settled dry run in a bounded native Actions
+finds no actionable incident or delivery change, with no pending WDPA records.
+Health-only progress and unchanged owner-blocked posts do not require a worker.
+It records the exact API read transcript from that settled dry run in a bounded native Actions
 artifact. It never posts Slack messages, writes checkpoints or publishes data.
 
 Each later check freshly enumerates monitored main runs and all WDPA deployment
@@ -271,19 +273,13 @@ retention run the full comparison; failed reads and malformed selected proof
 fail visibly. A rolling 24-hour source window also invalidates proof as old runs
 age out, so adoption and active periods cost more than stable idle periods.
 
-A failed check requests the existing completion/reconciliation path as its last
-step. The follow-up waits for the exact parent attempt to finish, so replay sees
-its outcome. The next hourly census catches a runner lost before that handoff.
-Normal production failure/recovery subscriptions remain immediate. Healthy
-safety checks have no unconditional completion subscription, avoiding a new
-empty alert run every hour. The timer uses job-scoped `actions: write` for the
-two fixed main workflow dispatches in its checked-in code; existing
-publisher/observer authorization and signed terminal evidence remain mandatory.
-Legacy webhook mode keeps completion polling and forwards verified safety
-failures without requiring a Slack bot; it does not use the idle certificate.
-Its 24-hour census also catches failed safety attempts with no admitted native
-completion handoff. An already admitted handoff is never resent merely because
-its webhook outcome is uncertain.
+Safety failures use native completed events in both bot and legacy webhook modes;
+no parent wait, forwarded failure or handoff retry remains. The timer uses
+job-scoped `actions: write` for three fixed main routes: catalog refresh, pending
+execution verification and authenticated incident batches. A batch binds the exact
+successful discovery step, attempt and current revision; it cannot acknowledge a
+Slack send or authorize a production mutation. Legacy mode checks pending
+executions without requiring a bot or an idle certificate.
 
 Except for the verified empty successful catalog probes described above, every
 admitted incident event loads and authenticates all current notification checkpoints, processes
@@ -491,16 +487,17 @@ configuration; ambiguous non-idempotent sends still require owner inspection.
 Webhook alerts sent while incident management is disabled have no managed message
 record. After recovery, the owner may dispatch `Alerts / Legacy workflow resolution`
 from `main` with the original failed run ID and its inspected Slack parent
-`message_ts`. The action uses read-only GitHub permissions to verify every failed job maps to a
-registered deployment and that each latest signed terminal success is newer and
-covers the failed revision. Runtime targets, including dataset usage, require
-`verified`, not merely `applied`. It updates only the supplied original parent;
+`message_ts`. The action uses read-only GitHub permissions and the shared
+recovery registry. Each failed job must map to a registered deployment or prove an exact signed
+worker failure from the completion observer. The latest signed terminal success
+must cover that target and its failed revision. Runtime targets, including dataset
+usage, require `verified`, not merely `applied`. It updates only the supplied original parent;
 it never posts a replacement or reply. Unsupported failures remain unresolved.
 This action does not enable incident management or reinterpret retained incident
 records from other protocol versions.
-The same signed WDPA recovery proof also covers historical completion jobs that
-reported an attested worker failure. Managed incident parents use the normal
-notification workflow so closure is retained in their signed ledger.
+The same signed runtime recovery proof covers historical completion jobs that
+reported an attested failure of that exact registered target. Managed incident
+parents use the normal notification workflow so closure is retained in their signed ledger.
 
 
 ## Feature identity decision replies

@@ -240,13 +240,15 @@ Before declaring live routing verified:
    through `unattended-workflow-alert.yml`. That privileged workflow checks out
    only `main`, reads event JSON as data, and never downloads source-run artifacts.
 
-Successful/skipped upstream outcomes are filtered before allocating the legacy
-failure worker, except completion handoffs that must inspect their verified
-safety parent for a failure. The safety timer has no unconditional completion
-subscription: failures request reconciliation, and a lost runner is caught by
-the next hourly check. When incident tracking is enabled, its separate reconciliation
-worker also inspects successful completions for matching recovery evidence;
-routine healthy completions produce no Slack messages. CI now includes reusable dataset publication, catalog refresh and
+Healthy upstream events allocate no notification worker. Recovery evidence is
+batched by the hourly safety probe and replayed through a direct authenticated
+request to the incident worker. Pending executions use the completion workflow. Watermark-only progress and unchanged owner-blocked Slack sends do not
+request follow-ups. Native safety completion failures alert independently of any
+follow-up; no polling or fixed parent-completion deadline remains. Failures of
+all monitored crons and deployments retain immediate coverage, with the existing
+24-hour replay for missed events. The hourly cadence stays in place until
+cadence-aware data freshness and Scheduler pause checks can compensate for a
+reduction. CI includes reusable dataset publication, catalog refresh and
 deployment jobs. For a failed main-push CI run, the alert worker verifies the
 workflow identity and exact current run attempt, then checks its actual jobs.
 Publication failures and failed deployment jobs after passing `ci-ready` are
@@ -316,3 +318,9 @@ gcloud secrets versions add shared-datasets-slack-webhook-url \
 
 This webhook configuration is separate from the bot settings and delivery
 reconciliation owned by [Slack incidents](slack-incidents.md).
+
+Dataset breaking-change advisories run only on PRs changing
+`.github/dataset-plans/**`, including body edits while such a plan is present.
+Every valid publish/delete requires an immutable plan; code and documentation PRs
+without one allocate no advisory routing runner. The advisory still independently
+validates the plan, PR snapshot and proposed schema before sending anything.

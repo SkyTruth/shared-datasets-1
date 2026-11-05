@@ -5,6 +5,10 @@ on:
     branches:
       - main
     types: [opened, edited, synchronize, reopened, ready_for_review]
+    # Every authorized mutation has a checked-in immutable plan. Body edits on
+    # such PRs still run; ordinary code/docs PRs need no routing runner.
+    paths:
+      - '.github/dataset-plans/**'
 
 permissions: {}
 

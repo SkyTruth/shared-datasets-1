@@ -34,6 +34,7 @@ on:
       - "Ingestion / WDPA monthly deploy"
       - "Ingestion / WDPA monthly build"
       - "MPAtlas monthly deploy"
+      - "Operations / Safety check"
       - "PMTiles CDN sync"
       - "Preview Terraform IAM sync"
       - "Prod Terraform state reconciliation"
@@ -58,10 +59,10 @@ on:
         required: true
         type: string
       delivery_result:
-        description: Owner confirmation after inspecting the incident in Slack
+        description: Delivery reconciliation or an authenticated safety batch
         required: true
         type: choice
-        options: [delivered, not-delivered, seal-checkpoint, replay-window]
+        options: [delivered, not-delivered, seal-checkpoint, replay-window, batch]
       message_ts:
         description: Exact message timestamp when confirming delivered; empty otherwise
         required: false
@@ -77,10 +78,7 @@ jobs:
       vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
       github.event.workflow_run.status == 'completed' &&
       (
-        contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) ||
-        (github.event.workflow_run.conclusion == 'success' &&
-         contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification"]'), github.event.workflow_run.name) &&
-         startsWith(github.event.workflow_run.display_title, 'Operational follow-up: safety '))
+        contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion)
       ) &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -88,7 +86,7 @@ jobs:
         github.event.workflow_run.event == 'schedule' ||
         github.event.workflow_run.event == 'workflow_run' ||
         (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
-        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation","Catalog / Web deploy","Catalog web deploy"]'), github.event.workflow_run.name))
+        (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation","Catalog / Web deploy","Catalog web deploy","Operations / Safety check"]'), github.event.workflow_run.name))
       )
     runs-on: ubuntu-latest
     steps:
@@ -116,7 +114,11 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         (
           github.event.workflow_run.status == 'completed' &&
-          contains(fromJSON('["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
+          (
+            contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) ||
+            (github.event.workflow_run.conclusion == 'success' &&
+             contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification"]'), github.event.workflow_run.name))
+          ) &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           (

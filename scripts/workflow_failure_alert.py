@@ -51,12 +51,9 @@ MONITORED_WORKFLOWS = {
     "wdpa-monthly-build.yml",
 }
 WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
-# A successful idle safety check must not start a notification workflow. Its
-# failures and recoveries remain in the existing hourly authoritative replay.
-REPLAY_ONLY_WORKFLOWS = {"operational-safety-check.yml"}
 OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
 UNATTENDED_DISPATCH_WORKFLOWS = OBSERVER_WORKFLOWS | {
-    name for path in REPLAY_ONLY_WORKFLOWS | {"catalog-web-deploy.yml"} for name in WORKFLOW_NAMES[path]
+    name for path in {"operational-safety-check.yml", "catalog-web-deploy.yml"} for name in WORKFLOW_NAMES[path]
 }
 
 
@@ -177,15 +174,8 @@ def resolve_legacy(api, slack, run_id, message_ts):
     incidents.require(failures, "source has no failed jobs")
     links = []
     for failure in failures:
-        if failure["kind"] == "deployment":
-            recovery, _ = incidents.terminal_success(api, failure["scope"])
-            incidents.require(recovery is not None
-                              and incidents.deployments.git_ancestor(failure["sha"], recovery["sha"])
-                              and incidents.instant(recovery["time"]) > incidents.instant(failure["time"]),
-                              "failed target has no newer verified recovery")
-        else:
-            recovery = incidents.observer_runtime_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
-            incidents.require(recovery is not None, "failed job has no registered verified runtime recovery")
+        recovery = incidents.verified_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
+        incidents.require(recovery is not None, "failed target has no newer verified recovery")
         links.append(f"<{incidents.emissions.invocation(REPOSITORY, recovery['run_id'], recovery['attempt'])}|Verified {failure['label']} recovery>")
     payload = build_slack_payload(title="Unattended GitHub workflow resolved", status="success",
                                  body=f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Original failed run>\n" + "\n".join(dict.fromkeys(links)))
@@ -212,16 +202,6 @@ def main() -> None:
         parser.error("notification requires --event-path")
     event = json.loads(args.event_path.read_text())
     run = event["workflow_run"]
-    if (run.get("name") in WORKFLOW_NAMES["deployment-verification.yml"] and run.get("event") == "workflow_dispatch"
-            and run.get("conclusion") == "success"):
-        api = GitHub()
-        if verify_source_event(api, run):
-            authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
-            match = re.fullmatch(r"Operational follow-up: safety ([1-9][0-9]*)/([1-9][0-9]*)", authoritative.get("display_title", ""))
-            if match:
-                from scripts.operational_safety_check import safety_parent
-                run = safety_parent(api, int(match[1]), int(match[2]))
-                event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
     jobs = None
     alert = alert_for_run(event)
     # Both CI publication and scheduled catalog activity need exact job evidence.

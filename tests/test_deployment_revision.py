@@ -433,19 +433,15 @@ class PendingDiscoveryBoundaryTests(unittest.TestCase):
         workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows/deployment-verification.yml").read_text())
         triggers = workflow.get("on", workflow.get(True))
         self.assertEqual(set(triggers), {"workflow_dispatch"})
-        inputs = triggers["workflow_dispatch"]["inputs"]
-        self.assertEqual(set(inputs), {"safety_run_id", "safety_run_attempt"})
-        self.assertTrue(all(value["type"] == "string" and not value.get("required", False) for value in inputs.values()))
+        self.assertIsNone(triggers["workflow_dispatch"])
         pending, verify = (workflow["jobs"][name] for name in ("pending", "verify"))
         self.assertNotIn("needs", pending)
         self.assertNotIn("concurrency", pending)
         installer = "python scripts/install_deployment_verifier.py"
         self.assertNotIn(installer, [step.get("run") for step in pending["steps"]])
         self.assertIn(installer, [step.get("run") for step in verify["steps"]])
-        handoff = next(step for step in pending["steps"] if step.get("name") == "Wait for the safety handoff to finish")
-        self.assertIn("inputs.safety_run_id != '' || inputs.safety_run_attempt != ''", handoff["if"])
-        self.assertEqual(handoff["run"], "python scripts/operational_safety_check.py --wait-for-safety")
-        self.assertEqual(verify["environment"], "shared-datasets-production")
+        self.assertFalse(any("wait-for-safety" in step.get("run", "") for step in pending["steps"]))
+        self.assertEqual(verify["environment"], {"name": "shared-datasets-production", "deployment": False})
         self.assertEqual(verify["needs"], "pending")
 
     def test_observer_rejects_invalid_signature_before_runtime_read_or_status_write(self):

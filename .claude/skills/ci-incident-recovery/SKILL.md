@@ -166,6 +166,15 @@ Verify the required terminal result. A started asynchronous execution is insuffi
 
 Confirm that the automated observer recognizes the recovery and updates the original incident. A successful observer run alone does not prove the visible alert changed.
 
+Safety failures arrive as native completed events; do not wait for a parent or
+redispatch its old handoff. Healthy events are batched by the hourly safety probe.
+An idle probe may advance health in memory without starting a worker. Unchanged
+uncertain Slack sends require owner reconciliation, not an hourly retry. Both
+legacy resolution and incident reconciliation use the shared target registry and
+exact signed failed-worker/recovery proofs. Read-only observer jobs retain their
+protected environment with `deployment: false`; that suppresses automatic GitHub
+deployment records without changing their cloud identity or terminal receipts.
+
 If an external service blocks reconciliation, state:
 
 - What has already succeeded.

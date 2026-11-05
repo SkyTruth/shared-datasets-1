@@ -124,7 +124,7 @@ class VerificationCache:
         require(identity == self.identity, "Slack identity changed within cache invocation")
         require(isinstance(statuses, list) and len(statuses) == 1, "notification checkpoint requires its complete status history")
         key = digest({"record": record, "statuses": statuses, "identity": identity})
-        reads = self.entries.get(key)
+        reads = self.used.get(key, self.entries.get(key))
         if reads is not None and all(digest(api.get(path)) == value for path, value in reads.items()):
             self.used[key] = copy.deepcopy(reads)
             self.hits += 1
@@ -191,7 +191,7 @@ class VerificationCache:
 
 
 def authenticate_producer(api, repository, workflow, producer, head_sha, *, workflow_path=WORKFLOW,
-                          job_name=JOB, required_steps=(PREPARE_STEP, UPLOAD_STEP), events=("workflow_run",)):
+                          job_name=JOB, required_steps=(PREPARE_STEP, UPLOAD_STEP), events=("workflow_run", "workflow_dispatch")):
     expected = execution(producer)
     latest = api.get(f"repos/{REPOSITORY}/actions/runs/{expected['id']}")
     exact = api.get(f"repos/{REPOSITORY}/actions/runs/{expected['id']}/attempts/{expected['run_attempt']}")

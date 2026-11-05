@@ -14,7 +14,9 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: shared-datasets-production
+    environment:
+      name: shared-datasets-production
+      deployment: false
     permissions:
       contents: read
       actions: write
@@ -81,19 +83,16 @@ jobs:
           path: ${{ runner.temp }}/operational-safety/cache.json
           if-no-files-found: error
           retention-days: 1
-      - name: Request operational reconciliation
-        if: ${{ always() && steps.trust.outcome == 'success' && (steps.probe.outputs.reconcile == 'true' || failure()) }}
+      - name: Request execution verification
+        if: ${{ steps.probe.outputs.verify == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          MISSED_HANDOFFS: ${{ steps.probe.outputs.missed_handoffs || '[]' }}
-        run: |
-          set -euo pipefail
-          gh workflow run deployment-verification.yml --ref main -f safety_run_id="$GITHUB_RUN_ID" -f safety_run_attempt="$GITHUB_RUN_ATTEMPT"
-          python - <<'PY'
-          import json, os, subprocess
-          for parent in json.loads(os.environ['MISSED_HANDOFFS']):
-              if set(parent) != {'id', 'run_attempt'} or any(type(value) is not int or value <= 0 for value in parent.values()):
-                  raise ValueError('Invalid safety handoff')
-              subprocess.run(['gh', 'workflow', 'run', 'deployment-verification.yml', '--ref', 'main',
-                              '-f', f"safety_run_id={parent['id']}", '-f', f"safety_run_attempt={parent['run_attempt']}"], check=True)
-          PY
+        run: gh workflow run deployment-verification.yml --ref main
+      - name: Request operational reconciliation
+        if: ${{ steps.probe.outputs.reconcile == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run unattended-workflow-alert.yml --ref main
+          -f incident_id=operational-batch -f delivery_result=batch
+          -f operation="safety:${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"

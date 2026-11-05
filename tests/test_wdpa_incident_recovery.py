@@ -363,3 +363,24 @@ def test_runtime_recovery_proof_cannot_be_attached_to_an_unrelated_job(observer_
     value["incident"]["failures"][0]["job_name"] = "unregistered signing job"
     with pytest.raises(incidents.IncidentError, match="completion-job runtime recovery"):
         incidents.validate_state(value)
+
+
+def test_failed_canary_legacy_parent_resolves_only_after_verified_recovery(observer_history, monkeypatch):
+    from scripts import workflow_failure_alert as alerts
+    ledger, _, runs, jobs, _, statuses = observer_history
+    monkeypatch.setattr(incidents.deployments, "git_ancestor", lambda *_: True)
+    event = {"repository": {"full_name": incidents.REPOSITORY}, "workflow_run": runs[100]}
+    assert alerts.alert_for_run(event, jobs=jobs[100]) is not None
+    slack = FakeSlack()
+    terminal = copy.deepcopy(statuses[5][0])
+    statuses[5][0].update(state="in_progress", description="verification_pending")
+    with pytest.raises(incidents.IncidentError, match="no newer verified recovery"):
+        alerts.resolve_legacy(ledger.api, slack, 100, "1791270000.000001")
+    assert slack.calls == []
+    statuses[5][0] = terminal
+    alerts.resolve_legacy(ledger.api, slack, 100, "1791270000.000001")
+    assert len(slack.calls) == 1 and slack.calls[0][0] == "update"
+    assert slack.calls[0][2] == {"ts": "1791270000.000001"}
+    assert "resolved" in slack.calls[0][1]["text"]
+    assert "runs/500/attempts/1" in slack.calls[0][1]["text"]
+    ledger.api.post.assert_not_called()
