@@ -1186,6 +1186,10 @@ wdpa-native = [
 browser = [
     { name = "geopandas" },
 ]
+ci-plan = [
+    { name = "python-hcl2" },
+    { name = "pyyaml" },
+]
 dev = [
     { name = "geopandas" },
     { name = "pytest" },
@@ -1209,6 +1213,10 @@ provides-extras = ["wdpa-native"]
 
 [package.metadata.requires-dev]
 browser = [{ name = "geopandas", specifier = "==1.1.1" }]
+ci-plan = [
+    { name = "python-hcl2", specifier = ">=8,<9" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+]
 dev = [
     { name = "geopandas", specifier = "==1.1.1" },
     { name = "pytest", specifier = ">=9.0.0" },
