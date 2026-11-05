@@ -63,6 +63,8 @@ TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
     for name, workflow in TERRAFORM_SYNCS.items()
 }
+INGESTION_TARGETS = frozenset({"wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily"})
+INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
 
 
 class DeploymentError(RuntimeError):
@@ -169,12 +171,33 @@ def verify_record(api, repository, record, *, statuses=None):
     return payload
 
 
+def receipt_signer(api, repository, target, run_id, attempt):
+    """Select only registered leaves, bound to the immutable emitting run graph.
+
+    Pre-consolidation runs signed in the target wrapper. A shared-leaf signature
+    requires GitHub's exact referenced workflow and its immutable source digest;
+    missing graph evidence can therefore never authorize the new leaf.
+    """
+    signer = "prod-terraform-target-apply.yml" if target in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS.get(target)
+    require(signer is not None, "receipt target has no trusted signer contract")
+    if target in INGESTION_TARGETS:
+        run = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
+        require(run.get("id") == run_id and run.get("run_attempt") == attempt, "signer execution attempt mismatch")
+        references = run.get("referenced_workflows", [])  # Historical inline leaves have no reusable graph.
+        require(isinstance(references, list), "invalid immutable signer graph")
+        shared = [item for item in references if item.get("path") == f"{repository}/{INGESTION_SIGNER}@{run.get('head_sha')}"]
+        if shared:
+            require(len(shared) == 1 and SHA.fullmatch(str(run.get("head_sha", "")))
+                    and shared[0].get("sha") == run["head_sha"] and shared[0].get("ref") == "refs/heads/main", "shared signer revision differs from immutable emitting workflow")
+            return INGESTION_SIGNER
+    return ".github/workflows/" + signer
+
+
 def verify_receipt(api, repository, record, status):
     payload = record_payload(record)
-    signer = "prod-terraform-target-apply.yml" if payload["target"] in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS.get(payload["target"])
-    require(signer is not None, "receipt target has no trusted signer contract")
+    signer = receipt_signer(api, repository, payload["target"], payload["execution_run_id"], payload["execution_run_attempt"])
     try:
-        emissions.verify(api, repository, record, status, original_signer=".github/workflows/" + signer)
+        emissions.verify(api, repository, record, status, original_signer=signer)
     except emissions.EmissionError as error:
         raise DeploymentError(str(error)) from error
 
@@ -320,9 +343,9 @@ def start(args, api):
         return decision
     repository = os.environ["GITHUB_REPOSITORY"]
     environment = f"production-{args.target}"
-    signer = "prod-terraform-target-apply.yml" if args.target in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS[args.target]
+    signer = receipt_signer(api, repository, args.target, int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
     try:
-        emissions.verify_rehearsal(api, repository, ".github/workflows/" + signer)
+        emissions.verify_rehearsal(api, repository, signer)
     except emissions.EmissionError as error:
         raise DeploymentError(str(error)) from error
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", args.artifact), "deployment artifact must be an immutable image digest")

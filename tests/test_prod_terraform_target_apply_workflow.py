@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from test_wdpa_monthly_deploy_workflow import shared_workflow
 from workflow_helpers import (
     assert_target_apply_caller,
     load_workflow,
@@ -168,7 +169,8 @@ class TargetApplyCallerTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 jobs = load_workflow(REPO_ROOT / ".github/workflows" / name)["jobs"]
                 self.assertNotIn("iam", jobs)
-                steps = workflow_steps_by_name({"jobs": jobs}, "deploy")
+                self.assertEqual(jobs["deploy"]["uses"], "./.github/workflows/ingestion-deploy.yml")
+                steps = workflow_steps_by_name(shared_workflow(), "prepare")
                 self.assertIn("Verify live deployment permissions", steps)
                 self.assertIn("Verify tested main revision", steps)
 

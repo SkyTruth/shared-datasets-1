@@ -176,9 +176,7 @@ class WrapperIsUsedForProdMutationsTests(unittest.TestCase):
 
     WORKFLOWS = (
         "prod-terraform-target-apply.yml",
-        "wdpa-monthly-deploy.yml",
-        "eamlis-monthly-deploy.yml",
-        "sea-ice-daily-deploy.yml",
+        "ingestion-deploy.yml",
         "catalog-viewer-deploy.yml",
         "pmtiles-cdn-sync.yml",
     )
@@ -203,74 +201,36 @@ class WrapperIsUsedForProdMutationsTests(unittest.TestCase):
 
 
 class CanaryDuplicationGuardTests(unittest.TestCase):
-    """A deploy must not start a canary alongside one already publishing.
+    """Run the shipped cross-target guard; cancellation stays explicit."""
 
-    On 2026-08-05 two merges minutes apart started two wdpa-monthly canaries.
-    The second rebuilt all 304,816 features over ~110 minutes before the publish
-    step re-checked the run record and skipped. Nothing corrupted, but two
-    ~2-hour 8-CPU runs were wasted. Skipping is preferred over cancelling
-    because the in-flight run is usually executing identical code and may be
-    most of the way through an actual release.
-    """
+    def test_each_target_refuses_active_canary_unless_cancel_is_opted_in(self):
+        from test_wdpa_monthly_deploy_workflow import run_shell, shared_step, target_table
+        script = shared_step("verify", "Resolve in-flight canary")["run"]
+        recorder = '''gcloud() {
+          if [[ "$*" == *"executions list"* ]]; then printf 'existing-execution 1\\n';
+          elif [[ "$*" == *"executions cancel"* ]]; then echo "cancelled:$*";
+          else return 9; fi
+        }
+'''
+        for target in target_table():
+            for cancel in ("false", "true"):
+                with self.subTest(target=target, cancel=cancel), tempfile.TemporaryDirectory() as directory:
+                    result = run_shell(Path(directory), script, target=target,
+                                       extra={"CANCEL_RUNNING_CANARY": cancel}, prefix=recorder)
+                    self.assertEqual(result.returncode == 0, cancel == "true", result.stderr)
+                    self.assertEqual("cancelled:" in result.stdout, cancel == "true")
+                    if cancel == "false":
+                        self.assertIn("refusing a duplicate canary", result.stderr)
 
-    DEPLOYS = {
-        "wdpa-monthly-deploy.yml": "wdpa-monthly",
-        "eamlis-monthly-deploy.yml": "eamlis-monthly",
-        "sea-ice-daily-deploy.yml": "sea-ice-daily",
-    }
-
-    def workflow(self, name: str) -> dict:
-        import yaml
-
-        return yaml.safe_load((REPO_ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
-
-    def steps(self, name: str) -> list[dict]:
-        return self.workflow(name)["jobs"]["deploy"]["steps"]
-
-    def test_every_deploy_resolves_an_in_flight_canary_first(self):
-        for name, job in self.DEPLOYS.items():
-            with self.subTest(workflow=name):
-                steps = self.steps(name)
-                names = [s.get("name") for s in steps]
-                self.assertIn("Resolve in-flight canary", names)
-                self.assertLess(
-                    names.index("Resolve in-flight canary"),
-                    names.index(f"Execute {job} canary"),
-                    "the guard must run before the canary",
-                )
-
-    def test_the_canary_is_skipped_when_one_is_already_running(self):
-        for name, job in self.DEPLOYS.items():
-            with self.subTest(workflow=name):
-                steps = {s.get("name"): s for s in self.steps(name)}
-                guard = steps["Resolve in-flight canary"]["run"]
-                canary = steps[f"Execute {job} canary"]
-
-                self.assertIn("status.runningCount", guard)
-                self.assertIn("run_canary=false", guard)
-                receipt = steps["Attest serialized deployment claim before mutation"]
-                self.assertEqual(receipt["id"], "claim-receipt")
-                self.assertEqual(receipt["with"]["receipt-path"], "${{ steps.revision.outputs.receipt_path }}")
-                self.assertEqual(canary["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.inflight.outputs.run_canary == 'true' }}")
-
-    def test_cancelling_is_available_but_opt_in(self):
-        for name in self.DEPLOYS:
-            with self.subTest(workflow=name):
-                workflow = self.workflow(name)
-                trigger = workflow.get("on") or workflow.get(True)
-                option = trigger["workflow_dispatch"]["inputs"]["cancel_running_canary"]
-                self.assertIs(option["default"], False, "skipping must be the default")
-
-                guard = {s.get("name"): s for s in self.steps(name)}["Resolve in-flight canary"]["run"]
-                self.assertIn("gcloud run jobs executions cancel", guard)
-                self.assertIn('"${CANCEL_RUNNING_CANARY}" == "true"', guard)
-
-    def test_the_skip_is_reported_rather_than_silent(self):
-        for name in self.DEPLOYS:
-            with self.subTest(workflow=name):
-                guard = {s.get("name"): s for s in self.steps(name)}["Resolve in-flight canary"]["run"]
-                self.assertIn("::notice::", guard)
-                self.assertIn("cancel_running_canary=true", guard)
+    def test_every_wrapper_defaults_to_no_cancellation_and_guard_precedes_launch(self):
+        from test_wdpa_monthly_deploy_workflow import shared_workflow, target_table
+        from workflow_helpers import load_workflow, workflow_triggers
+        steps = shared_workflow()["jobs"]["verify"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertLess(names.index("Resolve in-flight canary"), names.index("Execute ingestion canary"))
+        for target in target_table():
+            caller = load_workflow(REPO_ROOT / ".github/workflows" / (target + "-deploy.yml"))
+            self.assertIs(workflow_triggers(caller)["workflow_dispatch"]["inputs"]["cancel_running_canary"]["default"], False)
 
 if __name__ == "__main__":
     unittest.main()

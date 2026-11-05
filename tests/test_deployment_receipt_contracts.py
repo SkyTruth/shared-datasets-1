@@ -34,7 +34,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.workflows.mkdir(parents=True)
         for name in contracts.WORKFLOWS:
             value = leaf(name)
-            if name == "publish-typescript-sdk.yml":
+            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml"}:
                 source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
                 value = yaml.safe_load(source.read_text())
             self.write(name, value)
@@ -87,6 +87,33 @@ class ReceiptContractTests(unittest.TestCase):
         value["jobs"]["deploy"]["steps"][4]["if"] = "always() && steps.claim-receipt.outcome == 'success'"
         self.write(name, value)
         self.assertEqual(contracts.boundaries(self.root), [])
+
+    def test_shared_graph_rejects_missing_disabled_bypassed_or_disconnected_claims(self):
+        name = "ingestion-deploy.yml"
+        original = yaml.safe_load((self.workflows / name).read_text())
+        mutations = {
+            "prepare rehearsal removed": lambda jobs: jobs["prepare"]["steps"].remove(next(step for step in jobs["prepare"]["steps"] if step.get("with", {}).get("mode") == "rehearsal")),
+            "apply signature disconnected": lambda jobs: jobs["apply"]["outputs"].update(claim_signed="${{ steps.other.outcome }}"),
+            "apply claim disabled": lambda jobs: next(step for step in jobs["apply"]["steps"] if step.get("id") == "claim-receipt").update({"if": False}),
+            "apply claim missing": lambda jobs: jobs["apply"]["steps"].remove(next(step for step in jobs["apply"]["steps"] if step.get("id") == "claim-receipt")),
+            "apply OR bypass": lambda jobs: next(step for step in jobs["apply"]["steps"] if step.get("name") == "Terraform apply").update({"if": "steps.claim-receipt.outcome == 'success' || true"}),
+            "verify disconnected": lambda jobs: jobs["verify"].update(needs="prepare"),
+            "failed apply hidden": lambda jobs: jobs["verify"].update({"if": "success()"}),
+            "guard removed": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply")),
+            "guard disabled": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply").update({"if": False}),
+            "guard ignored": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply").update({"continue-on-error": True}),
+            "canary bypass": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Execute ingestion canary").update({"if": "always()"}),
+            "outcome missing": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("id") == "deployment-outcome")),
+            "outcome signature missing": lambda jobs: jobs["verify"]["steps"].pop(),
+            "outcome signature disabled": lambda jobs: jobs["verify"]["steps"][-1].update({"if": False}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = copy.deepcopy(original)
+                mutate(value["jobs"])
+                self.write(name, value)
+                self.assertTrue(contracts.boundaries(self.root))
+
 
     def test_unknown_outcome_requires_always_signing_of_its_own_file(self):
         name = "deployment-verification.yml"

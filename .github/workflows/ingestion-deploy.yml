@@ -153,6 +153,14 @@ jobs:
         ref: ${{ inputs.executor_sha }}
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore immutable receipt verifier after candidate checkout
+      env:
+        TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        set -euo pipefail
+        git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \
+          scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
+          .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"
     - name: Verify tested main revision
       env:
         GH_TOKEN: ${{ github.token }}
@@ -390,6 +398,14 @@ jobs:
         ref: ${{ inputs.executor_sha }}
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore immutable receipt verifier after candidate checkout
+      env:
+        TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        set -euo pipefail
+        git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \
+          scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
+          .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"
     - name: Verify tested main revision
       env:
         GH_TOKEN: ${{ github.token }}
@@ -586,6 +602,14 @@ jobs:
         ref: ${{ inputs.executor_sha }}
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore immutable receipt verifier after candidate checkout
+      env:
+        TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      run: |
+        set -euo pipefail
+        git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \
+          scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
+          .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"
     - name: Verify tested main revision
       env:
         GH_TOKEN: ${{ github.token }}

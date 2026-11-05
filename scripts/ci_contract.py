@@ -74,6 +74,7 @@ CONTRACT_FILES = (
     "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
     "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
     ".github/actions/deployment-receipt/action.yml",
+    ".github/workflows/ingestion-deploy.yml", "scripts/deployment_receipt_contracts.py",
 )
 
 
@@ -324,6 +325,8 @@ def select_deployments(
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
             selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
+        if path == ".github/workflows/ingestion-deploy.yml":
+            selected.update(ingestion)
         if path.startswith("ingestion/common/") or path in {
             "ingestion/__init__.py",
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",

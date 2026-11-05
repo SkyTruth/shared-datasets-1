@@ -57,6 +57,14 @@ caller never holds the state queue. The main pipeline invokes shared ingestion
 IAM once, before dependents; the secret authority bootstrap precedes runtime
 binding plans, with live permission verification between them.
 
+After candidate checkout, each runner restores the receipt verifier modules and
+composite action from `github.workflow_sha`. Older tested executors therefore
+cannot replace the current signing policy. New ingestion receipts require the
+exact shared leaf in GitHub's referenced workflow graph, with its SHA equal to
+the immutable emitting workflow revision. Historical wrapper-signed receipts
+retain their original leaf policy. This adds no top-level caller or signing
+authority for arbitrary reusable leaves.
+
 Artifact Registry IAM, preview IAM, scratch cleanup IAM and cron alert policies
 also use callable workflows after `ci-ready`, with explicit tested source inputs
 for restricted manual recovery. The generic target apply requires those inputs

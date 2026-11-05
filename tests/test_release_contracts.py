@@ -173,9 +173,9 @@ class ReleaseContractTests(unittest.TestCase):
                 path.write_text(original)
 
     def test_probe_of_another_plan_cannot_satisfy_monthly_apply(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
         original = path.read_text()
-        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/wdpa-monthly.tfplan.json"', '--plan-json "$RUNNER_TEMP/other-plan.json"'))
+        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/ingestion.tfplan.json"', '--plan-json "$RUNNER_TEMP/other-plan.json"'))
         self.assertTrue(any("Terraform apply" in error for error in contracts.saved_plan_permission_contract(self.root)))
 
     def test_disabled_probe_and_removed_cdn_post_apply_authority_fail(self):
@@ -225,14 +225,45 @@ class ReleaseContractTests(unittest.TestCase):
             path.write_text(original)
 
     def test_shallow_mutable_checkout_rejected(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
         path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor_sha }}", "ref: main"))
         self.assertTrue(any("complete history" in item for item in contracts.deployment_contract(self.root, "wdpa")))
 
     def test_candidate_cannot_replace_the_trusted_bootstrap(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
         path.write_text(path.read_text().replace("ref: ${{ github.workflow_sha }}", "ref: ${{ inputs.executor_sha }}"))
         self.assertTrue(any("trusted main workflow" in item for item in contracts.deployment_contract(self.root, "wdpa")))
+
+    def test_shared_runner_cannot_disable_or_replace_immutable_receipt_verifier(self):
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
+        original = path.read_text()
+        for job_name in ("prepare", "apply", "verify"):
+            for mutation in ("removed", "disabled", "candidate-sha"):
+                with self.subTest(job=job_name, mutation=mutation):
+                    value = yaml.safe_load(original)
+                    steps = value["jobs"][job_name]["steps"]
+                    restore = next(step for step in steps if step.get("name") == "Restore immutable receipt verifier after candidate checkout")
+                    if mutation == "removed":
+                        steps.remove(restore)
+                    elif mutation == "disabled":
+                        restore["if"] = False
+                    else:
+                        restore["env"]["TRUSTED_WORKFLOW_SHA"] = "${{ inputs.executor_sha }}"
+                    path.write_text(yaml.safe_dump(value))
+                    self.assertTrue(any("verifier" in error for error in contracts.deployment_contract(self.root, "wdpa")))
+
+    def test_each_wrapper_must_resolve_its_registered_target_and_exact_source(self):
+        for target, slug in contracts.DEPLOYS.items():
+            path = self.root / ".github/workflows" / (slug + "-deploy.yml")
+            original = path.read_text()
+            for key, value in (("uses", "./.github/workflows/arbitrary.yml"), ("target", "other-target"), ("executor_sha", "main")):
+                with self.subTest(target=target, key=key):
+                    caller = yaml.safe_load(original)
+                    job = caller["jobs"]["deploy"]
+                    (job if key == "uses" else job["with"])[key] = value
+                    path.write_text(yaml.safe_dump(caller))
+                    self.assertTrue(contracts.deployment_contract(self.root, target))
+            path.write_text(original)
 
     def test_scheduler_retains_bundle_without_manual_overrides(self):
         path = self.root / "terraform/envs/prod/wdpa_monthly.tf"

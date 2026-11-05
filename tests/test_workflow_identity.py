@@ -24,6 +24,16 @@ def test_workflow_names_have_unique_current_and_historical_identities():
     assert len(names) == len(set(names))
 
 
+def test_shared_ingestion_leaf_adds_no_top_level_or_notification_authority():
+    workflow = load_workflow(WORKFLOWS / "ingestion-deploy.yml")
+    assert set(workflow_triggers(workflow)) == {"workflow_call"}
+    assert "ingestion-deploy.yml" not in alerts.MONITORED_WORKFLOWS
+    assert "ingestion-deploy.yml" not in deployment_revision.TARGET_WORKFLOWS.values()
+    assert set(deployment_revision.TARGET_WORKFLOWS[target] for target in deployment_revision.INGESTION_TARGETS) == {
+        "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+    }
+
+
 def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]

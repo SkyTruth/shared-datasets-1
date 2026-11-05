@@ -7,6 +7,7 @@ import yaml
 
 ACTION = "./.github/actions/deployment-receipt"
 WORKFLOWS = (
+    "ingestion-deploy.yml",
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
     "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
@@ -175,7 +176,9 @@ def enabled(step):
 
 def command(step, verb):
     run = step.get("run", "").replace("\\\n", " ")
-    return re.search(r"deployment_revision\.py\s+" + verb + r"(?:\s|$)", run) is not None
+    return (re.search(r"deployment_revision\.py\s+" + verb + r"(?:\s|$)", run) is not None
+            or re.search(r"args=\(" + verb + r"\s", run) is not None
+            and 'python scripts/deployment_revision.py "${args[@]}"' in run)
 
 
 def mutations(step):
@@ -233,15 +236,57 @@ def sdk_candidate_read_only(workflow):
     return []
 
 
+def ingestion_boundary(workflow):
+    """Carry the signed claim across apply -> verify without hiding failed apply."""
+    jobs = workflow["jobs"]
+    if set(jobs) != {"prepare", "apply", "verify"}:
+        return ["ingestion-deploy.yml: exact prepare/apply/verify graph required"]
+    prepare, apply, verify = (jobs[key] for key in ("prepare", "apply", "verify"))
+    errors = []
+    for job, condition in ((prepare, "steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'"),
+                           (apply, "steps.window.outputs.ready == 'true'")):
+        rehearsals = [step for step in job.get("steps", []) if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal"]
+        if len(rehearsals) != 1 or rehearsals[0].get("if") != condition or rehearsals[0].get("continue-on-error"):
+            errors.append("ingestion-deploy.yml: exact admitted rehearsal must gate staging and claim creation")
+    if (apply.get("needs") != "prepare" or apply.get("if") != "needs.prepare.outputs.ready == 'true'"
+            or prepare.get("outputs", {}).get("ready") != "${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}"):
+        errors.append("ingestion-deploy.yml: apply must require prepared replay and runtime admission")
+    if apply.get("outputs") != {"deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}"}:
+        errors.append("ingestion-deploy.yml: apply must export the exact claim and signature outcome")
+    applies = [step for step in apply.get("steps", []) if mutations(step)[1]]
+    if len(applies) != 1 or applies[0].get("if") != "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'":
+        errors.append("ingestion-deploy.yml: saved-plan apply requires the exact signed claim barrier")
+    if verify.get("needs") != ["prepare", "apply"] or verify.get("if") != "${{ always() && needs.apply.outputs.deployment_id != '' }}":
+        errors.append("ingestion-deploy.yml: verify must record every claimed apply outcome, including failure")
+    guards = [step for step in verify.get("steps", []) if step.get("name") == "Require successful signed apply"]
+    if len(guards) != 1 or guards[0].get("env") != {
+        "APPLY_RESULT": "${{ needs.apply.result }}", "CLAIM_SIGNED": "${{ needs.apply.outputs.claim_signed }}",
+    } or guards[0].get("run", "").strip() != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success' or "if" in guards[0] or guards[0].get("continue-on-error"):
+        errors.append("ingestion-deploy.yml: canary requires successful apply and exact signed claim")
+    else:
+        steps = verify["steps"]
+        if any(mutations(step)[1] for step in steps[:steps.index(guards[0])]):
+            errors.append("ingestion-deploy.yml: signed apply admission must precede canary")
+    outcomes = [step for step in verify.get("steps", []) if command(step, "finish")]
+    if (len(outcomes) != 1 or outcomes[0].get("if") != "${{ always() }}"
+            or outcomes[0].get("env") != {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs.apply.outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}
+            or 'if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi' not in outcomes[0].get("run", "")):
+        errors.append("ingestion-deploy.yml: every claimed terminal outcome must be recorded even after failed apply")
+    return errors
+
+
 def boundaries(root):
     errors = []
     for filename in WORKFLOWS:
         value = yaml.safe_load((root / ".github/workflows" / filename).read_text())
         if filename == "publish-typescript-sdk.yml":
             errors.extend(sdk_candidate_read_only(value))
+        if filename == "ingestion-deploy.yml":
+            errors.extend(ingestion_boundary(value))
         for job_id, job in value["jobs"].items():
             steps = job.get("steps", [])
-            rehearsed, claim, barrier = False, None, None
+            inherited = filename == "ingestion-deploy.yml" and job_id == "verify"
+            rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):
                 if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal" and enabled(step):
@@ -264,7 +309,10 @@ def boundaries(root):
                     errors.append(f"{filename}/{step.get('name')}: signed rehearsal must precede artifact and production operations")
                 if deployment:
                     condition = str(step.get("if", ""))
-                    if not barrier or ("always()" in condition and f"steps.{barrier}.outcome == 'success'" not in condition):
+                    if inherited:
+                        if "always()" in condition:
+                            errors.append(f"{filename}/{step.get('name')}: canary cannot bypass signed apply admission")
+                    elif not barrier or ("always()" in condition and f"steps.{barrier}.outcome == 'success'" not in condition):
                         errors.append(f"{filename}/{step.get('name')}: verified signed claim must gate production mutation, including always recovery")
                 if command(step, "(?:finish|observe|reconcile)"):
                     outputs.append((index, step))

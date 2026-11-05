@@ -2,9 +2,7 @@
 
 import io
 import json
-import os
 from pathlib import Path
-import subprocess
 from unittest import mock
 
 import pytest
@@ -244,32 +242,53 @@ def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attem
     assert alerts.alert_for_run(payload, jobs=[ready, failed_validation, failed_delivery]) is not None
 
 
-@pytest.mark.parametrize("filename,step_name", [
-    ("sea-ice-daily-deploy.yml", "Execute sea-ice-daily canary"),
-    ("eamlis-monthly-deploy.yml", "Execute eamlis-monthly canary"),
-])
+@pytest.mark.parametrize("target", ["mpatlas-monthly", "sea-ice-daily", "eamlis-monthly", "wdpa-monthly"])
 @pytest.mark.parametrize("date", ["", "2026-10-01", "invalid; exit 0"])
 @pytest.mark.parametrize("exit_code", [0, 7])
-def test_real_synchronous_canary_shell_marks_only_execution_and_propagates_failure(filename, step_name, date, exit_code):
-    step = workflow_steps_by_name(load_workflow(WORKFLOWS / filename), "deploy")[step_name]
-    recorder = f'gcloud() {{ printf "%s\\n" "$@"; return {exit_code}; }}\n'
-    env = {**os.environ, "JOB_NAME": "test-job", "REGION": "us-central1",
-           "GOOGLE_CLOUD_PROJECT": "test-project", "CANARY_RUN_DATE": date,
-           "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY,
-           "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull}
-    result = subprocess.run(["bash", "-c", recorder + step["run"]], env=env, capture_output=True, text=True)
+def test_real_canary_launch_marks_only_short_executions_and_propagates_failure(tmp_path, target, date, exit_code):
+    from test_wdpa_monthly_deploy_workflow import run_shell, shared_step
+    launch = shared_step("verify", "Execute ingestion canary")
+    recorder = f'''gcloud() {{
+      printf "%s\\n" "$@" > "$COMMAND_LOG"
+      echo test-execution
+      return {exit_code}
+    }}
+'''
+    log = tmp_path / "commands"
+    result = run_shell(tmp_path, launch["run"], target=target, prefix=recorder, extra={
+        "COMMAND_LOG": str(log), "CANARY_RUN_DATE": date,
+        "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY, "GITHUB_RUN_ID": "123",
+    })
     if date.startswith("invalid"):
         assert result.returncode != 0
-        assert result.stdout == ""
+        assert not log.exists()
         return
     assert result.returncode == exit_code, result.stderr
-    args = result.stdout.splitlines()
-    assert args[:3] == ["run", "jobs", "execute"] or args[1:4] == ["run", "jobs", "execute"]
-    assert "--wait" in args and "--async" not in args
-    overrides = [a for a in args if a.startswith("--update-env-vars=")]
-    assert len(overrides) == 1
-    assert f"{MARKER}=https://github.com/{alerts.REPOSITORY}/actions/runs/123" in overrides[0]
-    assert (",RUN_DATE=2026-10-01" in overrides[0]) == bool(date)
+    args = log.read_text().splitlines()
+    assert args[:4] == ["run", "jobs", "execute", target]
+    assert "--async" in args and "--wait" not in args
+    overrides = [arg for arg in args if arg.startswith("--update-env-vars=")]
+    marker = f"{MARKER}=https://github.com/{alerts.REPOSITORY}/actions/runs/123"
+    assert (marker in " ".join(overrides)) == (target != "wdpa-monthly")
+    assert ("RUN_DATE=2026-10-01" in " ".join(overrides)) == bool(date)
+    assert not launch.get("continue-on-error", False)
+    if not exit_code:
+        assert (tmp_path / "environment").read_text() == "CANARY_EXECUTION=test-execution\n"
+
+
+@pytest.mark.parametrize("target", ["mpatlas-monthly", "sea-ice-daily", "eamlis-monthly", "wdpa-monthly"])
+@pytest.mark.parametrize("phase", ["verified", "failed", "wrong-image", "unknown"])
+def test_shared_canary_watcher_requires_terminal_success_of_exact_image(tmp_path, target, phase):
+    from test_wdpa_monthly_deploy_workflow import run_shell, shared_step
+    image = "image@sha256:" + "a" * 64
+    facts = {"spec": {"template": {"spec": {"containers": [{"image": image if phase != "wrong-image" else "wrong"}]}}},
+             "status": {"completionTime": "now", "succeededCount": 1 if phase == "verified" else 0,
+                        "failedCount": 1 if phase == "failed" else 0}}
+    prefix = "gcloud() { printf '%s' '$FACTS'; }\n".replace("$FACTS", json.dumps(facts))
+    step = shared_step("verify", "Watch ingestion canary")
+    result = run_shell(tmp_path, step["run"], target=target, prefix=prefix,
+                       extra={"IMAGE": image, "CANARY_EXECUTION": "test-execution"})
+    assert (result.returncode == 0) == (phase == "verified"), result.stderr
     assert not step.get("continue-on-error", False)
 
 
@@ -284,11 +303,16 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                 run = step.get("run", "")
                 if MARKER in run:
                     marked_steps.append(step["name"])
-                    assert "--wait" in run and "--async" not in run
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
+                    if path.name == "ingestion-deploy.yml":
+                        assert step["name"] == "Execute ingestion canary"
+                        assert 'if [[ "$TARGET" != wdpa-monthly ]]' in run
+                        assert "Watch ingestion canary" in workflow_steps_by_name(workflow, "verify")
+                    else:
+                        assert "--wait" in run and "--async" not in run
+    assert set(marked_steps) == {"Execute ingestion canary", "Execute bounded usage canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -313,14 +337,6 @@ def test_cloud_policy_covers_all_workers_and_suppresses_only_trusted_marked_exec
     assert "_catalog/wdpa-monthly-execution.json" not in write
     iam = (ROOT / "terraform/envs/prod/canonical_mutation_iam.tf").read_text()
     assert "wdpa_observer" not in iam
-
-
-def test_routine_wdpa_runs_keep_async_coverage():
-    workflow = load_workflow(WORKFLOWS / "wdpa-monthly-deploy.yml")
-    steps = workflow_steps_by_name(workflow, "deploy")
-    run = steps["Execute wdpa-monthly canary"]["run"]
-    assert "--async" in run
-    assert MARKER not in run
 
 
 @pytest.mark.parametrize("failure", [None, "missing", "applied", "older", "divergent", "unsigned", "unregistered"])

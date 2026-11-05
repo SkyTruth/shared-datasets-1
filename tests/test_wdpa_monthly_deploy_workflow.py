@@ -237,6 +237,23 @@ def test_unregistered_target_fails_before_image_or_authentication(tmp_path):
     assert not (tmp_path / 'outputs').exists()
 
 
+def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown_revision(tmp_path):
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO_ROOT, text=True).strip()
+    candidate = tmp_path / 'candidate'
+    (candidate / 'scripts').mkdir(parents=True)
+    (candidate / 'scripts/deployment_revision.py').write_text('raise RuntimeError("older candidate verifier")\n')
+    script = shared_step('prepare', 'Restore immutable receipt verifier after candidate checkout')['run']
+    result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
+    assert result.returncode == 0, result.stderr
+    for filename in ('deployment_revision.py', 'deployment_emission.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
+        expected = subprocess.check_output(['git', 'show', f'{revision}:scripts/{filename}'], cwd=REPO_ROOT)
+        assert (candidate / 'scripts' / filename).read_bytes() == expected
+    expected = subprocess.check_output(['git', 'show', f'{revision}:.github/actions/deployment-receipt/action.yml'], cwd=REPO_ROOT)
+    assert (candidate / '.github/actions/deployment-receipt/action.yml').read_bytes() == expected
+    result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': '0' * 40})
+    assert result.returncode != 0
+
+
 @pytest.mark.parametrize('target', ['wdpa-monthly', 'mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
 @pytest.mark.parametrize('caller,ref,accepted', [('ci.yml', 'main', True), ('self', 'main', True), ('foreign.yml', 'main', False), ('self', 'feature', False)])
 def test_each_runner_rejects_foreign_caller_before_bootstrap(tmp_path, target, caller, ref, accepted):

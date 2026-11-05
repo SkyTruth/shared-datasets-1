@@ -27,12 +27,11 @@ from scripts import cdn_plan_readiness as cdn
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
+    "prod-terraform-target-apply.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
-    "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+    "ingestion-deploy.yml",
     "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
 
@@ -208,25 +207,51 @@ def deployment_contract(root, target):
     errors = []
     if "push" in triggers or "pull_request" in triggers or "workflow_call" not in triggers:
         errors.append(f"{name}: automatic deployment must be called after ci-ready")
-    job = value["jobs"]["deploy"]
-    if job.get("environment") != "shared-datasets-production" or job.get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
+    caller = value["jobs"]["deploy"]
+    if caller.get("uses") != "./.github/workflows/ingestion-deploy.yml" or caller.get("with", {}).get("target") != DEPLOYS[target]:
+        return [f"{name}: registered target must call the shared ingestion executor"]
+    for key in ("executor_sha", "source_run_id", "source_run_attempt"):
+        if caller.get("with", {}).get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
+            errors.append(f"{name}: exact tested {key} must be required and forwarded")
+    shared = workflow(root, "ingestion-deploy.yml")
+    jobs = shared["jobs"]
+    if jobs["apply"].get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
         errors.append(f"{name}: protected serialized production job required")
-    steps = {s.get("name"): s for s in job["steps"]}
-    checkout = steps.get("Check out repository", {}).get("with", {})
-    if checkout.get("ref") != "${{ inputs.executor_sha }}" or checkout.get("fetch-depth") != 0:
-        errors.append(f"{name}: exact executor SHA and complete history required")
+    for job in jobs.values():
+        if job.get("environment") != "shared-datasets-production":
+            errors.append(f"{name}: protected production job required")
+        by_name = {step.get("name"): step for step in job.get("steps", [])}
+        checkout = by_name.get("Check out repository", {}).get("with", {})
+        if checkout.get("ref") != "${{ inputs.executor_sha }}" or checkout.get("fetch-depth") != 0:
+            errors.append(f"{name}: exact executor SHA and complete history required")
+        bootstrap = by_name.get("Check out trusted verifier", {}).get("with", {})
+        if bootstrap.get("ref") != "${{ github.workflow_sha }}" or bootstrap.get("fetch-depth") != 0:
+            errors.append(f"{name}: verifier must originate from immutable trusted main workflow code")
+        names = list(by_name)
+        ordered = ("Check out trusted verifier", "Verify executor before candidate checkout", "Check out repository",
+                   "Restore immutable receipt verifier after candidate checkout", "Verify tested main revision", "Authenticate to Google Cloud")
+        if any(item not in names for item in ordered) or [names.index(item) for item in ordered if item in names] != sorted(names.index(item) for item in ordered if item in names):
+            errors.append(f"{name}: trusted bootstrap and retained verifier must precede candidate execution and authentication")
+        restore = by_name.get(ordered[3], {})
+        if restore.get("env") != {"TRUSTED_WORKFLOW_SHA": "${{ github.workflow_sha }}"} or restore.get("run", "").strip() != (
+            'set -euo pipefail\n'
+            'git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \\\n'
+            '  scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \\\n'
+            '  .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"'
+        ) or "if" in restore:
+            errors.append(f"{name}: immutable receipt verifier must survive older candidate checkout")
+        for key in ("Verify executor before candidate checkout", "Verify tested main revision"):
+            if ("if" in by_name.get(key, {}) or not receipts.command(by_name.get(key, {}), "verify")
+                    or key == "Verify executor before candidate checkout" and "--bootstrap" not in by_name[key]["run"]):
+                errors.append(f"{name}: source verification cannot be disabled or bypassed")
+    steps = {s.get("name"): s for job in (jobs["prepare"], jobs["apply"]) for s in job["steps"]}
     order = list(steps)
-    bootstrap = steps.get("Check out trusted verifier", {}).get("with", {})
-    if bootstrap.get("ref") != "${{ github.workflow_sha }}" or bootstrap.get("fetch-depth") != 0:
-        errors.append(f"{name}: verifier must originate from immutable trusted main workflow code")
-    if "--bootstrap" not in steps.get("Verify executor before candidate checkout", {}).get("run", ""):
-        errors.append(f"{name}: candidate authorization must execute trusted bootstrap code")
-    for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before rebuilding", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
+    for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before preparing image", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
         if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):
             errors.append(f"{name}: {prerequisite} must precede {consumer}")
     if target == "wdpa":
-        loader = steps.get("Load exact tested wdpa-monthly image", {})
-        if "tested_image_authorization.py --workflow wdpa-monthly-deploy.yml --target wdpa-monthly" not in loader.get("run", ""):
+        loader = steps.get("Load exact tested image", {})
+        if 'tested_image_authorization.py --workflow "$WORKFLOW_FILE" --target "$TARGET"' not in loader.get("run", ""):
             errors.append(f"{name}: WDPA must deploy the exact CI-tested producer")
         tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
         if "WDPA_PROMOTION_BUNDLE" in tf or re.search(r"(?m)^\s*RUN_DATE\s*=", tf):

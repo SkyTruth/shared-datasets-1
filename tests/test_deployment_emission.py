@@ -263,6 +263,48 @@ class EmissionTests(unittest.TestCase):
         with patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=signer))):
             d.verify_record(self.api, REPO, claim)
 
+    def test_historical_and_shared_ingestion_receipts_bind_exact_immutable_leaf(self):
+        shared = {"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}
+        for target in d.INGESTION_TARGETS:
+            for references, signer in (([], ".github/workflows/" + d.TARGET_WORKFLOWS[target]), ([shared], d.INGESTION_SIGNER)):
+                self.emitter = {**run(), "referenced_workflows": references}
+                claim = record()
+                claim["payload"]["target"] = target
+                claim["environment"] = "production-" + target
+                value = e.receipt(REPO, claim, status())
+                with self.subTest(target=target, signer=signer), patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=signer))):
+                    d.verify_record(self.api, REPO, claim)
+                wrong = verified(value, signer=".github/workflows/arbitrary.yml")
+                with patch.object(e.subprocess, "check_output", return_value=json.dumps(wrong)), self.assertRaises(d.DeploymentError):
+                    d.verify_record(self.api, REPO, claim)
+
+    def test_shared_leaf_requires_exact_reference_revision_and_attempt_evidence(self):
+        shared = {"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}
+        value = e.receipt(REPO, record(), status())
+        for references in ([], [dict(shared, sha="c" * 40)], [shared, shared],
+                           [dict(shared, path=shared["path"].replace(REPO, "foreign/repo"))],
+                           [dict(shared, ref="refs/heads/feature")], [dict(shared, ref=None)],
+                           [dict(shared, path=shared["path"].replace("ingestion-deploy", "arbitrary"))], None):
+            self.emitter = {**run(), "referenced_workflows": references}
+            with self.subTest(references=references), patch.object(e.subprocess, "check_output", return_value=json.dumps(verified(value, signer=d.INGESTION_SIGNER))), self.assertRaises(d.DeploymentError):
+                d.verify_record(self.api, REPO, record())
+        self.api.post.assert_not_called()
+
+    def test_new_claim_rehearses_the_same_shared_leaf_as_receipt_verification(self):
+        self.emitter = {**run(), "referenced_workflows": [{"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}]}
+        self.api.post.return_value = record()
+        args = SimpleNamespace(target="wdpa-monthly", artifact=IMAGE, executor_sha=SHA, source_run_id=13, source_run_attempt=2, plan_json=None)
+        with patch.object(d, "check", return_value={"proceed": "true"}), patch.object(e, "verify_rehearsal") as rehearsal, patch.object(d, "post_status"):
+            d.start(args, self.api)
+        rehearsal.assert_called_once_with(self.api, REPO, d.INGESTION_SIGNER)
+
+    def test_bad_shared_signer_evidence_cannot_create_a_claim(self):
+        self.emitter = {**run(), "referenced_workflows": [{"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": "c" * 40}]}
+        args = SimpleNamespace(target="wdpa-monthly")
+        with patch.object(d, "check", return_value={"proceed": "true"}), self.assertRaises(d.DeploymentError):
+            d.start(args, self.api)
+        self.api.post.assert_not_called()
+
     def test_unknown_terminal_outcome_emits_receipt_before_failing(self):
         claim = record()
         self.api.get.return_value = claim
