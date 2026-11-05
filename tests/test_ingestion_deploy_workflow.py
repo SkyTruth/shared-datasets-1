@@ -405,15 +405,16 @@ def test_canary_date_is_one_argument_and_execution_is_recorded_before_watch(tmp_
     ({'succeededCount': 1, 'completionTime': 'now'}, True, None, False),
 ])
 def test_short_canary_requires_terminal_success_of_exact_digest(tmp_path, target, status, wrong_image, phase, success):
+    assert target_environment(target_table()[target])['CANARY_ATTEMPTS'] == (20 if target == 'wdpa-monthly' else 125)
     image = 'registry/job@sha256:' + 'a' * 64
     payload = {'spec': {'template': {'spec': {'containers': [{'image': 'wrong' if wrong_image else image}]}}}, 'status': status}
     if target == 'wdpa-monthly' and status == {'succeededCount': 1}:
         phase, success = 'verification_pending', True
     result = run_shell(tmp_path, shared_step('verify', 'Watch ingestion canary')['run'], target=target,
-                       extra={'IMAGE': image, 'CANARY_EXECUTION': 'canary-123', 'EXECUTION_JSON': json.dumps(payload), 'CALLS': str(tmp_path / 'calls')},
+                       extra={'IMAGE': image, 'CANARY_EXECUTION': 'canary-123', 'EXECUTION_JSON': json.dumps(payload), 'CALLS': str(tmp_path / 'calls'), 'CANARY_ATTEMPTS': '3'},
                        prefix='gcloud() { echo call >> "$CALLS"; echo "$EXECUTION_JSON"; }\nsleep() { :; }\n')
     assert (result.returncode == 0) == success, result.stderr
-    assert len((tmp_path / 'calls').read_text().splitlines()) == ((20 if target == 'wdpa-monthly' else 125) if status == {'succeededCount': 1} else 1)
+    assert len((tmp_path / 'calls').read_text().splitlines()) == (3 if status == {'succeededCount': 1} else 1)
     output = tmp_path / 'environment'
     assert (output.read_text() if output.exists() else '') == (f'DEPLOYMENT_PHASE={phase}\n' if phase else '')
 
