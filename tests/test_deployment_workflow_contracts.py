@@ -7,8 +7,7 @@ import sys
 import pytest
 import yaml
 
-from scripts import production_image_contracts as images
-from scripts.terraform_target_contracts import resource_index, registry
+from scripts.terraform_target_contracts import production_image_limits, registry
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,32 +45,31 @@ def test_deploy_callers_share_exact_source_mapping_and_keep_main_guards():
 
 
 @pytest.mark.parametrize('target,kind,body', [
-    ('sea-ice-daily', 'module "sea_ice_daily_job"', 'cpu = "2"\n memory = "512Mi"'),
+    ('sea-ice-daily', 'module "sea_ice_daily_job"', 'cpu = "2" # inline comment\n memory = "512Mi"'),
     ('catalog-viewer', 'resource "google_cloud_run_v2_service" "catalog_viewer"',
      'template { containers { resources { limits = { cpu = "2", memory = "512Mi" } } } }'),
 ])
-def test_image_limits_read_real_hcl_and_ignore_comment_decoys(tmp_path, monkeypatch, target, kind, body):
-    path = tmp_path / f'terraform/envs/prod/{target.replace("-", "_")}.tf'
+def test_image_limits_share_the_hcl_index_and_ignore_comment_decoys(tmp_path, target, kind, body):
+    package = target.replace('-', '_')
+    path = tmp_path / f'terraform/envs/prod/{package}.tf'
+    recipe = tmp_path / f'ingestion/{package}/Dockerfile'
     path.parent.mkdir(parents=True)
-    path.write_text(f'# {kind} {{ cpu = "999" }}\n  {kind} {{\n {body}\n  }}\n')
-    monkeypatch.setattr(images, 'ROOT', tmp_path)
-    try:
-        assert images.resource_limits(target) == ['--cpu-period', '100000', '--cpu-quota', '200000', '--memory', '512m']
-    finally:
-        resource_index.cache_clear()
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text('FROM scratch\n')
+    path.write_text(f'# {kind} {{ cpu = "999" }}\n  {kind} {{\n image = var.{package}_image\n {body}\n  }}\n')
+    assert production_image_limits(tmp_path)[target] == ['--cpu-period', '100000', '--cpu-quota', '200000', '--memory', '512m']
 
 
 @pytest.mark.parametrize('body', ['cpu = var.cpu\n memory = "512Mi"', 'cpu = "2"\n memory = var.memory'])
-def test_image_limits_refuse_nonliteral_values(tmp_path, monkeypatch, body):
+def test_image_limits_refuse_nonliteral_values(tmp_path, body):
     path = tmp_path / 'terraform/envs/prod/sea_ice_daily.tf'
     path.parent.mkdir(parents=True)
-    path.write_text('module "sea_ice_daily_job" {\n' + body + '\n}\n')
-    monkeypatch.setattr(images, 'ROOT', tmp_path)
-    try:
-        with pytest.raises(ValueError, match='literal'):
-            images.resource_limits('sea-ice-daily')
-    finally:
-        resource_index.cache_clear()
+    recipe = tmp_path / 'ingestion/sea_ice_daily/Dockerfile'
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text('FROM scratch\n')
+    path.write_text('module "sea_ice_daily_job" {\n image = var.sea_ice_daily_image\n' + body + '\n}\n')
+    with pytest.raises(ValueError, match='literal'):
+        production_image_limits(tmp_path)
 
 
 @pytest.mark.parametrize('case', ['latest', 'historical', 'role', 'retry', 'content-type', 'redirect', 'http-error', 'no-sidecar', 'foreign'])
@@ -79,7 +77,7 @@ def test_hosted_cdn_verifier_runs_with_only_stdlib_and_checks_all_routes(case):
     workflow = yaml.safe_load((ROOT / '.github/workflows/pmtiles-cdn-sync.yml').read_text())
     step = next(s for s in workflow['jobs']['verify']['steps'] if s.get('name') == 'Verify catalog CDN routes')
     command = shlex.split(step['run'])
-    assert command == ['python', '-I', '-S', '.github/actions/deployment-bootstrap/verify_cdn.py']
+    assert command == ['python', '-I', '-S', 'scripts/cdn_plan_readiness.py', 'verify-routes']
     # Only HTTP transport and time are replaced. The exact entrypoint parses the
     # serialized release index, chooses the sidecar and validates HTTP responses.
     boot = r'''
@@ -112,6 +110,7 @@ urllib.request.build_opener = opener
 time.sleep = sleeps.append
 accepted = case in {'latest', 'historical', 'role', 'retry'}
 try:
+    sys.argv = [script, 'verify-routes']
     runpy.run_path(script, run_name='__main__')
 except (OSError, ValueError):
     assert not accepted
@@ -172,8 +171,9 @@ def test_snapshot_restores_cdn_verification_from_the_trusted_revision(tmp_path):
     import tarfile
     root = tmp_path / 'repository'
     (root / 'scripts').mkdir(parents=True)
-    verifier = root / '.github/actions/deployment-bootstrap/verify_cdn.py'
-    verifier.parent.mkdir(parents=True)
+    verifier = root / 'scripts/cdn_plan_readiness.py'
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    (root / '.github').mkdir()
     verifier.write_text('print("trusted route verification")\n')
     (root / '.github/terraform-targets.json').write_text('{}')
     for name in ('deployment_revision', 'terraform_plan_allowlist', 'install_deployment_verifier'):
@@ -183,7 +183,7 @@ def test_snapshot_restores_cdn_verification_from_the_trusted_revision(tmp_path):
     git('init')
     git('add', '.')
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.org', 'commit', '-m', 'Trusted route verifier')
-    snapshot = runpy.run_path(str(ROOT / '.github/actions/deployment-bootstrap/restore.py'))['snapshot']
+    snapshot = runpy.run_path(str(ROOT / 'scripts/tested_image_bundle.py'))['snapshot_trusted']
     archive = tmp_path / 'trusted.tar'
     snapshot(git('rev-parse', 'HEAD'), archive, root=root)
     verifier.write_text('raise RuntimeError("candidate verification must not execute")\n')

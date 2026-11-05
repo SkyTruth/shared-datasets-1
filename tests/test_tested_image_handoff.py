@@ -441,7 +441,7 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
     released = (paths,) if isinstance(paths, str) else ()
     paths = [ci_preflight.INGESTION_ROLLOUT_HOLDS] if released else paths
     selection = ci_preflight.resolve_selection(paths, released_holds=released)
-    plan.update(selection, changed_paths=paths)
+    plan.update(selection, changed_paths=paths, production_image_limits=ci_preflight.production_image_limits())
     with zipfile.ZipFile(io.BytesIO(handoff["payloads"][0])) as archive:
         evidence = json.loads(archive.read("evidence.json"))
     evidence.update(selection, changed_paths=paths)

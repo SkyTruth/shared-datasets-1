@@ -149,7 +149,7 @@ jobs:
         run: |
           selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
           if [[ "$selected" == true ]]; then
-            python -I -S .github/actions/deployment-bootstrap/approval.py "$PR_NUMBER"
+            python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
           fi
 
   geospatial-integration:
@@ -309,6 +309,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
+      delivery: ${{ job.status == 'success' && steps.verify.outputs.delivery || '{}' }}
     steps:
       - *validation-checkout
       - *validation-python
@@ -327,6 +328,7 @@ jobs:
           RESULT: ${{ needs.pr-terraform-plan.result }}
         run: '[[ "$REQUIRED" != "true" || "$RESULT" == "success" ]]'
       - name: Require every selected suite and matrix entry
+        id: verify
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -335,7 +337,7 @@ jobs:
           python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ci-jobs.json").write_text(os.environ["JOB_RESULTS"])'
           python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
             --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json" \
-            --output "$RUNNER_TEMP/ci-ready/evidence.json"
+            --output "$RUNNER_TEMP/ci-ready/evidence.json" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: ci-ready-evidence-attempt${{ github.run_attempt }}
@@ -343,11 +345,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Post-gate callers check selection and prerequisite results explicitly.
-  # Explicit status avoids implicit success() over skipped optional ancestors.
   typescript-sdk:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sdk == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').typescript-sdk }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -366,7 +366,7 @@ jobs:
 
   dataset-mutation-selection:
     needs: ci-ready
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-mutation-selection }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -402,7 +402,7 @@ jobs:
 
   refresh-reviewed-catalog:
     needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.result == 'success' && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').refresh-reviewed-catalog && needs.dataset-mutation-selection.result == 'success' && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -421,7 +421,7 @@ jobs:
 
   announce-repo-functionality:
     needs: [ci-ready, dataset-mutation-selection]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' && needs.dataset-mutation-selection.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' && needs.dataset-mutation-selection.result == 'success' }}
     permissions:
       contents: read
     uses: ./.github/workflows/repo-functionality-alert.yml
@@ -433,7 +433,7 @@ jobs:
   publish-reviewed-dataset:
     name: "Publish PR #${{ matrix.pr_number }}"
     needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') && needs.dataset-mutation-selection.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') && needs.dataset-mutation-selection.result == 'success' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -454,7 +454,7 @@ jobs:
 
   ingestion-iam:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').ingestion-iam }}
     permissions: &terraform-permissions
       contents: read
       actions: read
@@ -470,7 +470,7 @@ jobs:
 
   mpatlas:
     needs: &ingestion-prerequisites [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
+    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').mpatlas }}
     permissions: &deployment-permissions
       contents: read
       actions: read
@@ -484,7 +484,7 @@ jobs:
 
   eamlis:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.eamlis == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').eamlis && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/eamlis-monthly-deploy.yml
     with: *deployment-source
@@ -492,7 +492,7 @@ jobs:
 
   wdpa:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').wdpa && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/wdpa-monthly-deploy.yml
     with: *deployment-source
@@ -500,7 +500,7 @@ jobs:
 
   sea-ice:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.sea_ice == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').sea-ice && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/sea-ice-daily-deploy.yml
     with: *deployment-source
@@ -508,7 +508,7 @@ jobs:
 
   pmtiles-cdn:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').pmtiles-cdn }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/pmtiles-cdn-sync.yml
     with: *deployment-source
@@ -517,7 +517,7 @@ jobs:
   dataset-usage:
     # Settle bucket CORS before the logging-only deployment plans the same bucket.
     needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-usage && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
     with: &deployment-source-with-iam
@@ -529,7 +529,7 @@ jobs:
 
   catalog-viewer:
     needs: [ci-ready, geospatial-changes, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/catalog-viewer-deploy.yml
     with: *deployment-source-with-iam
@@ -537,28 +537,28 @@ jobs:
 
   artifact-registry-iam:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').artifact-registry-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/artifact-registry-iam-sync.yml
     with: *deployment-source
 
   preview-terraform-iam:
     needs: [ci-ready, geospatial-changes, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.preview_terraform_iam == 'true' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').preview-terraform-iam && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/preview-terraform-iam-sync.yml
     with: *deployment-source
 
   scratch-cleanup-iam:
     needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').scratch-cleanup-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/scratch-cleanup-iam-sync.yml
     with: *deployment-source
 
   cron-alert-policy:
     needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
+    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').cron-alert-policy && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/cron-alert-policy-sync.yml
     with: *deployment-source-with-iam
@@ -566,7 +566,7 @@ jobs:
 
   identity-decision-reconcile:
     needs: [ci-ready, geospatial-changes, cron-alert-policy]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && fromJSON(needs.ci-ready.outputs.delivery || '{}').identity-decision-reconcile && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
     permissions:
       contents: read
       actions: read

@@ -333,7 +333,7 @@ def test_missing_registered_fixture_cannot_fall_back_to_another_producer(tmp_pat
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'scripts/local_ingestion_smoke.py').write_text('native smoke')
     monkeypatch.setattr(images, 'ROOT', tmp_path)
-    monkeypatch.setattr(images, 'resource_limits', lambda target: [])
+    monkeypatch.setattr(images, 'resource_limits', lambda target, limits=None: [])
     with pytest.raises(FileNotFoundError, match='eamlis-monthly.json'):
         images.commands('eamlis-monthly', 'b' * 40)
 

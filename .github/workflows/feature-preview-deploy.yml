@@ -87,7 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EXECUTOR_SHA: ${{ github.workflow_sha }}
-        run: python -I -S .github/actions/deployment-bootstrap/approval.py
+        run: python -I -S scripts/deployment_revision.py accept
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

@@ -80,7 +80,7 @@ subprocess.run(['node', str(policy)], check=True)
     git('init')
     git('add', '.')
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.org', 'commit', '-m', 'trusted executor')
-    snapshot = runpy.run_path(str(ROOT / '.github/actions/deployment-bootstrap/restore.py'))['snapshot']
+    snapshot = runpy.run_path(str(ROOT / 'scripts/tested_image_bundle.py'))['snapshot_trusted']
     archive = tmp_path / 'trusted.tar'
     snapshot(git('rev-parse', 'HEAD'), archive, root=root)
     for path in (policy, root / 'scripts/dataset_usage_deploy.py'):
@@ -91,7 +91,7 @@ subprocess.run(['node', str(policy)], check=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ['trusted telemetry', 'trusted javascript']
     # Evidence invalidation must include the snapshot program itself.
-    assert '.github/actions/deployment-bootstrap/restore.py' in ci.CONTRACT_FILES
+    assert 'scripts/tested_image_bundle.py' in ci.CONTRACT_FILES
 
 
 @pytest.mark.parametrize('defect', ['valid', 'empty', 'unknown-mode', 'unknown-placeholder'])

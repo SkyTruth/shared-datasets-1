@@ -29,7 +29,8 @@ def test_executing_interpreter_proof_rejects_a_different_version(actual, success
 
 @pytest.mark.parametrize("suite", SUITES)
 def test_each_locked_sync_is_followed_by_executing_interpreter_evidence(tmp_path, suite):
-    plan = {"base": "a" * 40, "tested_sha": "b" * 40, **ci_preflight.resolve_selection(None)}
+    plan = {"base": "a" * 40, "tested_sha": "b" * 40,
+            "production_image_limits": ci_preflight.production_image_limits(), **ci_preflight.resolve_selection(None)}
     commands = [command for command, _ in ci_preflight.suite_commands(suite, Path.cwd(), plan, tmp_path)]
     for index, command in enumerate(commands):
         if command[:2] == ["uv", "sync"]:

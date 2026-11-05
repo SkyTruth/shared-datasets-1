@@ -820,6 +820,24 @@ def verified_envelope(api: GitHub, directory: Path, expected_sha256: str, env: d
     return envelope
 
 
+def executor_acceptance(api, repository, executor, number=None):
+    """Bind pre-merge or merged acceptance to the exact executor before credentials."""
+    executor = sha(executor)
+    context = repository_context({"repository": api.get(f"repos/{repository}")})
+    require(context["full_name"] == repository, "repository mismatch")
+    merged = number is None
+    if merged:
+        matches = [pr for pr in api.pages(f"repos/{repository}/commits/{executor}/pulls?per_page=100")
+                   if pr.get("merged_at") and pr.get("merge_commit_sha") == executor]
+        require(len(matches) == 1, "expected one merged executor PR")
+        number = matches[0]["number"]
+    pr = api.get(f"repos/{repository}/pulls/{number}")
+    validate_pr(pr, context, number, merged=merged)
+    require((pr["merge_commit_sha"] if merged else pr["head"]["sha"]) == executor, "PR executor mismatch")
+    reviews = api.pages(f"repos/{repository}/pulls/{number}/reviews?per_page=100")
+    return {"executor_sha": executor, "pr_number": number, "acceptance": effective_acceptance(pr, reviews, repository)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("capture", "verify", "from-run", "preview", "discover"))

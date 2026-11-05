@@ -20,21 +20,16 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
-from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
+from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub, executor_acceptance
 from scripts.terraform_target_contracts import registry
 from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image_variables
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
-TARGET_WORKFLOWS = {
-    "monitoring-slack": "cron-alert-policy-sync.yml",
-    "wdpa-monthly-build": "wdpa-monthly-build.yml",
-    "typescript-sdk": "publish-typescript-sdk.yml",
-    "pmtiles-cdn": "pmtiles-cdn-sync.yml",
-    "catalog-web": "catalog-web-deploy.yml",
-    "catalog-viewer": "catalog-viewer-deploy.yml",
-    **{target: config["workflow"] for target, config in INGESTION_CONFIGS.items()},
+TARGET_WORKFLOWS = registry(section="record_workflows") | {
+    row.get("record_target", row.get("image")): row["workflow"]
+    for row in registry(section="deployments").values() if "image" in row or "record_target" in row
 }
 TERRAFORM_SYNCS = registry()
 TERRAFORM_WORKFLOWS = {
@@ -558,6 +553,7 @@ def main():
             begin.add_argument("--deferred", action="store_true")
             begin.add_argument("--plan-json")
             begin.add_argument("--plan-scope")
+    commands.add_parser("accept").add_argument("--pr-number", type=int)
     end = commands.add_parser("finish")
     end.add_argument("--deployment-id", required=True, type=int)
     end.add_argument("--execution", default="")
@@ -579,7 +575,9 @@ def main():
     args = parser.parse_args()
     api = GitHub()
     try:
-        if args.command == "window":
+        if args.command == "accept":
+            print(json.dumps(executor_acceptance(api, os.environ["GITHUB_REPOSITORY"], os.environ["EXECUTOR_SHA"], args.pr_number)))
+        elif args.command == "window":
             runtime_window(args)
         elif args.command == "pending":
             outputs = {"records": json.dumps(pending(api, os.environ["GITHUB_REPOSITORY"]))}

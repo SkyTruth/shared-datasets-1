@@ -70,7 +70,7 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     assert scanner['env']['BASE_SHA'] == '${{ github.event.before }}'
     assert 'select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA"' in scanner['run']
     caller = workflow['jobs']['announce-repo-functionality']
-    for prerequisite in ("github.event_name == 'push'", "github.ref == 'refs/heads/main'", "needs.ci-ready.result == 'success'", "needs.dataset-mutation-selection.outputs.has_repo_alert == 'true'"):
+    for prerequisite in ("github.event_name == 'push'", "github.ref == 'refs/heads/main'", "fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality", "needs.dataset-mutation-selection.outputs.has_repo_alert == 'true'"):
         assert prerequisite in caller['if']
     assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection'}
     assert caller['uses'] == './.github/workflows/repo-functionality-alert.yml'

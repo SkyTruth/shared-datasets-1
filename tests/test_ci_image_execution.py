@@ -23,6 +23,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument('--target', action='append')
 parser.add_argument('--output', type=Path)
+parser.add_argument('--limits', type=json.loads, required=True)
 args = parser.parse_args()
 assert len(args.target) == 1, 'one independent target per command'
 target = args.target[0]

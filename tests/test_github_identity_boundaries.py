@@ -11,7 +11,7 @@ from scripts.terraform_plan_permissions import plan_checks
 from terraform_helpers import evaluate, load_terraform, resources
 from workflow_helpers import load_workflow
 
-ROOT = Path(os.environ.get('WS22_ROOT', Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / 'terraform/envs/prod'
 REPO = 'SkyTruth/shared-datasets-1'
 OBSERVER = 'shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com'
@@ -167,7 +167,7 @@ def test_read_phases_use_observer_and_mutation_phases_use_runtime(filename, job)
         if auth:
             account = auth[0][1]
         run = step.get('run', '')
-        if any(command in run for command in ('gcloud run jobs describe', 'gcloud run services describe', 'gcloud run jobs executions describe', '--target catalog-viewer-observe', 'ingestion_verification.py', 'deployment_revision.py observe', 'verify_cdn.py')):
+        if any(command in run for command in ('gcloud run jobs describe', 'gcloud run services describe', 'gcloud run jobs executions describe', '--target catalog-viewer-observe', 'ingestion_verification.py', 'deployment_revision.py observe', 'cdn_plan_readiness.py verify-routes')):
             assert account == OBSERVER, (filename, step['name'], account)
             reads += 1
         if any(command in run for command in ('gcloud run jobs execute', 'invalidate-cdn-cache', 'scripts/ingestion_targets.py after-verify')):

@@ -133,16 +133,21 @@ def test_every_workflow_python_step_imports_in_its_declared_environment(isolated
         assert result.returncode == 0, f"{source}\n{result.stderr}"
 
 
-def test_every_production_image_command_executes_in_empty_hosted_interpreter(isolated_python):
+def test_every_production_image_command_executes_in_empty_hosted_interpreter(isolated_python, tmp_path):
+    from scripts.terraform_target_contracts import production_image_limits
+    limits = tmp_path / 'limits.json'
+    limits.write_text(json.dumps(production_image_limits()))
     program = '''
-import sys
+import sys, json
+from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from scripts.production_image_contracts import BUILD_TARGETS, commands
+limits = json.loads(Path(sys.argv[2]).read_text())
 for target in BUILD_TARGETS:
-    assert len(commands(target, "a" * 40)) > 1, target
+    assert len(commands(target, "a" * 40, limits=limits[target])) > 1, target
 assert "hcl2" not in sys.modules and "yaml" not in sys.modules
 '''
-    result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT)],
+    result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT), str(limits)],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 

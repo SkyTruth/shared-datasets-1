@@ -356,7 +356,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
 
         self.assertIn("python scripts/ingestion_targets.py image-vars", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
-        self.assertEqual(verify_run, 'python -I -S .github/actions/deployment-bootstrap/verify_cdn.py')
+        self.assertEqual(verify_run, 'python -I -S scripts/cdn_plan_readiness.py verify-routes')
 
     def test_pmtiles_bootstrap_allows_only_in_place_shared_bucket_update(self):
         shared_bucket = "google_storage_bucket.shared_bucket"

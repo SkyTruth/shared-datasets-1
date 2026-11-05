@@ -14,7 +14,7 @@ from test_ci_preflight import ROOT, fixture_repo
 @pytest.mark.parametrize('defect', [None, 'unlisted', 'unsupported', 'permission', 'module', 'deleted'])
 @pytest.mark.parametrize('contract', ['inline', 'terraform', 'manual', 'ingestion', 'plan_scope'])
 def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, monkeypatch, defect, contract):
-    root, git = fixture_repo(tmp_path)
+    root, git = fixture_repo(tmp_path, image_targets=())
     (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {}}))
     workflows = root / '.github/workflows'
     for path in workflows.glob('*.yml'):

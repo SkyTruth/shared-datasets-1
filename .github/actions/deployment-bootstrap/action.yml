@@ -32,7 +32,7 @@ runs:
     env:
       GH_TOKEN: ${{ github.token }}
       EXECUTOR_SHA: ${{ inputs.executor-sha }}
-    run: python -I -S .github/actions/deployment-bootstrap/approval.py
+    run: python -I -S scripts/deployment_revision.py accept
     shell: bash
   - name: Install pinned durable receipt verifier
     run: python scripts/install_deployment_verifier.py
@@ -52,7 +52,7 @@ runs:
   - name: Snapshot trusted verifier import closure
     env:
       TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
-    run: python .github/actions/deployment-bootstrap/restore.py "$TRUSTED_WORKFLOW_SHA" "$RUNNER_TEMP/trusted-deployment.tar"
+    run: python scripts/tested_image_bundle.py "$TRUSTED_WORKFLOW_SHA" "$RUNNER_TEMP/trusted-deployment.tar"
     shell: bash
   - name: Check out repository
     uses: actions/checkout@v4

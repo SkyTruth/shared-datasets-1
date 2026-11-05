@@ -25,7 +25,7 @@ HEALTH_SCOPE = "health:operational-safety-check"
 from scripts import incident_verification_cache as native
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
-from scripts.sdk_release_authorization import GitHub
+from scripts.dataset_mutation_authorization import GitHub
 from scripts import workflow_failure_alert as alerts
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -164,21 +164,16 @@ def catalog_changed(client, directory):
 def dry_reconciliation(api, run, identity, source_runs, start, end, directory, cache):
     from scripts import slack_incidents as incidents
 
+    claims = []
     class DryLedger(incidents.Ledger):
         def verify(self, record):
             state = super().verify(record)
             if state and incidents.pending_posts(state):
-                self.claims.append({"incident": state["incident"]["id"], "since": record["created_at"]})
+                claims.append({"incident": state["incident"]["id"], "since": record["created_at"]})
             return state
 
-        def load(self):
-            if not hasattr(self, "loaded"):
-                self.claims = []
-                self.loaded = super().load()
-            return copy.deepcopy(self.loaded)
-
         def save(self, state, _phase):
-            existing = self.loaded.get(state["scope"])
+            existing = states.get(state["scope"])
             if existing and {**state, "healthy": existing["healthy"],
                              "terminal_validation": existing["terminal_validation"]} == existing:
                 # Watermarks alone need no wake-up; the next worker retains them.
@@ -187,6 +182,7 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory, c
 
     ledger = DryLedger(api, run, directory, verification_cache=cache)
     states = ledger.load()
+    ledger.load = lambda: copy.deepcopy(states)
     safety_scopes = {"workflow:" + WORKFLOW.rsplit("/", 1)[-1],
                      incidents.scope_for_job(JOB, {}, WORKFLOW.rsplit("/", 1)[-1])[0]}
     safety_open = any(scope in safety_scopes and state["incident"]["resolution"] is None for scope, state in states.items())
@@ -202,7 +198,7 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory, c
         settled = not incidents.prepare(ledger, identity, observations)
     except SnapshotWrite:
         settled = False
-    return settled, ledger.claims
+    return settled, claims
 
 
 def verification_due(api, sources, pending, *, now):
@@ -442,18 +438,21 @@ def main():
             return json.loads(subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", job,
                 "--location=us-central1", "--project=shared-datasets-1", "--format=json"], text=True))
         warnings = []
-        problems = incident_problems()
+        configuration = incident_problems()
+        problems = list(configuration)
         probe_outcome = os.environ.get("SAFETY_PROBE_OUTCOME", "success")
         def dataset_freshness():
             from scripts import catalog_drift_guard as catalog
             return freshness(catalog.get_client(), now=now, scheduler=scheduler)
 
         def reconciliation_problems():
+            if probe_outcome != "success":
+                return []
             findings = []
-            result = json.loads((args.work_dir / "result.json").read_text()) if probe_outcome == "success" else {"reconcile": False}
+            result = json.loads((args.work_dir / "result.json").read_text())
             if result["reconcile"] and reconciliation_stalled(api, run):
                 findings.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
-            for claim in (json.loads((args.work_dir / "claims.json").read_text()) if probe_outcome == "success" and not incident_problems() else []):
+            for claim in (json.loads((args.work_dir / "claims.json").read_text()) if not configuration else []):
                 if now - native.timestamp(claim["since"]) >= timedelta(hours=24):
                     findings.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
             return findings

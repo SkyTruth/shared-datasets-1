@@ -226,7 +226,7 @@ jobs:
         with:
           service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - name: Verify catalog CDN routes
-        run: python -I -S .github/actions/deployment-bootstrap/verify_cdn.py
+        run: python -I -S scripts/cdn_plan_readiness.py verify-routes
       - name: Record terminal deployment outcome
         id: deployment-outcome
         env:

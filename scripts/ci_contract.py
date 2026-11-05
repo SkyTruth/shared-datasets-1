@@ -32,6 +32,15 @@ INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 
 
+def delivery_outputs(plan, event, ref):
+    """Successful CI emits main-only eligibility; later prerequisite results stay live."""
+    enabled = event == 'push' and ref == 'refs/heads/main'
+    return {**{name.replace('_', '-'): enabled and name in plan['deployments'] for name in DEPLOYMENTS},
+            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'],
+            **dict.fromkeys(('dataset-mutation-selection', 'refresh-reviewed-catalog', 'announce-repo-functionality',
+                             'publish-reviewed-dataset', 'identity-decision-reconcile'), enabled)}
+
+
 def rollout_holds(value, *, historical=False, previous=None, now=None, targets=INGESTION_DEPLOYMENTS) -> tuple[str, ...]:
     # Old commits used bare target names. Only comparison baselines may read that
     # persisted format; all new plans require accountable, bounded holds.

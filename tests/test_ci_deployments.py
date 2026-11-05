@@ -281,7 +281,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         job = jobs[target.replace("_", "-")]
         assert "ci-ready" in job["needs"]
         assert "github.event_name == 'push'" in job["if"]
-        assert "needs.ci-ready.result == 'success'" in job["if"]
+        assert "fromJSON(needs.ci-ready.outputs.delivery || '{}')." in job["if"]
         assert job["with"]["executor_sha"] == "${{ needs.ci-ready.outputs.tested_sha }}"
         assert "concurrency" not in job  # Mutating leaf owns the one production state lock.
         callee = load_workflow(ROOT / job["uses"].removeprefix("./"))
@@ -293,13 +293,13 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         assert "artifact-registry-iam" in jobs[target]["needs"]
     publisher = jobs["publish-reviewed-dataset"]
     assert "pmtiles-cdn" in publisher["needs"]
-    assert "needs.ci-ready.result == 'success'" in publisher["if"]
+    assert "fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset" in publisher["if"]
     assert "needs.pmtiles-cdn.result == 'success'" in publisher["if"]
     assert "needs.geospatial-changes.outputs.pmtiles_cdn != 'true'" in publisher["if"]
 
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
-    commands = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head", **ci_preflight.resolve_selection(None)}, ROOT)]
+    commands = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head", "production_image_limits": ci_preflight.production_image_limits(), **ci_preflight.resolve_selection(None)}, ROOT)]
     from scripts.tested_image_bundle import BUILD_TARGETS
     assert [args[args.index("--target") + 1] for args in commands] == list(BUILD_TARGETS)
     for args, target in zip(commands, BUILD_TARGETS, strict=True):
@@ -380,6 +380,12 @@ def condition_result(job, values, *, cancelled=False):
     # of its scheduler: without a status function GitHub injects success(), which
     # propagates skipped ancestors even when the explicit condition is true.
     assert "!cancelled()" in expression
+    if "fromJSON(needs.ci-ready.outputs.delivery" in expression:
+        from scripts.ci_contract import delivery_outputs
+        plan = {'deployments': [target for target in DEPLOYMENTS if values.get(f'needs.geospatial-changes.outputs.{target}') == 'true'],
+                'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else []}
+        delivery = delivery_outputs(plan, values['github.event_name'], values['github.ref']) if values['needs.ci-ready.result'] == 'success' else {}
+        expression = re.sub(r"fromJSON\(needs.ci-ready.outputs.delivery \|\| '{}'\).([\w-]+)", lambda match: repr(delivery.get(match[1], False)), expression)
     expression = expression.replace("!cancelled()", repr(not cancelled))
     expression = re.sub(r"(?:needs|github|inputs)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
     expression = re.sub(r"!(?!=)", "not ", expression)
@@ -510,7 +516,9 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
     from test_ci_preflight import results_for, jobs_for
     ci_preflight.verify_results(plan, results_for(plan), jobs_for(plan))
     command = suite_commands("production-images", root, plan, tmp_path)[0][0]
-    assert command[command.index("--target"):] == ["--target", target, "--output", str(tmp_path / target)]
+    assert command[command.index("--target") + 1] == target
+    assert json.loads(command[command.index("--limits") + 1]) == plan["production_image_limits"][target]
+    assert command[-2:] == ["--output", str(tmp_path / target)]
 
 
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])

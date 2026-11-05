@@ -14,7 +14,7 @@ from identity_policy_helpers import cel
 from terraform_helpers import evaluate, load_terraform, resources
 from workflow_helpers import load_workflow
 
-ROOT = Path(os.environ.get("WS26_ROOT", Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / "terraform/envs/prod"
 REPO = "SkyTruth/shared-datasets-1"
 SHA = "a" * 40
@@ -59,7 +59,7 @@ def test_preview_owner_acceptance_precedes_authentication(filename):
     for job in workflow["jobs"].values():
         steps = job["steps"]
         check = next(i for i, step in enumerate(steps) if step.get("name") == "Verify owner acceptance")
-        assert steps[check]["run"] == "python -I -S .github/actions/deployment-bootstrap/approval.py"
+        assert steps[check]["run"] == "python -I -S scripts/deployment_revision.py accept"
         assert steps[check]["env"]["EXECUTOR_SHA"] == "${{ github.workflow_sha }}"
         assert check < next(i for i, step in enumerate(steps) if "auth" in step.get("uses", ""))
 

@@ -31,6 +31,7 @@ def plan(suites=SUITES):
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
         "tested_sha": "c" * 40, "tree": "d" * 40,
+        "production_image_limits": preflight.production_image_limits(),
         "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": list(BUILD_TARGETS) if "production-images" in suites else [],
     }
 
@@ -389,7 +390,7 @@ def fixture_template(source, tree, overrides):
     return root
 
 
-def fixture_repo(tmp_path):
+def fixture_repo(tmp_path, *, image_targets=BUILD_TARGETS):
     root = tmp_path / "source"
     # Include local producer edits in focused checks as well as frozen commits.
     changed = set(preflight.git(ROOT, "diff", "--name-only", "-z", "HEAD", raw=True).split("\0"))
@@ -400,6 +401,12 @@ def fixture_repo(tmp_path):
     subprocess.run([os.environ.get("CI_GIT", "git"), "-c", "core.hooksPath=/dev/null", "clone", "--shared", "--quiet", str(template), str(root)], check=True)
     git = fixture_git(root)
     git("remote", "remove", "origin")
+    if not image_targets:
+        for target in BUILD_TARGETS:
+            package = Path(ci_contract.RECIPES[target]).parent.name
+            (root / f"terraform/envs/prod/{package}.tf").unlink()
+        git("add", ".")
+        git("commit", "-m", "non-image fixture")
     return root, git
 
 

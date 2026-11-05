@@ -29,9 +29,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
+from scripts.terraform_target_contracts import production_image_limits
 from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
-    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools,
+    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs,
     INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
@@ -258,6 +259,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "changed_paths": paths,
+        "production_image_limits": production_image_limits(root),
         **resolve_selection(paths, base=resolved_base if paths is not None else None, root=root,
                             catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
     }
@@ -368,7 +370,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             raise ValueError("production image suite selected without image targets")
         for target in targets:
             add(sys.executable, "-I", "scripts/production_image_contracts.py",
-                "--target", target, "--output", str(output / target))
+                "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -669,6 +671,7 @@ def main() -> int:
     verifier.add_argument("--results", type=Path, required=True)
     verifier.add_argument("--jobs", type=Path)
     verifier.add_argument("--output", type=Path)
+    verifier.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     root = Path.cwd()
     try:
@@ -716,6 +719,9 @@ def main() -> int:
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
                     })
                 write_json(args.output, evidence)
+            if args.github_output:
+                with args.github_output.open('a') as output:
+                    output.write('delivery=' + json.dumps(delivery_outputs(plan, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'])) + '\n')
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
         if not args.base or not args.head:
