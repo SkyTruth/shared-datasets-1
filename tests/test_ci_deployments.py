@@ -151,12 +151,16 @@ def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_valida
         select_deployments(path, catalog_snapshots=(duplicate, duplicate))
 
 
-def test_release_contracts_run_before_python_tests_for_selected_release_changes():
-    plan = {"base": "base", "tested_sha": "head", "deployments": ["wdpa", "ingestion_iam"]}
-    commands = [args for args, _ in suite_commands("tests", ROOT, plan, ROOT)]
+@pytest.mark.parametrize("paths", [["terraform/envs/prod/preview_terraform_iam.tf"],
+    [".github/workflows/prod-terraform-target-apply.yml"], ["scripts/deployment_permissions.py"]])
+def test_pr_validation_checks_all_offline_deployment_contracts_without_credentials(paths):
+    plan = {"base": "base", "tested_sha": "head", "changed_paths": paths, "deployments": []}
+    commands = [args for args, _ in suite_commands("lint", ROOT, plan, ROOT)]
     gate = next(args for args in commands if "scripts/release_contracts.py" in args)
-    assert gate[-4:] == ["--target", "iam", "--target", "wdpa"]
-    assert commands.index(gate) < next(index for index, args in enumerate(commands) if "pytest" in args)
+    assert gate[-2:] == ["--target", "all"]
+    assert sum(args[-1:] == ["validate"] for args in commands) == 2
+    assert any("scripts/terraform_target_contracts.py" in args for args in commands)
+    assert not any("gcloud" in args or "apply" in args for args in commands)
 
 
 def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_tested_sha():
@@ -185,10 +189,13 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
 
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
-    command = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
-    assert "scripts/production_image_contracts.py" in command[-1]
-    assert command[-1][-2:] == ["--output", str(ROOT)]
-    assert command[-1].count("--target") == 7
+    commands = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
+    from scripts.tested_image_bundle import BUILD_TARGETS
+    assert [args[args.index("--target") + 1] for args in commands] == list(BUILD_TARGETS)
+    for args, target in zip(commands, BUILD_TARGETS, strict=True):
+        assert "scripts/production_image_contracts.py" in args
+        assert args.count("--target") == 1
+        assert args[-2:] == ["--output", str(ROOT / target)]
     suite = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["production-images"]
     assert any("scripts/ci_preflight.py run-suite" in step.get("run", "") for step in suite["steps"])
     upload = next(step for step in suite["steps"] if step.get("id") == "retained-results")
@@ -362,7 +369,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
     outputs = dict(line.split("=", 1) for line in (tmp_path / "outputs").read_text().splitlines())
     assert json.loads(outputs["production-image-targets"]) == ["eamlis-monthly"]
     command = suite_commands("production-images", root, plan, tmp_path)[0][0]
-    assert command[command.index("--target"):] == ["--target", "eamlis-monthly", "--output", str(tmp_path)]
+    assert command[command.index("--target"):] == ["--target", "eamlis-monthly", "--output", str(tmp_path / "eamlis-monthly")]
 
 
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])

@@ -100,16 +100,15 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     reference = evidence.get("suite_artifacts", {}).get("production-images")
     suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
     proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
-    require(not evidence.get("reused_suites"), "cross-run image reuse is not supported")
+    require("production-images" not in evidence.get("reused_suites", {}), "cross-run image reuse is not supported")
     report_timing("source-authorization", started)
     directory.mkdir(parents=True, exist_ok=True)
     archive = directory / f"{target}.docker.tar"
     image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
     image_id = load_image(archive, image)
     report_timing("total", total_started)
-    outputs = {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
-               "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
-    return outputs
+    return {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
+            "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
 
 
 def main():

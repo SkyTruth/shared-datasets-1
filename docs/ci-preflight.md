@@ -83,8 +83,9 @@ dependency-closure checker. That checker uses a disposable local backend,
 lock-verified providers, exact workflow allowlists and
 `terraform/iam-plan-prerequisites.json`, including historical negative controls.
 It reads no production state. Python policy tests also evaluate provider-free
-Terraform console fixtures. Offline release contracts check declared permissions,
-saved-plan probes, image pushes and signed receipt boundaries before mutation.
+Terraform console fixtures. Every non-documentation lint run also checks all
+offline release contracts: declared permissions, saved-plan probes, image pushes
+and signed receipt boundaries.
 Live IAM, production-state plans and canaries still require protected execution.
 
 The Python suite runs the complete collection with two workers and no worker
@@ -96,7 +97,10 @@ rather than duplicating command lists here.
 
 ## Tested images and hosted gate
 
-Selected production recipes are built and exercised by immutable image identity,
+Selected production recipes run at most two targets concurrently in the existing
+producer job, with separate target outputs and a single checked manifest. The
+producer installs only Python and uv alongside the runner's Docker tools.
+Recipes are built and exercised by immutable image identity,
 then exported, hashed and loaded again through the deployment loader. Exact
 config/rootfs hashes bind retained bytes. Layer caches never substitute for
 validation evidence. Native/usage images use per-recipe Actions caches; the

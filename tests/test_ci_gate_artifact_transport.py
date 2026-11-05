@@ -80,6 +80,11 @@ def transport(tmp_path):
             (images / "manifest.json").write_text(json.dumps(result["production_images"]))
             for image in result["production_images"]["images"].values():
                 (images / image["archive"]).write_bytes(b"fixture-image-bytes" * 1024)
+            # A failed concurrent target may leave a partial archive below its
+            # own output directory. Diagnostics must exclude those payloads too.
+            partial = output / "incomplete-target/images"
+            partial.mkdir(parents=True)
+            (partial / "partial.docker.tar").write_bytes(b"partial-image-bytes")
         if suite.startswith("sdk-node"):
             package = output / "package"
             package.mkdir()

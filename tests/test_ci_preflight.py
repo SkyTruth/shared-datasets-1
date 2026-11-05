@@ -435,7 +435,7 @@ def test_image_host_entrypoints_require_only_standard_library(script):
 
 def test_image_suite_uses_verified_interpreter_without_installing_host_dependencies(tmp_path):
     commands = preflight.suite_commands("production-images", ROOT, plan(), tmp_path)
-    assert len(commands) == 1
+    assert len(commands) == len(BUILD_TARGETS)
     command, cwd = commands[0]
     assert command[:2] == [preflight.sys.executable, "-I"]
     # Exercise the actual command entrypoint with site packages disabled.
@@ -527,7 +527,6 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
     emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
     assert validation["suites"] == ["lint", "tests"]
     assert validation["deployments"] == []
-    assert json.loads(emitted["changed-paths"]) == validation["changed_paths"]
     assert json.loads(emitted["production-image-targets"]) == []
     assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]

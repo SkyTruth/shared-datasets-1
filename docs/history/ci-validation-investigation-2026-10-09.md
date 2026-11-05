@@ -17,7 +17,7 @@ All four cohort PRs remained open when rechecked; observed time to merge is
 therefore unavailable, not zero. No other chat was messaged, PR merged,
 automation changed, workflow retried or production operation performed by this
 investigation. Raw API responses, image-job logs and local traces are retained
-outside the repository. Portable [measurement data](ci-validation-investigation-2026-10-09.json)
+outside the repository. Portable [measurement data](../ci-validation-investigation-2026-10-09.json)
 records the exact heads, bases, trees, attempts and evidence directory names.
 
 ## Trace and baseline
