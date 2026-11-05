@@ -1,0 +1,12 @@
+name: Authenticate protected deployer
+description: Use the configured Terraform identity and install gcloud after trusted bootstrap
+runs:
+  using: composite
+  steps:
+  - name: Authenticate to Google Cloud
+    uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+      service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+  - name: Set up gcloud
+    uses: google-github-actions/setup-gcloud@v2

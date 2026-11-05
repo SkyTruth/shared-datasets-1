@@ -47,9 +47,7 @@ jobs:
         type: string
   workflow_call:
     inputs:
-      sync_iam:
-        required: true
-        type: boolean
+      sync_iam: {required: true, type: boolean}
       executor_sha:
         description: Exact tested main revision
         required: true

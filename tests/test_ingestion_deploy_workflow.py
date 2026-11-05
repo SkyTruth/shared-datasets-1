@@ -169,15 +169,17 @@ def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix='
     env = {
         **os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'],
         'TARGET': target, 'WORKFLOW_FILE': target + '-deploy.yml',
-        'TARGET_CONFIG': json.dumps(target_table()[target]),
         'RUNNER_TEMP': str(tmp_path), 'GITHUB_ENV': str(tmp_path / 'environment'),
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_WORKSPACE': str(REPO_ROOT),
         'GOOGLE_CLOUD_PROJECT': 'shared-datasets-1', 'REGION': 'us-central1',
         'CANARY_RUN_DATE': '', 'CANCEL_RUNNING_CANARY': 'false',
         **{key.upper(): str(value).lower() if isinstance(value, bool) else str(value)
            for key, value in target_table()[target].items() if key in {
-               'plan_guard', 'image_config_variable', 'canary_attempts', 'canary_timeout_phase', 'canary_run_url',
+               'plan_guard', 'after_verify',
            }},
+        'CANARY_ATTEMPTS': '20' if target == 'wdpa-monthly' else '125',
+        'CANARY_TIMEOUT_PHASE': 'verification_pending' if target == 'wdpa-monthly' else 'failed',
+        'CANARY_RUN_URL': 'false' if target == 'wdpa-monthly' else 'true',
         **(extra or {}),
     }
     return subprocess.run(['bash', '-e', '-c', prefix + script], cwd=REPO_ROOT, env=env, capture_output=True, text=True)
@@ -189,7 +191,7 @@ def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
     assert config['workflow'] == TARGET_WORKFLOWS[target]
     resolved = run_shell(tmp_path, shared_step('prepare', 'Resolve registered ingestion target')['run'], target=target)
     assert resolved.returncode == 0, resolved.stderr
-    assert json.loads((tmp_path / 'outputs').read_text().removeprefix('config=')) == config
+    assert 'PLAN_GUARD<<INGESTION_POLICY\n' + config['plan_guard'] + '\n' in (tmp_path / 'environment').read_text()
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'scripts/terraform_retry.sh').write_text('python -c \'import json,sys; print(json.dumps(sys.argv[1:]))\' "$@"\n')
     image = 'registry/job@sha256:' + 'a' * 64
@@ -197,7 +199,7 @@ def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
                        extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': image, 'TESTED_IMAGE_CONFIG': 'sha256:' + 'b' * 64})
     assert result.returncode == 0, result.stderr
     args = json.loads(result.stdout)
-    assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(subprocess.check_output(config['targets_command'], text=True).splitlines() if config['targets_command'] else config['targets'])
+    assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(subprocess.check_output([sys.executable, 'scripts/dataset_usage_deploy.py', '--targets'], text=True).splitlines() if config['plan_guard'] == 'usage' else config['targets'])
     variables = dict(a.removeprefix('-var=').split('=', 1) for a in args if a.startswith('-var='))
     assert variables[config['image_variable']] == image
     assert set(t['image_variable'] for t in target_table().values()) <= variables.keys()
@@ -241,6 +243,9 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
     (candidate / '.github/terraform-targets.json').write_text('untrusted candidate registry')
     workflow = load_workflow(REPO_ROOT / '.github/workflows' / filename)
     script = workflow_steps_by_name(workflow, job)['Restore immutable receipt verifier after candidate checkout']['run']
+    snapshot = workflow_steps_by_name(workflow, job)['Snapshot trusted verifier import closure']['run']
+    captured = run_shell(tmp_path, snapshot, extra={'TRUSTED_WORKFLOW_SHA': revision})
+    assert captured.returncode == 0, captured.stderr
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
     assert result.returncode == 0, result.stderr
     for filename in ('deployment_revision.py', 'deployment_emission.py', 'ingestion_targets.py', 'terraform_plan_allowlist.py', 'terraform_target_contracts.py', 'ci_toolchain.py', 'workflow_identity.py', 'github_api_read.py', 'install_deployment_verifier.py'):
@@ -254,7 +259,7 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
                    check=True, capture_output=True, text=True)
     help_text = subprocess.check_output([sys.executable, '-S', str(candidate / 'scripts/terraform_plan_allowlist.py'), '--help'], text=True)
     assert '--registered-scope' in help_text
-    result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': '0' * 40})
+    result = run_shell(tmp_path, snapshot, extra={'TRUSTED_WORKFLOW_SHA': '0' * 40})
     assert result.returncode != 0
 
 
@@ -413,11 +418,11 @@ def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
              'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume verified ingestion scheduler', 'Record deployment outcome']
     assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
     resume = shared_step('verify', 'Resume verified ingestion scheduler')
-    assert resume['if'] == "fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler"
+    assert resume['if'] == "env.AFTER_VERIFY != '' && inputs.resume_scheduler"
     for published in (True, False):
         calls = tmp_path / 'calls'
         calls.write_text('')
-        result = run_shell(tmp_path, resume['run'], target='sea-ice-daily', extra={'PUBLISHED': '0' if published else '1', 'CALLS': str(calls)}, prefix='''
+        result = run_shell(tmp_path, target_table()['sea-ice-daily']['after_verify'], target='sea-ice-daily', extra={'PUBLISHED': '0' if published else '1', 'CALLS': str(calls)}, prefix='''
 uv() { return "$PUBLISHED"; }
 gcloud() { echo "$*" >> "$CALLS"; }
 ''')
@@ -426,15 +431,12 @@ gcloud() { echo "$*" >> "$CALLS"; }
     assert 'COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions' in (REPO_ROOT / 'ingestion/sea_ice_daily/Dockerfile').read_text()
 
 
-def test_installed_synthetic_smoke_mounts_the_shared_entrypoint(tmp_path):
-    result = run_shell(tmp_path, shared_step('prepare', 'Smoke-test synthetic sea-ice build path in image')['run'],
-                       target='sea-ice-daily', extra={'IMAGE_TAG': 'verified:image', 'ARGS': str(tmp_path / 'args')},
-                       prefix='docker() { printf "%s\\n" "$@" > "$ARGS"; }\n')
-    assert result.returncode == 0, result.stderr
-    arguments = (tmp_path / 'args').read_text().splitlines()
-    mount = arguments[arguments.index('--mount') + 1]
-    assert mount == f'type=bind,src={REPO_ROOT}/scripts/local_ingestion_smoke.py,dst=/app/scripts/local_ingestion_smoke.py,readonly'
-    assert arguments[-6:] == ['verified:image', 'python', 'scripts/local_ingestion_smoke.py', '--sea-ice-only', '--workdir', '/tmp/ims-synthetic']
+def test_installed_smokes_run_only_in_ci_on_the_retained_image():
+    from scripts.production_image_contracts import commands
+    assert not any('Smoke-test' in step.get('name', '') for step in shared_workflow()['jobs']['prepare']['steps'])
+    checks = commands('sea-ice-daily', 'a' * 40, image_id='sha256:' + 'b' * 64)[1:]
+    assert any('--sea-ice-only' in args for args in checks)
+    assert all('--memory' in args and 'sha256:' + 'b' * 64 in args for args in checks)
 
 
 @pytest.mark.parametrize('apply_result,claim', [('failure', 'success'), ('success', 'failure'), ('success', 'success')])
@@ -579,7 +581,7 @@ def test_usage_window_does_not_require_broader_regional_inventory_permissions(tm
         revision.runtime_window(SimpleNamespace(target='dataset-usage', canary_run_date='', allow_cancel='false'))
     cloud.assert_not_called()
     assert (tmp_path / 'output').read_text() == 'ready=true\n'
-    assert TARGETS['dataset-usage']['window_in_plan']
+    assert TARGETS['dataset-usage']['plan_guard'] == 'usage'
     guard = shared_step('apply', 'Enforce usage telemetry, activation and cost boundaries')
     assert "steps.window.outputs.ready == 'true'" in guard['if']
     assert 'scripts/dataset_usage_deploy.py --plan-json' in guard['run']
@@ -597,3 +599,44 @@ def test_usage_wrapper_preserves_iam_admission(bootstrap, sync, event, accepted)
         'needs.bootstrap.result': bootstrap, 'inputs.sync_iam': sync,
         'github.event_name': event, 'github.ref': 'refs/heads/main',
     }) is accepted
+
+
+@pytest.mark.parametrize('change', [
+    {'plan_guard': 'unknown'}, {'canary_mode': 'unknown'}, {'canary_mode': 'deferred'},
+    {'plan_guard': 'wdpa'}, {'plan_guard': 'usage'}, {'rollout_gate': 'true'},
+    {'targets': ['module.foreign_job.google_cloud_run_v2_job.this']},
+    {'targets': []}, {'asset_root': '../foreign/asset'}, {'synthetic_smoke': True},
+])
+def test_registry_rejects_invalid_combinations_at_construction(change):
+    from scripts.ingestion_targets import target
+    config = dict(selection='example', asset_root='100-category/110-family/example',
+                  targets=['module.example_job.google_cloud_run_v2_job.this'])
+    with pytest.raises((ValueError, TypeError)):
+        target('example', **(config | change))
+
+
+def test_new_trusted_import_and_package_initializer_cannot_load_candidate_bytes(tmp_path):
+    import runpy
+    snapshot = runpy.run_path(str(REPO_ROOT / '.github/actions/deployment-bootstrap/restore.py'))['snapshot']
+    root = tmp_path / 'repository'
+    (root / 'scripts').mkdir(parents=True)
+    (root / '.github').mkdir()
+    (root / '.github/terraform-targets.json').write_text('{}')
+    (root / 'scripts/deployment_revision.py').write_text('from scripts import new_dependency\nprint(new_dependency.VALUE)\n')
+    (root / 'scripts/new_dependency.py').write_text('from . import second_dependency\nVALUE = second_dependency.VALUE\n')
+    (root / 'scripts/second_dependency.py').write_text('VALUE = "trusted dependency"\n')
+    for name in ('terraform_plan_allowlist', 'install_deployment_verifier'):
+        (root / f'scripts/{name}.py').write_text('')
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=root, stderr=subprocess.PIPE, text=True).strip()
+    git('init')
+    git('add', '.')
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.org', 'commit', '-m', 'Trusted import closure')
+    snapshot(git('rev-parse', 'HEAD'), tmp_path / 'trusted-deployment.tar', root=root)
+    for name in ('new_dependency', 'second_dependency', '__init__'):
+        (root / f'scripts/{name}.py').write_text('raise RuntimeError("candidate bytes executed")\n')
+    subprocess.run(['tar', '-xf', str(tmp_path / 'trusted-deployment.tar'), '-C', str(root)], check=True)
+    result = subprocess.run([sys.executable, str(root / 'scripts/deployment_revision.py')], cwd=root,
+                            env={**os.environ, 'PYTHONPATH': str(root)}, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'trusted dependency'

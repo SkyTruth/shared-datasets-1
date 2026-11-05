@@ -26,7 +26,7 @@ from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 from scripts.terraform_target_contracts import plan_scope
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
-JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items() if config["plan_guard"] == "job-image"}
+JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items() if config["plan_guard"] != "usage"}
 
 
 def split_lines(value: str) -> list[str]:
@@ -77,11 +77,11 @@ def blocked_changes(
         if (delete_only and actions != ["delete"]
                 or block_deletes and "delete" in actions
                 or address not in allowed_exact and not any(pattern.match(address) for pattern in allowed_patterns)
-                or config is not None and config["scope_update_only"] and actions != ["update"]):
+                or config is not None and config["plan_guard"] == "wdpa" and actions != ["update"]):
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
         if job_image is not None and address == job_image[0]:
-            if actions not in [[action] for action in config["image_actions"]]:
+            if actions not in ([["create"], ["update"]] if config["plan_guard"] == "install" else [["update"]]):
                 blocked.append(f"{'/'.join(actions)} {address}")
                 continue
             after = resource.get("change", {}).get("after", {})
@@ -89,8 +89,8 @@ def blocked_changes(
             image = containers[0].get("image") if containers else None
             if image != job_image[1]:
                 blocked.append(f"unexpected image for {address}: {image!r}")
-            if config["processing_contract"]:
-                blocked.extend(IMAGE_VALIDATORS[config["processing_contract"]](after, job_image[1], expected_config))
+            if config["plan_guard"] in IMAGE_VALIDATORS:
+                blocked.extend(IMAGE_VALIDATORS[config["plan_guard"]](after, job_image[1], expected_config))
     return blocked
 
 
@@ -120,13 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         if not args.expected_image:
             parser.error("--job-image-target requires a nonempty --expected-image")
         config = TARGETS[args.job_image_target]
-        if config["image_config_variable"] and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_config or ""):
+        if config["plan_guard"] == "wdpa" and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_config or ""):
             parser.error("WDPA requires --expected-config with its tested config digest")
         address = JOB_IMAGE_TARGETS[args.job_image_target]
         scope = set(TARGETS[args.job_image_target]["targets"])
         if (args.allowed_exact is not None and allowed_exact != scope) or allowed_patterns:
             parser.error("--job-image-target requires its exact resource scope and no allowed patterns")
-        if config["require_block_deletes"] and not args.block_deletes:
+        if config["plan_guard"] == "install" and not args.block_deletes:
             parser.error("the image target requires --block-deletes")
         allowed_exact = scope
         job_image = (address, args.expected_image)

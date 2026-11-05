@@ -207,7 +207,7 @@ def deployment_contract(root, target):
     if INGESTION_CONFIGS[DEPLOYS[target]]["plan_guard"] == "usage":
         guards = [step for step in jobs["apply"]["steps"] if "scripts/dataset_usage_deploy.py --plan-json" in step.get("run", "")]
         if (len(guards) != 1 or guards[0].get("continue-on-error")
-                or guards[0].get("if") != "steps.window.outputs.ready == 'true' && fromJSON(needs.prepare.outputs.config).plan_guard == 'usage'"):
+                or guards[0].get("if") != "steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'"):
             errors.append(f"{name}: usage telemetry saved-plan guard must gate deployment")
     if jobs["apply"].get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
         errors.append(f"{name}: protected serialized production job required")
@@ -230,7 +230,7 @@ def deployment_contract(root, target):
                 or bootstraps and steps.index(checkout) >= steps.index(bootstraps[0])):
             errors.append(f"{name}: unconditional trusted main workflow checkout with complete history required")
         if bootstraps and any(receipts.mutations(step)[1] or step.get("uses", "").startswith("google-github-actions/auth@")
-                              for step in steps[:steps.index(bootstraps[0])]):
+                              for step in receipts.expanded_steps(root, {"steps": steps[:steps.index(bootstraps[0])]})):
             errors.append(f"{name}: trusted bootstrap must precede authentication and mutation")
     if target == "wdpa":
         tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()

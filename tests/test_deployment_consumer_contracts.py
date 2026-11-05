@@ -80,7 +80,7 @@ def test_bundle_fingerprint_changes_with_bytes_names_and_refuses_symlinks(tmp_pa
         fingerprint([folder])
 
 
-@pytest.mark.parametrize('filename,job,mutation,record', [('pmtiles-cdn-sync.yml', 'sync', 'Terraform apply PMTiles managed-folder IAM bootstrap', 'Record serialized CDN deployment attempt'), ('catalog-viewer-deploy.yml', 'bootstrap', 'Terraform apply Secret Manager IAM bootstrap', 'Record serialized viewer deployment attempt'), ('catalog-web-deploy.yml', 'deploy', 'Publish catalog web bundle', 'Record serialized catalog deployment attempt')])
+@pytest.mark.parametrize('filename,job,mutation,record', [('pmtiles-cdn-sync.yml', 'sync', 'Terraform apply PMTiles managed-folder IAM bootstrap', 'Record serialized CDN deployment attempt'), ('catalog-web-deploy.yml', 'deploy', 'Publish catalog web bundle', 'Record serialized catalog deployment attempt')])
 def test_first_mutation_requires_record_under_noncancelling_serialization(filename, job, mutation, record):
     workflow = load_workflow(ROOT / '.github/workflows' / filename)
     steps = workflow_steps_by_name(workflow, job)
@@ -94,8 +94,6 @@ def test_first_mutation_requires_record_under_noncancelling_serialization(filena
     assert steps[receipt]['if'] == "${{ steps.deployment.outputs.proceed == 'true' }}"
     assert steps[receipt]['with'] == {'mode': 'receipt', 'receipt-path': '${{ steps.deployment.outputs.receipt_path }}'}
     condition = "steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'"
-    if filename == 'catalog-viewer-deploy.yml':
-        condition += " && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)"
     assert steps[mutation]['if'] == condition
 
 
@@ -110,26 +108,28 @@ def test_missing_required_evidence_cannot_be_omitted_from_fingerprint(tmp_path):
     ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles managed-folder IAM bootstrap allowlist', 'Verify permissions required by the saved CDN bootstrap plan', 'Record serialized CDN deployment attempt', 'pmtiles-managed-folder-bootstrap.tfplan.json', 'pmtiles-cdn-bootstrap', 'replay'),
     ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles resource-change allowlist', 'Verify permissions required by the saved CDN plan', 'Terraform apply', 'pmtiles-cdn-sync.tfplan.json', 'pmtiles-cdn', 'deployment'),
     ('catalog-viewer-deploy.yml', 'bootstrap', 'Enforce Secret Manager IAM bootstrap allowlist', 'Verify permissions required by the saved viewer bootstrap plan', 'Terraform apply Secret Manager IAM bootstrap', 'catalog-viewer-secret-manager-iam-bootstrap.tfplan.json', 'iam-bootstrap', 'deployment'),
-    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce catalog-viewer resource-change allowlist', 'Verify permissions required by the saved viewer plan', 'Terraform apply', 'catalog-viewer.tfplan.json', 'catalog-viewer', 'bootstrap'),
+    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce catalog-viewer resource-change allowlist', 'Verify permissions required by the saved viewer plan', 'Terraform apply', 'catalog-viewer.tfplan.json', 'catalog-viewer', 'prepare'),
 ])
 def test_actual_saved_plan_permissions_are_verified_before_mutation(filename, job, allowlist, check, mutation, plan, target, guard):
     steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows' / filename), job)
     names = list(steps)
     assert names.index(allowlist) < names.index(check) < names.index(mutation)
-    if guard == 'bootstrap':
-        admission = steps['Require successful signed bootstrap']
-        assert admission['env'] == {'APPLY_RESULT': '${{ needs.bootstrap.result }}', 'CLAIM_SIGNED': '${{ needs.bootstrap.outputs.claim_signed }}'}
+    if guard == 'prepare':
+        admission = steps['Require successful signed preparation']
+        assert admission['env'] == {'APPLY_RESULT': '${{ needs.prepare.result }}', 'CLAIM_SIGNED': '${{ needs.prepare.outputs.claim_signed }}'}
         assert admission['run'] == 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
-        assert names.index('Require successful signed bootstrap') < names.index(check)
+        assert names.index('Require successful signed preparation') < names.index(check)
         assert 'if' not in steps[check] and 'if' not in steps[mutation]
         assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']
+        return
+    if filename == 'catalog-viewer-deploy.yml' and target == 'iam-bootstrap':
+        workflow = load_workflow(ROOT / '.github/workflows' / filename)
+        assert "needs.prepare.outputs.claim_signed == 'success'" in workflow['jobs'][job]['if']
+        assert all('if' not in steps[key] for key in (allowlist, check, mutation))
         return
     expected_guard = f"steps.{guard}.outputs.proceed == 'true'"
     if guard == 'deployment':
         expected_guard += " && steps.claim-receipt.outcome == 'success'"
         assert names.index('Attest serialized deployment claim before mutation') < names.index(check)
-    if filename == 'catalog-viewer-deploy.yml' and target == 'iam-bootstrap':
-        expected_guard += " && (github.event_name == 'workflow_dispatch' || inputs.sync_iam)"
-        assert steps[allowlist]['if'] == steps[mutation]['if'] == expected_guard
     assert steps[check]['if'] == expected_guard
     assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']

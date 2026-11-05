@@ -2,29 +2,14 @@ name: Catalog / PMTiles CDN sync
 'on':
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision for selective recovery
-        required: true
-        type: string
-      source_run_id:
-        description: Main CI run that validated the executor
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {"description": "Exact tested main revision for selective recovery", "required": true, "type": "string"}
+      source_run_id: {"description": "Main CI run that validated the executor", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
   workflow_call:
     inputs:
-      executor_sha:
-        required: true
-        type: string
-      source_run_id:
-        required: true
-        type: string
-      source_run_attempt:
-        required: true
-        type: string
+      executor_sha: {required: true, type: string}
+      source_run_id: {required: true, type: string}
+      source_run_attempt: {required: true, type: string}
 permissions:
   contents: read
   actions: read
@@ -100,15 +85,9 @@ jobs:
             echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
             exit 1
           fi
-      - name: Authenticate to Google Cloud
+      - name: Authenticate protected deployer
+        uses: ./.github/actions/deployment-auth
         if: steps.replay.outputs.proceed == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-      - name: Set up gcloud
-        if: steps.replay.outputs.proceed == 'true'
-        uses: google-github-actions/setup-gcloud@v2
       - name: Set up Terraform
         if: steps.replay.outputs.proceed == 'true'
         uses: hashicorp/setup-terraform@v3
@@ -306,13 +285,8 @@ jobs:
           APPLY_RESULT: ${{ needs.sync.result }}
           CLAIM_SIGNED: ${{ needs.sync.outputs.claim_signed }}
         run: test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+      - name: Authenticate protected deployer
+        uses: ./.github/actions/deployment-auth
       - name: Invalidate catalog CDN cache
         run: |
           gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \

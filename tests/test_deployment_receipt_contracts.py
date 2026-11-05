@@ -176,13 +176,13 @@ class ReceiptContractTests(unittest.TestCase):
                 value = copy.deepcopy(original)
                 jobs = value['jobs']
                 if defect == 'signature':
-                    jobs['bootstrap']['outputs']['claim_signed'] = '${{ steps.other.outcome }}'
+                    jobs['prepare']['outputs']['claim_signed'] = '${{ steps.other.outcome }}'
                 elif defect == 'lock':
                     jobs['ready']['concurrency'] = jobs['deploy']['concurrency']
                 elif defect == 'readiness':
                     jobs['deploy']['needs'].remove('ready')
                 elif defect in {'admission', 'ignored'}:
-                    guard = next(s for s in jobs['deploy']['steps'] if s.get('name') == 'Require successful signed bootstrap')
+                    guard = next(s for s in jobs['deploy']['steps'] if s.get('name') == 'Require successful signed preparation')
                     guard.update({'if': False} if defect == 'admission' else {'continue-on-error': True})
                 elif defect == 'outcome':
                     jobs['verify']['steps'].pop()

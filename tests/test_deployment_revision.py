@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+import json
+
+import pytest
 from unittest.mock import Mock, patch
 
 from scripts import deployment_revision as d
@@ -525,3 +528,14 @@ def test_usage_replay_requires_verified_runtime_and_recovery_accepts_the_registe
                    'GITHUB_WORKFLOW_REF': REPO + '/.github/workflows/deployment-recovery.yml@refs/heads/main'}
     with patch.dict(d.os.environ, environment), patch.object(d, 'verify_record', return_value=record['payload']), patch.object(d, 'verify_ci'):
         assert d.recovery_record(types.SimpleNamespace(deployment_id=record['id']), api) == (record, record['payload'])
+
+
+def test_registered_permission_probes_preserve_historical_endpoints():
+    from pathlib import Path
+    from scripts.terraform_target_contracts import registry
+    fixture = json.loads((Path(__file__).parent / 'fixtures/ci_failures/deployment-permission-probes.json').read_text())
+    assert set(registry(section='permission_probes')) == set(fixture) | {'job-runtime'}
+    for name, expected in fixture.items():
+        assert permissions.checks(name) == [(url, tuple(values)) for url, values in expected]
+    with pytest.raises(KeyError):
+        permissions.checks('unregistered-target')
