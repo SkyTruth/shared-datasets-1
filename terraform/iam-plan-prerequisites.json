@@ -116,6 +116,10 @@
     "scratch-cleanup-iam-sync.yml/operational-retirement-bootstrap": [],
     "scratch-cleanup-iam-sync.yml/retire-operational-infrastructure": [],
     "scratch-cleanup-iam-sync.yml/revoke-operational-retirement": [],
-    "scratch-cleanup-iam-sync.yml/operational-retirement-grant": []
+    "scratch-cleanup-iam-sync.yml/operational-retirement-grant": [],
+    "terraform-state-read-iam-sync.yml/pr-plan-authority": [],
+    "terraform-state-read-iam-sync.yml/pr-plan-identity": [
+      "google_project_service.required"
+    ]
   }
 }

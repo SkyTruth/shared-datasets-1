@@ -284,6 +284,32 @@
       ],
       "block_deletes": true,
       "image_placeholder": "unused-by-state-read-iam-sync"
+    },
+    "PR plan identity IAM bootstrap": {
+      "workflow": "terraform-state-read-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.pr_plan_provisioner",
+        "google_project_iam_member.pr_plan_provisioner"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30
+    },
+    "PR plan identity provisioning": {
+      "workflow": "terraform-state-read-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_iam_workload_identity_pool.pr_plan",
+        "google_iam_workload_identity_pool_provider.pr_plan",
+        "google_service_account.pr_plan",
+        "google_service_account_iam_member.pr_plan_wif",
+        "google_project_iam_custom_role.pr_plan_reader",
+        "google_project_iam_member.pr_plan_reader",
+        "google_project_iam_custom_role.pr_plan_state_reader",
+        "google_storage_bucket_iam_member.pr_plan_state_reader",
+        "google_project_service.pr_plan_troubleshooter"
+      ],
+      "block_deletes": true
     }
   },
   "plan_scopes": {

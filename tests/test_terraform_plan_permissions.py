@@ -71,6 +71,8 @@ class SavedPlanPermissionTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 address = "terraform_data.cron_alert_channel_configured" if kind == "terraform_data" else None
                 fields = {key: field for key, field in value.items() if kind != "google_compute_url_map" or key != "service"}
+                if kind == "google_iam_workload_identity_pool":
+                    fields["workload_identity_pool_id"] = "github-pr-plan"
                 checks(plan(row(kind, ["delete" if kind in retirement else "create"], fields, address=address)))
 
     def test_existing_url_map_update_requires_actual_map_and_backend_authority(self):
