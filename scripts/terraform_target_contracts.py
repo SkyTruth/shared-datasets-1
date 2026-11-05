@@ -32,7 +32,7 @@ EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:
     """One reviewed resource scope per stable, historically signed sync name."""
     value = json.loads((root / '.github/terraform-targets.json').read_text())
-    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes'} or value['schema_version'] != 1:
+    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes', 'deployments', 'image_checks'} or value['schema_version'] != 1:
         raise ValueError('Unsupported Terraform target registry')
     return value[section] if section == 'targets' else value.get(section, {})
 

@@ -15,7 +15,7 @@ from scripts import deployment_revision as revision
 
 import pytest
 from scripts.deployment_revision import TARGET_WORKFLOWS
-from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS, environment as target_environment
 from scripts.deployment_receipt_contracts import expanded_steps
 
 from workflow_helpers import (
@@ -173,13 +173,8 @@ def run_shell(tmp_path, script, *, target='eamlis-monthly', extra=None, prefix='
         'GITHUB_OUTPUT': str(tmp_path / 'outputs'), 'GITHUB_WORKSPACE': str(REPO_ROOT),
         'GOOGLE_CLOUD_PROJECT': 'shared-datasets-1', 'REGION': 'us-central1',
         'CANARY_RUN_DATE': '', 'CANCEL_RUNNING_CANARY': 'false',
-        **{key.upper(): str(value).lower() if isinstance(value, bool) else str(value)
-           for key, value in target_table()[target].items() if key in {
-               'plan_guard', 'after_verify',
-           }},
-        'CANARY_ATTEMPTS': '20' if target == 'wdpa-monthly' else '125',
-        'CANARY_TIMEOUT_PHASE': 'verification_pending' if target == 'wdpa-monthly' else 'failed',
-        'CANARY_RUN_URL': 'false' if target == 'wdpa-monthly' else 'true',
+        **{key: str(value).lower() if isinstance(value, bool) else str(value)
+           for key, value in target_environment(target_table()[target]).items()},
         **(extra or {}),
     }
     return subprocess.run(['bash', '-e', '-c', prefix + script], cwd=REPO_ROOT, env=env, capture_output=True, text=True)
@@ -419,15 +414,21 @@ def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
     assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
     resume = shared_step('verify', 'Resume verified ingestion scheduler')
     assert resume['if'] == "env.AFTER_VERIFY != '' && inputs.resume_scheduler"
+    from scripts import ingestion_targets
+    assert target_table()['sea-ice-daily']['after_verify'] == 'resume_published_scheduler'
+    assert resume['run'] == 'uv run --no-sync python scripts/ingestion_targets.py after-verify'
     for published in (True, False):
-        calls = tmp_path / 'calls'
-        calls.write_text('')
-        result = run_shell(tmp_path, target_table()['sea-ice-daily']['after_verify'], target='sea-ice-daily', extra={'PUBLISHED': '0' if published else '1', 'CALLS': str(calls)}, prefix='''
-uv() { return "$PUBLISHED"; }
-gcloud() { echo "$*" >> "$CALLS"; }
-''')
-        assert (result.returncode == 0) == published
-        assert ('scheduler jobs resume' in calls.read_text()) == published
+        def run(args, **kwargs):
+            if not published:
+                raise subprocess.CalledProcessError(1, args)
+        with patch.dict(os.environ, REGION='us-central1', GOOGLE_CLOUD_PROJECT='shared-datasets-1'), patch.object(ingestion_targets.subprocess, 'run', side_effect=run) as external:
+            if published:
+                ingestion_targets.after_verify('sea-ice-daily')
+                assert [call.args[0][3] for call in external.call_args_list[1:]] == ['resume', 'describe']
+            else:
+                with pytest.raises(subprocess.CalledProcessError):
+                    ingestion_targets.after_verify('sea-ice-daily')
+                assert external.call_count == 1
     assert 'COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions' in (REPO_ROOT / 'ingestion/sea_ice_daily/Dockerfile').read_text()
 
 

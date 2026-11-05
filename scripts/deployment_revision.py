@@ -174,9 +174,9 @@ def receipt_signer(api, repository, target, run_id, attempt):
         shared = [item for item in leaves(run.get("referenced_workflows", []))
                   if str(item.get("path", "")).startswith(path)]
         if shared:
-            require(len(shared) == 1 and SHA.fullmatch(str(run.get("head_sha", "")))
-                    and shared[0].get("path") in {path + run["head_sha"], path + "refs/heads/main"}
-                    and shared[0].get("sha") == run["head_sha"] and shared[0].get("ref") == "refs/heads/main",
+            require(SHA.fullmatch(str(run.get("head_sha", ""))) and all(
+                    item.get("path") in {path + run["head_sha"], path + "refs/heads/main"}
+                    and item.get("sha") == run["head_sha"] and item.get("ref") == "refs/heads/main" for item in shared),
                     "shared signer revision differs from immutable emitting workflow")
             return INGESTION_SIGNER
     return ".github/workflows/" + signer
@@ -359,6 +359,8 @@ def finish(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
+    if os.environ.get("STAGE") == "verify":
+        verify_split_identity(record, payload)
     state = {"applied": "success", "verified": "success", "verification_pending": "in_progress", "failed": "failure", "unknown": "error"}[args.phase]
     environment_url = ""
     if args.execution:
@@ -373,6 +375,24 @@ def finish(args, api):
             stream.write(f"Deployment {args.deployment_id}: **{args.phase}**; executor `{record['sha']}`.\n")
     require(args.phase != "unknown", "deployment has no terminal runtime evidence; reconcile before recovery")
 
+
+
+def verify_split_identity(record, payload):
+    require(payload["target"] == os.environ["TARGET"] == "dataset-usage"
+            and record["sha"] == os.environ["EXECUTOR_SHA"] and payload["artifact"] == os.environ["IMAGE"]
+            and (payload["ci_run_id"], payload["ci_run_attempt"]) == (int(os.environ["SOURCE_RUN_ID"]), int(os.environ["SOURCE_RUN_ATTEMPT"]))
+            and (payload["execution_run_id"], payload["execution_run_attempt"]) == (int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"])),
+            "split verification does not match this usage deployment attempt")
+
+
+def verify_applied(args, api):
+    """Admit split verification only from this attempt's exact signed apply."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
+    payload = verify_record_identity(api, repository, record)
+    verify_split_identity(record, payload)
+    statuses = verified_statuses(api, repository, record)
+    require(statuses and statuses[0]["state"] == "success" and statuses[0]["description"] == "applied", "split verification requires a signed successful apply")
 
 
 def pending(api, repository):
@@ -595,6 +615,8 @@ def main():
     end.add_argument("--deployment-id", required=True, type=int)
     end.add_argument("--execution", default="")
     end.add_argument("--phase", required=True, choices=["applied", "verification_pending", "verified", "failed", "unknown"])
+    applied = commands.add_parser("verify-applied")
+    applied.add_argument("--deployment-id", required=True, type=int)
     commands.add_parser("pending")
     window = commands.add_parser("window")
     window.add_argument("--target", required=True)
@@ -611,7 +633,9 @@ def main():
             recovery.add_argument("--executor-dir")
     args = parser.parse_args()
     try:
-        if args.command == "window":
+        if args.command == "verify-applied":
+            verify_applied(args, GitHub())
+        elif args.command == "window":
             runtime_window(args)
         elif args.command in {"recovery-inputs", "reconcile"}:
             recover(args, GitHub())

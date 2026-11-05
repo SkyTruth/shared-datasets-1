@@ -1,6 +1,7 @@
 """Strict, streamed Docker-save image boundary shared by CI and deployment."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import gzip
 import io
@@ -13,14 +14,67 @@ import tarfile
 import tempfile
 from time import perf_counter
 
-from scripts.ingestion_targets import TARGETS as INGESTION_TARGETS
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def repository_files(revision, root):
+    with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(["git", "archive", revision], cwd=root))) as archive:
+        return {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+
+
+def dependency_graph(files):
+    """Local imports, package initializers and literal executor/data references."""
+    modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
+               for name in files if name.endswith(".py")}
+    modules.update({Path(name).stem: name for name in files if name.startswith("tests/") and name.count("/") == 1})
+    edges = {}
+    for name, source_text in files.items():
+        if not name.endswith(".py"):
+            continue
+        dependencies = set()
+        package = name.removeprefix("api/python/src/").split("/")[:-1]
+        for node in ast.walk(ast.parse(source_text, filename=name)):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
+                module = ".".join(filter(None, (prefix, node.module)))
+                names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in files and not node.value.endswith(".py"):
+                dependencies.add(node.value)
+            elif isinstance(node, ast.Call):
+                function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if function in {"run", "run_command", "Popen", "check_output", "check_call"}:
+                    dependencies.update(item.value for arg in node.args for item in ast.walk(arg)
+                                        if isinstance(item, ast.Constant) and isinstance(item.value, str) and item.value in files)
+                elif function == "import_module" and node.args and isinstance(node.args[0], ast.Constant):
+                    names = [node.args[0].value]
+            for module in names:
+                parts = module.split(".")
+                for index in range(1, len(parts) + 1):
+                    prefix = ".".join(parts[:index])
+                    dependencies.update(modules[key] for key in (prefix, prefix + ".__init__") if key in modules)
+        dependencies.update(str(parent / "__init__.py") for parent in Path(name).parents
+                            if str(parent / "__init__.py") in files)
+        edges[name] = dependencies
+
+    return edges
+
+
+def dependency_closure(edges, roots):
+    seen, pending = set(), list(roots)
+    while pending:
+        name = pending.pop()
+        if name not in seen:
+            seen.add(name)
+            pending.extend(edges.get(name, ()))
+    return seen
+
+
 def image_recipes(root=ROOT):
-    """Scheduled registry plus Terraform image consumers, never a second target list."""
-    recipes = {target: f"ingestion/{target.replace('-', '_')}/Dockerfile" for target in INGESTION_TARGETS}
+    """Production Terraform image consumers, never a second target list."""
+    recipes = {}
     for recipe in (*root.glob("services/*/Dockerfile"), *root.glob("ingestion/*/Dockerfile")):
         package = recipe.parent.name
         configuration = root / f"terraform/envs/prod/{package}.tf"

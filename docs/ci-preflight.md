@@ -96,13 +96,14 @@ Sea ice runs its synthetic conversion inside the sea-ice image under **2 vCPU /
 512 MiB**; WDPA's installed smoke builds both WDPA realms. EAMLIS and MPAtlas
 build tiny native fixtures through the linted
 [`installed_ingestion_fixture.py`](../scripts/installed_ingestion_fixture.py).
-Installed checks run without network or source mounts. Deployment's additional
-sea-ice smoke reuses `local_ingestion_smoke.py --sea-ice-only`.
+Installed checks run without network or source mounts. The sea-ice installed probe uses
+`local_ingestion_smoke.py --sea-ice-only` once in CI before image retention.
 
 Hosted production images use a fail-fast target matrix. Local image batches run
 at most two producers and terminate remaining producers on failure. Each result
 binds target, SHA/tree, toolchain and exact producing run/attempt. A compact gate
-receipt still requires both the tested TAR upload and diagnostic evidence.
+receipt requires diagnostic evidence and, outside PRs, the tested TAR upload.
+PRs have no deployment consumer and retain image validation metadata without TAR uploads.
 The matrix installs pinned Python through uv; viewer/Slack image jobs skip buildx
 and remote layer caching, preserving exact-image evidence.
 
