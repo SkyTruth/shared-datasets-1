@@ -62,7 +62,7 @@ def test_read_only_command_inventory_and_workflow_reachable_steps():
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'terraform']
     assert {n.args[0].value for n in calls} == {'version', 'init', 'show', 'plan'} == pr.TF_COMMANDS
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in {'run', 'check_output'}]
-    assert len(calls) == 3  # Read-only git show, Terraform allowlist, gcloud auth.
+    assert len(calls) == 2  # Terraform allowlist and gcloud auth; Git snapshots use the shared index.
     workflow = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())['jobs']['plan']
     actions = [s['uses'] for s in workflow['steps'] if 'uses' in s]
     assert all(a.startswith(('actions/checkout@', 'actions/download-artifact@', 'google-github-actions/auth@',

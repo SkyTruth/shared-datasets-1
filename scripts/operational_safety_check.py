@@ -98,19 +98,23 @@ class Snapshot:
         return None
 
 
+def utc(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def require(value, message):
     if not value:
         raise RuntimeError("OPERATIONAL_SAFETY: " + message)
 
 
-def context(api, environment=os.environ, *, workflow=WORKFLOW):
+def context(api, environment=os.environ, *, workflow=WORKFLOW, events=("schedule", "workflow_dispatch")):
     require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
             and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + workflow + "@refs/heads/main",
             "require exact trusted main workflow")
     identifier, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
     run = api.get(f"repos/{REPOSITORY}/actions/runs/{identifier}/attempts/{attempt}")
     require(run.get("id") == identifier and run.get("run_attempt") == attempt
-            and run["event"] in {"schedule", "workflow_dispatch"}
+            and run["event"] in events
             and run["path"] == workflow, "invalid execution provenance")
     definition = api.get(f"repos/{REPOSITORY}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
     alerts.source_identity(api, run, workflow, definition)
@@ -168,7 +172,7 @@ def source_inventory(api, run, since, *, now=None):
     query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
                        + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     rows = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
-    return [item for item in rows if item.get("id") != run["id"]
+    return [item for item in rows if (run is None or item.get("id") != run["id"])
                 and item.get("name") in alerts.WORKFLOW_PATHS and item.get("head_branch") == "main"
                 and item.get("head_repository", {}).get("full_name") == REPOSITORY], start, now
 
@@ -177,10 +181,9 @@ def catalog_changed(client, directory):
     from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
     destination = directory / "release-indexes"
     indexes.collect(client, catalog.DEFAULT_BUCKET, destination)
-    checks = catalog.run_checks(catalog.parse_args([
+    return any(not check.ok for check in catalog.run_checks(catalog.parse_args([
         "--bucket", catalog.DEFAULT_BUCKET, "--release-index-dir", str(destination.resolve()), "--latest-from-release-index",
-    ]))
-    return any(not check.ok for check in checks)
+    ])))
 
 
 def dry_reconciliation(api, run, identity, source_runs, start, end, directory, cache):
@@ -246,10 +249,8 @@ def verification_due(api, sources, pending, *, now):
             "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
-    checked = datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))
-    if now - checked >= timedelta(hours=3):
-        return True
-    return any(datetime.fromisoformat(status["created_at"].replace("Z", "+00:00")) > checked for status in statuses)
+    checked = utc(latest["created_at"])
+    return now - checked >= timedelta(hours=3) or any(utc(status["created_at"]) > checked for status in statuses)
 
 
 def reconciliation_stalled(api, run):
@@ -260,15 +261,14 @@ def reconciliation_stalled(api, run):
     prior = sorted((item for item in rows if item["id"] < run["id"]), key=lambda item: item["id"], reverse=True)[:2]
     if len(prior) < 2:
         return False
-    for item in prior:
+    def dispatched(item):
         if item.get("status") != "completed" or not alerts.verify_source_event(api, item):
             return False
         jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{item['id']}/attempts/{item['run_attempt']}/jobs?per_page=100", field="jobs")
-        if not any(job["name"] == JOB and any(step["name"] == "Request operational reconciliation"
+        return any(job["name"] == JOB and any(step["name"] == "Request operational reconciliation"
                    and step["status"] == "completed" and step["conclusion"] in {"success", "failure"}
-                   for step in job.get("steps", [])) for job in jobs):
-            return False
-    return True
+                   for step in job.get("steps", [])) for job in jobs)
+    return all(map(dispatched, prior))
 
 
 def fresh_activity(payload, cadence, *, now):
@@ -281,7 +281,7 @@ def fresh_activity(payload, cadence, *, now):
         return False
     checked = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
     if healthy and payload.get("updated_at"):
-        updated = datetime.fromisoformat(payload["updated_at"].replace("Z", "+00:00"))
+        updated = utc(payload["updated_at"])
         if updated.date() == checked.date():
             checked = updated
     return timedelta(0) <= now - checked < timedelta(days=FRESHNESS_DAYS[cadence])
@@ -305,9 +305,9 @@ def freshness(client, *, now, scheduler, pauses=None):
         require(state.get("name") == f"projects/shared-datasets-1/locations/us-central1/jobs/{job}", "Scheduler identity changed")
         pause = pauses.get(job)
         approved = bool(state["state"] == "PAUSED" and pause and pause["owner"] and pause["reason"] and
-                        now < datetime.fromisoformat(pause["expires_at"].replace("Z", "+00:00")))
+                        now < utc(pause["expires_at"]))
         if state["state"] != "ENABLED" and not approved:
-            updated = datetime.fromisoformat(state["userUpdateTime"].replace("Z", "+00:00"))
+            updated = utc(state["userUpdateTime"])
             if now - updated >= timedelta(hours=72):
                 problems.append(f"{job}: Scheduler {state['state']} for >=72 h without an approved pause")
         if approved:
@@ -352,7 +352,7 @@ def policy_warnings(now):
         entries = json.loads((ROOT / filename).read_text())
         validate_suspensions(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else {config["selection"] for config in TARGETS.values()}))
         for target, entry in entries.items():
-            remaining = datetime.fromisoformat(entry["expires_at"].replace("Z", "+00:00")) - now
+            remaining = utc(entry["expires_at"]) - now
             if remaining <= timedelta(hours=75):  # Three-hour sampling still warns >=72 hours ahead.
                 message = f"{target}: {filename} {'expired' if remaining <= timedelta(0) else 'expires'} {entry['expires_at']} (owner {entry['owner']})"
                 (problems if remaining <= timedelta(0) else warnings).append(message)
@@ -371,7 +371,7 @@ def audit_freshness(api, *, now):
         if not any(run.get("path") == definition["path"] and run.get("workflow_id") == definition["id"]
                    and run.get("status") == "completed" and run.get("conclusion") == "success"
                    and alerts.verify_source_event(api, run)
-                   and timedelta(0) <= now - datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")) < timedelta(days=9)
+                   and timedelta(0) <= now - utc(run["updated_at"]) < timedelta(days=9)
                    for run in runs):
             problems.append(f"{filename}: no successful main completion within 9 days")
     return problems

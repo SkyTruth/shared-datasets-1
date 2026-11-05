@@ -1424,7 +1424,7 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     assert "steps.attest-claims.outcome == 'success'" in steps["deliver"]["if"]
     assert "always()" in steps["attest-outcomes"]["if"]
     assert "workflow_dispatch" in workflow_triggers(workflow)
-    assert "Approved dataset mutation" in workflow_triggers(workflow)["workflow_run"]["workflows"]
+    assert "Data / Approved mutation" in workflow_triggers(workflow)["workflow_run"]["workflows"]
 
 
 HISTORICAL_GRAPH_SHA = subprocess.check_output(['git', 'rev-parse', '7bd972e'], text=True).strip()

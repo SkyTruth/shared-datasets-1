@@ -140,8 +140,8 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
     (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
     (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily"}),
     (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly"}),
-    (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer", "dataset-usage"}),
-    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly", "monitoring-slack"}),
+    (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly"}),
     (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], set()),
     (["README.md"], set()),
 ])
@@ -367,7 +367,7 @@ def fixture_repo(tmp_path):
     for filename in CONTRACT_FILES:
         target = root / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("fixture\n")
+        target.write_text((ROOT / filename).read_text() if filename == ".github/workflows/ci.yml" else "fixture\n")
     run("add", ".")
     run("commit", "-m", "initial")
     return root, run
@@ -399,7 +399,7 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     holds.write_text("{}\n")  # The plan reads the committed tree.
 
     plan, emitted = emit_plan(source, base, tmp_path)
-    assert plan["deployments"] == []
+    assert plan["deployments"] == ["catalog_viewer"]
     assert {emitted[target] for target in INGESTION_DEPLOYMENTS} == {"false"}
     assert {"lint", "tests", "production-images", "geospatial-integration"} <= set(plan["suites"])
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(json.loads(emitted["production-image-targets"]))
@@ -407,7 +407,7 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     git("add", ".")
     git("commit", "-m", "clear holds")
     assert set(preflight.make_plan(source, runtime_head, "HEAD")["deployments"]) == INGESTION_DEPLOYMENTS
-    assert set(preflight.make_plan(source, base, "HEAD")["deployments"]) == INGESTION_DEPLOYMENTS
+    assert set(preflight.make_plan(source, base, "HEAD")["deployments"]) == INGESTION_DEPLOYMENTS | {"catalog_viewer"}
 
 
 @pytest.mark.parametrize("invalid", [[], ["wdpa", "wdpa"], {"catalog_viewer": {}}, {"wdpa": {}},
@@ -635,7 +635,7 @@ def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path,
     for path in paths:
         target = source / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("changed fixture\n")
+        target.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" else "changed fixture\n")
     if paths:
         run("add", ".")
         run("commit", "-m", "change")
@@ -1008,7 +1008,7 @@ def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
     assert preflight.make_plan(source, base, "HEAD")["contract_digest"] != plan["contract_digest"]
 
 
-@pytest.mark.parametrize("path", ["scripts/ci_contract.py", "scripts/ci_preflight.py", ".github/workflows/ci.yml",
+@pytest.mark.parametrize("path", ["scripts/ci_contract.py", "scripts/ci_preflight.py",
                                  "terraform/iam-plan-prerequisites.json"])
 def test_ci_administration_does_not_rebuild_production_images(path):
     assert set(resolve_selection([path])["suites"]) == ALWAYS

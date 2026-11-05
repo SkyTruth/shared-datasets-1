@@ -24,7 +24,7 @@ def test_every_workflow_dispatch_producer_has_an_alert_and_replay_route():
                 assert alerts.alert_for_run(payload) is not None, (path.name, target, name)
                 # Safety and incident workers deliberately avoid native self-recursion;
                 # the safety replay owns those completions instead.
-                assert name in subscriptions or target in {'operational-safety-check.yml', 'unattended-workflow-alert.yml'}
+                assert load_workflow(path.parent / target)['name'] in subscriptions or target in {'operational-safety-check.yml', 'unattended-workflow-alert.yml'}
                 api = source_api(payload['workflow_run'])
                 api.pages.return_value = []  # Even startup failures without jobs are covered.
                 payload['workflow_run']['updated_at'] = '2026-11-05T01:00:00Z'

@@ -28,7 +28,7 @@ def test_three_hour_entrypoint_and_direct_safety_failure_coverage():
     assert not (set(WORKFLOW_NAMES[SAFETY]) & set(subscriptions))
     assert "Report safety failure directly" in workflow_steps_by_name(load_workflow(WORKFLOWS / SAFETY), "safety")
     for filename in files[1:]:
-        assert set(WORKFLOW_NAMES[filename]) <= set(subscriptions)
+        assert load_workflow(WORKFLOWS / filename)["name"] in subscriptions
     assert SAFETY in alerts.WORKFLOW_EVENTS
 
 

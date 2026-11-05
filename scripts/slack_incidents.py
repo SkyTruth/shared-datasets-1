@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -77,6 +76,11 @@ def positive(value):
 
 def escape(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def record_payload(record):
+    value = record["payload"]
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def observation_key(value):
@@ -367,17 +371,11 @@ def replay_observations(api, since, *, now=None, completed_until=None):
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
     """
-    now = now or datetime.now(timezone.utc)
-    start = max(instant(since), now - timedelta(hours=24))
-    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
-                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
-    runs = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
-    observations = []
-    for run in runs:
-        if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
-                and run.get("head_branch") == "main" and run.get("head_repository", {}).get("full_name") == REPOSITORY):
-            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}))
-    return [item for item in observations if start <= instant(item["time"]) <= (completed_until or now)]
+    from scripts.operational_safety_check import source_inventory
+    runs, start, end = source_inventory(api, None, since, now=now or datetime.now(timezone.utc))
+    observations = [item for run in runs if run.get("status") == "completed"
+                    for item in source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run})]
+    return [item for item in observations if start <= instant(item["time"]) <= (completed_until or end)]
 
 
 def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: None):
@@ -693,12 +691,7 @@ def failure_posts(state):
 def desired_posts(state):
     incident = state["incident"]
     parent = incident["posts"].get("parent")
-    if incident["resolution"] is not None:
-        # Existing failed-attempt claims still need owner reconciliation, but
-        # corrected failures cannot authorize any new message or retry reply.
-        return {"parent": None} if parent and parent["state"] == "delivered" else {}
-    # Failed attempts update the original parent; never claim new replies.
-    return {"parent": None}
+    return {"parent": None} if incident["resolution"] is None or parent and parent["state"] == "delivered" else {}
 
 
 def pending_posts(state):
@@ -803,18 +796,12 @@ class GitHub(deployments.GitHub):
 
 
 def worker_context(api, environment=os.environ):
-    require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
-            and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + WORKFLOW + "@refs/heads/main", "incidents require the trusted main workflow")
-    run_id, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
-    run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
-    repo = api.get(f"repos/{REPOSITORY}")
-    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
-    require(run.get("id") == run_id and run.get("run_attempt") == attempt and run.get("path") == WORKFLOW
-            and run.get("workflow_id") == workflow.get("id") and workflow.get("path") == WORKFLOW
-            and run.get("head_branch") == "main" and run.get("event") in {"workflow_run", "workflow_dispatch"}
-            and deployments.SHA.fullmatch(str(run.get("head_sha", "")))
-            and all(run.get(key, {}).get("id") == repo.get("id") and run.get(key, {}).get("full_name") == REPOSITORY for key in ("repository", "head_repository")), "invalid incident worker provenance")
-    return run
+    from scripts.operational_safety_check import context
+    try:
+        return context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
+    except (RuntimeError, ValueError) as error:
+        raise IncidentError("invalid incident worker provenance") from error
+
 
 
 class Ledger:
@@ -824,9 +811,7 @@ class Ledger:
         self.verification_cache = verification_cache
 
     def verify(self, record):
-        payload = record["payload"]
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = record_payload(record)
         require(isinstance(payload, dict) and set(payload) == {"schema", "state", "execution_run_id", "execution_run_attempt"}
                 and payload["schema"] in READ_SCHEMAS and record.get("task") == "slack-incident"
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
@@ -854,9 +839,7 @@ class Ledger:
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
         latest = {}
         for record in records:
-            payload = record["payload"]
-            if isinstance(payload, str):
-                payload = json.loads(payload)
+            payload = record_payload(record)
             require(isinstance(payload, dict) and payload.get("schema") in READ_SCHEMAS, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
             if scope not in latest or record["id"] > latest[scope]["id"]:
@@ -884,9 +867,7 @@ class Ledger:
                     # the migrated predecessor, preserving its parent/history.
                     bridges = []
                     for record in records:
-                        payload = record["payload"]
-                        if isinstance(payload, str):
-                            payload = json.loads(payload)
+                        payload = record_payload(record)
                         historical = payload["state"]
                         if (record["id"] < latest[scope]["id"] and historical["scope"] == scope
                                 and historical["incident"]["id"] == migrated["incident"]["id"]):
@@ -937,9 +918,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     match = re.fullmatch(r"checkpoint:([1-9][0-9]*):([0-9a-f]{64})", operation)
     require(match is not None, "require checkpoint:ID:SHA256 after reviewing the exact checkpoint")
     record = ledger.api.get(f"repos/{REPOSITORY}/deployments/{match[1]}")
-    payload = record["payload"]
-    if isinstance(payload, str):
-        payload = json.loads(payload)
+    payload = record_payload(record)
     require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
     state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
@@ -948,7 +927,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
     latest = ledger.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
-    same_scope = [item for item in latest if (json.loads(item["payload"]) if isinstance(item["payload"], str) else item["payload"])["state"]["scope"] == state["scope"]]
+    same_scope = [item for item in latest if record_payload(item)["state"]["scope"] == state["scope"]]
     require(same_scope and max(item["id"] for item in same_scope) == record["id"], "checkpoint is no longer the latest incident state")
     # Recovery truth is independently rechecked even when the owner confirms
     # notification delivery bookkeeping from an interrupted writer.
@@ -1102,9 +1081,7 @@ def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=
         if key not in incident["posts"]:
             incident["posts"][key] = {"state": "claimed", "ts": None}
     record = ledger.save(state, "claims")
-    if pending_posts(state) or needs_parent_delivery(state):
-        return [record]
-    return []
+    return [record] if pending_posts(state) or needs_parent_delivery(state) else []
 
 
 def main():

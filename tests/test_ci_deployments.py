@@ -19,8 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_holds(path):
     paths = [path]
     targets = {"mpatlas", "eamlis", "wdpa", "sea_ice", "dataset_usage"}
+    if path == "scripts/ingestion_targets.py":
+        targets |= {"catalog_viewer", "pmtiles_cdn"}
     assert set(select_deployments(paths)) == targets
-    assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == {"mpatlas", "eamlis", "dataset_usage"}
+    assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == targets - {"wdpa", "sea_ice"}
     assert "production-images" in resolve_selection(paths)["suites"]
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"} <= set(resolve_selection(paths)["production_image_targets"])
 
@@ -30,6 +32,7 @@ def test_shared_terraform_contract_selects_automatic_consumers_only(path):
     assert set(select_deployments([path])) == {
         'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
         'cron_alert_policy', 'ingestion_iam', 'dataset_usage', 'catalog_viewer', 'pmtiles_cdn',
+        'mpatlas', 'eamlis', 'wdpa', 'sea_ice',
     }
 
 
@@ -127,7 +130,8 @@ def test_viewer_runtime_does_not_redeploy_usage_collector(path):
 @pytest.mark.parametrize("path", ["terraform/envs/prod/catalog_viewer.tf", "terraform/modules/service_account/main.tf",
     "terraform/envs/prod/variables.tf", "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"])
 def test_viewer_and_usage_shared_resources_keep_both_deployments(path):
-    assert {"catalog_viewer", "dataset_usage"} <= set(select_deployments([path]))
+    expected = {"catalog_viewer"} if path.endswith("/catalog_viewer.tf") else {"catalog_viewer", "dataset_usage"}
+    assert expected <= set(select_deployments([path]))
 
 
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
@@ -135,8 +139,8 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
-    assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice"}
-    assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
+    assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice", "catalog_viewer"}
+    assert "catalog_viewer" not in select_deployments(["terraform/modules/cloud_run_job/main.tf"])  # Viewer is a service, not a job.
     assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"}
 
 
@@ -279,26 +283,11 @@ def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path
     if path.startswith('terraform/'):
         expected.add('artifact_registry_iam')
     if path == 'terraform/envs/prod/monitoring.tf':
-        expected.add('dataset_usage')  # This file declares the usage rollout's health resources.
+        expected.add('dataset_usage')  # This file owns the usage health resources.
     assert set(select_deployments([path])) == expected
     assert "production-images" in resolve_selection([path])["suites"]
 
 
-# These edges order mutations only when both owners are selected. Other direct
-# prerequisites (apart from the selector already verified by ci-ready) must pass.
-OPTIONAL_NEEDS = {
-    "ingestion-iam": ("dataset-usage",),
-    "scratch-cleanup-iam": ("dataset-usage",),
-    "mpatlas": ("ingestion-iam", "artifact-registry-iam", "cron-alert-policy"),
-    "wdpa": ("ingestion-iam", "artifact-registry-iam", "cron-alert-policy"),
-    "dataset-usage": ("artifact-registry-iam", "catalog-viewer", "pmtiles-cdn"),
-    "cron-alert-policy": ("ingestion-iam", "artifact-registry-iam"),
-    "eamlis": ("ingestion-iam", "artifact-registry-iam"),
-    "sea-ice": ("ingestion-iam", "artifact-registry-iam"),
-    "catalog-viewer": ("artifact-registry-iam",),
-    "publish-reviewed-dataset": ("pmtiles-cdn",),
-    "refresh-reviewed-catalog": ("pmtiles-cdn",),
-}
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
     "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
 ]
@@ -323,7 +312,11 @@ def condition_result(job, values, *, cancelled=False):
 def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests):
     job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][job_id]
     needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
-    optional = OPTIONAL_NEEDS.get(job_id, ())
+    from scripts.terraform_target_contracts import registry
+    declarations = registry(section="deployments")
+    optional = ([name.replace("_", "-") for name in declarations[job_id.replace("-", "_")]["terraform_prerequisites"]]
+                if job_id.replace("-", "_") in declarations else [name for name in needs if name.replace("-", "_") in declarations])
+    assert set(optional) == {name for name in needs if name.replace("-", "_") in declarations}
     assert set(optional) <= set(needs)
     values = {
         "github.event_name": "push", "github.ref": "refs/heads/main",
@@ -375,9 +368,9 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     (["ingestion/wdpa_monthly/run.py", "ingestion/eamlis_monthly/run.py"],
      {"wdpa", "eamlis"}),
     (["ingestion/wdpa_monthly/run.py", "terraform/envs/prod/wdpa_monthly.tf"],
-     {"wdpa", "ingestion_iam", "artifact_registry_iam"}),
+     {"wdpa"}),
     (["terraform/envs/prod/mpatlas_monthly.tf"],
-     {"mpatlas", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}),
+     {"mpatlas", "ingestion_iam"}),
 ])
 def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
     from test_ci_preflight import fixture_repo, emit_plan
@@ -388,7 +381,7 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
     for path in paths:
         destination = root / path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("changed fixture\n")
+        destination.write_text((ROOT / path).read_text() + "\n# fixture change\n" if path == ".github/workflows/ci.yml" else "changed fixture\n")
     git("add", ".")
     git("commit", "--allow-empty", "-m", "selected changes")
     plan, outputs = emit_plan(root, base, tmp_path)
@@ -401,7 +394,7 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
         "needs.ci-ready.result": "success", "needs.geospatial-changes.result": "success",
     }
     # Selected runtime jobs must run while unrelated and unselected IAM jobs skip.
-    assert values["needs.dataset-usage.result"] == "skipped"
+    assert values["needs.dataset-usage.result"] == ("success" if "dataset_usage" in expected else "skipped")
     for target in DEPLOYMENTS:
         assert condition_result(jobs[target.replace("_", "-")], values) is (target in expected)
 

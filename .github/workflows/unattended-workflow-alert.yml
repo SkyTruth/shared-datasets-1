@@ -2,29 +2,18 @@ name: Alerts / Workflow health and Slack reconciliation
 
 on:
   workflow_run:
-    # Historical aliases keep reruns and incident replay observable.
+    # Subscribe to names emitted today; API replay retains historical aliases.
     workflows:
-      - "Approved dataset mutation"
-      - "Artifact Registry IAM sync"
       - "Bucket hygiene audit"
       - "CI / Validate and deliver"
-      - "CI"
       - "SDK / Publish TypeScript"
-      - "Publish TypeScript SDK"
       - "Catalog / PMTiles CDN sync"
       - "Catalog / Viewer deploy"
       - "Catalog / Web deploy"
-      - "Catalog viewer deploy"
-      - "Catalog web deploy"
-      - "Cron alert policy sync"
       - "Data / Approved mutation"
       - "Data / Scratch cleanup audit"
-      - "Deployment completion check"
-      - "Deployment read-only reconciliation"
-      - "Deployment terminal verification"
       - "Deployments / Completion check"
       - "Deployments / Read-only reconciliation"
-      - "EAMLIS monthly deploy"
       - "Infrastructure / Artifact Registry IAM sync"
       - "Infrastructure / Cron alert policy sync"
       - "Infrastructure / Ingestion deploy IAM sync"
@@ -34,17 +23,8 @@ on:
       - "Ingestion / MPAtlas monthly deploy"
       - "Ingestion / Sea ice daily deploy"
       - "Ingestion / WDPA monthly deploy"
-      - "Ingestion / WDPA monthly build"
-      - "MPAtlas monthly deploy"
-      - "PMTiles CDN sync"
-      - "Preview Terraform IAM sync"
       - "Prod Terraform state reconciliation"
-      - "Scheduled ingestion deploy IAM sync"
-      - "Scratch cleanup IAM sync"
-      - "Scratch cleanup audit"
-      - "Sea ice daily deploy"
       - "Terraform state read IAM sync"
-      - "WDPA monthly deploy"
     branches: [main]
     types: [completed]
   workflow_dispatch:
@@ -84,12 +64,12 @@ jobs:
           (
             contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) ||
             (github.event.workflow_run.conclusion == 'success' &&
-             contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification"]'), github.event.workflow_run.name))
+             contains(fromJSON('["Deployments / Completion check"]'), github.event.workflow_run.name))
           ) &&
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.head_repository.full_name == github.repository &&
           (
-            (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
+            (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver"]'), github.event.workflow_run.name)) ||
             github.event.workflow_run.event == 'schedule' ||
             github.event.workflow_run.event == 'workflow_run' ||
             github.event.workflow_run.event == 'workflow_dispatch'
