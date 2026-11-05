@@ -49,7 +49,7 @@ def wdpa_build(work):
     from scripts.feature_metadata_translation_reuse import COLUMNS, build_memory
     source = work / "source.geojson"
     source.write_text(json.dumps({"type": "FeatureCollection", "features": [
-        {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[x, 1], [x+0.1, 1], [x+0.1, 1.1], [x, 1.1], [x, 1]]]},
+        {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[x, 1], [x+1, 1], [x+1, 2], [x, 2], [x, 1]]]},
          "properties": {**dict.fromkeys(translations.FIELDS, f"fixture-{x}"), "SITE_PID": str(x), "SITE_ID": x, "MARINE": realm, "ISO3": "IND"}}
         for x, realm in ((1, "1"), (2, "0"))
     ]}))

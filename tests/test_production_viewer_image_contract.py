@@ -346,6 +346,11 @@ def test_wdpa_fixture_carries_translation_fields_through_its_real_cli_input(tmp_
         features = json.loads((tmp_path / "source.geojson").read_text())["features"]
         assert {row["properties"]["MARINE"] for row in features} == {"0", "1"}
         assert all(set(translations.FIELDS) <= row["properties"].keys() for row in features)
+        # The installed contract decodes z0. Several tile pixels of width keep
+        # these synthetic polygons through Tippecanoe's default simplification.
+        for row in features:
+            longitudes = [point[0] for point in row["geometry"]["coordinates"][0]]
+            assert (max(longitudes) - min(longitudes)) * 4096 / 360 >= 4
         output = tmp_path / "build"
         output.mkdir()
         (output / "benchmark.json").write_text(json.dumps(dict(state="succeeded", contracts_verified=True,
