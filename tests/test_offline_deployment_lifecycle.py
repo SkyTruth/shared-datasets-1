@@ -286,7 +286,7 @@ def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_te
              'IMAGE': image, 'CANARY_EXECUTION': target + '-abcde', 'REGION': 'us-central1',
              'GOOGLE_CLOUD_PROJECT': 'shared-datasets-1', 'EXECUTION_JSON': str(execution_path), 'GITHUB_ENV': str(environment),
              **{key: str(value).lower() if isinstance(value, bool) else str(value)
-                for key, value in target_environment(config).items()}}, capture_output=True, text=True)
+                for key, value in target_environment(config).items()}, 'CANARY_ATTEMPTS': '3'}, capture_output=True, text=True)
     args.phase = 'failed' if applied.returncode or watched.returncode else environment.read_text().strip().split('=', 1)[1]
     args.execution = target + '-abcde'
     deployment.finish(args, services)
