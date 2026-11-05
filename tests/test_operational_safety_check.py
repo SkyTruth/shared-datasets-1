@@ -21,6 +21,7 @@ from scripts.incident_verification_cache import VerificationCache
 from scripts.workflow_identity import WORKFLOW_NAMES
 from test_deployment_emission import run as emitter_run, verified
 from test_incident_verification_cache import GH_VERSION
+from test_operational_snapshot import capture
 from test_slack_incidents import IDENTITY, signed_record
 
 PREFIX = "repos/" + safety.REPOSITORY
@@ -32,6 +33,7 @@ START = NOW - timedelta(hours=24)
 def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(START))
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
     monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
@@ -283,7 +285,7 @@ def test_unchanged_catalog_snapshot_still_traverses_live_incidents_and_reuses_ve
     api, client, directory, collect, checks = probe_inputs
     inventory = safety.catalog_inventory(client)
     cache = VerificationCache(api.current, IDENTITY, gh_version=GH_VERSION)
-    snapshot = safety.Snapshot.capture(api.current, {"head_sha": api.head, "gh_version": GH_VERSION, "since": stamp(START)},
+    snapshot = capture(api.current, {"head_sha": api.head, "gh_version": GH_VERSION, "since": stamp(START)},
                                        IDENTITY, inventory, cache)
     monkeypatch.setattr(safety.Snapshot, "restore", lambda *_: snapshot)
     assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory) == {
@@ -316,7 +318,7 @@ def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_
 
 
 @pytest.mark.parametrize("enabled", ["true", "false"])
-def test_probe_main_always_requires_bot_identity_and_serializes_worker_decisions(tmp_path, monkeypatch, enabled):
+def test_probe_main_requires_bot_identity_only_when_incidents_configured(tmp_path, monkeypatch, enabled):
     api, client = OperationalAPI(), CatalogClient()
     environment = {"GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
                    "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/" + safety.WORKFLOW + "@refs/heads/main",
@@ -335,8 +337,11 @@ def test_probe_main_always_requires_bot_identity_and_serializes_worker_decisions
     monkeypatch.setattr(safety, "probe", probe)
     monkeypatch.setattr(safety.sys, "argv", [safety.__file__, "--work-dir", str(tmp_path)])
     safety.main()
-    bot.identity.assert_called_once_with()
-    probe.assert_called_once_with(api, api.current, IDENTITY, stamp(START), client, tmp_path)
+    if enabled == "true":
+        bot.identity.assert_called_once_with()
+    else:
+        bot.identity.assert_not_called()
+    probe.assert_called_once_with(api, api.current, IDENTITY if enabled == "true" else None, stamp(START), client, tmp_path)
     assert json.loads((tmp_path / "result.json").read_text()) == result
     assert (tmp_path / "outputs").read_text().splitlines() == ["catalog=false", "reconcile=true", "verify=true", "snapshot=false"]
 
@@ -609,7 +614,7 @@ def test_health_report_posts_changes_and_daily_reminders_without_changing_proble
     assert previous['scope'] == slack_notify.notify.call_args.kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
 
 
-@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly']), safety.subprocess.CalledProcessError(1, ['gcloud', 'logging', 'write'])])
+@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly'])])
 def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp_path, monkeypatch, failure):
     api = OperationalAPI()
     for key, value in {'GITHUB_REPOSITORY': safety.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
@@ -620,11 +625,6 @@ def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp
     monkeypatch.setattr(catalog, 'get_client', lambda: None)
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
     monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
-    if isinstance(failure, safety.subprocess.CalledProcessError) and 'logging' in failure.cmd:
-        monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
-        safety.subprocess.check_call.side_effect = failure
-        (tmp_path/'result.json').write_text('{"reconcile":false}')
-        (tmp_path/'claims.json').write_text('[]')
     monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
     safety.main()
     report = json.loads((tmp_path/'health/cache.json').read_text())

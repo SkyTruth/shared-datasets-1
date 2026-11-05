@@ -28,6 +28,7 @@ def test_alerting_configuration_is_reported_and_deduplicated(tmp_path, monkeypat
     else:
         monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", enabled)
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", token)
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "2026-10-06T17:28:14Z")
     monkeypatch.setattr(sys, "argv", ["safety", "--health", "--work-dir", str(tmp_path)])
     previous = {"problems": [], "warnings": [], "notified_at": None}
     with mock.patch.object(safety, "freshness", return_value=[]), mock.patch.object(slack_notify, "notify") as notify:
