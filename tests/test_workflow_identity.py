@@ -39,7 +39,10 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
     assert len(subscriptions) == len(set(subscriptions))
     polled_only = {name for filename in ("operational-safety-check.yml", "unattended-workflow-alert.yml") for name in WORKFLOW_NAMES[filename]}
-    assert set(subscriptions) == {load_workflow(WORKFLOWS / filename)["name"] for filename in set(alerts.WORKFLOW_PATHS.values()) if filename not in {"operational-safety-check.yml", "unattended-workflow-alert.yml"} and (WORKFLOWS / filename).is_file()}
+    eligible = {filename: load_workflow(WORKFLOWS / filename) for filename in set(alerts.WORKFLOW_PATHS.values())
+                if filename not in {"operational-safety-check.yml", "unattended-workflow-alert.yml"} and (WORKFLOWS / filename).is_file()}
+    assert set(subscriptions) == {workflow["name"] for filename, workflow in eligible.items()
+                                  if set(workflow_triggers(workflow)) & alerts.WORKFLOW_EVENTS[filename]}
     assert polled_only <= set(alerts.WORKFLOW_PATHS)  # Historical identities remain replayable.
     matched = re.findall(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.name\)",
                          observer["jobs"]["incidents"]["if"])
