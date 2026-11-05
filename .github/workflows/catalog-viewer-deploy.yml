@@ -199,14 +199,14 @@ jobs:
       run: python scripts/deployment_permissions.py --target iam-bootstrap
     - name: Terraform plan Secret Manager IAM bootstrap
       run: |
+        image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+        image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
         bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
           -input=false \
           -refresh=false \
           -out="${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" \
           -target=google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager \
-          -var="wdpa_monthly_image=unused-by-catalog-viewer-deploy" \
-          -var="sea_ice_daily_image=unused-by-catalog-viewer-deploy" \
-          -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
+          "${image_vars[@]}"
     - name: Export Secret Manager IAM bootstrap plan JSON
       run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
     - name: Enforce Secret Manager IAM bootstrap allowlist
@@ -282,6 +282,8 @@ jobs:
       run: terraform -chdir=terraform/envs/prod init -input=false
     - name: Terraform plan
       run: |
+        image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+        image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
         bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
           -input=false \
           -refresh=false \
@@ -297,9 +299,7 @@ jobs:
           -target=google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker \
           -target=google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors \
           -var="catalog_viewer_image=${CATALOG_VIEWER_IMAGE}" \
-          -var="wdpa_monthly_image=unused-by-catalog-viewer-deploy" \
-          -var="sea_ice_daily_image=unused-by-catalog-viewer-deploy" \
-          -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
+          "${image_vars[@]}"
     - name: Export Terraform plan JSON
       run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer.tfplan" > "${RUNNER_TEMP}/catalog-viewer.tfplan.json"
     - name: Enforce catalog-viewer resource-change allowlist

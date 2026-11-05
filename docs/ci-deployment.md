@@ -20,9 +20,12 @@ behavior; source-specific operations are linked below.
    existing publication claims and installed identity state.
 3. **Declare the deployment once.** Update `DEPLOY_TARGETS` in
    [`scripts/ingestion_targets.py`](../scripts/ingestion_targets.py) for workflow,
-   resource scope, runtime window, canary mode and verification hook. The constructor
+   resource scope, runtime window, canary mode and named Python verification hook.
+   The constructor
    rejects incompatible publication/telemetry policies; image variables and caller
-   filenames derive from the target name. Native and synthetic image checks run
+   filenames derive from the target name. The executor declares the exact typed
+   environment keys it consumes; missing or renamed keys fail before authentication.
+   Native and synthetic image checks run
    once in CI before retention. Its `TARGETS` view includes only dataset publishers; telemetry must
    not acquire publication requirements. Use a thin `<target>-deploy.yml` wrapper
    calling [`ingestion-deploy.yml`](../.github/workflows/ingestion-deploy.yml).
@@ -32,9 +35,11 @@ behavior; source-specific operations are linked below.
    [`ci.yml`](../.github/workflows/ci.yml) with explicit `needs` for registry,
    IAM and monitoring prerequisites. Add or extend Terraform/IAM scopes through
    [the target-change procedure](terraform-reconciliation.md#change-a-terraform-or-iam-target)
-   when needed. Register the image recipe/installed probe in
-   [`tested_image_bundle.py`](../scripts/tested_image_bundle.py) and
-   [`production_image_contracts.py`](../scripts/production_image_contracts.py).
+   when needed. Declare the production Dockerfile and its Terraform image consumer;
+   [`tested_image_bundle.py`](../scripts/tested_image_bundle.py) derives the recipes.
+   Register installed probes under `image_checks` in [the registry](../.github/terraform-targets.json).
+   Its per-target `deployments` declarations own additional inputs and Terraform
+   prerequisites; resource scopes and image COPY inputs are derived.
    Check that the [resolved CI plan](ci-preflight.md#selection-and-offline-checks)
    includes the target's suites and exact image even for a hold-only release.
 5. **Exercise the changed boundary.** Run focused positive and negative tests
@@ -60,7 +65,12 @@ behavior; source-specific operations are linked below.
    must finish before pushing the retained image. Read
    [queue ownership](deployment-contracts.md#serialization-and-protected-execution)
    before changing concurrency: prepare and canary verification stay outside
-   the state queue. Manual recovery/dispatch requires `executor_sha`,
+   the state queue. Automatic usage deploys emit a signed applied receipt before
+   their separate canary job; ingestion and cleanup IAM depend on that apply. Both
+   phases retain the `deployment-dataset-usage` target queue, outside the state queue.
+   Split verification checks the exact target, image, source and execution attempt
+   against the signed receipt before authentication. Other ingestion wrappers
+   keep the combined rollout. Manual recovery/dispatch requires `executor_sha`,
    `source_run_id` and `source_run_attempt` from the exact successful main-push
    CI attempt. A deferred rollout is not a completed deployment.
 8. **Verify and report completion.** Use the workflow's captured canary ID;

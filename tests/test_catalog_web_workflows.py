@@ -329,7 +329,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertEqual(terraform_targets(bootstrap_plan), bootstrap_targets)
         self.assertIn("-refresh=false", bootstrap_plan)
         self.assertIn('out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"', bootstrap_plan)
-        self.assertIn("unused-by-pmtiles-cdn-sync", bootstrap_plan)
+        self.assertIn("python scripts/ingestion_targets.py image-vars", bootstrap_plan)
         self.assertEqual(cdn.BOOTSTRAP_EXACT, bootstrap_allowed_exact)
         self.assertEqual(
             cdn.BOOTSTRAP_UPDATE_ONLY,
@@ -353,7 +353,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn('address == "google_storage_bucket.shared_bucket" and "delete" in actions', enforce_run)
         self.assertIn('"delete" in actions', enforce_run)
 
-        self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])
+        self.assertIn("python scripts/ingestion_targets.py image-vars", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
         self.assertIn(
             'check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"',

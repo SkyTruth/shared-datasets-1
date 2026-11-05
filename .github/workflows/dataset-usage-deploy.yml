@@ -27,36 +27,23 @@ jobs:
     uses: ./.github/workflows/ingestion-deploy.yml
     with:
       target: dataset-usage
+      stage: ${{ inputs.stage || 'all' }}
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
 'on':
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {description: "Exact tested main revision", required: true, type: string}
+      source_run_id: {description: "Main-push CI run that tested executor_sha", required: true, type: string}
+      source_run_attempt: {description: "Exact successful ci-ready attempt", required: true, type: string}
   workflow_call:
+    outputs:
+      deployment_id: {description: Claimed deployment, value: '${{ jobs.deploy.outputs.deployment_id }}'}
+      image: {description: Tested image, value: '${{ jobs.deploy.outputs.image }}'}
     inputs:
+      stage: {type: string, default: all}
       sync_iam: {required: true, type: boolean}
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {description: "Exact tested main revision", required: true, type: string}
+      source_run_id: {description: "Main-push CI run that tested executor_sha", required: true, type: string}
+      source_run_attempt: {description: "Exact successful ci-ready attempt", required: true, type: string}

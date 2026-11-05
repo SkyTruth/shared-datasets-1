@@ -269,7 +269,7 @@ class EmissionTests(unittest.TestCase):
             wrapper = {"path": f"{REPO}/.github/workflows/{d.TARGET_WORKFLOWS[target]}@{SHA}", "sha": SHA, "ref": "refs/heads/main"}
             nested = dict(wrapper, referenced_workflows=[dict(wrapper, referenced_workflows=[shared])])
             for references, signer in (([], ".github/workflows/" + d.TARGET_WORKFLOWS[target]),
-                                       ([shared], d.INGESTION_SIGNER), ([wrapper, shared], d.INGESTION_SIGNER),
+                                       ([shared], d.INGESTION_SIGNER), ([shared, shared], d.INGESTION_SIGNER), ([wrapper, shared], d.INGESTION_SIGNER),
                                        ([nested], d.INGESTION_SIGNER),
                                        ([dict(shared, path=shared["path"].replace(SHA, "refs/heads/main"))], d.INGESTION_SIGNER)):
                 self.emitter = {**run(), "referenced_workflows": references}
@@ -286,7 +286,7 @@ class EmissionTests(unittest.TestCase):
     def test_shared_leaf_requires_exact_reference_revision_and_attempt_evidence(self):
         shared = {"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}
         value = e.receipt(REPO, record(), status())
-        for references in ([], [dict(shared, sha="c" * 40)], [shared, shared],
+        for references in ([], [dict(shared, sha="c" * 40)], [shared, dict(shared, sha="c" * 40)],
                            [dict(shared, path=shared["path"].replace(REPO, "foreign/repo"))],
                            [dict(shared, ref="refs/heads/feature")], [dict(shared, ref=None)],
                            [dict(shared, path=shared["path"].replace("ingestion-deploy", "arbitrary"))], None):

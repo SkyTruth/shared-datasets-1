@@ -1,7 +1,13 @@
 name: Ingestion / Shared deploy
 'on':
   workflow_call:
+    outputs:
+      deployment_id: {description: Claimed deployment, value: '${{ jobs.apply.outputs.deployment_id }}'}
+      image: {description: Tested image, value: '${{ jobs.prepare.outputs.image }}'}
     inputs:
+      stage: {type: string, default: all}
+      deployment_id: {type: string, default: ''}
+      image: {type: string, default: ''}
       target: {required: true, type: string}
       executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
       source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
@@ -17,6 +23,9 @@ permissions:
   attestations: write
 env:
   TARGET: ${{ inputs.target }}
+  STAGE: ${{ inputs.stage }}
+  VERIFY_DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+  VERIFY_IMAGE: ${{ inputs.image }}
   WORKFLOW_FILE: ${{ format('{0}-deploy.yml', inputs.target) }}
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
   SOURCE_RUN_ID: ${{ inputs.source_run_id }}
@@ -34,6 +43,7 @@ env:
 jobs:
   prepare:
     name: Prepare tested image
+    if: inputs.stage != 'verify'
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     outputs:
@@ -41,22 +51,25 @@ jobs:
       image: ${{ steps.image.outputs.image }}
       config_digest: ${{ steps.tested-image.outputs.config_digest }}
     steps:
-    - name: Check out trusted verifier
+    - &trusted-checkout
+      name: Check out trusted verifier
       uses: actions/checkout@v4
       with:
         ref: ${{ github.workflow_sha }}
         fetch-depth: 0
         persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
+    - &trusted-bootstrap
+      name: Authorize tested executor and retain trusted receipt policy
       uses: ./.github/actions/deployment-bootstrap
       with:
         workflow: ${{ env.WORKFLOW_FILE }}
         executor-sha: ${{ inputs.executor_sha }}
         source-run-id: ${{ inputs.source_run_id }}
         source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Resolve registered ingestion target
+    - &target-policy
+      name: Resolve registered ingestion target
       id: target
-      run: python scripts/ingestion_targets.py
+      run: python scripts/ingestion_targets.py ROLLOUT_GATE ASSET_ROOT PLAN_GUARD AFTER_VERIFY CANARY_ATTEMPTS CANARY_TIMEOUT_PHASE CANARY_RUN_URL
     - name: Check prior deployment before preparing image
       id: replay
       env:
@@ -164,22 +177,9 @@ jobs:
     - name: Validate main ref before state operations
       run: |
         if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
-    - name: Check out trusted verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: ${{ env.WORKFLOW_FILE }}
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Resolve registered ingestion target
-      id: target
-      run: python scripts/ingestion_targets.py
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *target-policy
     - name: Authenticate protected deployer
       uses: ./.github/actions/deployment-auth
     - name: Check runtime verification window
@@ -254,39 +254,43 @@ jobs:
       if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
       run: |
         bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
+    - name: Record applied deployment
+      id: applied
+      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase applied
+    - name: Attest applied deployment
+      if: ${{ always() && steps.applied.outputs.receipt_path != '' }}
+      uses: ./.github/actions/deployment-receipt
+      with:
+        mode: receipt
+        receipt-path: ${{ steps.applied.outputs.receipt_path }}
   verify:
     name: Verify ingestion canary
     needs:
     - prepare
     - apply
-    if: ${{ always() && needs.apply.outputs.deployment_id != '' }}
+    if: ${{ always() && inputs.stage != 'apply' && (needs.apply.outputs.deployment_id != '' || inputs.deployment_id != '') }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     env:
-      IMAGE: ${{ needs.prepare.outputs.image }}
+      IMAGE: ${{ inputs.image || needs.prepare.outputs.image }}
     steps:
-    - name: Check out trusted verifier
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.workflow_sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Authorize tested executor and retain trusted receipt policy
-      uses: ./.github/actions/deployment-bootstrap
-      with:
-        workflow: ${{ env.WORKFLOW_FILE }}
-        executor-sha: ${{ inputs.executor_sha }}
-        source-run-id: ${{ inputs.source_run_id }}
-        source-run-attempt: ${{ inputs.source_run_attempt }}
-    - name: Resolve registered ingestion target
-      id: target
-      run: python scripts/ingestion_targets.py
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *target-policy
     - name: Require successful signed apply
       env:
         APPLY_RESULT: ${{ needs.apply.result }}
         CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
+        if [[ "$STAGE" == verify ]]; then
+          python scripts/deployment_revision.py verify-applied --deployment-id "$VERIFY_DEPLOYMENT_ID"
+        else
+          test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
+        fi
     - name: Authenticate protected deployer
       uses: ./.github/actions/deployment-auth
     - name: Set up Python
@@ -375,12 +379,12 @@ jobs:
       run: gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state,schedule,timeZone)'
     - name: Resume verified ingestion scheduler
       if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
-      run: bash -euo pipefail -c "$AFTER_VERIFY"
+      run: uv run --no-sync python scripts/ingestion_targets.py after-verify
     - name: Record deployment outcome
       id: deployment-outcome
       env:
         GH_TOKEN: ${{ github.token }}
-        DEPLOYMENT_ID: ${{ needs.apply.outputs.deployment_id }}
+        DEPLOYMENT_ID: ${{ inputs.deployment_id || needs.apply.outputs.deployment_id }}
         JOB_STATUS: ${{ job.status }}
       run: |
         phase="${DEPLOYMENT_PHASE:-unknown}"

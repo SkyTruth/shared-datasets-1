@@ -209,7 +209,7 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     assert steps.index(retained) < steps.index(receipt)
     condition = "always() && steps.retained-results.outcome == 'success'"
     if suite == "production-images":
-        condition += " && steps.retained-image.outcome == 'success'"
+        condition += " && (steps.retained-image.outcome == 'success' || (github.event_name == 'pull_request' && steps.retained-image.outcome == 'skipped'))"
     assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"

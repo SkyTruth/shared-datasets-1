@@ -102,6 +102,8 @@ jobs:
       - name: Terraform plan PMTiles managed-folder IAM bootstrap
         if: steps.replay.outputs.proceed == 'true'
         run: |
+          image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+          image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
@@ -110,9 +112,7 @@ jobs:
             -target=google_project_iam_custom_role.pmtiles_managed_folder_sync \
             -target=google_project_iam_custom_role.pmtiles_url_map_sync \
             -target=google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync \
-            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
-            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
-            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
+            "${image_vars[@]}"
       - name: Export PMTiles managed-folder IAM bootstrap plan JSON
         if: steps.replay.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
@@ -154,6 +154,8 @@ jobs:
       - name: Terraform plan
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
+          image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+          image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
@@ -162,9 +164,7 @@ jobs:
             -target=google_compute_url_map.pmtiles_cdn \
             -target=google_storage_managed_folder.shared_bucket_public_prefixes \
             -target=google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers \
-            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
-            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
-            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
+            "${image_vars[@]}"
       - name: Export Terraform plan JSON
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"

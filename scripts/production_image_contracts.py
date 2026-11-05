@@ -18,6 +18,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.terraform_target_contracts import registry
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
@@ -134,29 +135,19 @@ def commands(target, executor, *, image_id=None):
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
              f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
     run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *resource_limits(target)]
-    if target == "monitoring-slack":
-        return [build, run + ["--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()]]
-    if target == "catalog-viewer":
-        return [build, [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image]]
-    if target == "dataset-usage":
-        return [build, run + [tested_image, "--print-policy-hash"],
-                run + ["--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()]]
-    run += [tested_image, "python"]
-    checks = [run + ["-c", INTERPRETER_PROBE], run + ["-c", NATIVE_VERSION_PROBE]]
-    if target == "wdpa-monthly":
-        checks.append(run + ["scripts/wdpa_input_memory_probe.py", "--help"])
-    # Source lives in linted modules; execution uses installed code, never a source mount.
+    checks = registry(section="image_checks")[target]
+    if not checks or set(checks) - {"host", "container"} or any(not rows or any(not args for args in rows) for rows in checks.values()):
+        raise ValueError("Invalid registered installed image checks")
+    values = dict(python=sys.executable, image=tested_image, interpreter_probe=INTERPRETER_PROBE, native_probe=NATIVE_VERSION_PROBE)
     fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
-    if fixture.is_file() or target not in {"wdpa-monthly", "sea-ice-daily"}:
-        payload = fixture.read_text()  # Missing registered fixtures cannot select another producer's smoke.
-        checks.append(run + ["-c", (ROOT / "scripts/installed_ingestion_fixture.py").read_text(), target,
-            payload])
-    else:
-        smoke = ["scripts/local_ingestion_smoke.py"] if target == "wdpa-monthly" else ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text()]
-        checks.append(run + [*smoke,
-            "--workdir", "/tmp/shared-datasets-1/_scratch/installed-fixture",
-            *(["--sea-ice-only"] if target == "sea-ice-daily" else [])])
-    return [build, *checks]
+    if any("{fixture}" in args for rows in checks.values() for args in rows):
+        values["fixture"] = fixture.read_text()
+    files = dict(monitoring_probe=ROOT / "tests/test_monitoring_slack.py", usage_probe=ROOT / "scripts/dataset_usage_cold_start.py",
+        fixture_script=ROOT / "scripts/installed_ingestion_fixture.py", smoke=ROOT / "scripts/local_ingestion_smoke.py")
+    values.update({key: path.read_text() for key, path in files.items()
+                   if any("{" + key + "}" in args for rows in checks.values() for args in rows)})
+    return [build, *[({"container": run, "host": []}[mode]) + [arg.format_map(values) for arg in args]
+                    for mode, rows in checks.items() for args in rows]]
 
 
 def cached_build(command, target):

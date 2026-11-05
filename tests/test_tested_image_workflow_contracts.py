@@ -178,10 +178,10 @@ def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, t
         assert bundle.read(path.name) == target.encode()
     compact = next(step for step in steps if step.get('with', {}).get('name', '').startswith('ci-gate-result-'))
     for failed in ('retained-image', 'retained-results'):
-        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True')
+        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True').replace('github.event_name', repr('push'))
         for upload in ('retained-image', 'retained-results'):
             expression = expression.replace('steps.' + upload + '.outcome', repr(outcome if upload == failed else 'success'))
-        assert eval(expression.replace('&&', ' and '), {'__builtins__': {}}) is (outcome == 'success')
+        assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (outcome == 'success')
 
 
 @pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])
