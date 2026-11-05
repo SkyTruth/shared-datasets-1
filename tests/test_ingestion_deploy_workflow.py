@@ -556,3 +556,17 @@ def test_usage_canary_releases_state_lock_and_records_failed_apply():
     assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy") == []
     verify["if"] = "success()"
     assert verification_boundary(workflow, "dataset-usage-deploy.yml", "deploy", "deploy")
+
+
+@pytest.mark.parametrize('prepared,proceed,cancelled,accepted', [
+    ('success', 'true', False, True), ('failure', 'true', False, False),
+    ('skipped', 'true', False, False), ('success', 'false', False, False),
+    ('success', 'true', True, False),
+])
+def test_usage_apply_explicitly_admits_prepared_image_after_skipped_bootstrap(prepared, proceed, cancelled, accepted):
+    from test_ci_deployments import condition_result
+    workflow = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')
+    assert workflow['jobs']['deploy']['needs'] == 'prepare'
+    assert condition_result(workflow['jobs']['deploy'], {
+        'needs.prepare.result': prepared, 'needs.prepare.outputs.proceed': proceed,
+    }, cancelled=cancelled) is accepted

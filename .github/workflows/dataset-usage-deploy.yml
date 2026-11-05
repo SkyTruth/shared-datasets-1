@@ -172,7 +172,7 @@ jobs:
     needs: bootstrap
   deploy:
     name: Deploy tested dataset usage image and private telemetry resources
-    if: needs.prepare.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:

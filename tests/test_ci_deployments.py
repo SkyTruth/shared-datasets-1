@@ -413,7 +413,7 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     values = {"github.event_name": "push", "github.ref": "refs/heads/main", "inputs.sync_iam": False,
               "needs.bootstrap.result": "skipped", "needs.resources.result": "skipped"}
     assert condition_result(jobs["bootstrap"], values) is False
-    consumer = jobs["deploy" if target == "dataset-usage" else "sync"]
+    consumer = jobs["prepare" if target == "dataset-usage" else "sync"]
     assert condition_result(consumer, values) is True
     values["inputs.sync_iam"] = True
     assert condition_result(jobs["bootstrap"], values) is True
