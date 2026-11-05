@@ -13,7 +13,6 @@ from scripts import cdn_plan_readiness as cdn
 
 from workflow_helpers import (
     load_workflow,
-    python_literal_string_set,
     terraform_targets,
     workflow_all_step_runs,
     workflow_steps_by_name,
@@ -114,7 +113,9 @@ def assert_protected_terraform_sync(
     testcase.assertEqual(terraform_targets(plan_run), expected_targets)
     testcase.assertIn("-refresh=false", plan_run)
     testcase.assertIn(f'out="${{RUNNER_TEMP}}/{plan_name}.tfplan"', plan_run)
-    testcase.assertEqual(python_literal_string_set(enforce_run, "allowed_exact"), expected_targets)
+    for resource in expected_targets | blocked_resources:
+        result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(resource, ["update"])])
+        testcase.assertEqual(result.returncode == 0, resource in expected_targets, result.stderr)
     testcase.assertIn("Refusing automatic", enforce_run)
     testcase.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod", steps["Terraform apply"]["run"])
     testcase.assertIn(" apply ", steps["Terraform apply"]["run"])
@@ -341,14 +342,13 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(any('sleep 30' in step.get('run', '') for step in workflow['jobs']['sync']['steps']))
 
-        self.assertEqual(
-            python_literal_string_set(enforce_run, "allowed_for_each_prefixes"),
-            {
-                "google_storage_managed_folder.shared_bucket_public_prefixes",
-                "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-            },
-        )
-        self.assertIn('address.startswith(f"{prefix}[")', enforce_run)
+        for prefix in (
+            "google_storage_managed_folder.shared_bucket_public_prefixes",
+            "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+        ):
+            for suffix in ('["fixture"]', '_foreign["fixture"]'):
+                result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(prefix + suffix, ["update"])])
+                self.assertEqual(result.returncode == 0, suffix == '["fixture"]', result.stderr)
         self.assertIn('managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"', enforce_run)
         self.assertIn('address == "google_storage_bucket.shared_bucket" and "delete" in actions', enforce_run)
         self.assertIn('"delete" in actions', enforce_run)
