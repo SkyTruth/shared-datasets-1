@@ -42,9 +42,7 @@ jobs:
         record: ${{ fromJSON(needs.pending.outputs.records) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment:
-      name: shared-datasets-production
-      deployment: false
+    environment: shared-datasets-production
     permissions:
       contents: read
       actions: read

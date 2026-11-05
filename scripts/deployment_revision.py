@@ -225,7 +225,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = INGESTION_TARGETS
+        runtime_targets = INGESTION_TARGETS | {"dataset-usage"}
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             if target == "wdpa-monthly-build":
@@ -492,7 +492,7 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in INGESTION_TARGETS | {"typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
+    require(payload.get("target") in INGESTION_TARGETS | {"dataset-usage", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")

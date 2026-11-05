@@ -79,6 +79,12 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
             and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
 
 
+def safety_health_only(run, jobs):
+    return run["name"] in WORKFLOW_NAMES["operational-safety-check.yml"] and any(
+        step.get("name") == "Check freshness and stalled operations" and step.get("conclusion") == "failure"
+        for job in jobs for step in job.get("steps", []))
+
+
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
     run = event["workflow_run"]
     # Maintenance and automatic follow-ups are unattended. CI's main-push
