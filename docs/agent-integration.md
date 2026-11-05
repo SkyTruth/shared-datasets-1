@@ -81,5 +81,5 @@ Full-history checks, native fixtures, Node 22/24, browser no-skips/no-retries,
 exact tested images and protected deployment authorization remain required.
 Test selection and deployment selection are separate contracts.
 
-See the [October investigation](ci-validation-investigation-2026-10-09.md) for
+See the [October investigation](history/ci-validation-investigation-2026-10-09.md) for
 the historical trace, measurements and deliberately deferred work.
