@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tarfile
 from unittest.mock import Mock
+from contextlib import nullcontext
 import zipfile
 
 import pytest
@@ -192,8 +193,20 @@ def download(fixture, target="sea-ice-daily"):
 
 
 @pytest.mark.parametrize("target", sorted(bundle.TARGETS))
+@pytest.mark.parametrize("matrix", [False, True])
 @pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
-def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff, target, compression):
+def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff, target, compression, matrix):
+    if matrix:
+        handoff['files']['result.json']['image_target'] = target
+        handoff['manifest']['images'] = {target: handoff['manifest']['images'][target]}
+        handoff['artifacts'][2]['name'] = f'ci-result-production-images-{target}-attempt1'
+        with zipfile.ZipFile(io.BytesIO(handoff['payloads'][0])) as archive:
+            evidence = json.loads(archive.read('evidence.json'))
+        evidence['suite_artifacts'] = {'production-images-' + target: handoff['artifacts'][2]['name']}
+        handoff['payloads'][0] = zipped({'evidence.json': evidence})
+        handoff['artifacts'][0].update(digest='sha256:' + hashlib.sha256(handoff['payloads'][0]).hexdigest())
+        handoff['jobs'][-1]['name'] = f'production-images ({target})'
+        refresh(handoff)
     image = handoff["manifest"]["images"][target]
     artifact_id = handoff["image_artifact_ids"][target]
     payload = zipped({image["archive"]: handoff["files"]["images/" + image["archive"]]}, compression)
@@ -469,6 +482,10 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
 
     monkeypatch.setattr(bundle.subprocess, "check_output", inspect)
     monkeypatch.setattr(bundle.subprocess, "run", run)
+    def process(args, **kwargs):
+        code = run(args, **kwargs).returncode
+        return nullcontext(Mock(poll=lambda: code, wait=lambda **_: code))
+    monkeypatch.setattr(bundle.subprocess, "Popen", process)
     actual = ci_preflight.run_suite(handoff["root"], plan, "production-images", output)
     assert actual["status"] == "success" and set(actual["production_images"]["images"]) == expected & bundle.TARGETS
     assert set(built_targets) == expected

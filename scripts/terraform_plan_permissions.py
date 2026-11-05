@@ -436,3 +436,125 @@ def plan_checks(plan, *, project_number, target=None):
                 raise ValueError("PLAN_PERMISSION_CONTRACT: unsupported mutation class " + kind)
     require(target != "pmtiles-cdn" or found_map, "CDN post-apply cache target missing from saved plan")
     return [(url, tuple(sorted(permissions))) for url, permissions in sorted(probes.items())]
+
+
+def static_checks(root, base, head):
+    """Check declaration coverage, never evaluate a plan or claim live IAM access.
+
+    HCL identifies changed declarations (including local-module instances).
+    Apply scopes come from the selected executors, not another ownership list.
+    Unknown resource kinds and removed probe-manifest permissions fail closed.
+    Runtime values, instance keys and effective IAM still need the saved plan.
+    """
+    import ast
+    import inspect
+    import json
+    import posixpath
+    import subprocess
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    import yaml
+    from scripts import deployment_permissions as permissions
+    from scripts.ci_contract import select_deployments
+    from scripts.terraform_target_contracts import address as declaration
+
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(root), *args], text=True)
+
+    def declarations(revision):
+        files = git('ls-tree', '-r', '--name-only', revision, '--', 'terraform/').splitlines()
+        modules = {'terraform/envs/prod': []}
+        for path in files:
+            if path.endswith('.tf'):
+                modules.setdefault(posixpath.dirname(path), []).append(hcl2.loads(git('show', f'{revision}:{path}'),
+                    serialization_options=SerializationOptions(with_comments=False, strip_string_quotes=True)))
+        result = {}
+        def walk(directory, prefix='', ancestry=(), visiting=()):
+            require(directory in modules and directory not in visiting, 'missing or cyclic local Terraform module: ' + directory)
+            for document in modules[directory]:
+                for block in document.get('resource', []):
+                    for kind, resources in block.items():
+                        for name, body in resources.items():
+                            result[prefix + kind + '.' + name] = (body, ancestry)
+                for block in document.get('module', []):
+                    for name, body in block.items():
+                        source = body['source']
+                        require(source.startswith('./') or source.startswith('../'), 'static check requires local module sources')
+                        walk(posixpath.normpath(posixpath.join(directory, source)), prefix + 'module.' + name + '.',
+                             (*ancestry, body), (*visiting, directory))
+        walk('terraform/envs/prod')
+        return result
+
+    before, after = declarations(base), declarations(head)
+    changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
+    paths = git('diff', '--name-only', base, head).splitlines()
+    ci = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())['jobs']
+    exact, patterns = set(), []
+
+    def literals(source):
+        # These are the actual inline saved-plan allowlists. Never execute their
+        # code or infer ownership from a shell -target list alone.
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                continue
+            name = node.targets[0].id
+            if name in {'allowed_exact', 'allowed_for_each_prefixes'} and isinstance(node.value, (ast.Set, ast.List, ast.Tuple)):
+                exact.update(declaration(value) for value in ast.literal_eval(node.value))
+            elif name == 'allowed_patterns' and isinstance(node.value, ast.List):
+                patterns.extend(re.compile(ast.literal_eval(value.args[0])) for value in node.value.elts)
+
+    def scope(filename, inputs=None):
+        value = yaml.safe_load((root / filename).read_text())
+        registry = value.get('env', {}).get('INGESTION_TARGETS')
+        if registry:
+            configs = json.loads(registry)
+            require(inputs and inputs.get('target') in configs, 'ingestion target scope is unavailable')
+            exact.update(declaration(row) for row in configs[inputs['target']]['targets'])
+        for job in value['jobs'].values():
+            config = job.get('with', {})
+            exact.update(declaration(row) for row in config.get('allowed_exact', '').splitlines() if row.strip())
+            patterns.extend(re.compile(row) for row in config.get('allowed_patterns', '').splitlines() if row.strip())
+            if job.get('uses', '').startswith('./.github/workflows/'):
+                scope(job['uses'][2:], config)
+            for step in job.get('steps', []):
+                for source in re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", step.get('run', ''), re.S):
+                    literals(source)
+        if filename.endswith('dataset-usage-deploy.yml'):
+            from scripts.dataset_usage_deploy import RESOURCES, RETIREMENT_RESOURCES
+            exact.update(declaration(row) for row in RESOURCES | RETIREMENT_RESOURCES)
+        if filename.endswith('pmtiles-cdn-sync.yml'):
+            from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
+            exact.update(BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
+
+    for target in select_deployments(paths):
+        scope(ci[target.replace('_', '-')]['uses'][2:])
+    # Derive supported classes from the runtime dispatch. Adding a class without
+    # its operation validator cannot acquire static coverage accidentally.
+    dispatch = ast.parse(inspect.getsource(plan_checks))
+    kinds = set()
+    for node in ast.walk(dispatch):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == 'kind':
+            for literal in ast.walk(node.comparators[0]):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
+                    kinds.add(literal.value)
+    manifest = set()
+    for name, values in vars(permissions).items():
+        if name.endswith('_PERMISSIONS'):
+            manifest.update(values)
+    manifest.update(node.value for node in ast.walk(ast.parse(inspect.getsource(permissions.checks)))
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and re.fullmatch(r'[a-z]+\.[a-zA-Z.]+', node.value))
+    errors = []
+    for key in sorted(changed):
+        kind = key.rsplit('.', 2)[-2]
+        if key not in exact and not any(pattern.match(key) or pattern.match(key + '[0]') for pattern in patterns):
+            errors.append(key + ': absent from selected deployment apply allowlists')
+        if kind not in kinds:
+            errors.append(key + ': no saved-plan permission validator')
+        if kind == 'google_project_iam_custom_role' and key in before:
+            removed = set(before[key][0].get('permissions', [])) - set(after.get(key, ({},))[0].get('permissions', []))
+            missing = removed & manifest
+            if missing:
+                errors.append(key + ': removed probe-manifest permissions ' + ', '.join(sorted(missing)))
+    require(not errors, 'STATIC_IAC_CONTRACT:\n' + '\n'.join(errors))
+    return sorted(changed)

@@ -15,6 +15,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import sdk_release_authorization as proof
 from scripts.ci_contract import select_production_images
+from scripts.ci_source_proof import job_name
 from scripts.deployment_revision import DeploymentError, GitHub as DeploymentGitHub, TARGET_WORKFLOWS, require, verify_context
 from scripts.tested_image_bundle import ImageError, MAX_IMAGE, MAX_JSON, TARGETS, hash_file, load_image, read_json, report_timing, validate_manifest
 
@@ -65,7 +66,10 @@ def selected_image(api, repository, run_id, artifacts, reference, path, target, 
     manifest = read_json(files["images/manifest.json"])
     require(result.get("production_images") == manifest, "image manifest differs from recorded validation result")
     images = validate_manifest(manifest, sha)
-    require(set(images) == set(select_production_images(plan.get("changed_paths"))) & TARGETS and target in images,
+    selected = set(select_production_images(plan.get("changed_paths"))) & TARGETS
+    expected = {target} if result.get("image_target") == target else selected
+    require(("image_target" not in result or result["image_target"] == target)
+            and target in selected and set(images) == expected and target in images,
             "tested production-image set differs from validation selection or requested target")
     image = images[target]
     report_timing("result-download-and-verification", started)
@@ -97,9 +101,11 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     require(target in TARGETS, "target has no retained-image contract")
     run, artifacts, evidence, plan = proof.verified_plan(api, repository, run_id, attempt, sha, root)
     require("production-images" in plan["suites"], "production images were not selected for validation")
-    reference = evidence.get("suite_artifacts", {}).get("production-images")
-    suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
-    proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
+    references = evidence.get("suite_artifacts", {})
+    suite = "production-images-" + target if "production-images-" + target in references else "production-images"
+    reference = references.get(suite)
+    suite_attempt = proof.reference_attempt(reference, "ci-result-" + suite, evidence["source"]["run_attempt"])
+    proof.producing_job(api, repository, run_id, suite_attempt, sha, job_name(suite), run["workflow_id"], run["repository"]["id"])
     require("production-images" not in evidence.get("reused_suites", {}), "cross-run image reuse is not supported")
     report_timing("source-authorization", started)
     directory.mkdir(parents=True, exist_ok=True)

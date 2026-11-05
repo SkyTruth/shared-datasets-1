@@ -19,7 +19,7 @@ from scripts.production_image_contracts import commands as image_commands
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.check_workflow_syntax import parser_source
 from scripts.ci_contract import (
-    ALWAYS, CONTRACT_FILES, NARROW_PATHS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
+    ALWAYS, CONTRACT_FILES, INGESTION_DEPLOYMENTS, NARROW_PATHS, SUITES, TOOLCHAIN, check_junit, expected_tools, select_suites,
     verify_results, select_production_images,
 )
 from workflow_helpers import load_workflow, workflow_triggers
@@ -466,7 +466,8 @@ def fixture_repo(tmp_path):
 def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     source, git = fixture_repo(tmp_path)
     holds = source / preflight.INGESTION_ROLLOUT_HOLDS
-    holds.write_text(json.dumps(sorted(preflight.INGESTION_DEPLOYMENTS)))
+    holds.write_text(json.dumps({target: {"owner": "maintainer", "reason": "review pending", "expires_at": "2099-01-01T00:00:00Z"}
+                                 for target in INGESTION_DEPLOYMENTS}))
     git("add", ".")
     git("commit", "-m", "hold rollouts")
     base = git("rev-parse", "HEAD")
@@ -476,7 +477,7 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     git("add", ".")
     git("commit", "-m", "change shared ingestion")
     runtime_head = git("rev-parse", "HEAD")
-    holds.write_text("[]\n")  # The plan reads the committed tree.
+    holds.write_text("{}\n")  # The plan reads the committed tree.
 
     output, github_output = tmp_path / "plan.json", tmp_path / "github-output"
     subprocess.run([
@@ -486,24 +487,26 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     plan = json.loads(output.read_text())
     emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
     assert plan["deployments"] == []
-    assert {emitted[target] for target in preflight.INGESTION_DEPLOYMENTS} == {"false"}
+    assert {emitted[target] for target in INGESTION_DEPLOYMENTS} == {"false"}
     assert {"lint", "tests", "production-images", "geospatial-integration"} <= set(plan["suites"])
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(json.loads(emitted["production-image-targets"]))
 
     git("add", ".")
     git("commit", "-m", "clear holds")
-    assert preflight.make_plan(source, runtime_head, "HEAD")["deployments"] == []
-    assert set(preflight.make_plan(source, base, "HEAD")["deployments"]) == preflight.INGESTION_DEPLOYMENTS
+    assert set(preflight.make_plan(source, runtime_head, "HEAD")["deployments"]) == INGESTION_DEPLOYMENTS
+    assert set(preflight.make_plan(source, base, "HEAD")["deployments"]) == INGESTION_DEPLOYMENTS
 
 
-@pytest.mark.parametrize("invalid", [{}, ["wdpa", "wdpa"], ["catalog_viewer"], [7]])
+@pytest.mark.parametrize("invalid", [[], ["wdpa", "wdpa"], {"catalog_viewer": {}}, {"wdpa": {}},
+    {"wdpa": {"owner": "maintainer", "reason": "review", "expires_at": "2020-01-01T00:00:00Z"}},
+    {"wdpa": {"owner": "maintainer", "reason": "review", "expires_at": "2099-01-01T00:00:00"}}])
 def test_invalid_ingestion_rollout_hold_fails_plan(tmp_path, invalid):
     source, git = fixture_repo(tmp_path)
     base = git("rev-parse", "HEAD")
     (source / preflight.INGESTION_ROLLOUT_HOLDS).write_text(json.dumps(invalid))
     git("add", ".")
     git("commit", "-m", "invalid hold")
-    with pytest.raises(ValueError, match="distinct scheduled deployment targets"):
+    with pytest.raises(ValueError, match="rollout hold"):
         preflight.make_plan(source, base, "HEAD")
 
 
