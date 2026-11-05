@@ -15,11 +15,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
 from scripts.github_api_read import read
+from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS, image_variables
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
@@ -27,15 +29,12 @@ SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
     "monitoring-slack": "cron-alert-policy-sync.yml",
     "dataset-usage": "dataset-usage-deploy.yml",
-    "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "wdpa-monthly-build": "wdpa-monthly-build.yml",
-    "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
-    "eamlis-monthly": "eamlis-monthly-deploy.yml",
-    "sea-ice-daily": "sea-ice-daily-deploy.yml",
     "typescript-sdk": "publish-typescript-sdk.yml",
     "pmtiles-cdn": "pmtiles-cdn-sync.yml",
     "catalog-web": "catalog-web-deploy.yml",
     "catalog-viewer": "catalog-viewer-deploy.yml",
+    **{target: config["workflow"] for target, config in INGESTION_CONFIGS.items()},
 }
 TERRAFORM_SYNCS = {
     "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
@@ -63,7 +62,7 @@ TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
     for name, workflow in TERRAFORM_SYNCS.items()
 }
-INGESTION_TARGETS = frozenset({"wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily"})
+INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
 INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
 
 
@@ -183,12 +182,23 @@ def receipt_signer(api, repository, target, run_id, attempt):
     if target in INGESTION_TARGETS:
         run = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
         require(run.get("id") == run_id and run.get("run_attempt") == attempt, "signer execution attempt mismatch")
-        references = run.get("referenced_workflows", [])  # Historical inline leaves have no reusable graph.
-        require(isinstance(references, list), "invalid immutable signer graph")
-        shared = [item for item in references if item.get("path") == f"{repository}/{INGESTION_SIGNER}@{run.get('head_sha')}"]
+        # GitHub may flatten a nested reusable chain or include child references.
+        # Inspect the entire immutable graph; never select an arbitrary leaf.
+        def leaves(references):
+            require(isinstance(references, list), "invalid immutable signer graph")
+            for item in references:
+                require(isinstance(item, dict), "invalid immutable signer reference")
+                yield item
+                yield from leaves(item.get("referenced_workflows", []))
+
+        path = f"{repository}/{INGESTION_SIGNER}@"
+        shared = [item for item in leaves(run.get("referenced_workflows", []))
+                  if str(item.get("path", "")).startswith(path)]
         if shared:
             require(len(shared) == 1 and SHA.fullmatch(str(run.get("head_sha", "")))
-                    and shared[0].get("sha") == run["head_sha"] and shared[0].get("ref") == "refs/heads/main", "shared signer revision differs from immutable emitting workflow")
+                    and shared[0].get("path") in {path + run["head_sha"], path + "refs/heads/main"}
+                    and shared[0].get("sha") == run["head_sha"] and shared[0].get("ref") == "refs/heads/main",
+                    "shared signer revision differs from immutable emitting workflow")
             return INGESTION_SIGNER
     return ".github/workflows/" + signer
 
@@ -233,7 +243,7 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
+        runtime_targets = INGESTION_TARGETS
         accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             if target == "wdpa-monthly-build":
@@ -417,25 +427,50 @@ def verification_window(executions, *, paused=False, canary_date="", allow_cance
 
 
 def runtime_window(args):
-    require(args.target in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}, "invalid runtime verification target")
+    require(args.target in INGESTION_TARGETS, "invalid runtime verification target")
     # First installation has no job/execution collection yet. A successful
     # regional inventory proves absence; permission/network errors still fail.
     if args.target == "mpatlas-monthly":
         jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
-                                                   "--project=shared-datasets-1", "--format=json"]))
+                                                   "--project=shared-datasets-1", "--format=json"], timeout=60))
         require(isinstance(jobs, list), "invalid Cloud Run job inventory")
         installed = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
     else:
         installed = True
-    executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
-                                                    "--region=us-central1", "--project=shared-datasets-1", "--format=json"])) if installed else []
     paused = False
-    if args.target == "wdpa-monthly":
+    if INGESTION_CONFIGS[args.target]["paused_gate"]:
         state = subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", args.target, "--location=us-central1",
-                                         "--project=shared-datasets-1", "--format=value(state)"], text=True).strip()
+                                         "--project=shared-datasets-1", "--format=value(state)"], text=True, timeout=60).strip()
         require(state in {"ENABLED", "PAUSED"}, "unknown scheduler state prevents runtime verification")
         paused = state == "PAUSED"
-    ready = verification_window(executions, paused=paused, canary_date=args.canary_run_date, allow_cancel=args.allow_cancel == "true")
+    wait = getattr(args, "wait_seconds", 0)
+    require(wait >= 0, "runtime wait must be nonnegative")
+    deadline = time.monotonic() + wait
+    cancelled = set()
+    while True:
+        executions = json.loads(subprocess.check_output([
+            "gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
+            "--region=us-central1", "--project=shared-datasets-1", "--format=json",
+        ], timeout=60)) if installed else []
+        require(isinstance(executions, list), "invalid Cloud Run execution inventory")
+        active = [entry for entry in executions if not entry.get("status", {}).get("completionTime")]
+        # Preparation/application may admit explicit cancellation. Verification
+        # must actually wait for cancellation or scheduled work to drain.
+        ready = verification_window(executions, paused=paused, canary_date=args.canary_run_date,
+                                    allow_cancel=args.allow_cancel == "true" and not wait)
+        if ready or not wait or paused and not args.canary_run_date:
+            break
+        if args.allow_cancel == "true":
+            for entry in active:
+                name = entry["metadata"]["name"]
+                if name not in cancelled:
+                    subprocess.check_call(["gcloud", "run", "jobs", "executions", "cancel", name,
+                                           "--region=us-central1", "--project=shared-datasets-1", "--quiet"], timeout=60)
+                    cancelled.add(name)
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "active execution did not drain within the runtime verification window")
+        print("::notice::Waiting for the active execution before starting a canary.", flush=True)
+        time.sleep(min(30, remaining))
     if not ready:
         print("::notice::Deployment deferred: runtime verification is unavailable while the schedule is paused or an execution is active.")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
@@ -475,7 +510,7 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
+    require(payload.get("target") in INGESTION_TARGETS | {"typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")
@@ -515,6 +550,7 @@ def recover(args, api):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             stream.write(f"executor_sha={record['sha']}\ntarget={payload['target']}\nimage={payload['artifact']}\n")
             stream.write("targets=" + json.dumps(payload["targets"]) + "\n")
+            stream.write("image_variables=" + json.dumps(image_variables(payload["target"], payload["artifact"])) + "\n")
             stream.write("kind=" + ("sdk" if payload["target"] == "typescript-sdk" else "terraform" if payload["target"] in TERRAFORM_WORKFLOWS else "ingestion") + "\n")
         return
     sdk = payload["target"] == "typescript-sdk"
@@ -582,7 +618,8 @@ def main():
     window = commands.add_parser("window")
     window.add_argument("--target", required=True)
     window.add_argument("--canary-run-date", default="")
-    window.add_argument("--allow-cancel", default="false")
+    window.add_argument("--allow-cancel", default="false", choices=["true", "false"])
+    window.add_argument("--wait-seconds", type=int, default=0)
     observer = commands.add_parser("observe")
     observer.add_argument("--deployment-id", required=True, type=int)
     for command in ("recovery-inputs", "reconcile"):
