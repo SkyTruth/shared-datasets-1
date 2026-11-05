@@ -250,7 +250,7 @@ jobs:
       if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
       env:
         GH_TOKEN: ${{ github.token }}
-      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase "${{ steps.revision.outputs.noop == 'true' && 'verified' || 'applied' }}" --execution "${{ steps.revision.outputs.execution }}"
+      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase "${{ steps.revision.outputs.noop == 'true' && !inputs.resume_scheduler && 'verified' || 'applied' }}" --execution "${{ steps.revision.outputs.execution }}"
     - name: Attest applied deployment
       if: ${{ always() && steps.applied.outputs.receipt_path != '' }}
       uses: ./.github/actions/deployment-receipt
@@ -262,7 +262,7 @@ jobs:
     needs:
     - prepare
     - apply
-    if: ${{ always() && needs.apply.outputs.deployment_id != '' && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success') }}
+    if: ${{ always() && needs.apply.outputs.deployment_id != '' && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success' || inputs.resume_scheduler) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     environment: shared-datasets-production

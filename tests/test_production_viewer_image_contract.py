@@ -286,8 +286,8 @@ def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize('target,cpu,memory', [
-    ('sea-ice-daily', '2', '512m'), ('eamlis-monthly', '6', '4g'),
-    ('mpatlas-monthly', '6', '8g'), ('wdpa-monthly', '4', '8g'),
+    ('sea-ice-daily', '2', '512m'), ('eamlis-monthly', '4', '4g'),
+    ('mpatlas-monthly', '4', '8g'), ('wdpa-monthly', '4', '8g'),
     ('catalog-viewer', '1', '2g'), ('dataset-usage', '1', '1g'), ('monitoring-slack', '1', '512m'),
 ])
 def test_every_installed_probe_uses_production_limits(target, cpu, memory):

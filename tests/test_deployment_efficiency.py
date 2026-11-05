@@ -6,6 +6,8 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
+import shlex
 import subprocess
 import sys
 import textwrap
@@ -208,6 +210,27 @@ def test_noop_contract_requires_exact_signed_output_and_keeps_failure_verificati
     if defect == 'hidden-failure':
         jobs['verify']['if'] = jobs['verify']['if'].replace(" || needs.apply.result != 'success'", '')
     assert bool(ingestion_boundary(workflow)) == (defect is not None)
+
+
+@pytest.mark.parametrize('noop,resume,result,verify', [(True, False, 'success', False), (True, True, 'success', True),
+                                                    (True, False, 'failure', True), (False, False, 'success', True)])
+def test_noop_keeps_explicit_scheduler_resume_and_failed_apply_verification(noop, resume, result, verify):
+    workflow = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
+    values = {'needs.apply.outputs.deployment_id': '71', 'needs.apply.outputs.noop': str(noop).lower(),
+              'needs.apply.result': result, 'steps.revision.outputs.noop': str(noop).lower(), 'inputs.resume_scheduler': resume}
+
+    def evaluate(expression):
+        if not expression.startswith('${{'):
+            return expression
+        expression = expression.removeprefix('${{').removesuffix('}}').replace('always()', 'True')
+        for key, value in values.items():
+            expression = expression.replace(key, repr(value))
+        return eval(re.sub(r'!(?!=)', ' not ', expression.replace('&&', ' and ').replace('||', ' or ')), {'__builtins__': {}}, {})
+
+    assert bool(evaluate(workflow['jobs']['verify']['if'])) is verify
+    if result == 'success':
+        command = shlex.split(workflow_steps_by_name(workflow, 'apply')['Record applied deployment']['run'])
+        assert evaluate(command[command.index('--phase') + 1]) == ('verified' if noop and not resume else 'applied')
 
 
 def test_apply_noop_cli_runs_in_clean_hosted_stdlib_interpreter(journey):

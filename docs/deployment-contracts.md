@@ -140,7 +140,7 @@ Ingestion skips apply/canary only with no saved-plan resource/output/deferred ch
 a live digest matching tested bytes, and the latest exact-image execution's success.
 The signed claim records `noop_execution`; the signed `verified` outcome retains its URL.
 Missing/failed executions keep the canary path; unreadable evidence fails closed.
-Signing failures retain signed failure handling. Applied config never proves runtime success.
+Signing failures retain failure handling; explicit scheduler resume keeps canary verification.
 
 Canonical receipts bind record/status IDs, target, executor, source CI, artifact, scope
 and phase. Actions-bot metadata/URLs alone prove nothing. Protected leaves attest bytes;

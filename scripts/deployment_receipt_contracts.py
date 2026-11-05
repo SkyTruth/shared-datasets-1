@@ -245,7 +245,7 @@ def verification_boundary(workflow, filename, parent, needs, *, apply_parent=Non
     verify = workflow["jobs"].get("verify", {})
     expected_if = "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}"
     if filename == "ingestion-deploy.yml":
-        expected_if = expected_if.removesuffix(" }}") + " && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success') }}"
+        expected_if = expected_if.removesuffix(" }}") + " && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success' || inputs.resume_scheduler) }}"
     if verify.get("needs") != needs or verify.get("if") != expected_if:
         errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
     admission = {
