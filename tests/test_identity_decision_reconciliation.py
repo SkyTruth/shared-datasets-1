@@ -37,9 +37,7 @@ def test_actual_cli_transport_preserves_the_verifier_pagination_contract(monkeyp
     def read(path, *, paginate=False):
         calls.append((path, paginate))
         return json.dumps(responses[path]).encode()
-    # Keep both real adapters intact: mocking pages() hides their incompatible
-    # calling conventions. Substitute only their shared read-only HTTP boundary.
-    monkeypatch.setattr(command.deployment, "read", read)
+    # Keep real pagination and verifier entrypoints; replace only HTTP reads.
     monkeypatch.setattr(command.auth, "read", read)
     monkeypatch.setattr(command.subprocess, "check_output", lambda *args, **kwargs: sha + "\n")
     monkeypatch.setenv("GITHUB_REPOSITORY", command.REPOSITORY)

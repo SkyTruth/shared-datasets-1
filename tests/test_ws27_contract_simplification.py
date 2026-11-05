@@ -4,12 +4,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -228,3 +230,38 @@ def test_hosted_usage_gate_imports_only_ci_plan_dependencies_and_resolves_real_y
         env={**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH'], 'GITHUB_REPOSITORY': repository,
              'GITHUB_REF': 'refs/heads/main', 'GITHUB_RUN_ID': '13', 'GITHUB_RUN_ATTEMPT': '2'})
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('declared', [False, True])
+def test_hosted_cdn_folder_guard_parses_the_immutable_hcl_revision(tmp_path, declared):
+    role = ('# resource "google_project_iam_custom_role" "pmtiles_managed_folder_sync" { permissions = ["storage.managedFolders.delete"] }\n'
+            '  resource "google_project_iam_custom_role" "pmtiles_managed_folder_sync" {\n'
+            '    permissions = ["storage.managedFolders.' + ('delete' if declared else 'create') + '"]\n  }\n').encode()
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode='w') as archive:
+        member = tarfile.TarInfo('terraform/envs/prod/shared_bucket_public.tf')
+        member.size = len(role)
+        archive.addfile(member, io.BytesIO(role))
+    binary = tmp_path / 'bin'
+    binary.mkdir()
+    git = binary / 'git'
+    git.write_text(f'''#!{sys.executable}
+import sys
+args = sys.argv[1:]
+if args == ['archive', {'b' * 40!r}]:
+    sys.stdout.buffer.write({raw.getvalue()!r})
+elif args[0] == 'show' and args[1].endswith(':catalog/shared-datasets-catalog.csv'):
+    print('canonical_path')
+    if args[1].startswith({'a' * 40!r}):
+        print('gs://skytruth-shared-datasets-1/example/asset/latest/a.fgb')
+else:
+    raise SystemExit(91)
+''')
+    git.chmod(0o755)
+    result = isolated_python(tmp_path, ['PyYAML', 'python-hcl2', 'lark', 'regex'],
+        'import runpy; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")',
+        'scripts/cdn_plan_readiness.py', 'check-diff', '--base', 'a' * 40, '--head', 'b' * 40,
+        env={**os.environ, 'PATH': str(binary) + os.pathsep + os.environ['PATH']})
+    assert (result.returncode == 0) is declared, result.stdout + result.stderr
+    if not declared:
+        assert 'does not declare storage.managedFolders.delete' in result.stderr

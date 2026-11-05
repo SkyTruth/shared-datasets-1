@@ -435,7 +435,7 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     opener = mock.Mock(return_value=Response(b'{"ok":true,"channel":"C0123456789","ts":"1792793158.506179"}'))
     slack = Slack("test-token", "C0123456789", opener=opener)
     monkeypatch.setattr("sys.argv", ["alert", "--resolve-run-id", "123", "--message-ts", "1792793158.506179"])
-    with mock.patch.object(authorization, "read", side_effect=read), mock.patch.object(deployments, "read", side_effect=read), \
+    with mock.patch.object(authorization, "read", side_effect=read), \
             mock.patch.object(emissions, "verify") as verify_receipt, \
             mock.patch("scripts.slack_incidents.terminal_contract_sha256", return_value="c" * 64), \
             mock.patch.object(deployments, "git_ancestor", return_value=True), \

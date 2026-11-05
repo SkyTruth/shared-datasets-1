@@ -23,7 +23,7 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     for name, field in trigger['workflow_dispatch']['inputs'].items():
         assert field['required'] and field['type'] == 'string'
         assert '${{ inputs.' + name in workflow['env'][name.upper()]
-    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read'}
+    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read', 'pull-requests': 'read'}
     candidate, publish = workflow['jobs']['candidate'], workflow['jobs']['publish']
     assert 'id-token' not in candidate.get('permissions', {})
     assert publish['permissions']['id-token'] == 'write'

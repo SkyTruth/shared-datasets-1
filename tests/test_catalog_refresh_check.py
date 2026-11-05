@@ -7,7 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts import catalog_drift_guard as guard, catalog_refresh_check as probe, catalog_site, deployment_revision, deployment_source
+from scripts import catalog_drift_guard as guard, catalog_refresh_check as probe, catalog_site, deployment_source
+from scripts import dataset_mutation_authorization as authorization
 from test_catalog_site import DOC
 
 
@@ -35,7 +36,7 @@ def main_ci(monkeypatch):
         return json.dumps([payload] if paginate else payload).encode()
 
     transport = Mock(side_effect=read)
-    monkeypatch.setattr(deployment_revision, "read", transport)
+    monkeypatch.setattr(authorization, "read", transport)
     return SimpleNamespace(run=run, ready=ready, runs=runs, transport=transport)
 
 

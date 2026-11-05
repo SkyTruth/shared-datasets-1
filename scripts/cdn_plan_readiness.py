@@ -201,7 +201,7 @@ def check_diff(root: Path, base: str, head: str) -> None:
     if not removed:
         return
     from scripts.release_contracts import role_permissions
-    declared = role_permissions(read(head, 'terraform/envs/prod/shared_bucket_public.tf'), 'pmtiles_managed_folder_sync')
+    declared = role_permissions(root, 'shared_bucket_public.tf', 'pmtiles_managed_folder_sync', revision=head)
     if DELETE not in declared:
         raise ValueError(f'catalog removes managed folders {sorted(removed)} but reviewed CDN role does not declare {DELETE}; retain catalog rows or establish reviewed removal authority first')
 

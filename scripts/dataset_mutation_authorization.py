@@ -54,23 +54,24 @@ def positive_int(value: Any) -> int:
 
 class GitHub:
     """Thin gh transport. --paginate follows every Link; --slurp preserves pages."""
+    require = staticmethod(require)
 
     def get(self, path: str) -> Any:
         return plans.strict_json_loads(read(path))
 
     def pages(self, path: str, *, field: str | None = None) -> list[dict[str, Any]]:
         pages = plans.strict_json_loads(read(path, paginate=True))
-        require(isinstance(pages, list) and bool(pages), "missing paginated API response")
+        self.require(isinstance(pages, list) and bool(pages), "missing paginated API response")
         total = None
         if field is not None:
-            require(all(isinstance(page, dict) for page in pages), "invalid named API pages")
+            self.require(all(isinstance(page, dict) for page in pages), "invalid named API pages")
             total = pages[0].get("total_count")
-            require(type(total) is int and all(page.get("total_count") == total for page in pages), "inconsistent API total_count")
+            self.require(type(total) is int and all(page.get("total_count") == total for page in pages), "inconsistent API total_count")
             pages = [page.get(field) for page in pages]
-        require(all(isinstance(page, list) for page in pages), "invalid API pages")
+        self.require(all(isinstance(page, list) for page in pages), "invalid API pages")
         rows = [row for page in pages for row in page]
-        require(all(isinstance(row, dict) for row in rows), "invalid API page entry")
-        require(total is None or len(rows) == total, "incomplete API enumeration")
+        self.require(all(isinstance(row, dict) for row in rows), "invalid API page entry")
+        self.require(total is None or len(rows) == total, "incomplete API enumeration")
         return rows
 
     def archive(self, repository: str, artifact_id: int) -> bytes:

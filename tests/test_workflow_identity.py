@@ -77,7 +77,7 @@ def test_deployment_source_resolves_the_exact_verified_ci_attempt_for_either_lab
     api.pages.return_value = [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
     event = json.loads(json.dumps({"workflow_run": run}))
     assert deployment_source.resolve(api, alerts.REPOSITORY, sha, event, 999, 1) == (123, 2)
-    api.pages.assert_called_once_with(f"repos/{alerts.REPOSITORY}/actions/runs/123/attempts/2/jobs?per_page=100", "jobs")
+    api.pages.assert_called_once_with(f"repos/{alerts.REPOSITORY}/actions/runs/123/attempts/2/jobs?per_page=100", field="jobs")
     run["path"] = ".github/workflows/untrusted.yml"
     with pytest.raises(DeploymentError, match="repository CI workflow"):
         deployment_source.resolve(api, alerts.REPOSITORY, sha, event, 999, 1)

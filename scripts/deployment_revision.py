@@ -56,6 +56,7 @@ def require(condition, message):
 
 
 class GitHub(ReadOnlyGitHub):
+    require = staticmethod(require)
     def post(self, path, payload):
         return json.loads(subprocess.check_output(["gh", "api", "--method", "POST", path, "--input", "-"], input=json.dumps(payload).encode()))
 

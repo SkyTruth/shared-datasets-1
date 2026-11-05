@@ -32,7 +32,7 @@ def resolve(api, repository, sha, event, current_id, current_attempt):
 def resolve_main_ci(api, repository, sha):
     # Manual mutation recovery and index-rebuild follow-ups retain their original
     # executor. Overall CI can be red because publication failed after ci-ready.
-    runs = api.pages(f"repos/{repository}/actions/workflows/ci.yml/runs?head_sha={sha}&event=push&branch=main&per_page=100", "workflow_runs")
+    runs = api.pages(f"repos/{repository}/actions/workflows/ci.yml/runs?head_sha={sha}&event=push&branch=main&per_page=100", field="workflow_runs")
     runs = [run for run in runs if run.get("head_sha") == sha]
     if runs and all(run.get("status") in {"queued", "in_progress", "waiting", "pending", "requested"} for run in runs):
         raise PendingCI("main CI is still pending for executor")

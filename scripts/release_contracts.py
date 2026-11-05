@@ -38,8 +38,8 @@ IMAGE_PROBE_WORKFLOWS = (
 )
 
 
-def role_permissions(root, filename, name):
-    return set(terraform_targets.resource_index(root)['terraform/envs/prod/' + filename].get(
+def role_permissions(root, filename, name, *, revision=None):
+    return set(terraform_targets.resource_index(root, revision)['terraform/envs/prod/' + filename].get(
         'google_project_iam_custom_role.' + name, {}).get('permissions', []))
 
 

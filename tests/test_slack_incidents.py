@@ -17,6 +17,7 @@ import yaml
 
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
+from scripts import dataset_mutation_authorization as authorization
 from scripts import slack_incidents as incidents
 from scripts.slack_incident_api import Slack, SlackError
 from workflow_helpers import load_workflow, workflow_triggers
@@ -886,7 +887,7 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     f"repos/{incidents.REPOSITORY}/actions/workflows/ci.yml",
 ])
 def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path):
-    with mock.patch.object(deployments, "read", side_effect=[
+    with mock.patch.object(authorization, "read", side_effect=[
             RuntimeError("identity unavailable"), b'{"nested":{"id":1}}', b'{"nested":{"id":2}}']) as read:
         api = incidents.GitHub()
         with pytest.raises(RuntimeError, match="identity unavailable"):
@@ -910,7 +911,7 @@ def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path
     "repos/Other/repository/actions/workflows/ci.yml",
 ])
 def test_operational_and_nonidentity_gets_always_refresh(path):
-    with mock.patch.object(deployments, "read", side_effect=[b'{"id":1}', b'{"id":2}']) as read:
+    with mock.patch.object(authorization, "read", side_effect=[b'{"id":1}', b'{"id":2}']) as read:
         api = incidents.GitHub()
         assert api.get(path) == {"id": 1}
         assert api.get(path) == {"id": 2}
@@ -919,7 +920,7 @@ def test_operational_and_nonidentity_gets_always_refresh(path):
 
 def test_identity_snapshot_does_not_cache_paginated_status_history():
     path = f"repos/{incidents.REPOSITORY}/deployments/10/statuses?per_page=100"
-    with mock.patch.object(deployments, "read", side_effect=[b'[[{"id":1}]]', b'[[{"id":2},{"id":1}]]']) as read:
+    with mock.patch.object(authorization, "read", side_effect=[b'[[{"id":1}]]', b'[[{"id":2},{"id":1}]]']) as read:
         api = incidents.GitHub()
         assert api.pages(path) == [{"id": 1}]
         assert api.pages(path) == [{"id": 2}, {"id": 1}]
@@ -974,7 +975,7 @@ def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_pa
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "github-output"))
     for client in (deployments.GitHub, incidents.GitHub):
         with mock.patch.object(incidents, "GitHub", client), \
-                mock.patch.object(deployments, "read", side_effect=read) as transport, \
+                mock.patch.object(authorization, "read", side_effect=read) as transport, \
                 mock.patch.object(incidents, "datetime", wraps=datetime) as clock, \
                 mock.patch.object(incidents, "Slack", return_value=FakeSlack()), \
                 mock.patch.object(incidents.VerificationCache, "restore"), \
