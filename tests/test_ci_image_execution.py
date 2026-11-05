@@ -113,9 +113,13 @@ def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tm
         target.write_text("changed input\n")
     git("add", ".")
     git("commit", "-m", "select image targets")
-    plan = preflight.make_plan(source, base, "HEAD")
+    monkeypatch.setenv("GITHUB_RUN_ID", "42094352596")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.chdir(source)
     plan_path, output = tmp_path / "plan.json", tmp_path / "images-result"
-    plan_path.write_text(json.dumps(plan))
+    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base, "--head", "HEAD", "--output", str(plan_path)])
+    assert preflight.main() == 0
+    assert json.loads(plan_path.read_text())["source"] == {"run_id": "42094352596", "run_attempt": 1}
     check_output = preflight.subprocess.check_output
     monkeypatch.setattr(preflight.subprocess, "check_output", lambda argv, **kwargs:
                         "{}" if argv[:2] == ["docker", "version"] else check_output(argv, **kwargs))

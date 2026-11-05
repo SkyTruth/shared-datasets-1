@@ -69,6 +69,13 @@ def test_exclusions_equal_exact_secret_refresh_dependency_closures(tmp_path):
     providers = Path(os.environ.get('TF_DATA_DIR', ROOT / 'terraform/envs/prod/.terraform')) / 'providers'
     prod = contracts.prepare(ROOT, tmp_path, providers)
     graph = contracts.parse_graph(contracts.graph(prod, 'terraform', contracts.isolated_environment(tmp_path), tmp_path))
+    # Real provider graph: an IAM-only plan checks bucket existence but cannot
+    # pull its logging configuration into scope or wait for the usage canary.
+    for name in ('Scheduled ingestion deploy IAM sync', 'Scratch cleanup IAM sync'):
+        roots = {contracts.address(r) for r in contracts.registry()[name]['resources']}
+        ancestors = contracts.closure(graph, roots)
+        assert 'data.google_storage_bucket.shared_bucket_iam' in ancestors
+        assert 'google_storage_bucket.shared_bucket' not in ancestors
     all_scopes = pr.scopes({'deployments': list(contracts.registry(section='deployments')),
                            'changed_paths': [p.relative_to(ROOT).as_posix() for p in (ROOT / 'terraform/envs/prod').glob('*.tf')]})
     retired = {r for rows in json.loads((ROOT / 'terraform/iam-plan-prerequisites.json').read_text())['retired_targets'].values() for r in rows}

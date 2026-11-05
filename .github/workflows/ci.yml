@@ -115,6 +115,9 @@ jobs:
 
   tests:
     needs: geospatial-changes
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -123,8 +126,21 @@ jobs:
         with:
           binaries: gitleaks terraform
       - *validation-plan
+      - name: Initialize pinned providers for offline graph tests
+        run: terraform -chdir=terraform/envs/prod init -backend=false -input=false -lockfile=readonly
       - name: Run selected secret, guardrail and Python checks
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
+      - name: Owner approval of this exact head required before merge
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.event.pull_request.user.login != 'jonaraphael' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
+          if [[ "$selected" == true ]]; then
+            python -I -S .github/actions/deployment-bootstrap/approval.py "$PR_NUMBER"
+          fi
       - *retained-validation-results
       - *compact-gate-result
 
@@ -425,8 +441,8 @@ jobs:
     secrets: inherit
 
   ingestion-iam:
-    needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' }}
     permissions: &terraform-permissions
       contents: read
       actions: read
@@ -522,8 +538,8 @@ jobs:
     with: *deployment-source
 
   scratch-cleanup-iam:
-    needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/scratch-cleanup-iam-sync.yml
     with: *deployment-source

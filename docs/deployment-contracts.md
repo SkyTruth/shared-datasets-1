@@ -63,11 +63,11 @@ resulting suites and required `production_image_targets` unchanged to consumers.
 
 Publisher wrappers hold `ingestion-<target>` across prepare/apply/verify; usage holds
 `deployment-dataset-usage` across bootstrap/rollout. CI's `dataset-usage` reusable
-caller owns the complete rollout. Ingestion and cleanup IAM depend on its native
-job result, so neither can overtake an unfinished usage rollout. A second usage
-revision cannot apply before the first finishes verifying its image. This also
-makes a failed canary block dependent IAM; there is no separate polling runner or
-nested-job-name protocol. Only shared `apply` holds `prod-terraform-state` with
+caller owns the complete rollout. Ingestion and cleanup IAM read the existing
+canonical bucket through a data source, keeping bucket logging/CORS out of their
+plans and allowing them to proceed in parallel with usage verification. A second
+usage revision cannot apply before the first finishes verifying its image. There
+is no polling runner or nested-job-name protocol. Only shared `apply` holds `prod-terraform-state` with
 `queue: max`; plan, JSON, allowlist, permissions, claim and apply stay atomic.
 Every queue bounds runners, including reusable leaves: state writers 30 minutes,
 preparation 20, follow-ups 5–20, preview 90, canonical promotion 120, catalog publishing 45.

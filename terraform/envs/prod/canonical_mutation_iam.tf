@@ -170,7 +170,7 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_folder_us
 }
 
 resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_publish_viewer" {
-  bucket = var.bucket_name
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
   role   = "roles/storage.objectViewer"
   member = module.shared_datasets_publisher_service_account.member
 
@@ -179,12 +179,10 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
     description = "Allow approved publisher reads from staged pending-publish objects and orphaned gcloud composite temp parts only."
     expression  = local.pending_publish_source_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_publish_cleanup_user" {
-  bucket = var.bucket_name
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
   role   = "roles/storage.objectUser"
   member = module.shared_datasets_publisher_service_account.member
 
@@ -193,8 +191,6 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
     description = "Allow approved publisher cleanup of pending-publish scratch objects, cleanup warning markers, and orphaned gcloud composite temp parts."
     expression  = local.pending_publish_cleanup_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "shared_bucket_scratch_writers" {

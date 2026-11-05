@@ -16,8 +16,10 @@ from test_operational_safety_check import probe_inputs  # noqa: F401 - pytest fi
 @pytest.fixture(scope="module")
 def hosted_python(tmp_path_factory):
     directory = tmp_path_factory.mktemp("hosted-probe")
-    result = subprocess.run(["uv", "sync", "--offline", "--frozen", "--no-dev", "--python", "3.12.12"], cwd=safety.ROOT,
-        env={**os.environ, "UV_PROJECT_ENVIRONMENT": str(directory / "env")}, capture_output=True, text=True)
+    environment = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(directory / "env")}
+    environment.pop("VIRTUAL_ENV", None)
+    result = subprocess.run(["uv", "sync", "--frozen", "--no-dev", "--python", "3.12.12"], cwd=safety.ROOT,
+        env=environment, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return str(directory / "env/bin/python")
 

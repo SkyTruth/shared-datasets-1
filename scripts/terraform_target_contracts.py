@@ -347,7 +347,7 @@ def verify(root: Path, output: Path, *, executable='terraform', providers: Path 
         try:
             check_graph(root, parse_graph(broken_dot))
         except ValueError as exc:
-            expected = 'google_storage_bucket_iam_member.wdpa_reset_translation_reader -> google_storage_bucket.shared_bucket -> ' + failure['forbidden_resource']
+            expected = 'google_storage_bucket.shared_bucket -> ' + failure['forbidden_resource']
             if expected not in str(exc):
                 raise ValueError('Historical negative control did not fail on its observed dependency chain') from exc
             (negative / 'refusal.txt').write_text(str(exc) + '\n')

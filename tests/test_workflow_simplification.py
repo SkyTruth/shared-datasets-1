@@ -17,7 +17,7 @@ def test_usage_has_one_native_queue_owning_caller_and_no_polling_cli():
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     assert 'dataset-usage-rollout' not in jobs
     assert jobs['dataset-usage']['uses'] == './.github/workflows/dataset-usage-deploy.yml'
-    assert all('dataset-usage' in jobs[name]['needs'] for name in ('ingestion-iam', 'scratch-cleanup-iam'))
+    assert all('dataset-usage' not in jobs[name]['needs'] for name in ('ingestion-iam', 'scratch-cleanup-iam'))
     result = subprocess.run([sys.executable, '-I', '-S', 'scripts/deployment_revision.py', '--help'],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

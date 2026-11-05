@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts import deployment_permissions as permissions, deployment_revision as revision
+from scripts import deployment_permissions as permissions
 from scripts import terraform_plan_allowlist as allowlist
 from workflow_helpers import load_workflow
 
@@ -49,13 +49,13 @@ def test_usage_two_runs_keep_target_ownership_until_exact_image_verification(tmp
                                     capture_output=True, text=True)
             assert result.returncode == 0, (trace, result.stderr)
     assert trace == ['A.apply', 'A.verify', 'B.apply', 'B.verify']
-    # Native dependencies wait for the queue-owning rollout, including its canary.
+    # IAM reads the existing bucket independently; the rollout keeps its queue.
     assert call['uses'] == './.github/workflows/dataset-usage-deploy.yml'
     assert 'dataset-usage-rollout' not in ci
     assert 'concurrency' not in call and 'runs-on' not in call
     for name in ('ingestion-iam', 'scratch-cleanup-iam'):
-        assert 'dataset-usage' in ci[name]['needs']
-        assert "needs.dataset-usage.result == 'success'" in ci[name]['if']
+        assert 'dataset-usage' not in ci[name]['needs']
+        assert 'needs.dataset-usage.result' not in ci[name]['if']
     # A foreign live image still fails: serialization must not weaken the guard.
     rejected = subprocess.run(['bash', '-euo', 'pipefail', '-c', guard], cwd=ROOT,
                               env={**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],

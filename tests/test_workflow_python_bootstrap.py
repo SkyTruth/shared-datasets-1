@@ -98,11 +98,13 @@ def isolated_python(tmp_path_factory):
     def interpreter(flags):
         destination = directory / str(len(list(directory.iterdir())))
         environment = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(destination), "UV_PYTHON": TOOLCHAIN["python"],
-                       "UV_CACHE_DIR": str(ROOT / ".uv-cache"), "UV_LINK_MODE": "copy"}
+                       "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", str(ROOT / ".uv-cache")), "UV_LINK_MODE": "copy"}
+        environment.pop("VIRTUAL_ENV", None)
         command = (["uv", "venv", "--no-project", "--python", TOOLCHAIN["python"], str(destination)] if flags is None else
-                   ["uv", "sync", "--frozen", "--offline", "--project", str(ROOT), *flags])
+                   ["uv", "sync", "--frozen", "--project", str(ROOT), *flags])
         result = subprocess.run(command, env=environment, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
+        assert "VIRTUAL_ENV" not in result.stderr, result.stderr
         return destination / "bin/python"
     return interpreter
 
@@ -197,3 +199,17 @@ PYTHON
     assert [(kind, source.strip()) for _, kind, source in commands] == [
         ("script", "scripts/ci_preflight.py"), ("inline", "import json; print(json.dumps({}))"),
         ("inline", "from scripts import ci_contract")]
+
+
+def test_bootstrap_handles_cold_cache_and_exported_virtualenv(tmp_path, tmp_path_factory, monkeypatch):
+    import shutil
+    source = tmp_path / 'clean-checkout'
+    source.mkdir()
+    for name in ('pyproject.toml', 'uv.lock', 'README.md'):
+        shutil.copyfile(ROOT / name, source / name)
+    monkeypatch.setitem(globals(), 'ROOT', source)
+    monkeypatch.setenv('VIRTUAL_ENV', '/home/runner/work/shared-datasets-1/.venv')
+    monkeypatch.setenv('UV_CACHE_DIR', str(source / '.uv-cache'))
+    interpreter = isolated_python.__wrapped__(tmp_path_factory)(("--only-group", "ci-plan"))
+    done = subprocess.run([str(interpreter), '-I', '-c', 'import yaml, hcl2'], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
