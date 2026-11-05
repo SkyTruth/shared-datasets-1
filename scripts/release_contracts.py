@@ -16,13 +16,13 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
-from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
+from scripts.deployment_revision import TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
+from scripts import terraform_target_contracts as terraform_targets
 
 DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -37,7 +37,7 @@ IMAGE_PROBE_WORKFLOWS = (
 
 
 def workflow(root, name):
-    return yaml.safe_load((root / ".github/workflows" / name).read_text())
+    return terraform_targets.workflow(root, name)
 
 
 def role_permissions(text, name):
@@ -113,6 +113,7 @@ def image_permission_contract(root):
 
 def iam_contract(root):
     errors = []
+    syncs = {name: item['workflow'] for name, item in terraform_targets.registry(root).items()}
     errors += cdn.bootstrap_definition_errors((root / 'terraform/envs/prod/shared_bucket_public.tf').read_text())
     cdn_workflow = workflow(root, 'pmtiles-cdn-sync.yml')
     errors += cdn.routing_contract_errors(root)
@@ -167,11 +168,12 @@ def iam_contract(root):
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")
+    errors += receipts.terraform_boundary(generic)
     required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
-    for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
+    for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "sync_name"):
         if not required[key].get("required"):
             errors.append(f"generic Terraform apply must require {key}")
-    for filename in sorted(set(TERRAFORM_SYNCS.values())):
+    for filename in sorted(set(syncs.values())):
         caller = workflow(root, filename)
         triggers = caller.get("on", caller.get(True))
         if set(triggers) != {"workflow_call", "workflow_dispatch"}:
@@ -182,7 +184,7 @@ def iam_contract(root):
                     errors.append(f"{filename}/{name}: unregistered inline deployment")
                 continue
             inputs = job["with"]
-            if inputs.get("caller_workflow") != filename or TERRAFORM_SYNCS.get(inputs["sync_name"]) != filename:
+            if inputs.get("caller_workflow") != filename or syncs.get(inputs["sync_name"]) != filename:
                 errors.append(f"{filename}/{name}: target does not belong to its trusted caller")
             if not inputs.get("readiness_target"):
                 errors.append(f"{filename}/{name}: live permission prerequisite is missing")

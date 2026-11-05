@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import ast
 import re
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from scripts.terraform_target_contracts import workflow as resolved_workflow
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
+    if (path.parents[2] / '.github/terraform-targets.json').is_file():
+        return resolved_workflow(path.parents[2], path.name)
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
@@ -62,6 +68,28 @@ TARGET_APPLY_WORKFLOW_USES = "./.github/workflows/prod-terraform-target-apply.ym
 
 def newline_values(value: Any) -> set[str]:
     return {line.strip() for line in str(value or "").splitlines() if line.strip()}
+
+
+def terraform_environment(directory: Path, inputs: dict) -> dict[str, str]:
+    """Run the real target producer and read its GitHub environment transport."""
+    root = Path(__file__).resolve().parents[1]
+    destination = directory / 'github-env'
+    destination.write_text('')
+    environment = {**os.environ, 'GITHUB_ENV': str(destination),
+                   'INPUT_TF_VARS': inputs.get('tf_vars', ''), 'DELETE_ONLY': 'false', 'BLOCK_DELETES': 'false'}
+    subprocess.run([sys.executable, str(root / 'scripts/terraform_target_contracts.py'),
+                    '--sync-name', inputs['sync_name'], '--workflow', inputs['caller_workflow']],
+                   check=True, env=environment, capture_output=True, text=True)
+    lines = iter(destination.read_text().splitlines())
+    for line in lines:
+        key, delimiter = line.split('<<', 1)
+        values = []
+        for value in lines:
+            if value == delimiter:
+                break
+            values.append(value)
+        environment[key] = '\n'.join(values)
+    return environment
 
 
 def assert_target_apply_caller(
@@ -118,7 +146,6 @@ def assert_target_apply_caller(
         testcase.assertEqual(job["needs"], expected_needs)
 
     testcase.assertEqual(inputs["sync_name"], sync_name)
-    testcase.assertEqual(inputs["refusal_prefix"], refusal_prefix)
     testcase.assertEqual(newline_values(inputs["targets"]), expected_targets)
     testcase.assertEqual(
         newline_values(inputs["allowed_exact"]),

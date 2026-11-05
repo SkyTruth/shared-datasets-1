@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import unittest
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+from scripts.terraform_target_contracts import registry
 from pathlib import Path
 
 from test_wdpa_monthly_deploy_workflow import shared_workflow
@@ -9,6 +16,7 @@ from workflow_helpers import (
     load_workflow,
     workflow_steps_by_name,
     workflow_triggers,
+    terraform_environment,
 )
 
 
@@ -22,88 +30,98 @@ MAIN_DEPLOYMENT_EVENT = "${{ github.ref == 'refs/heads/main' && (github.event_na
 
 
 
+def shared_steps():
+    return workflow_steps_by_name(load_workflow(REUSABLE), 'sync')
+
+
 class ReusableTargetApplyWorkflowTests(unittest.TestCase):
-    def setUp(self):
-        self.workflow = load_workflow(REUSABLE)
-        self.trigger = workflow_triggers(self.workflow)
-        self.job = self.workflow["jobs"]["sync"]
-        self.steps = workflow_steps_by_name(self.workflow, "sync")
-
     def test_only_callable_and_protected(self):
-        self.assertEqual(list(self.trigger), ["workflow_call"])
-        self.assertEqual(self.job["environment"], "shared-datasets-production")
-        self.assertEqual(
-            self.job["concurrency"],
-            {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
-        )
-        self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
-        self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])
-        self.assertIn("may only apply from main", self.steps["Validate main ref"]["run"])
-        self.assertIn(
-            "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER",
-            self.steps["Validate Terraform auth configuration"]["run"],
-        )
-        self.assertIn(
-            "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT",
-            self.steps["Validate Terraform auth configuration"]["run"],
-        )
-        self.assertIn(
-            "GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER",
-            self.workflow["env"]["TERRAFORM_WORKLOAD_IDENTITY_PROVIDER"],
-        )
-        self.assertIn("GCP_TERRAFORM_SERVICE_ACCOUNT", self.workflow["env"]["TERRAFORM_SERVICE_ACCOUNT"])
+        workflow = load_workflow(REUSABLE)
+        self.assertEqual(list(workflow_triggers(workflow)), ['workflow_call'])
+        job = workflow['jobs']['sync']
+        self.assertEqual(job['environment'], 'shared-datasets-production')
+        self.assertEqual(job['concurrency'], {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False})
+        self.assertEqual(workflow['env']['TERRAFORM_DIR'], 'terraform/envs/prod')
+        self.assertNotIn('terraform_dir', workflow_triggers(workflow)['workflow_call']['inputs'])
+        propagation = workflow['jobs']['propagation']
+        self.assertNotIn('concurrency', propagation)
+        self.assertNotIn('environment', propagation)
+        self.assertEqual(propagation['permissions'], {})
+        self.assertEqual([name for name, job in workflow['jobs'].items() if 'concurrency' in job], ['sync'])
+        self.assertEqual(job['needs'], 'prepare')
+        self.assertEqual(job['if'], "needs.prepare.outputs.proceed == 'true'")
+        self.assertNotIn('concurrency', workflow['jobs']['prepare'])
+        self.assertIn('Prepare tested Monitoring image and bot credential',
+                      workflow_steps_by_name(workflow, 'prepare'))
+        self.assertNotIn('Prepare tested Monitoring image and bot credential', shared_steps())
 
-    def test_every_mutation_requires_trusted_source_proof_and_a_record(self):
-        inputs = self.trigger["workflow_call"]["inputs"]
-        for key in ("caller_workflow", "executor_sha", "source_run_id", "source_run_attempt", "readiness_target"):
-            self.assertTrue(inputs[key]["required"], key)
-        names = list(self.steps)
-        self.assertEqual(self.steps["Check out trusted verifier"]["with"]["ref"], "${{ github.workflow_sha }}")
-        self.assertLess(names.index("Verify executor before candidate checkout"), names.index("Check out repository"))
-        self.assertLess(names.index("Verify tested main revision"), names.index("Authenticate to Google Cloud"))
-        self.assertLess(names.index("Claim tested deployment revision"), names.index("Terraform apply"))
-        self.assertNotIn("if", self.steps["Verify executor before candidate checkout"])
-        self.assertNotIn("if", self.steps["Verify tested main revision"])
-        claim = self.steps["Attest serialized deployment claim before mutation"]
-        self.assertEqual(claim["id"], "claim-receipt")
-        self.assertEqual(claim["with"]["receipt-path"], "${{ steps.revision.outputs.receipt_path }}")
-        self.assertLess(names.index("Claim tested deployment revision"), names.index("Attest serialized deployment claim before mutation"))
-        self.assertLess(names.index("Attest serialized deployment claim before mutation"), names.index("Terraform apply"))
-        self.assertEqual(self.steps["Terraform apply"]["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}")
-        self.assertIn('--workflow "$CALLER_WORKFLOW"', self.steps["Verify tested main revision"]["run"])
-        self.assertIn('--plan-scope "$TARGETS"', self.steps["Claim tested deployment revision"]["run"])
 
-    def test_terraform_dir_is_restricted_to_prod(self):
-        inputs = self.trigger["workflow_call"]["inputs"]
-        self.assertEqual(inputs["terraform_dir"]["default"], "terraform/envs/prod")
-        validate_run = self.steps["Validate Terraform directory"]["run"]
-        self.assertIn('"${TERRAFORM_DIR}" == *..*', validate_run)
-        self.assertIn("^terraform/envs/prod(/[A-Za-z0-9_.-]+)*$", validate_run)
-        self.assertIn("terraform_dir must stay under terraform/envs/prod", validate_run)
+@pytest.mark.parametrize('sync_name,item', list(registry().items()))
+def test_target_contract_reaches_actual_plan_and_allowlist_without_scope_drift(tmp_path, sync_name, item):
+    inputs = {'sync_name': sync_name, 'caller_workflow': item['workflow']}
+    environment = terraform_environment(tmp_path, inputs)
+    fake = tmp_path / 'terraform'
+    arguments = tmp_path / 'arguments.json'
+    fake.write_text(f'#!{sys.executable}\nimport json,sys\nfrom pathlib import Path\n'
+                    f'Path({str(arguments)!r}).write_text(json.dumps(sys.argv[1:]))\n')
+    fake.chmod(0o755)
+    environment.update(TERRAFORM_BIN=str(fake), GITHUB_WORKSPACE=str(REPO_ROOT),
+                       TERRAFORM_DIR='terraform/envs/prod', RUNNER_TEMP=str(tmp_path),
+                       PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'])
+    result = subprocess.run(['bash', '-c', shared_steps()['Terraform plan']['run']],
+                            env=environment, cwd=REPO_ROOT, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    values = json.loads(arguments.read_text())
+    assert [v.removeprefix('-target=') for v in values if v.startswith('-target=')] == item['resources']
+    assert '-refresh=true' in values
+    assert [v.removeprefix('-var=') for v in values if v.startswith('-var=')] == environment['TF_VARS'].splitlines()
+    plan_path = tmp_path / 'target-apply.tfplan.json'
+    own_actions = ['delete'] if item.get('delete_only') else ['create']
+    for address, accepted in [(r, True) for r in item['resources']] + [('google_storage_bucket.unowned', False)]:
+        plan_path.write_text(json.dumps({'resource_changes': [{'address': address, 'change': {'actions': own_actions}}]}))
+        guarded = subprocess.run(['bash', '-c', shared_steps()['Enforce resource-change allowlist']['run']],
+                                 env=environment, cwd=REPO_ROOT, text=True, capture_output=True)
+        assert (guarded.returncode == 0) is accepted, guarded.stdout + guarded.stderr
 
-    def test_plan_is_targeted_and_allowlist_enforced_before_apply(self):
-        plan_run = self.steps["Terraform plan"]["run"]
-        enforce_run = self.steps["Enforce resource-change allowlist"]["run"]
-        enforce_env = self.steps["Enforce resource-change allowlist"]["env"]
-        apply_run = self.steps["Terraform apply"]["run"]
-        step_names = [step["name"] for step in self.job["steps"] if "name" in step]
 
-        self.assertIn("-refresh=true", plan_run)
-        self.assertNotIn("-refresh=false", plan_run)
-        self.assertIn('plan_args+=("-target=${target}")', plan_run)
-        self.assertIn('plan_args+=("-var=${tf_var}")', plan_run)
-        self.assertIn("scripts/terraform_plan_allowlist.py", enforce_run)
-        self.assertIn("--allowed-exact", enforce_run)
-        self.assertEqual(enforce_env["ALLOWED_EXACT"], "${{ inputs.allowed_exact }}")
-        self.assertIn('terraform_retry.sh" -chdir="${TERRAFORM_DIR}" apply -input=false', apply_run)
-        self.assertLess(step_names.index("Terraform plan"), step_names.index("Enforce resource-change allowlist"))
-        self.assertLess(step_names.index("Enforce resource-change allowlist"), step_names.index("Terraform apply"))
+@pytest.mark.parametrize('sync,workflow', [('unknown', 'artifact-registry-iam-sync.yml'),
+                                         ('Preview Terraform IAM sync', 'artifact-registry-iam-sync.yml')])
+def test_unregistered_or_foreign_target_fails_before_environment_transport(tmp_path, sync, workflow):
+    destination = tmp_path / 'env'
+    result = subprocess.run([sys.executable, str(REPO_ROOT / 'scripts/terraform_target_contracts.py'),
+                             '--sync-name', sync, '--workflow', workflow],
+                            env={**os.environ, 'GITHUB_ENV': str(destination)}, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert not destination.exists()
 
-    def test_optional_post_apply_wait(self):
-        wait_step = self.steps["Wait after apply"]
-        self.assertIn("inputs.post_apply_wait_seconds > 0", wait_step["if"])
-        self.assertIn("steps.revision.outputs.proceed == 'true'", wait_step["if"])
-        self.assertIn('sleep "${WAIT_SECONDS}"', wait_step["run"])
+
+@pytest.mark.parametrize('mutation', ['none', 'empty', 'missing', 'extra', 'newline'])
+def test_monitoring_job_output_transport_preserves_complete_immutable_identities(tmp_path, mutation):
+    values = {'monitoring_slack_image': 'example.invalid/image@sha256:' + 'a' * 64,
+              'monitoring_slack_channel_id': 'C12345678', 'monitoring_slack_token_version': '12'}
+    if mutation == 'empty':
+        values = {}
+    elif mutation == 'missing':
+        del values['monitoring_slack_image']
+    elif mutation == 'extra':
+        values['unexpected'] = 'forbidden'
+    elif mutation == 'newline':
+        values['monitoring_slack_token_version'] = '12\nTF_VAR_injected=true'
+    destination = tmp_path / 'env'
+    script = shared_steps()['Load prepared Monitoring variables']['run']
+    result = subprocess.run(['bash', '-c', script], cwd=REPO_ROOT, text=True, capture_output=True,
+                            env={**os.environ, 'MONITORING_VARS': json.dumps(values), 'GITHUB_ENV': str(destination),
+                                 'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH']})
+    assert (result.returncode == 0) is (mutation == 'none'), result.stderr
+    if mutation == 'none':
+        assert dict(line.removeprefix('TF_VAR_').split('=', 1) for line in destination.read_text().splitlines()) == values
+
+
+def test_caller_scope_environment_cannot_override_the_registered_allowlist(tmp_path, monkeypatch):
+    monkeypatch.setenv('ALLOWED_EXACT', 'google_storage_bucket.unowned')
+    inputs = {'sync_name': 'Preview Terraform IAM sync', 'caller_workflow': 'preview-terraform-iam-sync.yml'}
+    environment = terraform_environment(tmp_path, inputs)
+    assert 'google_storage_bucket.unowned' not in environment['ALLOWED_EXACT']
 
 
 class TargetApplyCallerTests(unittest.TestCase):

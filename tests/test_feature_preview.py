@@ -268,7 +268,6 @@ class FeaturePreviewTests(unittest.TestCase):
 
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
-        workflow = ARTIFACT_REGISTRY_IAM_WORKFLOW.read_text()
         custom_role = re.search(
             r'resource "google_project_iam_custom_role" "artifact_registry_iam_policy_manager" \{(?P<body>.*?)\n\}',
             artifact_registry_tf,
@@ -298,30 +297,10 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("roles/artifactregistry.writer", artifact_registry_tf)
         self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
         self.assertIn("google_project_iam_member.github_actions_artifact_registry_iam_policy_manager", artifact_registry_tf)
-        self.assertIn("Artifact Registry IAM sync", workflow)
-        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
-        self.assertIn("post_apply_wait_seconds: 30", workflow)
-        self.assertIn("allowed_exact", workflow)
-        self.assertIn(
-            "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
-            workflow,
-        )
-        self.assertIn("Refusing automatic Artifact Registry IAM bootstrap", workflow)
-        self.assertIn("Refusing automatic Artifact Registry IAM writer sync", workflow)
         self.assertNotIn("roles/artifactregistry.admin", artifact_registry_tf)
-        self.assertNotIn("roles/artifactregistry.admin", workflow)
 
     def test_preview_terraform_iam_sync_uses_custom_role_and_allowlist(self):
         preview_terraform_tf = (PROD_TF / "preview_terraform_iam.tf").read_text()
-        workflow = PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text()
 
         self.assertIn("import {", preview_terraform_tf)
         self.assertIn("projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform", preview_terraform_tf)
@@ -354,41 +333,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("resourcemanager.projects.setIamPolicy", preview_terraform_tf)
         self.assertNotIn("roles/storage.admin", preview_terraform_tf)
         self.assertNotIn("roles/editor", preview_terraform_tf)
-        self.assertIn("Preview Terraform IAM sync", workflow)
-        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
-        self.assertIn("workflow_call:", workflow)
-        self.assertIn("source_run_attempt:", workflow)
-        self.assertIn("needs: bootstrap", workflow)
-        self.assertIn("caller_workflow: preview-terraform-iam-sync.yml", workflow)
-        self.assertIn("allowed_exact", workflow)
-        self.assertIn(
-            "google_project_iam_custom_role.preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "module.feature_preview_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "module.feature_preview_loader_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "google_project_iam_member.github_actions_preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "google_service_account_iam_member.feature_preview_loader_github_wif",
-            workflow,
-        )
-        self.assertIn(
-            "google_service_account_iam_member.feature_preview_service_self_sign_blob",
-            workflow,
-        )
-        self.assertIn("block_deletes: true", workflow)
-        self.assertIn("Refusing automatic preview Terraform IAM sync", workflow)
-        self.assertNotIn("roles/storage.admin", workflow)
-        self.assertNotIn("roles/editor", workflow)
 
 
 if __name__ == "__main__":
@@ -402,15 +346,12 @@ def test_published_reader_is_scoped_and_owned_by_protected_iam_sync():
     assert 'role   = "roles/storage.objectViewer"' in resource
     assert 'expression  = local.catalog_viewer_object_viewer_condition' in resource
     assert 'bucket = var.bucket_name' in resource
-    workflow = (root / ".github/workflows/preview-terraform-iam-sync.yml").read_text()
-    assert workflow.count("google_storage_bucket_iam_member.feature_preview_published_reader") == 2
     preview = (root / "terraform/envs/preview/catalog_viewer.tf").read_text()
     assert 'name  = "CATALOG_VIEWER_INCLUDE_PUBLISHED"' in preview
 
 
 def test_published_reader_job_checks_bucket_authority_and_preserves_bootstrap_order():
-    import yaml
-    job = yaml.safe_load(PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text())["jobs"]["published-reader"]
+    job = load_workflow(PREVIEW_TERRAFORM_IAM_WORKFLOW)["jobs"]["published-reader"]
     assert job["needs"] == "sync"
     assert job["with"]["readiness_target"] == "bucket-iam"
     assert job["with"]["block_deletes"] is True

@@ -1,0 +1,285 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "Artifact Registry IAM sync": {
+      "workflow": "artifact-registry-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
+        "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager"
+      ],
+      "post_apply_wait_seconds": 30
+    },
+    "Artifact Registry writer binding sync": {
+      "workflow": "artifact-registry-iam-sync.yml",
+      "readiness_target": "artifact-registry",
+      "resources": [
+        "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer"
+      ]
+    },
+    "Monitoring alert policy IAM bootstrap": {
+      "workflow": "cron-alert-policy-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_service.monitoring_slack_pubsub",
+        "google_project_iam_custom_role.monitoring_alert_policy_manager",
+        "google_project_iam_member.github_actions_monitoring_alert_policy_manager",
+        "google_project_iam_custom_role.monitoring_incident_reader"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30
+    },
+    "Monitoring Slack transport resources": {
+      "workflow": "cron-alert-policy-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_service_account.monitoring_slack",
+        "google_service_account.monitoring_slack_push",
+        "google_service_account_iam_member.monitoring_slack_deployer[\"runtime\"]",
+        "google_service_account_iam_member.monitoring_slack_deployer[\"push\"]",
+        "google_storage_bucket.monitoring_slack",
+        "google_storage_bucket_iam_member.monitoring_slack_state",
+        "google_storage_bucket_iam_member.monitoring_slack_recovery",
+        "google_secret_manager_secret.monitoring_slack",
+        "google_project_iam_member.monitoring_slack_token",
+        "google_project_iam_member.monitoring_slack_token_writer",
+        "google_project_iam_member.monitoring_slack_token_version_writer",
+        "google_pubsub_topic.monitoring_slack",
+        "google_pubsub_topic.identity_decision_events",
+        "google_project_iam_member.monitoring_slack_incident_reader",
+        "google_pubsub_topic_iam_member.identity_decision_publisher[\"wdpa\"]",
+        "google_pubsub_topic_iam_member.identity_decision_publisher[\"sea_ice\"]",
+        "google_pubsub_topic_iam_member.identity_decision_publisher[\"eamlis\"]",
+        "google_pubsub_topic_iam_member.identity_decision_publisher[\"mpatlas\"]"
+      ],
+      "block_deletes": true,
+      "image_placeholder": "unused-by-monitoring-slack-resources"
+    },
+    "Cron alert policy sync": {
+      "workflow": "cron-alert-policy-sync.yml",
+      "readiness_target": "monitoring-alerts",
+      "resources": [
+        "google_cloud_run_v2_service.monitoring_slack",
+        "google_cloud_run_v2_service_iam_member.monitoring_slack_push",
+        "google_pubsub_subscription.monitoring_slack",
+        "google_pubsub_subscription.identity_decision_events",
+        "google_monitoring_notification_channel.monitoring_slack",
+        "google_pubsub_topic_iam_member.monitoring_slack_publisher",
+        "google_monitoring_alert_policy.dataset_object_deleted",
+        "terraform_data.cron_alert_channel_configured",
+        "google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure",
+        "google_monitoring_alert_policy.release_awaiting_identity_decision",
+        "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",
+        "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal"
+      ],
+      "block_deletes": true,
+      "prepare_monitoring_slack": true
+    },
+    "Dataset usage deploy IAM bootstrap": {
+      "workflow": "dataset-usage-deploy.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.dataset_usage_deployer",
+        "google_project_iam_member.github_actions_dataset_usage_deployer"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30,
+      "image_placeholder": "unused-by-dataset-usage-bootstrap"
+    },
+    "Preview Terraform IAM bootstrap": {
+      "workflow": "preview-terraform-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.preview_terraform",
+        "google_project_iam_member.github_actions_preview_terraform"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30
+    },
+    "Preview Terraform IAM sync": {
+      "workflow": "preview-terraform-iam-sync.yml",
+      "readiness_target": "preview-service-account-iam",
+      "resources": [
+        "module.feature_preview_service_account.google_service_account.this",
+        "module.feature_preview_loader_service_account.google_service_account.this",
+        "google_service_account_iam_member.feature_preview_loader_github_wif",
+        "google_service_account_iam_member.feature_preview_service_self_sign_blob"
+      ],
+      "block_deletes": true
+    },
+    "Preview published dataset reader": {
+      "workflow": "preview-terraform-iam-sync.yml",
+      "readiness_target": "bucket-iam",
+      "resources": [
+        "google_storage_bucket_iam_member.feature_preview_published_reader"
+      ],
+      "block_deletes": true
+    },
+    "Production Terraform state reconciliation": {
+      "workflow": "prod-terraform-state-reconcile.yml",
+      "readiness_target": "terraform-state-read",
+      "resources": [],
+      "state_only": true
+    },
+    "Translation notice secret IAM bootstrap": {
+      "workflow": "scheduled-ingestion-deploy-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.translation_notice_iam_manager",
+        "google_project_iam_member.github_actions_translation_notice_iam_manager",
+        "google_project_iam_custom_role.eamlis_quality_iam_manager",
+        "google_project_iam_member.github_actions_eamlis_quality_iam_manager"
+      ],
+      "post_apply_wait_seconds": 30
+    },
+    "Scheduled ingestion deploy IAM sync": {
+      "workflow": "scheduled-ingestion-deploy-iam-sync.yml",
+      "readiness_target": "ingestion-iam",
+      "resources": [
+        "google_project_iam_custom_role.scheduled_ingestion_deployer",
+        "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+        "module.wdpa_builder_service_account.google_service_account.this",
+        "google_project_iam_custom_role.wdpa_monthly_build_stager",
+        "google_storage_bucket_iam_member.wdpa_monthly_build_stager",
+        "google_storage_bucket_iam_member.wdpa_automatic_build_stager",
+        "google_storage_bucket_iam_member.wdpa_monthly_build_inputs",
+        "google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader",
+        "google_service_account_iam_member.wdpa_builder_deployer",
+        "google_storage_bucket_iam_member.wdpa_reset_translation_reader",
+        "google_secret_manager_secret_iam_member.translation_notice[\"wdpa\"]",
+        "google_secret_manager_secret_iam_member.translation_notice[\"eamlis\"]",
+        "google_storage_bucket_iam_member.translation_debt_writer[\"wdpa\"]",
+        "google_storage_bucket_iam_member.translation_debt_writer[\"eamlis\"]",
+        "google_storage_bucket_iam_member.publisher_translation_debt_writer",
+        "google_storage_bucket_iam_member.eamlis_job_object_user",
+        "google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader",
+        "module.mpatlas_job_service_account.google_service_account.this",
+        "module.mpatlas_scheduler_service_account.google_service_account.this",
+        "google_storage_bucket_iam_member.mpatlas_job_object_user",
+        "google_service_account_iam_member.mpatlas_deployer_act_as[\"job\"]",
+        "google_service_account_iam_member.mpatlas_deployer_act_as[\"scheduler\"]"
+      ]
+    },
+    "Scratch cleanup IAM sync": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "bucket-iam",
+      "resources": [
+        "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
+        "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user"
+      ]
+    },
+    "WDPA validation retirement IAM bootstrap": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.wdpa_validation_retirement",
+        "google_project_iam_member.github_actions_wdpa_validation_retirement"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30,
+      "image_placeholder": "unused-by-wdpa-validation-retirement"
+    },
+    "WDPA validation retirement": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "bucket-iam",
+      "resources": [
+        "google_storage_bucket_iam_member.wdpa_build_stager",
+        "google_storage_bucket_iam_member.wdpa_build_folder_stager",
+        "google_project_iam_custom_role.wdpa_build_stager",
+        "google_service_account_iam_member.wdpa_validation_deployer",
+        "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
+        "module.wdpa_validation_service_account.google_service_account.this"
+      ],
+      "image_placeholder": "unused-by-wdpa-validation-retirement"
+    },
+    "Operational retirement IAM bootstrap": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.operational_retirement"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30,
+      "image_placeholder": "unused-by-operational-retirement",
+      "tf_vars": [
+        "operational_retirement_authority_enabled=false"
+      ]
+    },
+    "Operational retirement authority grant": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_member.github_actions_operational_retirement[0]"
+      ],
+      "block_deletes": true,
+      "post_apply_wait_seconds": 30,
+      "image_placeholder": "unused-by-operational-retirement",
+      "tf_vars": [
+        "operational_retirement_authority_enabled=true"
+      ]
+    },
+    "Operational infrastructure retirement": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_iam_workload_identity_pool_provider.operational_observer",
+        "google_logging_log_view.operational_observations[\"_Default-run-activity\"]",
+        "google_logging_log_view.operational_observations[\"_Default-run-data-access\"]",
+        "google_logging_log_view.operational_observations[\"_Default-run-stderr\"]",
+        "google_logging_log_view.operational_observations[\"_Default-scheduler-executions\"]",
+        "google_logging_log_view.operational_observations[\"_Required-run-activity\"]",
+        "google_logging_log_view.operational_observations[\"_Required-run-data-access\"]",
+        "google_logging_log_view.operational_observations[\"_Required-run-stderr\"]",
+        "google_logging_log_view.operational_observations[\"_Required-scheduler-executions\"]",
+        "google_monitoring_alert_policy.dataset_schema_changed",
+        "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
+        "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
+        "google_project_iam_custom_role.operational_log_view_manager",
+        "google_project_iam_custom_role.operational_metric_descriptor_manager",
+        "google_project_iam_custom_role.operational_observer_reader",
+        "google_project_iam_custom_role.operational_observer_receipts",
+        "google_project_iam_custom_role.operational_provider_creator",
+        "google_project_iam_custom_role.operational_provider_reader",
+        "google_project_iam_custom_role.readonly_provider_updater",
+        "module.operational_observer_service_account.google_service_account.this",
+        "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+        "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+        "google_monitoring_alert_policy.wdpa_execution_observer_unhealthy",
+        "google_project_iam_custom_role.wdpa_execution_reader",
+        "google_project_iam_custom_role.wdpa_observer_bootstrap",
+        "google_service_account_iam_member.wdpa_observer_deployer",
+        "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+        "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+        "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+        "module.wdpa_observer_service_account.google_service_account.this"
+      ],
+      "delete_only": true,
+      "image_placeholder": "unused-by-operational-retirement",
+      "tf_vars": [
+        "operational_retirement_authority_enabled=true"
+      ]
+    },
+    "Operational retirement authority revocation": {
+      "workflow": "scratch-cleanup-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_member.github_actions_operational_retirement[0]"
+      ],
+      "delete_only": true,
+      "image_placeholder": "unused-by-operational-retirement",
+      "tf_vars": [
+        "operational_retirement_authority_enabled=false"
+      ]
+    },
+    "Production Terraform state read IAM bootstrap": {
+      "workflow": "terraform-state-read-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_project_iam_custom_role.terraform_state_reader",
+        "google_project_iam_member.github_actions_terraform_state_reader"
+      ],
+      "block_deletes": true,
+      "image_placeholder": "unused-by-state-read-iam-sync"
+    }
+  }
+}

@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from scripts.terraform_plan_permissions import plan_checks
-from workflow_helpers import load_workflow
+from workflow_helpers import load_workflow, terraform_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/terraform_targets/operational-retirement.json'
@@ -45,7 +45,7 @@ def guard(tmp_path, plan):
     shell = next(step['run'] for step in steps if step.get('name') == 'Enforce resource-change allowlist')
     shell = shell.replace('${{ inputs.delete_only }}', str(inputs['delete_only']).lower())
     (tmp_path / 'target-apply.tfplan.json').write_text(json.dumps(plan))
-    environment = {**os.environ, 'RUNNER_TEMP': str(tmp_path), 'ALLOWED_EXACT': inputs['allowed_exact'],
+    environment = {**terraform_environment(tmp_path, inputs), 'RUNNER_TEMP': str(tmp_path), 'ALLOWED_EXACT': inputs['allowed_exact'],
                    'ALLOWED_PATTERNS': inputs.get('allowed_patterns', ''), 'BLOCK_DELETES': 'false',
                    'REFUSAL_PREFIX': inputs['refusal_prefix'],
                    'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH']}

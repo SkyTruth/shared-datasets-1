@@ -38,26 +38,8 @@ TARGET_WORKFLOWS = {
     "catalog-viewer": "catalog-viewer-deploy.yml",
 }
 TERRAFORM_SYNCS = {
-    "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
-    "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
-    "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
-    "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
-    "Artifact Registry writer binding sync": "artifact-registry-iam-sync.yml",
-    "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
-    "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
-    "Preview published dataset reader": "preview-terraform-iam-sync.yml",
-    "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
-    "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
-    "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement authority grant": "scratch-cleanup-iam-sync.yml",
-    "Operational infrastructure retirement": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement authority revocation": "scratch-cleanup-iam-sync.yml",
-    "Production Terraform state reconciliation": "prod-terraform-state-reconcile.yml",
-    "Production Terraform state read IAM bootstrap": "terraform-state-read-iam-sync.yml",
-    "Monitoring Slack transport resources": "cron-alert-policy-sync.yml",
-    "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
-    "Cron alert policy sync": "cron-alert-policy-sync.yml",
+    name: target["workflow"]
+    for name, target in json.loads((Path(__file__).resolve().parents[1] / ".github/terraform-targets.json").read_text())["targets"].items()
 }
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow

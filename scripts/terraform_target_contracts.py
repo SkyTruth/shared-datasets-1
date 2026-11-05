@@ -18,8 +18,6 @@ import subprocess
 import sys
 import tempfile
 
-import yaml
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
 
@@ -30,6 +28,54 @@ DATA = re.compile(r'^(?:module\.[A-Za-z0-9_-]+\.)*data\.')
 QUOTED = r'"(?:[^"\\]|\\.)+"'
 NODE = re.compile(r'^\s*(' + QUOTED + r')\s+\[label=')
 EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
+
+
+def registry(root: Path = ROOT) -> dict[str, dict]:
+    """One reviewed resource scope per stable, historically signed sync name."""
+    value = json.loads((root / '.github/terraform-targets.json').read_text())
+    if set(value) != {'schema_version', 'targets'} or value['schema_version'] != 1:
+        raise ValueError('Unsupported Terraform target registry')
+    return value['targets']
+
+
+def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = '') -> dict:
+    item = registry(root)[sync_name]
+    if item['workflow'] != workflow:
+        raise ValueError('Terraform target does not belong to its trusted caller')
+    resources = item['resources']
+    if (set(item) - {'workflow', 'readiness_target', 'resources', 'block_deletes', 'delete_only',
+                    'prepare_monitoring_slack', 'post_apply_wait_seconds', 'state_only', 'tf_vars', 'image_placeholder'}
+            or not isinstance(resources, list) or len(resources) != len(set(resources))
+            or any(type(item[key]) is not bool for key in ('block_deletes', 'delete_only', 'prepare_monitoring_slack', 'state_only') if key in item)
+            or bool(resources) == bool(item.get('state_only'))
+            or item.get('block_deletes') and item.get('delete_only')):
+        raise ValueError('Terraform targets require an exact mutation allowlist or a state-only scope')
+    for row in resources:
+        address(row)
+    if item.get('state_only') and item.get('prepare_monitoring_slack'):
+        raise ValueError('state-only reconciliation cannot prepare external mutations')
+    result = {key: value for key, value in item.items() if key not in {
+        'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars',
+    }}
+    placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
+    variables = [*item.get('tf_vars', []), *(name + '_image=' + placeholder for name in ('wdpa_monthly', 'sea_ice_daily', 'eamlis_monthly'))]
+    result.update(caller_workflow=workflow, sync_name=sync_name, targets='\n'.join(resources),
+                  allowed_exact='\n'.join(resources), refusal_prefix='Refusing ' + sync_name,
+                  tf_vars=tf_vars if item.get('state_only') else '\n'.join(variables))
+    return result
+
+
+def export(sync_name: str, workflow: str, *, tf_vars: str = '') -> None:
+    """Serialize reviewed settings once for the workflow's plan/guard consumers."""
+    values = resolve(sync_name, workflow, tf_vars=tf_vars)
+    with Path(os.environ['GITHUB_ENV']).open('a') as stream:
+        for key, value in values.items():
+            if isinstance(value, bool):
+                value = str(value).lower()
+            delimiter = 'TERRAFORM_' + hashlib.sha256(str(value).encode()).hexdigest()
+            if delimiter in str(value).splitlines():
+                raise ValueError('Invalid Terraform environment delimiter')
+            stream.write(f'{key.upper()}<<{delimiter}\n{value}\n{delimiter}\n')
 
 
 def address(value: str) -> str:
@@ -80,13 +126,25 @@ def closure(graph: dict[str, set[str]], targets: set[str]) -> dict[str, list[str
     return paths
 
 
+def workflow(root: Path, filename: str) -> dict:
+    """Resolve the same reviewed settings for selection and offline contracts."""
+    import yaml
+
+    value = yaml.safe_load((root / '.github/workflows' / filename).read_text())
+    for job in value['jobs'].values():
+        if job.get('uses') == CALLER:
+            inputs = job['with']
+            job['with'] = {**inputs, **resolve(inputs['sync_name'], inputs['caller_workflow'], root,
+                                            tf_vars=inputs.get('tf_vars', ''))}
+    return value
+
+
 def callers(root: Path) -> dict[str, dict]:
     jobs = {}
     for path in sorted((root / '.github/workflows').iterdir()):
         if not path.is_file() or path.suffix not in {'.yml', '.yaml'}:
             continue
-        workflow = yaml.safe_load(path.read_text())
-        for name, job in workflow['jobs'].items():
+        for name, job in workflow(root, path.name)['jobs'].items():
             if job.get('uses') == CALLER:
                 jobs[path.name + '/' + name] = job
     if not jobs:
@@ -234,8 +292,15 @@ def verify(root: Path, output: Path, *, executable='terraform', providers: Path 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--sync-name')
+    parser.add_argument('--workflow')
     args = parser.parse_args()
     try:
+        if args.sync_name or args.workflow:
+            if not args.sync_name or not args.workflow:
+                raise ValueError('Both registered sync name and caller workflow are required')
+            export(args.sync_name, args.workflow, tf_vars=os.environ.get('INPUT_TF_VARS', ''))
+            return
         if args.output:
             evidence = verify(ROOT, args.output)
         else:
@@ -244,7 +309,7 @@ def main():
             with tempfile.TemporaryDirectory(prefix='terraform-targets-', dir=workdir) as directory:
                 evidence = verify(ROOT, Path(directory))
         print(f"Terraform target ownership passed for {len(evidence['jobs'])} narrow jobs; both historical activation controls were rejected.")
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+    except (KeyError, ValueError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, str(exc) + '\n')
 
 

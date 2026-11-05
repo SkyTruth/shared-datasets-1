@@ -12,7 +12,7 @@ import pytest
 
 from scripts.deployment_revision import TERRAFORM_SYNCS
 from scripts.terraform_plan_permissions import plan_checks
-from workflow_helpers import load_workflow
+from workflow_helpers import load_workflow, terraform_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/terraform_targets/state-only-outputs.json'
@@ -31,7 +31,7 @@ def guard(directory, plan):
     inputs = caller()
     (directory / 'target-apply.tfplan.json').write_text(json.dumps(plan))
     shell = step('Enforce resource-change allowlist').replace('${{ inputs.delete_only }}', 'false')
-    environment = {**os.environ, 'RUNNER_TEMP': str(directory), 'ALLOWED_EXACT': inputs['allowed_exact'],
+    environment = {**terraform_environment(directory, inputs), 'RUNNER_TEMP': str(directory), 'ALLOWED_EXACT': inputs['allowed_exact'],
                    'ALLOWED_PATTERNS': '', 'BLOCK_DELETES': 'false', 'REFUSAL_PREFIX': inputs['refusal_prefix'],
                    'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH']}
     return subprocess.run(['bash', '-c', shell], cwd=ROOT, env=environment, text=True, capture_output=True)
