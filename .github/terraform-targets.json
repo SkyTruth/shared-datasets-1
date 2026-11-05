@@ -434,22 +434,25 @@
     "eamlis-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required."
   },
   "selection_exceptions": {
-    ".github/actions/deployment-bootstrap/approval.py": {
-      "kind": "boundary",
-      "reason": "Validates owner acceptance before candidate checkout; imported dataset policy does not produce deployment content"
-    },
-    "scripts/deployment_emission.py": {
-      "kind": "boundary",
-      "reason": "Signs and verifies deployment receipts; its imported policy does not produce deployment content"
-    },
+    ".github/actions/deployment-bootstrap/approval.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "scripts/deployment_emission.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
     "scripts/deployment_permissions.py": {"kind": "exclude", "reason": "Authority probes change CI evidence, never desired deployment content"},
-    "scripts/deployment_revision.py": {"kind": "boundary", "reason": "Signed execution admission; never a deployment content producer"},
-    "scripts/tested_image_authorization.py": {"kind": "boundary", "reason": "Checks retained image evidence; does not produce image bytes"},
-    "scripts/install_deployment_verifier.py": {"kind": "boundary", "reason": "Installs the pinned historical receipt verifier"},
-    "scripts/terraform_plan_allowlist.py": {"kind": "boundary", "reason": "Validates registered saved plans; no deployment content"},
-    "scripts/terraform_target_contracts.py": {"kind": "boundary", "reason": "Exports the scopes already consumed below"},
-    "scripts/ingestion_targets.py": {"kind": "boundary", "reason": "Exports the target policy already consumed below"},
-    "scripts/ingestion_verification.py": {"kind": "boundary", "reason": "Checks a published release after deployment"},
+    "scripts/deployment_revision.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "scripts/tested_image_authorization.py": {"kind": "exclude", "reason": "Retained-image admission only; exercise ingestion, viewer and Monitoring image consumers",
+      "deployments": {"sea_ice": "Ingestion canary", "catalog_viewer": "Viewer canary", "cron_alert_policy": "Monitoring image canary"}},
+    "scripts/install_deployment_verifier.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "scripts/terraform_plan_allowlist.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "scripts/terraform_target_contracts.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "scripts/ingestion_targets.py": {"kind": "boundary", "reason": "Defines runtime policy for all ingestion consumers",
+      "deployments": {"mpatlas": "Policy consumer", "eamlis": "Policy consumer", "wdpa": "Policy consumer", "sea_ice": "Ingestion canary", "dataset_usage": "Policy consumer"}},
+    "scripts/ingestion_verification.py": {"kind": "exclude", "reason": "Checks a published release after deployment",
+      "deployments": {"sea_ice": "Ingestion canary"}},
     "scripts/publication_rollout_gate.py": {"kind": "boundary", "reason": "Checks publication readiness; its source imports do not change the deployed image"},
     "scripts/dataset_usage_deploy.py": {"kind": "boundary", "reason": "Validates the registered telemetry scope; image COPY owns runtime dependencies"},
     "scripts/cdn_plan_readiness.py": {"kind": "boundary", "reason": "Checks tested image prerequisites without producing CDN resources"},
@@ -474,6 +477,26 @@
       "deployments": {
         "artifact_registry_iam": "Terraform locals consume the registered workflow identity inventory for exact WIF bindings"
       }
-    }
+    },
+    "scripts/tested_image_bundle.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/actions/deployment-auth/action.yml": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/actions/deployment-bootstrap/action.yml": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/actions/deployment-receipt/action.yml": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/terraform-targets.json": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    "terraform/envs/prod/variables.tf": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/workflows/ingestion-deploy.yml": {"kind": "exclude", "reason": "Shared rollout machinery; sea ice exercises the daily canary and scheduler-resume hook",
+      "deployments": {"sea_ice": "Ingestion canary"}},
+    ".github/actions/deployment-bootstrap/restore.py": {"kind": "exclude", "reason": "Shared executor machinery; exercise representative protected paths",
+      "deployments": {"sea_ice": "Ingestion canary", "pmtiles_cdn": "CDN canary", "catalog_viewer": "Viewer canary", "artifact_registry_iam": "Terraform canary"}},
+    ".github/workflows/prod-terraform-target-apply.yml": {"kind": "exclude", "reason": "Shared Terraform executor; exercise the Artifact Registry IAM caller",
+      "deployments": {"artifact_registry_iam": "Terraform canary"}},
+    ".github/actions/deployment-bootstrap/terraform/action.yml": {"kind": "exclude", "reason": "Shared Terraform executor; exercise the Artifact Registry IAM caller",
+      "deployments": {"artifact_registry_iam": "Terraform canary"}}
   }
 }

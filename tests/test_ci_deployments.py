@@ -1,6 +1,7 @@
 import ast
 import json
 import re
+import shutil
 import subprocess
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -15,7 +16,7 @@ from workflow_helpers import load_workflow, workflow_triggers, workflow_steps_by
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('path', ['.github/workflows/ingestion-deploy.yml', 'scripts/ingestion_targets.py', 'scripts/ingestion_verification.py'])
+@pytest.mark.parametrize('path', ['scripts/ingestion_targets.py'])
 def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_holds(path):
     paths = [path]
     targets = {"mpatlas", "eamlis", "wdpa", "sea_ice", "dataset_usage"}
@@ -27,20 +28,86 @@ def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_hol
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"} <= set(resolve_selection(paths)["production_image_targets"])
 
 
-@pytest.mark.parametrize('path', ['.github/terraform-targets.json', 'scripts/terraform_target_contracts.py'])
-def test_shared_terraform_contract_selects_automatic_consumers_only(path):
-    assert set(select_deployments([path])) == {
-        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
-        'cron_alert_policy', 'ingestion_iam', 'dataset_usage', 'catalog_viewer', 'pmtiles_cdn',
-        'mpatlas', 'eamlis', 'wdpa', 'sea_ice',
-    }
+@pytest.mark.parametrize('path,expected', [
+    *[(path, {'sea_ice', 'artifact_registry_iam', 'catalog_viewer', 'pmtiles_cdn'}) for path in (
+        'scripts/deployment_revision.py', 'scripts/deployment_emission.py', 'scripts/tested_image_bundle.py',
+        '.github/actions/deployment-auth/action.yml', '.github/actions/deployment-bootstrap/action.yml',
+        '.github/actions/deployment-bootstrap/approval.py', '.github/actions/deployment-receipt/action.yml',
+        '.github/terraform-targets.json', 'terraform/envs/prod/variables.tf', 'scripts/terraform_target_contracts.py',
+        'scripts/terraform_plan_allowlist.py', '.github/actions/deployment-bootstrap/restore.py',
+        'scripts/install_deployment_verifier.py')],
+    ('scripts/tested_image_authorization.py', {'sea_ice', 'catalog_viewer', 'cron_alert_policy'}),
+    ('.github/workflows/ingestion-deploy.yml', {'sea_ice'}),
+    ('scripts/ingestion_verification.py', {'sea_ice'}),
+    ('.github/workflows/prod-terraform-target-apply.yml', {'artifact_registry_iam'}),
+    ('.github/actions/deployment-bootstrap/terraform/action.yml', {'artifact_registry_iam'}),
+])
+def test_executor_machinery_selects_one_representative_per_shared_executor(path, expected):
+    plan = resolve_selection([path])
+    assert set(plan['deployments']) == expected
+    assert ALWAYS <= set(plan['suites'])
+    if 'sea_ice' in expected:
+        assert 'production-images' in plan['suites']
+        assert 'sea-ice-daily' in plan['production_image_targets']
+    assert 'sea_ice' not in select_deployments([path], ingestion_holds=('sea_ice',))
 
 
-def test_shared_bootstrap_selects_all_callers():
-    assert set(select_deployments(['.github/actions/deployment-bootstrap/action.yml'])) == {
-        'mpatlas', 'eamlis', 'wdpa', 'sea_ice', 'dataset_usage', 'catalog_viewer', 'pmtiles_cdn',
-        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam', 'cron_alert_policy', 'ingestion_iam',
-    }
+@pytest.mark.parametrize('target,path', [
+    ('mpatlas', 'terraform/envs/prod/mpatlas_monthly.tf'),
+    ('eamlis', 'terraform/envs/prod/eamlis_monthly.tf'),
+    ('wdpa', 'terraform/envs/prod/wdpa_monthly.tf'),
+    ('sea_ice', 'terraform/envs/prod/sea_ice_daily.tf'),
+    ('ingestion_iam', 'terraform/envs/prod/scheduled_ingestion_deploy_iam.tf'),
+    ('pmtiles_cdn', 'terraform/envs/prod/shared_bucket_public.tf'),
+    ('catalog_viewer', 'terraform/envs/prod/catalog_viewer.tf'),
+    ('dataset_usage', 'terraform/envs/prod/dataset_usage.tf'),
+    ('artifact_registry_iam', 'terraform/envs/prod/artifact_registry_iam.tf'),
+    ('preview_terraform_iam', 'terraform/envs/prod/preview_terraform_iam.tf'),
+    ('scratch_cleanup_iam', 'terraform/envs/prod/canonical_mutation_iam.tf'),
+    ('cron_alert_policy', 'terraform/envs/prod/monitoring.tf'),
+])
+def test_target_content_retains_deployment_and_exact_image_floor(target, path):
+    from scripts.ci_contract import DEPLOYMENT_IMAGES
+    assert (ROOT / path).is_file()
+    plan = resolve_selection([path])
+    assert target in plan['deployments']
+    if target in DEPLOYMENT_IMAGES:
+        assert DEPLOYMENT_IMAGES[target] in plan['production_image_targets']
+
+
+@pytest.mark.parametrize('target,image', [
+    ('mpatlas', 'mpatlas-monthly'), ('eamlis', 'eamlis-monthly'), ('wdpa', 'wdpa-monthly'),
+    ('sea_ice', 'sea-ice-daily'), ('dataset_usage', 'dataset-usage'),
+    ('catalog_viewer', 'catalog-viewer'), ('cron_alert_policy', 'monitoring-slack'),
+])
+def test_each_production_recipe_still_selects_its_exact_deployment_and_image(target, image):
+    from scripts.tested_image_bundle import RECIPES
+    plan = resolve_selection([RECIPES[image]])
+    assert plan['deployments'] == [target]
+    assert image in plan['production_image_targets']
+
+
+def test_executor_selection_cuts_replay_fanout_without_losing_content_targets():
+    from scripts.ci_contract import INGESTION_DEPLOYMENTS
+    replay = json.loads((ROOT / 'tests/fixtures/ci-selection-replay.json').read_text())
+    plans = [resolve_selection(row['paths']) for row in replay]
+    assert len(plans) == 120
+    assert sum(len(plan['deployments']) == len(DEPLOYMENTS) for plan in plans) <= 3
+    assert sum(len(plan['deployments']) for plan in plans) / len(plans) < 4.05
+    assert sum(bool(set(plan['deployments']) & INGESTION_DEPLOYMENTS) for plan in plans) <= 64
+
+
+def test_representative_executor_override_still_discovers_new_content_producers(tmp_path):
+    root = tmp_path / 'source'
+    for name in ('.github', 'scripts', 'terraform', 'ingestion', 'services', 'catalog', 'api'):
+        shutil.copytree(ROOT / name, root / name,
+                        ignore=shutil.ignore_patterns('.terraform', '__pycache__', 'node_modules'))
+    workflow = root / '.github/workflows/ingestion-deploy.yml'
+    with workflow.open('a') as stream:
+        stream.write('\n  fixture-content:\n    steps:\n    - run: python scripts/new_content.py\n')
+    (root / 'scripts/new_content.py').write_text('CONTENT = True\n')
+    assert set(select_deployments(['scripts/new_content.py'], root=root)) == {
+        'mpatlas', 'eamlis', 'wdpa', 'sea_ice', 'dataset_usage'}
 
 
 def test_every_tracked_path_validates_all_images_consumed_by_selected_deployments():
@@ -128,7 +195,7 @@ def test_viewer_runtime_does_not_redeploy_usage_collector(path):
 
 
 @pytest.mark.parametrize("path", ["terraform/envs/prod/catalog_viewer.tf", "terraform/modules/service_account/main.tf",
-    "terraform/envs/prod/variables.tf", "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"])
+    "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"])
 def test_viewer_and_usage_shared_resources_keep_both_deployments(path):
     expected = {"catalog_viewer"} if path.endswith("/catalog_viewer.tf") else {"catalog_viewer", "dataset_usage"}
     assert expected <= set(select_deployments([path]))
@@ -482,11 +549,8 @@ def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutatio
     assert condition_result(jobs['refresh-reviewed-catalog'], values) is (has_mutations == 'false')
 
 
-def test_nested_terraform_bootstrap_selects_only_its_registered_automatic_consumers():
-    assert set(select_deployments([".github/actions/deployment-bootstrap/terraform/action.yml"])) == {
-        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
-        'cron_alert_policy', 'ingestion_iam', 'dataset_usage',
-    }
+def test_nested_terraform_bootstrap_uses_its_representative_executor():
+    assert select_deployments([".github/actions/deployment-bootstrap/terraform/action.yml"]) == ['artifact_registry_iam']
 
 
 @pytest.mark.parametrize("declared", [True, False])
