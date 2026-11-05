@@ -124,10 +124,11 @@ matching terminal record cannot resolve a deployment incident.
 Audit/workflow startup incidents use successful completion of the same trusted
 workflow. Other job incidents require the same exact job within that workflow.
 Historical `deployment-verification.yml` completion-job incidents also accept a
-newer signed WDPA runtime recovery when the exact original job successfully
-attested a signed failed WDPA execution. The resolver verifies every retained
-failure, the failed deployment revisions and their ancestry to the latest
-`verified` WDPA deployment. It retains the original incident ID, scope, parent,
+newer signed runtime recovery for the exact target whose failed execution the
+original job successfully attested. Incident reconciliation and legacy resolution
+share the deployment recovery registry and failure-proof verifier. Every retained
+failure must match that target, its original signed receipt and ancestry to the
+latest `verified` deployment. It retains the original incident ID, scope, parent,
 failure history and delivery claims in the signed ledger. Verification errors,
 failed attestation and mixed unresolved failures retain their alerts. The normal
 notification workflow performs this reconciliation using existing evidence.

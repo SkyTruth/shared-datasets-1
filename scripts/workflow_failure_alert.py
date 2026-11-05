@@ -177,15 +177,8 @@ def resolve_legacy(api, slack, run_id, message_ts):
     incidents.require(failures, "source has no failed jobs")
     links = []
     for failure in failures:
-        if failure["kind"] == "deployment":
-            recovery, _ = incidents.terminal_success(api, failure["scope"])
-            incidents.require(recovery is not None
-                              and incidents.deployments.git_ancestor(failure["sha"], recovery["sha"])
-                              and incidents.instant(recovery["time"]) > incidents.instant(failure["time"]),
-                              "failed target has no newer verified recovery")
-        else:
-            recovery = incidents.observer_runtime_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
-            incidents.require(recovery is not None, "failed job has no registered verified runtime recovery")
+        recovery = incidents.verified_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
+        incidents.require(recovery is not None, "failed target has no newer verified recovery")
         links.append(f"<{incidents.emissions.invocation(REPOSITORY, recovery['run_id'], recovery['attempt'])}|Verified {failure['label']} recovery>")
     payload = build_slack_payload(title="Unattended GitHub workflow resolved", status="success",
                                  body=f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Original failed run>\n" + "\n".join(dict.fromkeys(links)))
