@@ -46,28 +46,36 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 
 ### Which workflow applies what
 
-Workflow filenames below are under `.github/workflows/`. `ci.yml` routes selected
-main-push changes after successful `ci-ready`; the narrow sync callers delegate
-their applies to `prod-terraform-target-apply.yml`. That reusable workflow owns
-the `shared-datasets-production` environment, production-state queue, saved-plan
-apply, and `scripts/terraform_plan_allowlist.py` enforcement of each caller's
-explicit targets and allowed resource changes.
+`ci.yml` routes main-push mutations after successful `ci-ready`. The IAM
+entrypoints select a stable synchronization name from
+[the versioned target registry](../../../.github/terraform-targets.json).
+`scripts/terraform_target_contracts.py` resolves that same resource scope for
+execution, offline dependency checks and release contracts; deployment recovery
+uses its unchanged historical name/hash identities. Edit the registry when a
+reviewed target scope changes, instead of copying allowlists into callers.
 
-| Workflow | Apply scope and enforcement |
-|---|---|
-| `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
-| `prod-terraform-target-apply.yml` | Reusable protected apply for the narrow sync callers below; refuses changes outside their declared resource allowlists. |
-| `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
-| `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. 30x30 work is deferred and is outside this bootstrap. |
-| `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
-| `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer roles and bindings, staged-bundle read access, create-only automatic WDPA staging, and translation notice/debt access. |
-| `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
-| `scratch-cleanup-iam-sync.yml` | Syncs pending-publish bindings and explicit WDPA retirement resources. Its operational retirement bootstraps the separately approved expiring authority, deletes only the 30 exact retired addresses (including the obsolete WDPA observer), and revokes the grant after success or failure; see `docs/terraform-reconciliation.md`. Preserves active services and monthly retained-bundle access. |
-| `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then provisions the private authenticated Monitoring-to-Slack transport and syncs all five ingestion, identity-decision, Scheduler, unapproved-writer and deletion alert policies. |
-| `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` | Apply only their own Cloud Run Job through `scripts/terraform_plan_allowlist.py`, including the expected immutable image check. |
-| `mpatlas-monthly-deploy.yml` | Applies only the MPAtlas job with its exact tested image, scheduler invoker binding, monthly scheduler and optional canonical deny-policy writer exception; blocks deletes/replacements. The ingestion IAM sync owns its identities and scoped storage/actAs grants. |
-| `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker and canonical destructive-action deny policy; also validates the exact CI-tested image/config digest, absence of monthly pins, and runtime limits. |
-| `pmtiles-cdn-sync.yml` | Applies managed-folder IAM bootstrap checked by `scripts/cdn_plan_readiness.py check-bootstrap`, then shared-bucket/CDN URL-map/public managed-folder changes under its inline allowlist. |
+`prod-terraform-target-apply.yml` runs trusted source and permission checks plus
+Monitoring image/credential preparation before entering `prod-terraform-state`.
+Its `sync` job rechecks source/replay admission after acquiring that queue,
+initializes Terraform, validates the exact saved plan, signs the claim and applies
+that saved plan. Only this job owns the queue. IAM propagation waits follow in an
+unprivileged job, outside the production environment and state queue. The WIF
+provider, Terraform service account and protected environment are unchanged.
+
+The narrow entrypoints retain their ordering and manual-dispatch interfaces:
+`artifact-registry-iam-sync.yml`, `scheduled-ingestion-deploy-iam-sync.yml`,
+`preview-terraform-iam-sync.yml`, `scratch-cleanup-iam-sync.yml`, and
+`cron-alert-policy-sync.yml`. State reconciliation and its metadata-read bootstrap
+remain manual-only (`prod-terraform-state-reconcile.yml` and
+`terraform-state-read-iam-sync.yml`). State-only reconciliation has no resource
+allowlist or preparation and refuses every live mutation; supply current recorded
+deployment variables. Operational retirement retains its exact thirty-resource
+pure-delete scope and always-run authority revocation; see
+[Terraform reconciliation](../../../docs/terraform-reconciliation.md).
+
+Ingestion deployments use `ingestion-deploy.yml` and exact tested-image checks.
+`pmtiles-cdn-sync.yml` owns the separately constrained managed-folder/bootstrap
+and CDN routing scopes. Neither path inherits a generic IAM mutation scope.
 
 Other protected publication paths:
 
