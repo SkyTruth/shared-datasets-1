@@ -5,7 +5,7 @@ locals {
   github_identity_attributes = {
     for identity, workflows in local.github_workflow_identities : "attribute.${identity}" =>
     "${local.github_job_workflow_ref} in ${jsonencode([for workflow in workflows : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main"])} ? 'allowed' : 'denied'"
-    if identity != "bucket_reader"
+    if identity != "bucket_reader" && !startswith(identity, "pr_plan")
   }
   observer_permissions = [
     "cloudscheduler.jobs.get", "run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list",

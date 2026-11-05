@@ -27,10 +27,8 @@ TF_COMMANDS = frozenset({"version", "init", "show", "plan"})
 
 def scopes(plan, root=ROOT):
     """Resolve CI-selected executors and manual-only changed resource owners."""
-    import yaml
-
-    ci = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
-    workflows = {Path(ci[name.replace("_", "-")]["uses"]).name for name in plan["deployments"]}
+    deployments = registry(root, section="deployments")
+    workflows = {deployments[name]["workflow"] for name in plan["deployments"]}
     changed = set(plan["changed_paths"] or [])
     declarations = set()
     for relative in changed:
@@ -127,25 +125,6 @@ def deployed_variables(state):
     return values
 
 
-def policy_endpoint(url):
-    """Map existing plan_checks probes to read-only IAM policy endpoints."""
-    parsed = urlsplit(url)
-    base = url.split("?", 1)[0]
-    # URL maps and WIF pools inherit project allow policy; their APIs expose
-    # testIamPermissions but no resource getIamPolicy operation.
-    if "/urlMaps/" in parsed.path or "/workloadIdentityPools/" in parsed.path:
-        return PROJECT_URL.removesuffix(":testIamPermissions") + ":getIamPolicy", {"options": {"requestedPolicyVersion": 3}}
-    if parsed.hostname == "storage.googleapis.com":
-        base = base.removesuffix("/testPermissions")
-        return base + "?optionsRequestedPolicyVersion=3", None
-    if parsed.hostname == "compute.googleapis.com":
-        return base.removesuffix("/testIamPermissions") + "/getIamPolicy?optionsRequestedPolicyVersion=3", None
-    base = base.removesuffix(":testIamPermissions") + ":getIamPolicy"
-    if parsed.hostname in {"cloudresourcemanager.googleapis.com", "iam.googleapis.com", "iap.googleapis.com"}:
-        return base, {"options": {"requestedPolicyVersion": 3}}
-    return base + "?options.requestedPolicyVersion=3", None
-
-
 def full_resource(url, project_number):
     parsed = urlsplit(url)
     if url == PROJECT_URL:
@@ -156,13 +135,6 @@ def full_resource(url, project_number):
     path = parsed.path.removesuffix(":testIamPermissions").removesuffix("/testIamPermissions")
     path = re.sub(r"^/(?:compute/)?v[12]/", "", path)
     return "//" + parsed.hostname + "/" + path
-
-
-def allow_permissions(policies, roles, member):
-    """Unconditional direct grants only. Google evaluates CEL and deny policies."""
-    return {permission for policy in policies for binding in policy.get("bindings", [])
-            if member in binding["members"] and not binding.get("condition")
-            for permission in roles(binding["role"])["includedPermissions"]}
 
 
 class PolicyReader:
@@ -176,20 +148,8 @@ class PolicyReader:
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.load(response)
 
-    def policy(self, url):
-        endpoint, body = policy_endpoint(url)
-        return self.read(endpoint, json.dumps(body) if body is not None else None)
-
-    def role(self, name):
-        require(re.fullmatch(r"(?:roles/[A-Za-z0-9_.]+|projects/[a-z0-9-]+/roles/[A-Za-z0-9_.]+)", name), "unsupported role identity")
-        return self.read("https://iam.googleapis.com/v1/" + name)
-
     def verify(self, required, deployer, project_number):
-        project = self.policy(PROJECT_URL)
-        member = "serviceAccount:" + deployer
         for url, permissions in required:
-            policies = [project] if url == PROJECT_URL else [project, self.policy(url)]
-            proven = allow_permissions(policies, self.role, member)
             for permission in permissions:
                 # Troubleshooter is read-only and handles inherited bindings,
                 # conditional grants and deny policies.
@@ -198,7 +158,7 @@ class PolicyReader:
                     "fullResourceName": full_resource(url, project_number), "permission": permission}})
                 verdict = self.read("https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot", body)
                 granted = (verdict.get("overallAccessState") == "CAN_ACCESS" and
-                           (permission in proven or verdict.get("allowPolicyExplanation", {}).get("allowAccessState") == "ALLOW_ACCESS_STATE_GRANTED"))
+                           verdict.get("allowPolicyExplanation", {}).get("allowAccessState") == "ALLOW_ACCESS_STATE_GRANTED")
                 print(permission, "granted" if granted else "missing or unknown")
                 require(granted,
                         "production deploy identity lacks proven permission " + permission)
@@ -210,6 +170,13 @@ def run(plan, root=ROOT):
     require(selected(plan), "no Terraform inputs selected")
     targets = scopes(plan, root)
     require(targets, "Terraform change has no registered plan scope")
+    excluded = registry(root, section="pr_plan_exclusions")
+    for scope in targets:
+        if scope["name"] in excluded:
+            print("::notice::Live PR plan excluded: " + scope["name"] + ": " + excluded[scope["name"]])
+    targets = [scope for scope in targets if scope["name"] not in excluded]
+    if not targets:
+        return
     prod = root / "terraform/envs/prod"
     version = json.loads(terraform("version", "-json", directory=prod))
     require(version["terraform_version"] == TOOLCHAIN["terraform"], "PR Terraform version differs from pin")

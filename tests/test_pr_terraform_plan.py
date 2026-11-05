@@ -73,11 +73,7 @@ def test_read_only_command_inventory_and_workflow_reachable_steps():
 @pytest.mark.parametrize('url,expected', [(PROJECT_URL, '//cloudresourcemanager.googleapis.com/projects/123'),
     (BUCKET, '//storage.googleapis.com/projects/_/buckets/fixture-bucket'),
     (SA, f'//iam.googleapis.com/projects/{PROJECT}/serviceAccounts/{DEPLOYER}')])
-def test_permission_probe_to_read_policy_and_troubleshooter_resource(url, expected):
-    endpoint, body = pr.policy_endpoint(url)
-    assert 'testIamPermissions' not in endpoint and 'testPermissions' not in endpoint
-    assert 'getIamPolicy' in endpoint or '/iam?' in endpoint
-    assert body is None or set(body) == {'options'}
+def test_permission_probe_to_troubleshooter_resource(url, expected):
     assert pr.full_resource(url, '123') == expected
 
 
@@ -97,30 +93,15 @@ def fixture_transport(request, **kwargs):
     return io.BytesIO(json.dumps(payload).encode())
 
 
-@pytest.mark.parametrize('url,method', [(PROJECT_URL, 'POST'), (SA, 'POST'), (BUCKET, 'GET'),
-    ('https://iap.googleapis.com/v1/projects/123/iap_web/cloud_run-us-central1/services/viewer:testIamPermissions', 'POST'),
-    (f'https://run.googleapis.com/v2/projects/{PROJECT}/locations/us-central1/jobs/fixture:testIamPermissions', 'GET'),
-    (f'https://pubsub.googleapis.com/v1/projects/{PROJECT}/topics/fixture:testIamPermissions', 'GET')])
-def test_get_policy_transport_matches_google_api_method_and_v3_options(url, method):
-    # IAM service accounts/IAP use POST; Run/PubSub/Storage use GET. Do not
-    # infer this from the shared getIamPolicy method name.
-    def transport(request, **kwargs):
-        assert request.get_method() == method
-        assert ('requestedPolicyVersion=3' in request.full_url or 'optionsRequestedPolicyVersion=3' in request.full_url
-                or json.loads(request.data) == {'options': {'requestedPolicyVersion': 3}})
-        return io.BytesIO(b'{"bindings":[]}')
-    with patch.object(pr.urllib.request, 'urlopen', side_effect=transport):
-        assert pr.PolicyReader('fixture-token').policy(url) == {'bindings': []}
-
-
-def test_real_iam_http_serialization_role_expansion_and_production_principal(capsys):
+def test_real_iam_http_serialization_and_production_principal(capsys):
     with patch.object(pr.urllib.request, 'urlopen', side_effect=fixture_transport):
         pr.PolicyReader('fixture-token').verify([(BUCKET, ['storage.buckets.update']), (SA, ['iam.serviceAccounts.actAs'])], DEPLOYER, '123')
     assert capsys.readouterr().out.splitlines() == ['storage.buckets.update granted', 'iam.serviceAccounts.actAs granted']
 
 
 @pytest.mark.parametrize('verdict', [{'overallAccessState': 'CANNOT_ACCESS'}, {'overallAccessState': 'UNKNOWN_INFO'}, {},
-    {'overallAccessState': 'UNKNOWN_CONDITIONAL'}])
+    {'overallAccessState': 'UNKNOWN_CONDITIONAL'}, {'overallAccessState': 'CAN_ACCESS'},
+    {'overallAccessState': 'CAN_ACCESS', 'allowPolicyExplanation': {'allowAccessState': 'ALLOW_ACCESS_STATE_UNKNOWN_CONDITIONAL'}}])
 def test_allow_grant_cannot_override_deny_missing_or_unknown_permission(verdict):
     def transport(request, **kwargs):
         if 'iam:troubleshoot' in request.full_url:
@@ -128,15 +109,6 @@ def test_allow_grant_cannot_override_deny_missing_or_unknown_permission(verdict)
         return fixture_transport(request, **kwargs)
     with patch.object(pr.urllib.request, 'urlopen', side_effect=transport), pytest.raises(ValueError, match='permission storage.buckets.update'):
         pr.PolicyReader('fixture-token').verify([(BUCKET, ['storage.buckets.update'])], DEPLOYER, '123')
-
-
-def test_policy_computation_rejects_missing_wrong_member_and_unevaluated_cel():
-    def role(name):
-        return {'includedPermissions': ['run.jobs.update']}
-    for binding in [{'role': 'roles/fixture', 'members': ['serviceAccount:other']},
-                    {'role': 'roles/fixture', 'members': ['serviceAccount:' + DEPLOYER], 'condition': {'expression': 'false'}}]:
-        assert pr.allow_permissions([{'bindings': [binding]}], role, 'serviceAccount:' + DEPLOYER) == set()
-    assert pr.allow_permissions([{'bindings': [{'role': 'roles/fixture', 'members': ['serviceAccount:' + DEPLOYER]}]}], role, 'serviceAccount:' + DEPLOYER) == {'run.jobs.update'}
 
 
 def state():
@@ -165,7 +137,7 @@ def test_manual_terraform_owners_are_selected_even_without_automatic_deployments
 def test_complete_runner_through_saved_plan_and_http_boundaries(tmp_path, capsys, stage):
     event_path = tmp_path / 'event.json'
     event_path.write_text(json.dumps(event(stage == 'fork')))
-    plan = {'changed_paths': ['terraform/envs/prod/terraform_state_read_iam.tf'], 'deployments': []}
+    plan = {'changed_paths': ['terraform/envs/prod/terraform_state_read_iam.tf'], 'deployments': ['eamlis']}
     saved = {'format_version': '1.2', 'resource_changes': [{'address': 'google_project_iam_custom_role.' + ('foreign' if stage == 'allowlist' else 'terraform_state_reader'),
         'type': 'google_project_iam_custom_role', 'change': {'actions': ['update'], 'before': {},
             'after': {'project': PROJECT, 'role_id': 'fixture', 'description': SECRET}}}]}
@@ -209,3 +181,5 @@ def test_complete_runner_through_saved_plan_and_http_boundaries(tmp_path, capsys
         assert calls == []
     else:
         assert {c[2] for c in calls} <= pr.TF_COMMANDS
+        assert sum(c[2] == 'plan' for c in calls) == 1
+        assert '::notice::Live PR plan excluded: eamlis-monthly:' in captured.out

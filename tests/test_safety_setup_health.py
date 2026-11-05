@@ -54,7 +54,7 @@ def test_health_entrypoint_and_imports_work_without_site_packages_and_fallback_d
     command = steps['Check freshness and stalled operations']['run']
     assert '"$interpreter" scripts/operational_safety_check.py --health' in command
     assert 'uv ' not in command
-    for name in ('Install locked probe dependencies', 'Install pinned durable receipt verifier', 'Authenticate read-only catalog probe'):
+    for name in ('Install locked probe dependencies', 'Install pinned durable receipt verifier', 'Authenticate heartbeat writer and catalog reader'):
         identifier = steps[name]['id']
         assert 'steps.' + identifier + '.outcome' in steps['Check freshness and stalled operations']['env']['SAFETY_SETUP_OUTCOMES']
     result = subprocess.run([sys.executable, '-S', str(Path(safety.__file__)), '--help'], cwd=tmp_path,
@@ -164,7 +164,7 @@ runpy.run_path(sys.argv[0],run_name='__main__')
         prior = {**current, 'status': 'completed', 'conclusion': 'failure'}
 
 
-@pytest.mark.parametrize('failed_setup', ['Install locked probe dependencies', 'Install pinned durable receipt verifier', 'Authenticate read-only catalog probe'])
+@pytest.mark.parametrize('failed_setup', ['Install locked probe dependencies', 'Install pinned durable receipt verifier', 'Authenticate read-only catalog probe', 'Authenticate heartbeat writer and catalog reader'])
 @pytest.mark.parametrize('broken_boundary', [None, 'health', 'upload', 'dispatch'])
 def test_retained_setup_reports_own_replay_but_never_hide_delivery_or_dispatch_failure(failed_setup, broken_boundary):
     steps = [{'name': failed_setup, 'conclusion': 'failure'}, {'name': 'Check operational work', 'conclusion': 'skipped'},
@@ -204,8 +204,13 @@ def test_heartbeat_read_failure_cannot_claim_established_monitoring_and_iam_gran
                        serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
     role = next(group['google_project_iam_custom_role']['operational_safety_reader'] for group in config['resource']
                 if 'operational_safety_reader' in group.get('google_project_iam_custom_role', {}))
-    assert {permission.strip('"') for permission in role['permissions']} == {
-        'cloudscheduler.jobs.get', 'run.executions.get', 'logging.logEntries.create', 'monitoring.timeSeries.list'}
+    assert role['permissions'] == ['logging.logEntries.create']
+    from terraform_helpers import load_terraform, evaluate
+    values = load_terraform(safety.ROOT / 'terraform/envs/prod/github_job_identities.tf')['locals'][0]
+    values['github_workflow_identities'] = json.loads((safety.ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())
+    permissions = evaluate(values, 'local.github_job_permissions', variables={'github_repository': 'SkyTruth/shared-datasets-1'})['heartbeat']
+    assert {'cloudscheduler.jobs.get', 'run.executions.get', 'monitoring.timeSeries.list'} <= set(permissions)
+    assert all(permission.endswith(('.get', '.list')) for permission in permissions)
 
 
 @pytest.mark.parametrize('series', [None, True, 'present', {'metric': 'forged'}])

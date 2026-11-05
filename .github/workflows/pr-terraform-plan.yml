@@ -5,8 +5,13 @@ permissions:
   contents: read
   id-token: write
 jobs:
+  activation:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER == '' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo '::notice::Read-only PR Terraform planning is not yet activated. Provision the protected identity, then set the PR-plan repository variables. Static IaC checks still run.'
   plan:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:

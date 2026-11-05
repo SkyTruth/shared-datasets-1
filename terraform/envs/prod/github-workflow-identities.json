@@ -6,5 +6,7 @@
   "runtime": ["catalog-viewer-deploy.yml", "ingestion-deploy.yml", "ingestion-schedule-control.yml", "pmtiles-cdn-sync.yml"],
   "heartbeat": ["operational-safety-check.yml"],
   "reconciler": ["identity-decision-reconcile.yml", "resolve-workflow-alert.yml"],
-  "bucket_reader": ["bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml"]
+  "bucket_reader": ["bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml"],
+  "pr_plan": ["pr-terraform-plan.yml"],
+  "pr_plan_caller": ["ci.yml"]
 }

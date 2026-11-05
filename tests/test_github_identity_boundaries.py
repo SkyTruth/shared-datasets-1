@@ -47,13 +47,15 @@ def auth_accounts(value, job):
 
 
 def declared_workflows():
-    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'runtime', 'heartbeat', 'reconciler', 'bucket_reader')}
+    found = {name: set() for name in ('terraform', 'publisher', 'preview', 'observer', 'runtime', 'heartbeat', 'reconciler', 'bucket_reader', 'pr_plan')}
     for path in (ROOT / '.github/workflows').glob('*.yml'):
         value = load_workflow(path)
         for job in value['jobs'].values():
             for _step, account in auth_accounts(value, job):
                 if account == '${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}':
                     identity = 'terraform'
+                elif account == '${{ vars.GCP_PR_PLAN_SERVICE_ACCOUNT }}':
+                    identity = 'pr_plan'
                 elif account == '${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}':
                     identity = 'bucket_reader'
                 elif account == 'feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com':
@@ -62,6 +64,7 @@ def declared_workflows():
                     identity = account.split('@')[0].removeprefix('shared-datasets-')
                 assert identity in found, (path.name, account)
                 found[identity].add(path.name)
+    found['pr_plan_caller'] = {'ci.yml'}
     return found
 
 
@@ -164,7 +167,7 @@ def test_read_phases_use_observer_and_mutation_phases_use_runtime(filename, job)
         if any(command in run for command in ('gcloud run jobs describe', 'gcloud run services describe', 'gcloud run jobs executions describe', '--target catalog-viewer-observe', 'ingestion_verification.py', 'deployment_revision.py observe', 'check_catalog_url "https:')):
             assert account == OBSERVER, (filename, step['name'], account)
             reads += 1
-        if any(command in run for command in ('gcloud run jobs execute', 'invalidate-cdn-cache', 'bash -euo pipefail -c "$AFTER_VERIFY"')):
+        if any(command in run for command in ('gcloud run jobs execute', 'invalidate-cdn-cache', 'scripts/ingestion_targets.py after-verify')):
             assert account == RUNTIME, (filename, step['name'], account)
             mutations += 1
         if re.search(r'(?:terraform|terraform_retry.sh).*\sapply\s', run):

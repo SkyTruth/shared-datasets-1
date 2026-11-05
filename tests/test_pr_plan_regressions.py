@@ -26,7 +26,7 @@ def test_pr_leaf_identity_is_registered_without_top_level_authority():
     assert WORKFLOW_NAMES['pr-terraform-plan.yml'] == ('Infrastructure / Read-only PR plan',)
     leaf = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())
     assert set(leaf.get('on', leaf.get(True))) == {'workflow_call'}
-    assert 'pr-terraform-plan.yml' not in workflow_failure_alert.MONITORED_WORKFLOWS
+    assert 'pr-terraform-plan.yml' not in workflow_failure_alert.WORKFLOW_EVENTS
     assert 'pr-terraform-plan.yml' not in deployment_revision.TARGET_WORKFLOWS.values()
 
 @pytest.mark.parametrize('paths,expected', [([], False), (['docs/ci-deployment.md'], False),
@@ -48,8 +48,8 @@ def test_isolated_wif_shape_and_exact_state_read_grant():
     provider = rows['google_iam_workload_identity_pool_provider', 'pr_plan']
     parts = ["assertion.repository == '${var.github_repository}'", "assertion.event_name == 'pull_request'",
              "assertion.ref.matches('^refs/pull/[0-9]+/merge$')",
-             "assertion.workflow_ref == '${var.github_repository}/.github/workflows/ci.yml@' + assertion.ref",
-             "assertion.job_workflow_ref == '${var.github_repository}/.github/workflows/pr-terraform-plan.yml@' + assertion.ref"]
+             "assertion.workflow_ref in ${jsonencode([for workflow in local.github_workflow_identities.pr_plan_caller",
+             "assertion.job_workflow_ref in ${jsonencode([for workflow in local.github_workflow_identities.pr_plan"]
     source = (ROOT / 'terraform/envs/prod/pr_plan_iam.tf').read_text()
     assert all(part in source for part in parts)
     assert 'google_iam_workload_identity_pool.pr_plan.workload_identity_pool_id' in provider['workload_identity_pool_id']

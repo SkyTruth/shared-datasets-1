@@ -20,8 +20,8 @@ resource "google_iam_workload_identity_pool_provider" "pr_plan" {
     "assertion.repository == '${var.github_repository}'",
     "assertion.event_name == 'pull_request'",
     "assertion.ref.matches('^refs/pull/[0-9]+/merge$')",
-    "assertion.workflow_ref == '${var.github_repository}/.github/workflows/ci.yml@' + assertion.ref",
-    "assertion.job_workflow_ref == '${var.github_repository}/.github/workflows/pr-terraform-plan.yml@' + assertion.ref",
+    "assertion.workflow_ref in ${jsonencode([for workflow in local.github_workflow_identities.pr_plan_caller : "${var.github_repository}/.github/workflows/${workflow}@"])}.map(prefix, prefix + assertion.ref)",
+    "assertion.job_workflow_ref in ${jsonencode([for workflow in local.github_workflow_identities.pr_plan : "${var.github_repository}/.github/workflows/${workflow}@"])}.map(prefix, prefix + assertion.ref)",
   ])
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"

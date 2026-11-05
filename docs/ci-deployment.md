@@ -119,18 +119,20 @@ CI's selected deployments and the registered owners of changed root Terraform
 resources, including manual-only IAM targets. Each scope gets a refreshed
 Terraform **1.8.5** plan with its registered targets and variables, using current
 state-recorded immutable image digests. Every saved plan passes the production
-resource/action allowlist and `plan_checks`. IAM policies and role definitions
-are read for the **production deploy identity**; Policy Troubleshooter v3 must
-confirm allow/deny access. Missing, conditional-unknown or unreadable authority
-fails closed. This rehearsal does not replace protected deploy-time checks.
+resource/action allowlist and `plan_checks`. Policy Troubleshooter v3 evaluates
+effective IAM for the **production deploy identity**, including inherited and
+conditional grants and deny policies; both overall and allow verdicts must confirm
+access. Missing, conditional-unknown or unreadable authority fails closed. This rehearsal does not replace protected deploy-time checks.
 
 The dedicated `shared-datasets-pr-plan` service account has metadata/IAM reads
 and read access to the exact default production state object (plus bucket object
 name listing required by Terraform's GCS workspace discovery). It has no state
 lock/write, resource mutation, Secret Manager, signing or deployer impersonation
 permissions. The owner's no-Secret-Manager rule also excludes metadata/policy
-reads: scopes requiring a secret refresh or secret policy read fail closed;
-these scopes need a separately reviewed design before they can pass this gate.
+reads. The reviewed `pr_plan_exclusions` in `.github/terraform-targets.json`
+list exactly the six secret-bearing scopes. Each selected exclusion emits an
+explicit PR notice; static IaC checks and protected deploy-time plans still run.
+All other selected scopes must pass the live gate once activated.
 **Same-repository PR authors can read production state**, including any
 sensitive values already persisted there; this exposure is the owner's explicit
 exception to credential-free PR validation. Fork PRs skip authentication; GitHub
@@ -155,5 +157,8 @@ Bootstrap the two new registered scopes through the reviewed, protected
 precedes `PR plan identity provisioning`. No local apply is permitted. Configure
 repository variables `GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER` and
 `GCP_PR_PLAN_SERVICE_ACCOUNT` from the sensitive `github_pr_plan_*` outputs.
-Until provisioning and variables exist, selected PR checks intentionally fail.
+Set the service-account variable first and the provider variable last, after
+protected provisioning succeeds. Until the provider variable exists, the PR job
+reports **not yet activated** and succeeds without authenticating. Once it exists,
+authentication, planning, allowlist and permission failures block `ci-ready`.
 No identity was provisioned by the code change itself.
