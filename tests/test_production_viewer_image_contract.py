@@ -302,6 +302,17 @@ def test_every_installed_probe_uses_production_limits(target, cpu, memory):
             assert command[command.index('--cpu-period') + 1] == '100000'
             assert command[command.index('--cpu-quota') + 1] == str(int(cpu) * 100000)
             assert command[command.index('--memory') + 1] == memory
+            assert command[command.index('--tmpfs') + 1] == '/tmp'
+
+
+def test_wdpa_timeout_keeps_margin_above_observed_maximum():
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    modules = hcl2.loads((ROOT / 'terraform/envs/prod/wdpa_monthly.tf').read_text(),
+                        serialization_options=SerializationOptions(strip_string_quotes=True))['module']
+    job = next(row['wdpa_monthly_job'] for row in modules if 'wdpa_monthly_job' in row)
+    assert job['timeout'] == '43200s'
+    assert 43200 - (8 * 3600 + 21 * 60) == 3 * 3600 + 39 * 60
 
 
 @pytest.mark.parametrize('target', ['eamlis-monthly', 'mpatlas-monthly'])

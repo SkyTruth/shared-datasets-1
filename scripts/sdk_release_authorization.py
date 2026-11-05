@@ -21,25 +21,19 @@ from scripts.dataset_mutation_authorization import GitHub as ArtifactGitHub
 from scripts.deployment_revision import DeploymentError, require, verify_ci, verify_context
 
 class GitHub(ArtifactGitHub):
+    """Adapt CI's positional page API to the archive transport."""
     def pages(self, path, field=None):
         return super().pages(path, field=field)
-
 
 MAX_ARCHIVE = 100 * 1024 * 1024
 IDENTITY = ("schema_version", "base", "head", "tested_sha", "tree", "contract_digest")
 
 
 def admit_source(api, repository, run_id, attempt, sha, event):
-    """Only a main CI caller or exact manual recovery may supply tested bytes."""
-    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        from scripts.operational_safety_check import context
-        current = context(api, workflow=".github/workflows/publish-typescript-sdk.yml")
-        require(current["event"] == "workflow_dispatch", "SDK recovery requires dispatch")
-    else:
-        require(os.environ.get("GITHUB_EVENT_NAME") == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main"
-                and os.environ.get("GITHUB_WORKFLOW_REF") == f"{repository}/.github/workflows/ci.yml@refs/heads/main"
-                and str(run_id) == os.environ.get("GITHUB_RUN_ID")
-                and str(attempt) == os.environ.get("GITHUB_RUN_ATTEMPT"), "SDK must use its current main CI attempt")
+    """npm must see this top-level workflow for automatic and recovery releases."""
+    from scripts.operational_safety_check import context
+    current = context(api, workflow=".github/workflows/publish-typescript-sdk.yml")
+    require(os.environ.get("GITHUB_EVENT_NAME") == current["event"] == "workflow_dispatch", "SDK publishing requires dispatch")
     source = verify_ci(api, repository, sha, run_id, attempt)
     require(all(event.get("repository", {}).get(key) == source["repository"][key] for key in ("id", "full_name")),
             "SDK event repository mismatch")
@@ -182,8 +176,6 @@ def main():
         elif args.admit_source:
             outputs = {"source_eligible": "true"}
         else:
-            # Transport variants share the same strict boundary; named artifact
-            # pagination additionally needs the keyword-only field argument.
             from scripts.deployment_revision import GitHub as DeploymentGitHub
             verify_context(args, DeploymentGitHub())
             outputs = download(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, args.output, Path.cwd())

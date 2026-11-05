@@ -303,17 +303,21 @@ jobs:
   typescript-sdk:
     needs: [ci-ready, geospatial-changes]
     if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sdk == 'true' }}
-    uses: ./.github/workflows/publish-typescript-sdk.yml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
-      deployments: write
-      attestations: write
-      id-token: write
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+      actions: write
+    steps:
+      - name: Dispatch top-level npm trusted publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXECUTOR_SHA: ${{ needs.ci-ready.outputs.tested_sha }}
+        run: |
+          gh workflow run publish-typescript-sdk.yml --ref main \
+            -f executor_sha="$EXECUTOR_SHA" -f source_run_id="$GITHUB_RUN_ID" \
+            -f source_run_attempt="$GITHUB_RUN_ATTEMPT"
 
   dataset-mutation-selection:
     needs: ci-ready

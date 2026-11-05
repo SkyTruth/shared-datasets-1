@@ -422,7 +422,7 @@ def static_checks(root, base, head):
     """Check declaration coverage, never evaluate a plan or claim live IAM access.
 
     HCL identifies changed declarations (including local-module instances).
-    Apply scopes come from the selected executors, not another ownership list.
+    Apply scopes come from registered executors, including manual-only targets.
     Unknown resource kinds and removed probe-manifest permissions fail closed.
     Runtime values, instance keys and effective IAM still need the saved plan.
     """
@@ -432,10 +432,11 @@ def static_checks(root, base, head):
     from hcl2.utils import SerializationOptions
     import yaml
     from scripts import deployment_permissions as permissions
-    from scripts.ci_contract import select_deployments
     from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
     from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+    from scripts.dataset_usage_deploy import RESOURCES, RETIREMENT_RESOURCES
+    from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
 
     def git(*args):
         return subprocess.check_output(['git', '-C', str(root), *args], text=True)
@@ -466,32 +467,16 @@ def static_checks(root, base, head):
 
     before, after = declarations(base), declarations(head)
     changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
-    paths = git('diff', '--name-only', base, head).splitlines()
-    ci = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())['jobs']
-    exact = set()
-
-    def scope(filename, inputs=None):
-        value = terraform_targets.workflow(root, posixpath.basename(filename))
-        if filename == '.github/workflows/ingestion-deploy.yml':
-            require(inputs and inputs.get('target') in TARGETS, 'ingestion target scope is unavailable')
-            exact.update(declaration(row) for row in TARGETS[inputs['target']]['targets'])
-        for job in value['jobs'].values():
-            config = job.get('with', {})
-            exact.update(declaration(row) for row in config.get('allowed_exact', '').splitlines() if row.strip())
-            if job.get('uses', '').startswith('./.github/workflows/'):
-                scope(job['uses'][2:], config)
-        if filename.endswith('dataset-usage-deploy.yml'):
-            from scripts.dataset_usage_deploy import RESOURCES, RETIREMENT_RESOURCES
-            exact.update(declaration(row) for row in RESOURCES | RETIREMENT_RESOURCES)
-        if filename.endswith('pmtiles-cdn-sync.yml'):
-            from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
-            exact.update(BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
-        for item in terraform_targets.registry(root, section='plan_scopes').get(posixpath.basename(filename), {}).values():
-            exact.update(item.get('exact', []) + item.get('instances', []))
+    exact = {declaration(row) for item in terraform_targets.registry(root).values() for row in item['resources']}
+    exact.update(declaration(row) for item in TARGETS.values() for row in item['targets'])
+    exact.update(declaration(row) for row in RESOURCES | RETIREMENT_RESOURCES | BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
+    for path in (root / '.github/workflows').glob('*.yml'):
+        for job in yaml.safe_load(path.read_text())['jobs'].values():
+            exact.update(declaration(row) for row in job.get('with', {}).get('allowed_exact', '').splitlines() if row.strip())
+    for scopes in terraform_targets.registry(root, section='plan_scopes').values():
+        for item in scopes.values():
+            exact.update(declaration(row) for row in item.get('exact', []) + item.get('instances', []))
             exact.update(prefix + '.' + child for prefix, child in item.get('modules', {}).items())
-
-    for target in select_deployments(paths):
-        scope(ci[target.replace('_', '-')]['uses'][2:])
     probe_targets = {item['readiness_target'] for item in terraform_targets.registry(root).values()} | set(TARGETS)
     probe_targets.update({'artifact-registry-images', 'monitoring-slack-secret', 'catalog-viewer', 'pmtiles-cdn', 'pmtiles-cdn-bootstrap'})
     manifest = {permission for target in probe_targets for _, required in permissions.checks(target) for permission in required}
@@ -499,7 +484,7 @@ def static_checks(root, base, head):
     for key in sorted(changed):
         kind = key.rsplit('.', 2)[-2]
         if key not in exact:
-            errors.append(key + ': absent from selected deployment apply allowlists')
+            errors.append(key + ': absent from registered deployment apply allowlists')
         if kind not in RESOURCE_KINDS:
             errors.append(key + ': no saved-plan permission validator')
         if kind == 'google_project_iam_custom_role' and key in before:

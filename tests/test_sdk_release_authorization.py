@@ -18,10 +18,11 @@ REPO = 'SkyTruth/shared-datasets-1'
 
 
 @pytest.fixture(autouse=True)
-def ci_caller(monkeypatch):
-    for key, value in {'GITHUB_EVENT_NAME':'push', 'GITHUB_REF':'refs/heads/main',
-                       'GITHUB_WORKFLOW_REF': REPO+'/.github/workflows/ci.yml@refs/heads/main',
-                       'GITHUB_RUN_ID':'123', 'GITHUB_RUN_ATTEMPT':'1'}.items():
+def publisher_caller(monkeypatch):
+    for key, value in {'GITHUB_EVENT_NAME':'workflow_dispatch', 'GITHUB_REF':'refs/heads/main',
+                       'GITHUB_REPOSITORY': REPO,
+                       'GITHUB_WORKFLOW_REF': REPO+'/.github/workflows/publish-typescript-sdk.yml@refs/heads/main',
+                       'GITHUB_RUN_ID':'900', 'GITHUB_RUN_ATTEMPT':'1'}.items():
         monkeypatch.setenv(key, value)
 
 
@@ -200,14 +201,16 @@ def test_candidate_must_match_recorded_test_result_even_with_consistent_new_hash
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
 
 
-def admission_fixture(*, ready='success', sdk='success', conclusion='failure', current_attempt=1, name='CI'):
+def admission_fixture(*, ready='success', sdk='success', conclusion='failure', name='CI'):
     repository = {'id': 9, 'full_name': REPO}
     workflow = {'id': 7, 'path': '.github/workflows/ci.yml'}
     run = {'id': 123, 'run_attempt': 1, 'workflow_id': 7, 'path': workflow['path'], 'name': name,
            'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'status': 'completed', 'conclusion': conclusion,
            'repository': repository, 'head_repository': repository}
     api = Mock()
-    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else workflow if endpoint.endswith('/workflows/ci.yml') else run if '/attempts/' in endpoint else {**run, 'run_attempt': current_attempt}
+    publisher = {'id': 8, 'path': '.github/workflows/publish-typescript-sdk.yml'}
+    current = {**run, 'id': 900, 'workflow_id': 8, 'event': 'workflow_dispatch', 'path': publisher['path']}
+    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else publisher if endpoint.endswith('/workflows/publish-typescript-sdk.yml') else workflow if endpoint.endswith('/workflows/ci.yml') else current if '/runs/900/' in endpoint else run
     api.pages.return_value = [] if ready is None else [{'name': 'ci-ready', 'status': 'completed', 'conclusion': ready}]
     if sdk is not None:
         api.pages.return_value.append({'name': 'sdk-validation (Node 24)', 'status': 'completed', 'conclusion': sdk})
@@ -240,30 +243,17 @@ def test_unselected_or_failed_sdk_suite_stops_before_candidate_bootstrap(sdk):
 @pytest.mark.parametrize('key', ['GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_WORKFLOW_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'])
 def test_sdk_admission_rejects_another_caller_or_attempt(monkeypatch, key):
     api, event = admission_fixture()
-    monkeypatch.setenv(key, 'forged')
-    with pytest.raises(DeploymentError, match='current main CI attempt'):
+    monkeypatch.setenv(key, '2' if key == 'GITHUB_RUN_ATTEMPT' else '901' if key == 'GITHUB_RUN_ID' else 'forged')
+    with pytest.raises(RuntimeError):
         release.admit_source(api, REPO, 123, 1, SHA, event)
     api.archive.assert_not_called()
 
 
-@pytest.mark.parametrize('trusted', [False, True])
-def test_manual_sdk_recovery_uses_exact_current_workflow_and_tested_source(monkeypatch, trusted):
+@pytest.mark.parametrize('caller', ['ci.yml', 'publish-typescript-sdk.yml'])
+def test_sdk_trusted_publisher_identity_is_the_top_level_workflow(monkeypatch, caller):
     api, event = admission_fixture()
-    original = api.get.side_effect
-    workflow = {'id': 8, 'path': '.github/workflows/publish-typescript-sdk.yml'}
-    current = {**event['workflow_run'], 'id': 900, 'workflow_id': 8, 'event': 'workflow_dispatch', 'path': workflow['path']}
-    def get(path):
-        if path.endswith('/workflows/publish-typescript-sdk.yml'):
-            return workflow
-        if path.endswith('/runs/900/attempts/1'):
-            return current
-        return original(path)
-    api.get.side_effect = get
-    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
-    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
-    monkeypatch.setenv('GITHUB_RUN_ID', '900')
-    monkeypatch.setenv('GITHUB_WORKFLOW_REF', REPO + '/' + workflow['path'] + ('@refs/heads/main' if trusted else '@refs/heads/feature'))
-    if trusted:
+    monkeypatch.setenv('GITHUB_WORKFLOW_REF', f'{REPO}/.github/workflows/{caller}@refs/heads/main')
+    if caller == 'publish-typescript-sdk.yml':
         assert release.admit_source(api, REPO, 123, 1, SHA, event)
     else:
         with pytest.raises(RuntimeError, match='trusted main workflow'):
@@ -276,7 +266,7 @@ def test_sdk_admission_rejects_forged_source_identity_even_when_validation_faile
     # Change authoritative run data, not an unused workflow_run event hint.
     event['workflow_run'][change] = {'id':100, 'full_name':'evil/fork'} if change == 'repository' else 'forged'
     original = api.get.side_effect
-    api.get.side_effect = lambda endpoint: event['workflow_run'] if '/attempts/' in endpoint else original(endpoint)
+    api.get.side_effect = lambda endpoint: event['workflow_run'] if '/runs/123/attempts/' in endpoint else original(endpoint)
     with pytest.raises(DeploymentError):
         release.admit_source(api, REPO, 123, 1, SHA, event)
 

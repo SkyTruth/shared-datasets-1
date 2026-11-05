@@ -235,7 +235,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         raise ValueError("head must be the checked-out tested revision")
     try:
         resolved_base = git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
-        changed = git(root, "diff", "--name-only", "-z", resolved_base, resolved_head, raw=True)
+        changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, resolved_head, raw=True)
         paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
         # An absent comparison selects all, but individual history-dependent
@@ -258,7 +258,8 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "changed_paths": paths,
-        **resolve_selection(paths, catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
+        **resolve_selection(paths, base=resolved_base if paths is not None else None, root=root,
+                            catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
     }
 
 

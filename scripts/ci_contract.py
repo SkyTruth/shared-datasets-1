@@ -11,9 +11,12 @@ import ast
 from functools import lru_cache
 from fnmatch import fnmatchcase
 import hashlib
+import io
 import shlex
 import json
 import re
+import subprocess
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 from scripts.ci_source_proof import job_name
@@ -49,6 +52,8 @@ def rollout_holds(value, *, historical=False, previous=None, now=None, targets=I
     if not isinstance(value, dict) or not set(value) <= set(targets):
         raise ValueError("rollout holds must map scheduled deployment targets to owner, reason and expires_at")
     if not historical:
+        if previous is not None and len(set(previous) - set(value)) > 1:
+            raise ValueError("release at most one rollout hold per change")
         owners = {word.removeprefix("@") for line in (Path(__file__).resolve().parents[1] / ".github/CODEOWNERS").read_text().splitlines()
                   if line.strip() and not line.lstrip().startswith("#") for word in line.split()[1:]}
         for target, hold in value.items():
@@ -87,25 +92,32 @@ CONTRACT_FILES = tuple(sorted({
 }))
 
 
-@lru_cache(maxsize=1)
-def dependency_inputs():
+@lru_cache(maxsize=4)
+def dependency_inputs(revision=None, root=None):
     """Generate dependencies from local imports, script calls and Docker COPY.
 
     Include package initializers, relative imports and literal subprocess paths.
     Directory COPY declarations remain prefixes, including newly added files.
     Parsing errors fail selection rather than silently omitting a dependency.
     """
-    sources = {path.relative_to(ROOT).as_posix(): path for directory in
+    root = root or ROOT
+    snapshot = None
+    if revision is not None:
+        with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(["git", "archive", revision], cwd=root))) as archive:
+            snapshot = {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+    sources = {path.relative_to(root).as_posix(): path.read_text() for directory in
                ("scripts", "ingestion", "services", "api/python/src", "tests")
-               for path in (ROOT / directory).rglob("*.py") if "__pycache__" not in path.parts}
+               for path in (root / directory).rglob("*.py") if "__pycache__" not in path.parts} if snapshot is None else {
+                   name: raw.decode() for name, raw in snapshot.items()
+                   if name.endswith(".py") and name.startswith(("scripts/", "ingestion/", "services/", "api/python/src/", "tests/"))}
     modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
                for name in sources}
     modules.update({Path(name).stem: name for name in sources if name.startswith("tests/") and name.count("/") == 1})
     edges = {}
-    for name, path in sources.items():
+    for name, source_text in sources.items():
         dependencies = set()
         package = name.removeprefix("api/python/src/").split("/")[:-1]
-        for node in ast.walk(ast.parse(path.read_text(), filename=name)):
+        for node in ast.walk(ast.parse(source_text, filename=name)):
             names = []
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
@@ -138,8 +150,11 @@ def dependency_inputs():
 
     images, copies = {}, {}
     for target, recipe in RECIPES.items():
+        if snapshot is not None and recipe not in snapshot:
+            continue
         copied = {recipe, ".dockerignore"}
-        for line in (ROOT / recipe).read_text().replace("\\\n", " ").splitlines():
+        recipe_text = (root / recipe).read_text() if snapshot is None else snapshot[recipe].decode()
+        for line in recipe_text.replace("\\\n", " ").splitlines():
             operation, _, arguments = line.strip().partition(" ")
             if operation.upper() != "COPY" or arguments.startswith("--from="):
                 continue
@@ -149,10 +164,11 @@ def dependency_inputs():
             for source in words[:-1]:
                 source = source.removeprefix("./").rstrip("/")
                 source = "" if source == "." else source
-                copied.add(source + "/" if (ROOT / source).is_dir() else source)
+                directory = (root / source).is_dir() if snapshot is None else any(name.startswith(source + "/") for name in snapshot)
+                copied.add(source + "/" if directory else source)
         copies[target] = set(copied)
         fixture = f"tests/fixtures/production_images/{target}.json"
-        if (ROOT / fixture).is_file():
+        if (root / fixture).is_file() if snapshot is None else fixture in snapshot:
             copied.add(fixture)
         copied.add(f"tests/test_{target.replace('-', '_')}.py")
         images[target] = copied | closure(name for name in sources if matches(name, copied) and not name.startswith("tests/"))
@@ -160,31 +176,31 @@ def dependency_inputs():
     native.update({name for name, inputs in edges.items() if name.startswith("tests/")
                    and inputs & {item for item in native if not item.endswith("/__init__.py")}})
     browser = closure(name for name in sources if name.startswith("tests/browser/"))
-    return images, native, browser, sources.keys(), copies
+    return images, native, browser, sources.keys() if snapshot is None else snapshot.keys(), copies
 
 
 def matches(path, inputs):
     return any((item == "/" or path.startswith(item)) if item.endswith("/") else fnmatchcase(path, item) for item in inputs)
 
 
-def classify_change(path: str) -> tuple[str, set[str]]:
+def classify_change(path: str, inputs=None) -> tuple[str, set[str]]:
     """Runtime selection follows generated dependencies; unknown paths stay broad."""
-    if (path.startswith("scripts/ci_") or path in {
-            "pyproject.toml", "uv.lock", ".github/workflows/ci.yml", ".github/actions/ci-tools/action.yml",
+    if (path in {
+            "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
             ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
-            "scripts/production_image_contracts.py", "scripts/installed_ingestion_fixture.py", "scripts/tested_image_bundle.py", "terraform/iam-plan-prerequisites.json",
+            "scripts/production_image_contracts.py", "scripts/installed_ingestion_fixture.py", "scripts/tested_image_bundle.py",
         } or path.startswith("tests/fixtures/") and path.endswith(".md")):
         return "shared", set(SUITES)
+    images, native, browser, sources, _ = inputs or dependency_inputs()
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("catalog/") or any(matches(path, inputs) for inputs in dependency_inputs()[0].values()):
+        if path.startswith("catalog/") or any(matches(path, copied) for copied in images.values()):
             suites.add("geospatial-integration")
         return "metadata", suites
     if path == "api/typescript/README.md":
         return "component", {"sdk-node22", "sdk-node24", "browser"}
     if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
-    images, native, browser, sources, _ = dependency_inputs()
     suites = set()
     if any(matches(path, inputs) for inputs in images.values()):
         suites.add("production-images")
@@ -197,7 +213,7 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         suites.update({"sdk-node22", "sdk-node24", "browser"})
     if suites or path in sources or path.startswith(("ingestion/", "services/", "api/", "web/", "tests/browser/")):
         return "component", suites
-    if path.startswith(".github/") and (ROOT / path).is_file():
+    if path.startswith(".github/") and ((ROOT / path).is_file() or path in sources):
         return "component", suites
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
         return "infrastructure", suites
@@ -208,7 +224,7 @@ def documentation_only(paths: list[str] | None) -> bool:
     return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
 
 
-def resolve_selection(paths, **deployment_inputs):
+def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
     """Resolve deployments first, then their validation floor, exactly once."""
     if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
         raise ValueError("selection requires a changed-path list")
@@ -220,16 +236,16 @@ def resolve_selection(paths, **deployment_inputs):
         suites.update(SUITES)
         images.update(BUILD_TARGETS)
     else:
-        inputs = dependency_inputs()[0]
         for path in paths:
-            tier, required = classify_change(path)
+            inputs = dependency_inputs(base, root) if base and not ((root or ROOT) / path).exists() else dependency_inputs()
+            tier, required = classify_change(path, inputs)
             suites.update(required)
             tiers.add(tier)
             if tier in {"shared", "unknown"}:
                 images.update(BUILD_TARGETS)
                 reason = f"{tier} dependency: {path}"
             elif tier != "documentation":
-                images.update(target for target, copied in inputs.items() if matches(path, copied))
+                images.update(target for target, copied in inputs[0].items() if matches(path, copied))
         if not tiers & {"shared", "unknown"}:
             reason = "tiers: " + ", ".join(sorted(tiers))
     suites.discard("production-images")

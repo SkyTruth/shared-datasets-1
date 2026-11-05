@@ -32,7 +32,8 @@ Complete decision discovery for both realms runs before the compatibility
 sample or artifact build; see [publication readiness](publication-readiness.md).
 Existing production execution ownership remains authoritative across code changes.
 
-The production worker remains 4 CPU / 8 GiB / 100 GiB DISK / zero retries / 24 hours.
+The production worker uses 4 CPU / 8 GiB / 100 GiB DISK / zero retries / 12 hours,
+allowing 3 h 39 m above the observed 8 h 21 m maximum.
 Validation requires kernel memory peak within 8 GiB and scratch below 80 GiB;
 6.4 GiB memory headroom is advisory. Samples never replace full-build validation.
 Missing telemetry or a missing/different scratch mount fails before publication.

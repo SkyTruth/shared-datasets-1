@@ -604,9 +604,10 @@ the command prints the exact path. CI checks the PR's version increase and runs
 the SDK and package checks on Node 22 and 24; `ci-ready` requires both selected
 matrix results.
 
-Merging a versioned package change to `main` runs release detection inside the
-main-push CI run, only when the resolved CI plan selected the SDK suites and
-`ci-ready` succeeded. The release job verifies that exact `ci-ready` result,
+After SDK validation and `ci-ready` succeed on a main push, CI dispatches
+`publish-typescript-sdk.yml` with the tested SHA, run and attempt. This top-level
+workflow preserves npm's [trusted publisher identity](https://docs.npmjs.com/trusted-publishers/)
+and re-verifies that exact `ci-ready` result,
 checks the reviewed version, and publishes the retained Node 24 tarball bytes
 through npm's GitHub Actions OIDC handshake. A manual dispatch of
 `publish-typescript-sdk.yml` with the tested `executor_sha`, `source_run_id` and
