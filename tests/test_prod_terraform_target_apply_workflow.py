@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 import pytest
+import yaml
 from scripts.terraform_target_contracts import registry
 from pathlib import Path
 
@@ -43,7 +44,16 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertEqual(job['environment'], 'shared-datasets-production')
         self.assertEqual(job['concurrency'], {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False})
         self.assertEqual(workflow['env']['TERRAFORM_DIR'], 'terraform/envs/prod')
-        self.assertNotIn('terraform_dir', workflow_triggers(workflow)['workflow_call']['inputs'])
+        self.assertEqual(set(workflow_triggers(workflow)['workflow_call']['inputs']), {
+            'caller_workflow', 'executor_sha', 'source_run_id', 'source_run_attempt', 'sync_name', 'tf_vars',
+        })
+        usage = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')
+        raw = yaml.safe_load((REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml').read_text())
+        self.assertEqual(set(raw['jobs']['bootstrap']['with']), {
+            'caller_workflow', 'executor_sha', 'source_run_id', 'source_run_attempt', 'sync_name',
+        })
+        self.assertEqual(set(usage['jobs']['bootstrap']['with']['allowed_exact'].splitlines()),
+                         set(registry()['Dataset usage deploy IAM bootstrap']['resources']))
         propagation = workflow['jobs']['propagation']
         self.assertNotIn('concurrency', propagation)
         self.assertNotIn('environment', propagation)

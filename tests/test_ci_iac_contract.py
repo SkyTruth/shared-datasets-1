@@ -1,6 +1,7 @@
 """Credential-free changed-HCL checks consume the executor's actual allowlists."""
 import subprocess
 import sys
+import json
 
 import pytest
 
@@ -10,7 +11,8 @@ from test_ci_preflight import ROOT, fixture_repo
 
 
 @pytest.mark.parametrize('defect', [None, 'unlisted', 'unsupported', 'permission', 'module', 'deleted'])
-def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect):
+@pytest.mark.parametrize('contract', ['inline', 'terraform', 'ingestion'])
+def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect, contract):
     root, git = fixture_repo(tmp_path)
     workflows = root / '.github/workflows'
     (workflows / 'ci.yml').write_text('jobs:\n  artifact-registry-iam:\n    uses: ./.github/workflows/sync.yml\n')
@@ -26,6 +28,18 @@ def test_changed_hcl_checks_real_snapshots_before_cloud_auth(tmp_path, defect):
         child.write_text(body)
         address = 'module.worker.' + address
     (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    with:\n      allowed_exact: ' + address + '\n')
+    if contract == 'terraform':
+        (root / '.github/terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {
+            'Fixture sync': {'workflow': 'sync.yml', 'readiness_target': 'iam-bootstrap', 'resources': [address]},
+        }}))
+        (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/prod-terraform-target-apply.yml\n'
+            '    with:\n      sync_name: Fixture sync\n      caller_workflow: sync.yml\n')
+        (workflows / 'prod-terraform-target-apply.yml').write_text('jobs: {}\n')
+    elif contract == 'ingestion':
+        (root / 'scripts/ingestion_targets.py').write_text('TARGETS = ' + repr({'eamlis-monthly': {'targets': [address]}}))
+        (workflows / 'sync.yml').write_text('jobs:\n  sync:\n    uses: ./.github/workflows/ingestion-deploy.yml\n'
+            '    with:\n      target: eamlis-monthly\n')
+        (workflows / 'ingestion-deploy.yml').write_text('jobs: {}\n')
     git('add', '.')
     git('commit', '-m', 'static scope baseline')
     base = git('rev-parse', 'HEAD')

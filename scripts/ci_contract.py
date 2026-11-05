@@ -84,6 +84,8 @@ CONTRACT_FILES = (
     "scripts/production_image_contracts.py",
     "scripts/dataset_usage_cold_start.py",
     "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
+    ".github/terraform-targets.json", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py",
+    ".github/actions/deployment-bootstrap/action.yml",
     "tests/fixtures/terraform_targets/failed-main.json",
     "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
     "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
@@ -317,8 +319,10 @@ def select_deployments(
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
             selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
-        if path == ".github/workflows/ingestion-deploy.yml":
+        if path in {".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py"}:
             selected.update(ingestion)
+        if path == ".github/actions/deployment-bootstrap/action.yml":
+            selected.update(ingestion | {"dataset_usage"})
         if path.startswith("ingestion/common/") or path in {
             "ingestion/__init__.py",
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
@@ -396,6 +400,8 @@ def select_deployments(
             selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
         if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
             selected.update(iam)
+        if path in {".github/terraform-targets.json", "scripts/terraform_target_contracts.py"}:
+            selected.update(iam | {"dataset_usage"})
         if path == "terraform/envs/prod/main.tf":
             selected.update({"artifact_registry_iam", "preview_terraform_iam"})
         if path.startswith("ingestion/dataset_usage/") or path in {

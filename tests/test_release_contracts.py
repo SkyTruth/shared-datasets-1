@@ -261,7 +261,7 @@ class ReleaseContractTests(unittest.TestCase):
     def test_shared_runner_cannot_disable_or_replace_immutable_receipt_verifier(self):
         action_path = self.root / ".github/actions/deployment-bootstrap/action.yml"
         action_original = action_path.read_text()
-        for mutation in ("removed", "disabled", "candidate-sha"):
+        for mutation in ("removed", "disabled", "candidate-sha", "scripts/ingestion_targets.py", ".github/terraform-targets.json"):
             with self.subTest(mutation=mutation):
                 action = yaml.safe_load(action_original)
                 steps = action["runs"]["steps"]
@@ -270,8 +270,10 @@ class ReleaseContractTests(unittest.TestCase):
                     steps.remove(restore)
                 elif mutation == "disabled":
                     restore["if"] = False
-                else:
+                elif mutation == "candidate-sha":
                     restore["env"]["TRUSTED_WORKFLOW_SHA"] = "${{ inputs.executor_sha }}"
+                else:
+                    restore['run'] = restore['run'].replace(mutation, '')
                 action_path.write_text(yaml.safe_dump(action))
                 self.assertTrue(any("verifier" in error for error in contracts.deployment_contract(self.root, "wdpa")))
 

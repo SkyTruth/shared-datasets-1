@@ -448,7 +448,6 @@ def static_checks(root, base, head):
     """
     import ast
     import inspect
-    import json
     import posixpath
     import subprocess
     import hcl2
@@ -456,6 +455,7 @@ def static_checks(root, base, head):
     import yaml
     from scripts import deployment_permissions as permissions
     from scripts.ci_contract import select_deployments
+    from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
 
     def git(*args):
@@ -504,10 +504,13 @@ def static_checks(root, base, head):
                 patterns.extend(re.compile(ast.literal_eval(value.args[0])) for value in node.value.elts)
 
     def scope(filename, inputs=None):
-        value = yaml.safe_load((root / filename).read_text())
-        registry = value.get('env', {}).get('INGESTION_TARGETS')
-        if registry:
-            configs = json.loads(registry)
+        value = terraform_targets.workflow(root, posixpath.basename(filename))
+        if filename == '.github/workflows/ingestion-deploy.yml':
+            # Read the literal contract from the checked source tree without
+            # executing candidate Python or retaining the old YAML target table.
+            configs = next(ast.literal_eval(node.value) for node in ast.parse(
+                (root / 'scripts/ingestion_targets.py').read_text()).body
+                if isinstance(node, ast.Assign) and any(isinstance(name, ast.Name) and name.id == 'TARGETS' for name in node.targets))
             require(inputs and inputs.get('target') in configs, 'ingestion target scope is unavailable')
             exact.update(declaration(row) for row in configs[inputs['target']]['targets'])
         for job in value['jobs'].values():

@@ -55,7 +55,8 @@ runs:
     run: |
       set -euo pipefail
       git archive "$TRUSTED_WORKFLOW_SHA" scripts/deployment_revision.py scripts/deployment_emission.py \
-        scripts/ingestion_targets.py scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
+        scripts/ingestion_targets.py .github/terraform-targets.json \
+        scripts/workflow_identity.py scripts/github_api_read.py scripts/install_deployment_verifier.py \
         .github/actions/deployment-receipt | tar -x -C "$GITHUB_WORKSPACE"
     shell: bash
   - name: Verify tested main revision

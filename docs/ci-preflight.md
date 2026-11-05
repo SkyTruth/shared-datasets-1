@@ -17,7 +17,9 @@ Pinned tools, exact commands and evidence formats live in
 `scripts/ci_toolchain.py`, `scripts/ci_preflight.py` and `scripts/ci_contract.py`.
 
 Terraform PRs run credential-free init/validate, dependency closure and changed-HCL
-apply-scope/permission-contract checks. Static checks cannot prove dynamic values,
+apply-scope/permission-contract checks using `scripts/ingestion_targets.py` and
+`.github/terraform-targets.json`. Registry changes select their automatic consumers;
+state-reader and state-only reconciliation remain manual. Static checks cannot prove dynamic values,
 instance keys or effective IAM; protected saved-plan/live probes remain required.
 Unknown inputs keep broad validation; selection never authorizes deployment.
 

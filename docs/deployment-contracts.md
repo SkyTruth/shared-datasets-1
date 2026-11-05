@@ -44,7 +44,7 @@ authority bootstrap and live permission checks before runtime binding plans.
 
 Every ingestion runner checks out `github.workflow_sha`, then invokes the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
-restores the current receipt policy/registry from that immutable workflow SHA,
+restores the receipt policy and both target registries from that immutable workflow SHA,
 and verifies the tested checkout before authentication. The Terraform service
 account and `shared-datasets-production` environment remain unchanged. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)

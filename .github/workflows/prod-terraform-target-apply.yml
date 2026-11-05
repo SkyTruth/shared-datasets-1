@@ -28,26 +28,6 @@ on:
         description: Current state-recorded variables for state-only reconciliation
         type: string
         default: ''
-      # Temporary dataset-usage bootstrap input compatibility; execution always
-      # resolves the registry. Remove these after its caller migration.
-      readiness_target:
-        type: string
-        default: ''
-      refusal_prefix:
-        type: string
-        default: ''
-      targets:
-        type: string
-        default: ''
-      allowed_exact:
-        type: string
-        default: ''
-      block_deletes:
-        type: boolean
-        default: false
-      post_apply_wait_seconds:
-        type: number
-        default: 0
 env:
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
   CALLER_WORKFLOW: ${{ inputs.caller_workflow }}

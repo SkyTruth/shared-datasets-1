@@ -38,21 +38,7 @@ jobs:
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
       sync_name: Dataset usage deploy IAM bootstrap
-      refusal_prefix: Refusing dataset usage deploy IAM bootstrap
-      block_deletes: true
-      post_apply_wait_seconds: 30
-      targets: |
-        google_project_iam_custom_role.dataset_usage_deployer
-        google_project_iam_member.github_actions_dataset_usage_deployer
-      allowed_exact: |
-        google_project_iam_custom_role.dataset_usage_deployer
-        google_project_iam_member.github_actions_dataset_usage_deployer
-      tf_vars: |
-        wdpa_monthly_image=unused-by-dataset-usage-bootstrap
-        sea_ice_daily_image=unused-by-dataset-usage-bootstrap
-        eamlis_monthly_image=unused-by-dataset-usage-bootstrap
   deploy:
     name: Deploy tested dataset usage image and private telemetry resources
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || needs.bootstrap.result == 'success') }}

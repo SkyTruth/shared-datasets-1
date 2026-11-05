@@ -245,6 +245,7 @@ def deployment_contract(root, target):
         restore = by_name.get(ordered[3], {})
         tokens = shlex.split(restore.get("run", ""))
         retained = {"scripts/deployment_revision.py", "scripts/deployment_emission.py", "scripts/ingestion_targets.py",
+                    ".github/terraform-targets.json",
                     "scripts/workflow_identity.py", "scripts/github_api_read.py", "scripts/install_deployment_verifier.py",
                     ".github/actions/deployment-receipt"}
         if (restore.get("env") != {"TRUSTED_WORKFLOW_SHA": "${{ github.workflow_sha }}"} or "if" in restore

@@ -17,13 +17,28 @@ from workflow_helpers import load_workflow, workflow_triggers
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_holds():
-    paths = [".github/workflows/ingestion-deploy.yml"]
+@pytest.mark.parametrize('path', ['.github/workflows/ingestion-deploy.yml', 'scripts/ingestion_targets.py', 'scripts/ingestion_verification.py'])
+def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_holds(path):
+    paths = [path]
     targets = {"mpatlas", "eamlis", "wdpa", "sea_ice"}
     assert set(select_deployments(paths)) == targets
     assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == {"mpatlas", "eamlis"}
     assert "production-images" in select_suites(paths)[0]
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(select_production_images(paths))
+
+
+@pytest.mark.parametrize('path', ['.github/terraform-targets.json', 'scripts/terraform_target_contracts.py'])
+def test_shared_terraform_contract_selects_automatic_consumers_only(path):
+    assert set(select_deployments([path])) == {
+        'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
+        'cron_alert_policy', 'ingestion_iam', 'dataset_usage',
+    }
+
+
+def test_shared_bootstrap_selects_all_callers():
+    assert set(select_deployments(['.github/actions/deployment-bootstrap/action.yml'])) == {
+        'mpatlas', 'eamlis', 'wdpa', 'sea_ice', 'dataset_usage',
+    }
 
 
 def test_every_tracked_path_validates_all_images_consumed_by_selected_deployments():

@@ -214,6 +214,8 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
     candidate = tmp_path / 'candidate'
     (candidate / 'scripts').mkdir(parents=True)
     (candidate / 'scripts/deployment_revision.py').write_text('raise RuntimeError("older candidate verifier")\n')
+    (candidate / '.github').mkdir()
+    (candidate / '.github/terraform-targets.json').write_text('untrusted candidate registry')
     script = shared_step('prepare', 'Restore immutable receipt verifier after candidate checkout')['run']
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': revision})
     assert result.returncode == 0, result.stderr
@@ -222,6 +224,10 @@ def test_immutable_verifier_restore_replaces_candidate_bytes_and_rejects_unknown
         assert (candidate / 'scripts' / filename).read_bytes() == expected
     expected = subprocess.check_output(['git', 'show', f'{revision}:.github/actions/deployment-receipt/action.yml'], cwd=REPO_ROOT)
     assert (candidate / '.github/actions/deployment-receipt/action.yml').read_bytes() == expected
+    expected = subprocess.check_output(['git', 'show', f'{revision}:.github/terraform-targets.json'], cwd=REPO_ROOT)
+    assert (candidate / '.github/terraform-targets.json').read_bytes() == expected
+    subprocess.run([sys.executable, str(candidate / 'scripts/deployment_revision.py'), '--help'],
+                   check=True, capture_output=True, text=True)
     result = run_shell(tmp_path, script, extra={'GITHUB_WORKSPACE': str(candidate), 'TRUSTED_WORKFLOW_SHA': '0' * 40})
     assert result.returncode != 0
 
