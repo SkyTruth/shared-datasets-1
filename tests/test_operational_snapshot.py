@@ -1,54 +1,58 @@
-"""Exercise real transcript JSON/ZIP boundaries with native API transport doubles."""
+"""Settled safety artifacts retain only catalog proof and native receipt verification."""
 from __future__ import annotations
 
 import copy
 import hashlib
 import io
 import json
+from unittest import mock
 import zipfile
 
 import pytest
 
+from scripts import deployment_emission as emissions
 from scripts import incident_verification_cache as native
-from scripts import operational_snapshot as snapshots
-from test_incident_verification_cache import GH_VERSION, NativeArtifacts, PREFIX
+from scripts import operational_safety_check as snapshots
+from test_incident_verification_cache import GH_VERSION, NativeArtifacts, PREFIX, unavailable
+from test_deployment_emission import verified
 from test_slack_incidents import IDENTITY, SHA
 
-
 POLICY = {"head_sha": SHA, "gh_version": GH_VERSION, "since": "2026-10-01T00:00:00Z"}
-INVENTORY = {"sources": [{"id": 11, "run_attempt": 1}], "catalog": [{"name": "asset.json", "generation": "1"}]}
-DEPLOYMENTS = PREFIX + "/deployments?environment=slack-incidents&task=slack-incident&per_page=100"
-STATUSES = PREFIX + "/deployments/10/statuses?per_page=100"
-JOBS = PREFIX + "/actions/runs/11/attempts/1/jobs?per_page=100"
+INVENTORY = {"asset.json": "1", "catalog.csv": "2"}
 
 
 class SafetyArtifacts(NativeArtifacts):
     def __init__(self):
         super().__init__()
-        self.producer.update(path=snapshots.WORKFLOW, event="schedule")
-        self.current.update(path=snapshots.WORKFLOW, event="schedule")
-        self.workflow["path"] = snapshots.WORKFLOW
+        self.producer.update(path=snapshots.WORKFLOW, workflow_id=13, event="schedule")
+        self.current.update(path=snapshots.WORKFLOW, workflow_id=13, event="schedule")
+        self.workflow.update(id=13, path=snapshots.WORKFLOW)
         self.job["name"] = snapshots.JOB
         self.job["steps"] = [{"name": name, "status": "completed", "conclusion": "success"}
                              for name in (snapshots.PROBE_STEP, snapshots.UPLOAD_STEP)]
-        self.artifact["name"] = snapshots.artifact_name(self.producer)
+        self.artifact["name"] = 'safety-snapshot-200-1'
 
-
-def capture(api):
-    recording = snapshots.RecordingAPI(api)
-    recording.get(PREFIX)
-    recording.get(PREFIX + "/actions/runs/11/attempts/1")
-    recording.pages(DEPLOYMENTS)
-    recording.pages(STATUSES)
-    recording.pages(JOBS, field="jobs")
-    return recording
+    def get(self, path):
+        if path.endswith('/actions/workflows/unattended-workflow-alert.yml'):
+            self.reads.append(path)
+            return {'id': 12, 'path': '.github/workflows/unattended-workflow-alert.yml'}
+        return super().get(path)
 
 
 @pytest.fixture
-def retained(tmp_path):
+def retained(tmp_path, monkeypatch):
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
     api = SafetyArtifacts()
-    recording = capture(api)
-    snapshot = snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, recording)
+    cache = native.VerificationCache(api.producer, IDENTITY, gh_version=GH_VERSION)
+    def verify(view):
+        emissions.verify(view, native.REPOSITORY, api.record, api.statuses[0],
+                         original_signer=native.WORKFLOW, batch=True, verified_statements=[])
+    receipt = emissions.receipt(native.REPOSITORY, api.record, api.statuses[0])
+    with mock.patch.object(emissions, 'verified_output', return_value=json.dumps(
+            verified(receipt, emitter=api.emitter, signer=native.WORKFLOW))) as crypto:
+        cache.verify(api, api.record, api.statuses, IDENTITY, verify)
+    assert crypto.call_count == 1
+    snapshot = snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, cache)
     api.retain(snapshot.save(tmp_path, api.producer))
     api.reads.clear()
     return api, snapshot
@@ -56,105 +60,45 @@ def retained(tmp_path):
 
 def restore(api, **changes):
     values = {"run": api.current, "policy": POLICY, "identity": IDENTITY, "inventory": INVENTORY}
-    values.update(changes)
-    return snapshots.Snapshot.restore(api, **values)
+    return snapshots.Snapshot.restore(api, **{**values, **changes})
 
 
-def test_native_roundtrip_matches_every_actual_get_and_pages_response(retained):
-    api, original = retained
+def test_native_roundtrip_reuses_verified_receipt_only_after_fresh_provenance_reads(retained):
+    api, _ = retained
     snapshot = restore(api)
     api.reads.clear()
-    assert snapshot.matches(api)
-    assert api.reads == [item["path"] for item in original.data["requests"]]
-    assert api.archive_reads == [api.artifact["id"]]
-    assert {item["field"] for item in snapshot.data["requests"]} == {None, "jobs"}
+    assert snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
+    assert sorted(api.reads) == sorted([PREFIX, PREFIX + '/actions/runs/11/attempts/1',
+                                       PREFIX + '/actions/workflows/unattended-workflow-alert.yml'])
+    assert api.archive_reads == [api.artifact['id']]
+    assert 'requests' not in snapshot.data  # No second persisted API-response transcript.
 
 
-@pytest.mark.parametrize("change", ["record", "status", "emitter", "repository", "job"])
-def test_changed_input_prevents_idle_without_replaying_old_responses(retained, change):
+@pytest.mark.parametrize('change', ['record', 'status', 'emitter', 'repository'])
+def test_changed_live_evidence_requires_original_signature_verification(retained, change):
     api, _ = retained
     snapshot = restore(api)
-    target = {"record": api.record, "status": api.statuses[0], "emitter": api.emitter,
-              "repository": api.repo, "job": api.job}[change]
-    target["changed"] = True
-    api.reads.clear()
-    assert snapshot.matches(api) is False
-    assert len(api.reads) == len(snapshot.data["requests"])
+    target = {'record': api.record, 'status': api.statuses[0], 'emitter': api.emitter, 'repository': api.repo}[change]
+    target['changed'] = True
+    with pytest.raises(RuntimeError, match='original attestation unavailable'):
+        snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
 
 
-def test_live_failure_is_not_hidden_after_an_earlier_changed_response(retained):
+def test_failed_live_read_cannot_be_hidden_by_saved_verification(retained):
     api, _ = retained
     snapshot = restore(api)
-    api.repo["changed"] = True
-    api.read_error = RuntimeError("current emitter unavailable")
-    with pytest.raises(RuntimeError, match="current emitter unavailable"):
-        snapshot.matches(api)
+    api.read_error = RuntimeError('live emitter unavailable')
+    with pytest.raises(RuntimeError, match='live emitter unavailable'):
+        snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
 
 
-def test_source_job_history_is_fetched_and_unavailability_remains_fatal(retained, monkeypatch):
+@pytest.mark.parametrize("change", ["code", "verifier", "activation", "identity", "catalog"])
+def test_changed_context_requires_a_full_catalog_comparison(retained, change):
     api, _ = retained
-    snapshot = restore(api)
-    original = api.pages
-
-    def unavailable_jobs(path, field=None):
-        if path == JOBS:
-            raise RuntimeError("current source jobs unavailable")
-        return original(path, field=field)
-
-    monkeypatch.setattr(api, "pages", unavailable_jobs)
-    with pytest.raises(RuntimeError, match="current source jobs unavailable"):
-        snapshot.matches(api)
-
-
-def test_conflicting_duplicate_capture_is_ineligible_but_unchanged_duplicate_is_deduplicated():
-    api = SafetyArtifacts()
-    recording = snapshots.RecordingAPI(api)
-    recording.get(PREFIX)
-    recording.get(PREFIX)
-    assert len(recording.requests) == 1
-    assert snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, recording)
-    api.repo["changed"] = True
-    recording.get(PREFIX)
-    assert snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, recording) is None
-
-
-def test_mutations_are_rejected_before_transport_and_cannot_be_exported():
-    class NoWrites:
-        def post(self, *_):
-            pytest.fail("mutation reached transport")
-    recording = snapshots.RecordingAPI(NoWrites())
-    with pytest.raises(snapshots.SnapshotWrite):
-        recording.post(PREFIX + "/deployments", {})
-    api = SafetyArtifacts()
-    assert snapshots.Snapshot.capture(api.producer, POLICY, IDENTITY, INVENTORY, recording) is None
-
-
-@pytest.mark.parametrize("method,path,field", [
-    ("get", "https://evil.example/token", None),
-    ("get", "repos/SkyTruth/other", None),
-    ("get", PREFIX + "-other", None),
-    ("get", PREFIX + "/../other", None),
-    ("get", PREFIX + "/actions/runs/1\n", None),
-    ("get", PREFIX + "/actions/runs/1?token=secret", None),
-    ("post", PREFIX, None),
-    ("get", PREFIX, "jobs"),
-    ("pages", JOBS, None),
-    ("pages", STATUSES, "jobs"),
-    ("pages", DEPLOYMENTS + "&per_page=1", None),
-    ("pages", DEPLOYMENTS + "&arbitrary=value", None),
-    ("get", PREFIX + "/actions/secrets", None),
-])
-def test_only_known_same_repository_read_endpoints_are_accepted(method, path, field):
-    with pytest.raises(snapshots.SnapshotError):
-        snapshots.validate_request(method, path, field)
-
-
-@pytest.mark.parametrize("change", ["code", "verifier", "activation", "identity", "sources", "catalog"])
-def test_changed_context_is_a_normal_full_comparison_path(retained, change):
-    api, _ = retained
-    policy, identity, inventory, run = copy.deepcopy(POLICY), copy.deepcopy(IDENTITY), copy.deepcopy(INVENTORY), dict(api.current)
+    policy, identity, inventory, run = copy.deepcopy(POLICY), copy.deepcopy(IDENTITY), dict(INVENTORY), dict(api.current)
     if change == "code":
         policy["head_sha"] = run["head_sha"] = "b" * 40
+        api.candidates = []
     elif change == "verifier":
         policy["gh_version"] += "different build"
     elif change == "activation":
@@ -162,15 +106,12 @@ def test_changed_context_is_a_normal_full_comparison_path(retained, change):
     elif change == "identity":
         identity["channel"] = "C987654321"
     else:
-        inventory[change].append({"new": True})
-    if change == "code":
-        # The server's exact-head filter excludes the previous code revision.
-        api.candidates = []
+        inventory['catalog.csv'] = '3'
     assert restore(api, run=run, policy=policy, identity=identity, inventory=inventory) is None
 
 
 @pytest.mark.parametrize("reason", ["missing", "expired", "expiry-time"])
-def test_missing_or_expired_retention_is_a_normal_full_comparison(retained, reason):
+def test_missing_or_expired_retention_requires_full_verification(retained, reason):
     api, _ = retained
     if reason == "missing":
         api.missing = True
@@ -182,8 +123,8 @@ def test_missing_or_expired_retention_is_a_normal_full_comparison(retained, reas
     assert api.archive_reads == []
 
 
-@pytest.mark.parametrize("change", ["digest", "producer", "job-attempt", "job-skipped", "probe-skipped", "upload-skipped", "member", "extra-member", "schema", "duplicate", "foreign-path"])
-def test_selected_proof_requires_exact_native_producer_and_strict_bounded_document(retained, tmp_path, change):
+@pytest.mark.parametrize("change", ["digest", "producer", "job-attempt", "job-skipped", "probe-skipped", "upload-skipped", "member", "extra-member", "schema", "entries", "foreign-path"])
+def test_selected_proof_requires_exact_native_producer_and_bounded_verified_entries(retained, tmp_path, change):
     api, snapshot = retained
     data = copy.deepcopy(snapshot.data)
     if change == "digest":
@@ -203,35 +144,18 @@ def test_selected_proof_requires_exact_native_producer_and_strict_bounded_docume
             data["producer"]["run_attempt"] += 1
         elif change == "schema":
             data["schema"] = "unrecognized"
-        elif change == "duplicate":
-            data["requests"].append(copy.deepcopy(data["requests"][0]))
+        elif change == "entries":
+            data['entries'] = {'invalid': {}}
         else:
-            data["requests"][0]["path"] = "repos/SkyTruth/other"
+            reads = next(iter(data['entries'].values()))
+            reads['repos/SkyTruth/other'] = reads.pop(PREFIX)
         api.retain(snapshot.save(tmp_path, api.producer), members={native.MEMBER: native.canonical(data)})
-    with pytest.raises((snapshots.SnapshotError, native.CacheError)):
+    with pytest.raises((RuntimeError, native.CacheError)):
         restore(api)
 
 
-def test_limits_apply_to_captured_and_loaded_requests(retained, monkeypatch):
-    api, snapshot = retained
-    monkeypatch.setattr(snapshots, "MAX_REQUESTS", 1)
-    recording = snapshots.RecordingAPI(api)
-    recording.get(PREFIX)
-    with pytest.raises(snapshots.SnapshotError, match="too many"):
-        recording.get(PREFIX + "/actions/runs/11/attempts/1")
-    with pytest.raises(snapshots.SnapshotError, match="request transcript"):
-        snapshots.Snapshot(snapshot.data)
-
-
-def test_empty_transcript_cannot_certify_reconciliation(retained):
-    _, snapshot = retained
-    data = {**snapshot.data, "requests": []}
-    with pytest.raises(snapshots.SnapshotError, match="request transcript"):
-        snapshots.Snapshot(data)
-
-
 @pytest.mark.parametrize("change", ["metadata", "archive", "member"])
-def test_shared_archive_limits_also_apply_to_safety_proofs(retained, monkeypatch, change):
+def test_archive_limits_apply_before_restore(retained, monkeypatch, change):
     api, _ = retained
     limit = 4096
     monkeypatch.setattr(native, "MAX_BYTES", limit)
@@ -239,8 +163,7 @@ def test_shared_archive_limits_also_apply_to_safety_proofs(retained, monkeypatch
         api.artifact["size_in_bytes"] = limit + 1
     elif change == "archive":
         api.raw = b"x" * (limit + 1)
-        api.artifact["size_in_bytes"] = 1
-        api.artifact["digest"] = "sha256:" + hashlib.sha256(api.raw).hexdigest()
+        api.artifact.update(size_in_bytes=1, digest="sha256:" + hashlib.sha256(api.raw).hexdigest())
     else:
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -251,34 +174,29 @@ def test_shared_archive_limits_also_apply_to_safety_proofs(retained, monkeypatch
         restore(api)
 
 
-def test_candidate_discovery_is_bounded_and_skips_newer_run_without_artifact(retained):
-    api, _ = retained
-    newer = {**api.producer, "id": api.producer["id"] + 1}
-    api.candidates = [newer, api.producer]
-    api.no_artifact_runs.add(newer["id"])
-    assert restore(api).matches(api)
-    query = next(path for path in api.reads if "/runs?" in path)
-    assert "created=%3E%3D" in query
-    assert "head_sha=" + SHA in query
-    assert f"/actions/runs/{newer['id']}/artifacts?" in "\n".join(api.reads)
-
-
-def test_snapshot_can_be_renewed_only_with_same_policy_revision(retained, tmp_path):
+def test_only_checked_receipts_can_be_renewed_and_revision_cannot_change(retained, tmp_path):
     api, _ = retained
     snapshot = restore(api)
-    assert snapshot.matches(api)
-    newer = {**api.current, "id": 400}
-    path = snapshot.save(tmp_path, newer)
-    assert json.loads(path.read_bytes())["producer"]["id"] == 400
-    assert json.loads(path.read_bytes())["requests"] == snapshot.data["requests"]
-    with pytest.raises(snapshots.SnapshotError, match="policy differs"):
-        snapshot.save(tmp_path, {**newer, "head_sha": "b" * 40})
+    assert snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
+    newer = {**api.current, 'id': 400}
+    renewed = snapshots.Snapshot.capture(newer, POLICY, IDENTITY, INVENTORY, snapshot.cache)
+    assert json.loads(renewed.save(tmp_path, newer).read_bytes())['entries'] == snapshot.cache.used
+    with pytest.raises(RuntimeError, match='policy differs'):
+        renewed.save(tmp_path, {**newer, 'head_sha': 'b' * 40})
 
 
-def test_restore_accepts_scheduled_and_manual_producers_but_not_other_events(retained):
+def test_probe_cannot_write_through_its_read_view():
+    api = mock.Mock()
+    view = snapshots.ReadOnlyAPI(api)
+    with pytest.raises(snapshots.SnapshotWrite):
+        view.post(PREFIX + '/deployments', {})
+    api.post.assert_not_called()
+
+
+def test_snapshot_producer_accepts_manual_safety_but_rejects_push(retained):
     api, _ = retained
-    api.producer["event"] = "workflow_dispatch"
-    assert restore(api).matches(api)
-    api.producer["event"] = "push"
-    with pytest.raises(native.CacheError, match="untrusted"):
+    api.producer['event'] = 'workflow_dispatch'
+    assert restore(api)
+    api.producer['event'] = 'push'
+    with pytest.raises(native.CacheError, match='untrusted'):
         restore(api)

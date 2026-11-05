@@ -14,7 +14,8 @@ import test_deployment_revision as deployment_fixtures
 
 from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
 from scripts import deployment_emission as emissions, deployment_revision as deployments
-from scripts import operational_safety_check as safety, operational_snapshot as snapshots
+from scripts import operational_safety_check as safety
+from scripts import operational_safety_check as snapshots
 from scripts import slack_incidents as incidents, slack_notify
 from scripts.incident_verification_cache import VerificationCache
 from scripts.workflow_identity import WORKFLOW_NAMES
@@ -31,6 +32,7 @@ START = NOW - timedelta(hours=24)
 def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
+    monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
     monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
 
 
@@ -265,7 +267,7 @@ class CatalogClient:
 def probe_inputs(tmp_path, monkeypatch):
     api, client = OperationalAPI(), CatalogClient()
     monkeypatch.setattr(safety.subprocess, "check_output", lambda *_args, **_kwargs: GH_VERSION)
-    monkeypatch.setattr(VerificationCache, "restore", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(VerificationCache, "restore", lambda _api, run, identity, **_kwargs: VerificationCache(run, identity, gh_version=GH_VERSION))
     collect, checks = mock.Mock(), mock.Mock(return_value=[SimpleNamespace(ok=True)])
     monkeypatch.setattr(indexes, "collect", collect)
     monkeypatch.setattr(catalog, "run_checks", checks)
@@ -273,20 +275,25 @@ def probe_inputs(tmp_path, monkeypatch):
     return api, client, tmp_path, collect, checks
 
 
-def test_unchanged_authenticated_snapshot_skips_full_catalog_and_dry_work(probe_inputs, monkeypatch):
+def test_unchanged_catalog_snapshot_still_traverses_live_incidents_and_reuses_verified_receipts(probe_inputs, monkeypatch):
     api, client, directory, collect, checks = probe_inputs
-    snapshot = mock.Mock()
-    snapshot.matches.return_value = True
-    snapshot.data = {"requests": ["one", "two"]}
-    monkeypatch.setattr(snapshots.Snapshot, "restore", mock.Mock(return_value=snapshot))
-    monkeypatch.setattr(safety, "dry_reconciliation", mock.Mock(side_effect=AssertionError("unexpected expensive dry run")))
+    inventory = safety.catalog_inventory(client)
+    cache = VerificationCache(api.current, IDENTITY, gh_version=GH_VERSION)
+    snapshot = safety.Snapshot.capture(api.current, {"head_sha": api.head, "gh_version": GH_VERSION, "since": stamp(START)},
+                                       IDENTITY, inventory, cache)
+    monkeypatch.setattr(safety.Snapshot, "restore", lambda *_: snapshot)
     assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory) == {
         "catalog": False, "reconcile": False, "verify": False, "snapshot": True}
-    snapshot.matches.assert_called_once_with(api)
-    snapshot.save.assert_called_once_with(directory, api.current)
     collect.assert_not_called()
     checks.assert_not_called()
-    assert any("environment=production-wdpa-monthly" in path for _method, path in api.calls)
+    assert any("environment=slack-incidents" in path for _method, path in api.calls)
+    missed = api.source(101)
+    api.add_source(missed)
+    assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)['reconcile'] is True
+    api.fail_on = '/actions/runs/101'
+    with pytest.raises(RuntimeError, match='live API unavailable'):
+        safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert api.posts == []
 
 
 def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_inputs):
@@ -304,25 +311,29 @@ def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_
         assert any(f"/deployments/{identifier}/statuses?" in path for _method, path in api.calls)
 
 
-@pytest.mark.parametrize("pending", [False, True])
-def test_legacy_mode_is_idle_without_pending_execution_or_bot_identity(tmp_path, monkeypatch, pending):
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_probe_main_always_requires_bot_identity_and_serializes_worker_decisions(tmp_path, monkeypatch, enabled):
     api, client = OperationalAPI(), CatalogClient()
-    monkeypatch.setattr(deployments, "pending", lambda *_: [99] if pending else [])
     environment = {"GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
                    "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/" + safety.WORKFLOW + "@refs/heads/main",
                    "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_OUTPUT": str(tmp_path / "outputs"),
-                   "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED": "false"}
+                   "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED": enabled, "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": stamp(START)}
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(incidents, "GitHub", lambda: api)
     monkeypatch.setattr(catalog, "get_client", lambda: client)
-    monkeypatch.setattr(safety, "catalog_changed", mock.Mock(return_value=False))
-    monkeypatch.setattr(incidents, "Slack", mock.Mock(side_effect=AssertionError("legacy mode must not require bot")))
-    monkeypatch.setattr(safety, "probe", mock.Mock(side_effect=AssertionError("legacy has no reusable bot registry")))
+    bot = mock.Mock()
+    bot.identity.return_value = IDENTITY
+    monkeypatch.setattr(incidents, "Slack", lambda *_: bot)
+    result = {"catalog": False, "reconcile": True, "verify": True, "snapshot": False}
+    probe = mock.Mock(return_value=result)
+    monkeypatch.setattr(safety, "probe", probe)
     monkeypatch.setattr(safety.sys, "argv", [safety.__file__, "--work-dir", str(tmp_path)])
     safety.main()
-    lines = (tmp_path / "outputs").read_text().splitlines()
-    assert lines == ["catalog=false", "reconcile=false", "verify=" + str(pending).lower(), "snapshot=false"]
+    bot.identity.assert_called_once_with()
+    probe.assert_called_once_with(api, api.current, IDENTITY, stamp(START), client, tmp_path)
+    assert json.loads((tmp_path / "result.json").read_text()) == result
+    assert (tmp_path / "outputs").read_text().splitlines() == ["catalog=false", "reconcile=true", "verify=true", "snapshot=false"]
 
 
 def test_catalog_change_during_comparison_cannot_receive_an_idle_snapshot(probe_inputs):
@@ -578,32 +589,6 @@ def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
     assert not safety.fresh_activity(payload,'daily',now=NOW+timedelta(hours=1))
 
 
-@pytest.mark.parametrize('filename,trigger', [('unattended-workflow-alert.yml','workflow_dispatch'), ('ci.yml','push'), ('publish-typescript-sdk.yml','workflow_run')])
-@pytest.mark.parametrize('later_success', [False, True])
-def test_legacy_health_surfaces_a_token_dispatched_failure(tmp_path, monkeypatch, filename, trigger, later_success):
-    api=OperationalAPI()
-    api.definitions.setdefault(filename, {'id': 99, 'path': '.github/workflows/' + filename})
-    source=api.source(101,filename)
-    source['event']=trigger
-    api.add_source(source)
-    if filename == 'ci.yml':
-        api.jobs[101].append({'name':'ci-ready', 'status':'completed', 'conclusion':'success'})
-    if later_success:
-        api.add_source({**source, 'id': 102, 'conclusion': 'success'})
-    (tmp_path/'result.json').write_text(json.dumps({'reconcile':False}))
-    (tmp_path/'claims.json').write_text('[]')
-    for key,value in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
-                      'GITHUB_WORKFLOW_REF':safety.REPOSITORY+'/'+safety.WORKFLOW+'@refs/heads/main',
-                      'GITHUB_RUN_ID':'300', 'GITHUB_RUN_ATTEMPT':'1', 'SHARED_DATASETS_SLACK_INCIDENTS_ENABLED':'false'}.items():
-        monkeypatch.setenv(key,value)
-    monkeypatch.setattr(incidents,'GitHub',lambda:api)
-    monkeypatch.setattr(catalog,'get_client',lambda:None)
-    monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
-    monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(tmp_path)])
-    safety.main()
-    assert 'Failed unattended run: https://github.com/SkyTruth/shared-datasets-1/actions/runs/101' in json.loads((tmp_path/'health/cache.json').read_text())['problems']
-    assert api.posts == []
-
 
 def test_health_report_posts_changes_and_daily_reminders_without_changing_problem_identity(tmp_path, monkeypatch):
     previous = {'problems': [], 'warnings': [], 'notified_at': None}
@@ -734,3 +719,44 @@ def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(def
             safety.previous_health(api, api.current)
     else:
         assert safety.previous_health(api, api.current) == report
+
+
+def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result_files(tmp_path, monkeypatch):
+    api = OperationalAPI()
+    monkeypatch.setattr(incidents, 'GitHub', lambda: api)
+    monkeypatch.setattr(safety, 'context', lambda *_: api.current)
+    monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], []))
+    monkeypatch.setattr(catalog, 'get_client', lambda: None)
+    monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
+    monkeypatch.setenv('SAFETY_PROBE_OUTCOME', 'failure')
+    monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
+    previous = {'problems': [], 'warnings': [], 'notified_at': None}
+    for hour, sends in ((0, 1), (3, 1), (24, 2)):
+        class Clock(datetime):
+            @classmethod
+            def now(cls, _zone):
+                return NOW + timedelta(hours=hour)
+        monkeypatch.setattr(safety, 'datetime', Clock)
+        monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+        safety.main()
+        previous = json.loads((tmp_path / 'health/cache.json').read_text())
+        assert previous['problems'] == ['Operational discovery failure; inspect Check operational work']
+        assert slack_notify.notify.call_count == sends
+    safety.subprocess.check_call.assert_not_called()  # No false success heartbeat.
+
+
+def test_settled_probe_reuses_signature_verification_after_real_snapshot_serialization(probe_inputs, monkeypatch):
+    api, client, directory, collect, checks = probe_inputs
+    api.install_state(acked_job_state(api))
+    with signed_transport(api) as crypto:
+        assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)['snapshot']
+        assert crypto.call_count == 1
+    retained = safety.Snapshot(json.loads((directory / 'cache.json').read_bytes()))
+    assert len(retained.cache.entries) == 1
+    monkeypatch.setattr(safety.Snapshot, 'restore', lambda *_: retained)
+    with mock.patch.object(emissions, 'verified_output', side_effect=AssertionError('unchanged receipt reverified')):
+        result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert result == {'catalog': False, 'reconcile': False, 'verify': False, 'snapshot': True}
+    assert retained.cache.hits == 1 and retained.cache.misses == 0
+    assert collect.call_count == checks.call_count == 1
+    assert api.posts == []

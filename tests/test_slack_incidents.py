@@ -1411,9 +1411,8 @@ def test_malicious_labels_cannot_insert_mentions_and_id_is_searchable():
 def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_preserved_failure_filter():
     root = Path(__file__).resolve().parents[1]
     workflow = load_workflow(root / incidents.WORKFLOW)
-    legacy = workflow["jobs"]["notify"]
+    assert set(workflow["jobs"]) == {"incidents"}
     worker = workflow["jobs"]["incidents"]
-    assert "INCIDENTS_ENABLED != 'true'" in legacy["if"]
     assert "INCIDENTS_ENABLED == 'true'" in worker["if"]
     assert worker["concurrency"]["queue"] == "max" and worker["concurrency"]["cancel-in-progress"] is False
     checkout = next(step for step in worker["steps"] if step.get("uses") == "actions/checkout@v4")

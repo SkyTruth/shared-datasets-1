@@ -153,26 +153,11 @@ class VerificationCache:
     @classmethod
     def restore(cls, api, run, identity, *, gh_version=None):
         current = cls(run, identity, gh_version=gh_version)
-        repository = api.get(f"repos/{REPOSITORY}")
-        workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
-        require(positive(repository.get("id")) and repository.get("full_name") == REPOSITORY
-                and positive(workflow.get("id")) and workflow.get("path") == WORKFLOW, "cache repository/workflow mismatch")
-        since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        query = urlencode({"branch": "main", "status": "success", "head_sha": run["head_sha"], "created": ">=" + since, "per_page": 100})
-        runs = api.pages(f"repos/{REPOSITORY}/actions/workflows/{workflow['id']}/runs?{query}", field="workflow_runs")
-        candidates = [item for item in runs if item.get("id") != run["id"] and item.get("head_sha") == run["head_sha"]]
-        for producer in sorted(candidates, key=lambda item: item["id"], reverse=True):
-            execution(producer)
-            artifacts = api.pages(f"repos/{REPOSITORY}/actions/runs/{producer['id']}/artifacts?per_page=100", field="artifacts")
-            selected = [item for item in artifacts if item.get("name") == artifact_name(producer)]
-            if not selected:
-                continue
-            require(len(selected) == 1, "ambiguous notification verification artifact")
-            artifact = selected[0]
-            if artifact.get("expired") is True or timestamp(artifact.get("expires_at")) <= datetime.now(timezone.utc):
-                continue
-            producer = authenticate_producer(api, repository, workflow, producer, run["head_sha"])
-            data = artifact_payload(api, producer, artifact)
+        retained = retained_payload(api, run, workflow_path=WORKFLOW, job_name=JOB,
+            required_steps=(PREPARE_STEP, UPLOAD_STEP), events=("workflow_run", "workflow_dispatch"),
+            name_prefix="notification-verification")
+        if retained:
+            producer, data = retained
             require(isinstance(data, dict) and set(data) == {"schema", "producer", "policy", "identity", "entries"}
                     and data["schema"] == SCHEMA and data["producer"] == execution(producer), "verification artifact producer mismatch")
             policy, saved_identity = data["policy"], data["identity"]
@@ -188,6 +173,34 @@ class VerificationCache:
                 return current
             return cls(run, identity, gh_version=current.policy["gh_version"], entries=data["entries"])
         return current
+
+
+def retained_payload(api, run, *, workflow_path, job_name, required_steps, events, name_prefix):
+    """Restore one bounded same-revision artifact through its native producer proof."""
+    prefix = f"repos/{REPOSITORY}"
+    repository = api.get(prefix)
+    workflow = api.get(f"{prefix}/actions/workflows/{workflow_path.rsplit('/', 1)[-1]}")
+    require(positive(repository.get("id")) and repository.get("full_name") == REPOSITORY
+            and positive(workflow.get("id")) and workflow.get("path") == workflow_path, "cache repository/workflow mismatch")
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    query = urlencode({"branch": "main", "status": "success", "head_sha": run["head_sha"], "created": ">=" + since, "per_page": 100})
+    runs = api.pages(f"{prefix}/actions/workflows/{workflow['id']}/runs?{query}", field="workflow_runs")
+    for producer in sorted((row for row in runs if row.get("id") != run["id"] and row.get("head_sha") == run["head_sha"]),
+                           key=lambda row: row["id"], reverse=True):
+        execution(producer)
+        name = f"{name_prefix}-{producer['id']}-{producer['run_attempt']}"
+        artifacts = api.pages(f"{prefix}/actions/runs/{producer['id']}/artifacts?per_page=100", field="artifacts")
+        selected = [row for row in artifacts if row.get("name") == name]
+        if not selected:
+            continue
+        require(len(selected) == 1, "ambiguous verification artifact")
+        artifact = selected[0]
+        if artifact.get("expired") is True or timestamp(artifact.get("expires_at")) <= datetime.now(timezone.utc):
+            continue
+        producer = authenticate_producer(api, repository, workflow, producer, run["head_sha"],
+            workflow_path=workflow_path, job_name=job_name, required_steps=required_steps, events=events)
+        return producer, artifact_payload(api, producer, artifact)
+    return None
 
 
 def authenticate_producer(api, repository, workflow, producer, head_sha, *, workflow_path=WORKFLOW,

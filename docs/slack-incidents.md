@@ -11,7 +11,8 @@ attempt and mutation records. Unknown impact remains unknown.
 
 ## Admission and cadence
 
-`unattended-workflow-alert.yml` receives failed native completions. Healthy events
+`unattended-workflow-alert.yml` receives failed native completions, including
+main-push CI delivery jobs and the top-level SDK publisher. Healthy events
 allocate no worker except the terminal observer, which also reconciles recovery.
 The three-hour safety probe discovers GITHUB_TOKEN-dispatched failures, including
 notification batches, for which GitHub emits no `workflow_run` event. Its rolling
@@ -19,7 +20,8 @@ notification batches, for which GitHub emits no `workflow_run` event. Its rollin
 consecutive reconciliation dispatches fail health; unchanged health findings never
 enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
 owns scoped non-red reports, deduplication, reminders and missing-run detection.
-Infrastructure failures report and request completion verification without checkout.
+Failed discovery uses the same retained, change-plus-daily health report.
+Infrastructure failures that prevent reporting retain a direct webhook signal.
 
 Each safety probe cheaply inspects the exact pending WDPA execution for terminal
 status before completion-observer backoff. Pending verification backs off at most
@@ -92,12 +94,17 @@ writers pause admission, drain without cancelling sends, merge and resume within
 
 ## Incremental verification
 
-Snapshots require authenticated successful same-main producers, identical policy/
-Slack identity, unchanged generations and live identical API transcripts. Pending
-executions/claims cannot create them. Artifacts bind exact producer, successful
-job/upload, creation interval, archive digest and sole bounded member; export only
-verified receipts. Terminal fingerprints cover complete status history and verifier.
-Missing proof invokes full verification; malformed evidence/failed reads fail visibly.
+The safety probe retains catalog generations and the same native receipt cache
+used by notification workers. Every probe traverses live source runs/jobs,
+incident records/statuses and recovery evidence; there is no second persisted
+API transcript or idle-reconciliation bypass. Unchanged catalog generations skip
+catalog rebuilding, while unchanged receipts reuse exact verified signature inputs.
+Snapshots require authenticated successful same-main producers and identical
+policy/Slack identity. Pending executions/claims cannot create them. Artifacts bind
+exact producer, successful job/upload, creation interval, archive digest and sole
+bounded member; export only receipts checked in that invocation. Terminal
+fingerprints cover complete status history and verifier. Missing proof invokes
+full verification; malformed evidence/failed reads fail visibly.
 Caches grant no authority; final signing/reconciliation use fresh checks. Only
 repository/workflow identities cache within an invocation. GET transport/5xx and
 recognized attestation 503 failures retry at most three times after 5 then 15 seconds
@@ -109,9 +116,11 @@ proofs fail immediately; this mechanism never retries writes or uncertain sends.
 Install/invite a bot with `chat:write`; no history/search/public-post scope is needed.
 Set secret `SHARED_DATASETS_SLACK_BOT_TOKEN`, exact channel variable
 `SHARED_DATASETS_SLACK_CHANNEL_ID`, UTC activation `SHARED_DATASETS_SLACK_INCIDENTS_SINCE`
-and finally `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED=true`. Never log/commit tokens
-or put them in arguments. Retain the incoming webhook for disabled mode and safety.
-Enabled mode fails on missing configuration; transport never silently changes.
+and `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED=true` to admit incident workers.
+Never log/commit tokens or put them in arguments. The bot is the sole workflow
+incident transport; disabling admission does not switch to webhooks. Retain the
+incoming webhook for safety findings and other operational summaries. Missing bot
+configuration fails visibly.
 Workspace/bot/channel changes require registry migration. Observe real recovery;
 never fail production or post synthetic production messages to test delivery.
 
@@ -130,6 +139,10 @@ Claims still require inspection. Catch-up uses `replay-window`, incident
 `workflow-bot-cutover`, `replay:START..END` and no timestamp. Enumerate closed past
 UTC windows daily, at most seven days; never rerun source workflows.
 
+Legacy posting was removed after read-only confirmation of active bot admission
+(`true`, 2026-11-05). Keep closure: owner resolver job `resolve` still failed at
+run `41756725199` on 2026-11-04; this is no evidence that all historical parents
+are closed. Pinned historical caller-graph fixtures remain required.
 For legacy webhook closure, owner main dispatch supplies original failed run ID
 and inspected parent timestamp. Every failure requires registered signed recovery
 or exact historical worker proof; runtime targets require `verified`. Update only

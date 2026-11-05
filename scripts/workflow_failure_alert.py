@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Notify only for failed unattended GitHub runs; never execute their artifacts."""
+"""Classify trusted unattended runs and close owner-identified legacy parents."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 from pathlib import Path
@@ -12,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.slack_notify import build_slack_payload, notify
+from scripts.slack_notify import build_slack_payload
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_WORKFLOWS
@@ -59,10 +58,19 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
 
 
 def safety_health_only(run, jobs):
-    return run["name"] in WORKFLOW_NAMES["operational-safety-check.yml"] and any(
-        any(step.get("name") == "Check freshness and stalled operations" and step.get("conclusion") == "failure" for step in job.get("steps", []))
-        and any(step.get("name") == "Retain safety health report" and step.get("conclusion") == "success" for step in job.get("steps", []))
-        for job in jobs)
+    if run["name"] not in WORKFLOW_NAMES["operational-safety-check.yml"]:
+        return False
+    # A retained health report owns covered probe failures. Dispatch, setup,
+    # notification and upload failures still need infrastructure incident routing.
+    for job in jobs:
+        steps = job.get("steps", [])
+        failed = {step["name"] for step in steps if step.get("conclusion") in FAILED_CONCLUSIONS}
+        if (failed and failed <= {"Check operational work", "Check freshness and stalled operations"}
+                and any(step.get("name") == "Retain safety health report" and step.get("conclusion") == "success" for step in steps)
+                and ("Check operational work" not in failed or any(step.get("name") == "Check freshness and stalled operations"
+                     and step.get("conclusion") == "success" for step in steps))):
+            return True
+    return False
 
 
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
@@ -171,43 +179,14 @@ def resolve_legacy(api, slack, run_id, message_ts):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--event-path", type=Path)
-    parser.add_argument("--resolve-run-id", type=int)
-    parser.add_argument("--message-ts")
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resolve-run-id", type=int, required=True)
+    parser.add_argument("--message-ts", required=True)
     args = parser.parse_args()
-    if args.resolve_run_id is not None:
-        if args.event_path or args.dry_run or not args.message_ts:
-            parser.error("resolution requires only --resolve-run-id and --message-ts")
-        from scripts.slack_incident_api import Slack
-        from scripts.deployment_revision import GitHub as DeploymentGitHub
-        resolve_legacy(DeploymentGitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
-                                      os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
-                       args.resolve_run_id, args.message_ts)
-        return
-    if not args.event_path or args.message_ts:
-        parser.error("notification requires --event-path")
-    event = json.loads(args.event_path.read_text())
-    run = event["workflow_run"]
-    jobs = None
-    alert = alert_for_run(event)
-    # Both CI publication and scheduled catalog activity need exact job evidence.
-    needs_jobs = ((run["name"] in WORKFLOW_NAMES["ci.yml"] and run["event"] == "push"
-                   or run["name"] in WORKFLOW_NAMES["catalog-web-deploy.yml"] and run["event"] in {"schedule", "workflow_dispatch"})
-                   and run["conclusion"] in FAILED_CONCLUSIONS and run["status"] == "completed"
-                   and run["head_branch"] == "main" and run["head_repository"]["full_name"] == REPOSITORY
-                   and event["repository"]["full_name"] == REPOSITORY)
-    if needs_jobs:
-        jobs = jobs_for_event(GitHub(), run)
-        alert = None if jobs is None else alert_for_run(event, jobs=jobs)
-    elif alert is not None and not verify_source_event(GitHub(), run):
-        alert = None
-    if alert is None:
-        print("No unattended workflow failure to announce.")
-    elif args.dry_run:
-        print(json.dumps(alert, indent=2))
-    else:
-        notify(**alert, strict=True)
+    from scripts.slack_incident_api import Slack
+    from scripts.deployment_revision import GitHub as DeploymentGitHub
+    resolve_legacy(DeploymentGitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
+                                   os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
+                   args.resolve_run_id, args.message_ts)
 
 
 if __name__ == "__main__":

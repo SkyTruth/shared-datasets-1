@@ -60,23 +60,10 @@ def test_event_data_cannot_override_destination_or_inject_slack_mentions():
             alerts.alert_for_run(event(id=run_id))
 
 
-def test_cli_dry_run_and_delivery_failure(tmp_path, monkeypatch, capsys):
-    path = tmp_path / "event.json"
-    path.write_text(json.dumps(event()))
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path), "--dry-run"])
-    with mock.patch.object(alerts, "notify") as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
+def test_removed_webhook_cli_cannot_post(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["alert", "--event-path", "event.json"])
+    with pytest.raises(SystemExit):
         alerts.main()
-        notify.assert_not_called()
-    assert "actions/runs/123" in capsys.readouterr().out
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
-        with pytest.raises(RuntimeError, match="delivery failed"):
-            alerts.main()
-        assert notify.call_args.kwargs["strict"] is True
-    path.write_text(json.dumps(event(event="pull_request")))
-    with mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-        notify.assert_not_called()
 
 
 def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
@@ -88,17 +75,18 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
-    assert not set(alerts.WORKFLOW_NAMES["ci.yml"] + alerts.WORKFLOW_NAMES["publish-typescript-sdk.yml"]) & set(subscriptions)
+    assert set(alerts.WORKFLOW_NAMES["ci.yml"] + alerts.WORKFLOW_NAMES["publish-typescript-sdk.yml"]) <= set(subscriptions)
+    assert set(workflow["jobs"]) == {"incidents"}
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
-    worker_filter = workflow["jobs"]["notify"]["if"]
+    worker_filter = workflow["jobs"]["incidents"]["if"]
     assert "github.event.workflow_run.status == 'completed'" in worker_filter
     assert "contains(fromJSON(" in worker_filter
     conclusions = json.loads(worker_filter.split("fromJSON('", 1)[1].split("')", 1)[0])
     assert set(conclusions) == alerts.FAILED_CONCLUSIONS
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in worker_filter
-    steps = workflow["jobs"]["notify"]["steps"]
+    steps = workflow["jobs"]["incidents"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"] == {"ref": "main", "persist-credentials": False}
+    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
 
 
@@ -149,25 +137,19 @@ def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusi
     assert alerts.alert_for_run(event(name=name, event="workflow_run"), jobs=jobs) is not None
 
 
-def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_path, monkeypatch):
+def test_catalog_probe_uses_verified_job_evidence_before_suppressing():
+    from scripts import slack_incidents as incidents
     payload = event(name="Catalog web deploy", head_sha="a" * 40, run_attempt=1)
     api = source_api(payload["workflow_run"])
     api.pages.return_value = [
         {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
-    path = tmp_path / "event.json"
-    path.write_text(json.dumps(payload))
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-    notify.assert_not_called()
+    assert incidents.source_observations(api, payload, {}) == []
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
     api = source_api(payload["workflow_run"], run_attempt=2)
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-    notify.assert_not_called()
+    assert incidents.source_observations(api, payload, {}) == []
     api.pages.assert_not_called()
 
 
@@ -462,8 +444,7 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     assert opener.call_args.args[0].full_url == "https://slack.com/api/chat.update"
 
 
-@pytest.mark.parametrize("mode", ["legacy", "incidents"])
-def test_native_safety_failure_needs_no_parent_handoff_or_timing_assumption(tmp_path, monkeypatch, mode):
+def test_native_safety_failure_needs_no_parent_handoff_or_timing_assumption():
     from scripts import slack_incidents as incidents
     payload = event(name="Operations / Safety check", event="schedule", head_sha="a" * 40, run_attempt=1)
     run = payload["workflow_run"]
@@ -471,29 +452,6 @@ def test_native_safety_failure_needs_no_parent_handoff_or_timing_assumption(tmp_
     api = source_api(run)
     api.pages.return_value = [{"id": 456, "name": "Check for operational work", "status": "completed",
                               "conclusion": "failure", "completed_at": "2026-11-04T18:00:00Z"}]
-    # A parent may complete long after runner cleanup; only its native completed
-    # event is consumed. No follow-up, title parsing, polling or sleep is needed.
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
-        if mode == "legacy":
-            path = tmp_path / "event.json"
-            path.write_text(json.dumps(payload))
-            monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-            alerts.main()
-            assert notify.call_args.kwargs["strict"] is True
-            assert "/actions/runs/123|" in notify.call_args.kwargs["body"]
-        else:
-            observed = incidents.source_observations(api, payload, {})
-            assert len(observed) == 1 and observed[0]["conclusion"] == "failure"
-            assert observed[0]["job_id"] == 456
-
-
-@pytest.mark.parametrize("name", alerts.WORKFLOW_NAMES["deployment-verification.yml"])
-def test_successful_historical_followup_cannot_forward_or_invent_a_parent(tmp_path, monkeypatch, name):
-    payload = event(name=name, event="workflow_dispatch", conclusion="success", display_title="Operational follow-up: safety 999/1")
-    path = tmp_path / "event.json"
-    path.write_text(json.dumps(payload))
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "GitHub") as api, mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-    api.assert_not_called()
-    notify.assert_not_called()
+    observed = incidents.source_observations(api, payload, {})
+    assert len(observed) == 1 and observed[0]["conclusion"] == "failure"
+    assert observed[0]["job_id"] == 456

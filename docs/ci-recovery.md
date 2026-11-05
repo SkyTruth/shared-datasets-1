@@ -51,7 +51,7 @@ original alert reconciled as distinct milestones.
 | Same read-only outage after bounded retries | Stop identical retries until new provider recovery evidence appears; do not rebuild locally or manufacture a push to compensate. |
 | Mutation started, partial apply or uncertain transport result | Inspect durable records and live effects, then use protected target-specific reconciliation; never blanket-rerun. |
 | Stale/missing authority, artifact or signed evidence | Preserve the failed record and obtain reviewed recovery; a newer success cannot silently replace missing proof. |
-| Safety-health finding or incomplete health read | Inspect its scoped health report and prerequisites; findings use change-plus-daily reminders, not production replay. |
+| Failed safety discovery, health finding or incomplete health read | Inspect its scoped health report and prerequisites; findings use change-plus-daily reminders, not production replay. |
 | Uncertain Slack send/claim | Use [delivery reconciliation](slack-incidents.md#configure-and-reconcile); inspect the exact parent/checkpoint instead of blindly resending. |
 
 Follow-ups belong to the same owner and must refresh live head/run identity.
