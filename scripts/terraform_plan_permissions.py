@@ -51,6 +51,7 @@ google_cloud_run_v2_job_iam_member google_cloud_run_v2_service_iam_member google
 google_iap_web_cloud_run_service_iam_member google_compute_url_map terraform_data
 google_project_service
 google_pubsub_topic_iam_member google_pubsub_topic google_pubsub_subscription google_monitoring_alert_policy
+google_iam_workload_identity_pool
 '''.split())
 
 
@@ -262,7 +263,14 @@ def plan_checks(plan, *, project_number, target=None):
             current = (change.get("before") if action == "delete" else change.get("after")) or {}
             # Some deletion providers retain all identity fields only in before.
             require(isinstance(current, dict) and current, "mutation values unavailable")
-            if kind in PROJECT_OPERATIONS:
+            if kind in {"google_iam_workload_identity_pool", "google_iam_workload_identity_pool_provider"} and current.get("workload_identity_pool_id") == "github-pr-plan":
+                project(current)
+                if kind.endswith("_provider"):
+                    require(current.get("workload_identity_pool_provider_id") == "ci-pr-plan", "unexpected PR provider identity")
+                prefix = "iam.workloadIdentityPoolProviders" if kind.endswith("_provider") else "iam.workloadIdentityPools"
+                require(action in {"create", "update"}, "PR plan identity deletion is not authorized")
+                add(PROJECT_URL, (prefix + ".get", prefix + "." + action))
+            elif kind in PROJECT_OPERATIONS:
                 project(current)
                 operations, fields, allowed = PROJECT_OPERATIONS[kind]
                 require(action in allowed, "unsupported " + kind + " action: " + action)
@@ -377,7 +385,7 @@ def plan_checks(plan, *, project_number, target=None):
                 # This guard changes Terraform state only; it makes no GCP call.
             elif kind == "google_project_service":
                 project(current)
-                require(action == "create" and current.get("service") == "pubsub.googleapis.com", "unsupported API enablement mutation")
+                require(action == "create" and current.get("service") in {"pubsub.googleapis.com", "policytroubleshooter.googleapis.com"}, "unsupported API enablement mutation")
                 add(PROJECT_URL, ("serviceusage.services.enable", "serviceusage.services.get", "serviceusage.operations.get"))
             elif kind == "google_pubsub_topic_iam_member":
                 project(current)

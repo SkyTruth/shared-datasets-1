@@ -28,6 +28,7 @@ WORKFLOW_NAMES = {
     'operational-safety-check.yml': ('Operations / Safety check',),
     'pmtiles-cdn-sync.yml': ('Catalog / PMTiles CDN sync', 'PMTiles CDN sync'),
     'preview-terraform-iam-sync.yml': ('Infrastructure / Preview Terraform IAM sync', 'Preview Terraform IAM sync'),
+    'pr-terraform-plan.yml': ('Infrastructure / Read-only PR plan',),
     'prod-terraform-state-reconcile.yml': ('Prod Terraform state reconciliation',),
     'prod-terraform-target-apply.yml': ('Infrastructure / Production Terraform target apply', 'Prod Terraform target apply'),
     'publish-dataset.yml': ('Data / Approved mutation', 'Approved dataset mutation'),

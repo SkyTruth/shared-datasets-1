@@ -28,6 +28,7 @@ jobs:
     name: geospatial-changes
     runs-on: ubuntu-24.04
     outputs:
+      pr_terraform: ${{ steps.pr-plan.outputs.pr_terraform }}
       should_run: ${{ steps.plan.outputs.should_run }}
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
       browser: ${{ steps.plan.outputs.browser }}
@@ -66,6 +67,9 @@ jobs:
         run: |
           python scripts/ci_preflight.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --source-head "$SOURCE_HEAD" \
             --output "$RUNNER_TEMP/ci-plan/plan.json" --github-output "$GITHUB_OUTPUT"
+      - name: Select live PR Terraform check
+        id: pr-plan
+        run: python scripts/pr_terraform_plan.py select --plan "$RUNNER_TEMP/ci-plan/plan.json"
       - uses: actions/upload-artifact@v4
         with:
           name: ci-validation-plan-attempt${{ github.run_attempt }}
@@ -265,11 +269,19 @@ jobs:
       - *retained-validation-results
       - *compact-gate-result
 
+  pr-terraform-plan:
+    needs: geospatial-changes
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.geospatial-changes.outputs.pr_terraform == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/pr-terraform-plan.yml
+
   ci-ready:
     name: ci-ready
     permissions: *validation-permissions
     if: always()
-    needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser]
+    needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -282,6 +294,11 @@ jobs:
         with:
           pattern: ci-gate-result-*
           path: ${{ runner.temp }}/ci-results
+      - name: Require selected same-repo Terraform plan
+        env:
+          REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.geospatial-changes.outputs.pr_terraform == 'true' }}
+          RESULT: ${{ needs.pr-terraform-plan.result }}
+        run: '[[ "$REQUIRED" != "true" || "$RESULT" == "success" ]]'
       - name: Require every selected suite and matrix entry
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}

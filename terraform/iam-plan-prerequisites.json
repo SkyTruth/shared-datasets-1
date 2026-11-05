@@ -126,6 +126,10 @@
       "module.feature_preview_loader_service_account.google_service_account.this",
       "google_storage_bucket.shared_bucket",
       "google_storage_bucket.monitoring_slack"
+    ],
+    "terraform-state-read-iam-sync.yml/pr-plan-authority": [],
+    "terraform-state-read-iam-sync.yml/pr-plan-identity": [
+      "google_project_service.required"
     ]
   }
 }

@@ -109,3 +109,51 @@ WDPA monthly operation and owned recovery live in
 in [the reset runbook](feature-id-reset-installation.md).
 Usage telemetry's reader-first activation and cost gates live in
 [its README](../ingestion/dataset_usage/README.md#activation-and-cost).
+
+## Automatic read-only Terraform PR plans
+
+By the repository owner's 2026-11-05 decision, same-repository Terraform PRs
+automatically run `pr-terraform-plan` before `ci-ready`, without an approval
+click. Documentation and application-only changes skip it. The runner consumes
+CI's selected deployments and the registered owners of changed root Terraform
+resources, including manual-only IAM targets. Each scope gets a refreshed
+Terraform **1.8.5** plan with its registered targets and variables, using current
+state-recorded immutable image digests. Every saved plan passes the production
+resource/action allowlist and `plan_checks`. IAM policies and role definitions
+are read for the **production deploy identity**; Policy Troubleshooter v3 must
+confirm allow/deny access. Missing, conditional-unknown or unreadable authority
+fails closed. This rehearsal does not replace protected deploy-time checks.
+
+The dedicated `shared-datasets-pr-plan` service account has metadata/IAM reads
+and read access to the exact default production state object (plus bucket object
+name listing required by Terraform's GCS workspace discovery). It has no state
+lock/write, resource mutation, Secret Manager, signing or deployer impersonation
+permissions. The owner's no-Secret-Manager rule also excludes metadata/policy
+reads: scopes requiring a secret refresh or secret policy read fail closed;
+these scopes need a separately reviewed design before they can pass this gate.
+**Same-repository PR authors can read production state**, including any
+sensitive values already persisted there; this exposure is the owner's explicit
+exception to credential-free PR validation. Fork PRs skip authentication; GitHub
+normally withholds their `id-token: write`. Keep the repository's fork write-token
+option disabled: WIF's PR subject alone does not distinguish a fork. All other
+PR jobs remain credential-free.
+
+The PR identity uses a separate WIF pool and requires this repository,
+`pull_request`, a numeric PR merge ref, the exact CI caller's `workflow_ref` and
+the exact reusable planner's `job_workflow_ref` at that ref. These are distinct
+claims: GitHub supplies `job_workflow_ref` only for
+[reusable workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-with-reusable-workflows).
+Plans/JSON are never uploaded, provider output is captured privately, temporary
+plans are removed, checkout credentials are not persisted and logs emit only
+resource addresses/actions and permission names. Failed provider diagnostics are
+withheld because they can contain attribute values. Policy evaluation follows
+[Google's v3 access verdict](https://docs.cloud.google.com/policy-intelligence/docs/reference/policytroubleshooter/rest/v3/iam/troubleshoot),
+including deny policies; principal access boundary evaluation is not claimed.
+
+Bootstrap the two new registered scopes through the reviewed, protected
+`terraform-state-read-iam-sync.yml` workflow: `PR plan identity IAM bootstrap`
+precedes `PR plan identity provisioning`. No local apply is permitted. Configure
+repository variables `GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER` and
+`GCP_PR_PLAN_SERVICE_ACCOUNT` from the sensitive `github_pr_plan_*` outputs.
+Until provisioning and variables exist, selected PR checks intentionally fail.
+No identity was provisioned by the code change itself.

@@ -75,6 +75,7 @@ CONTRACT_FILES = tuple(sorted({
 } | {
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
     ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
+    ".github/workflows/pr-terraform-plan.yml",
     ".github/terraform-targets.json", "terraform/iam-plan-prerequisites.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
