@@ -266,7 +266,12 @@ class EmissionTests(unittest.TestCase):
     def test_historical_and_shared_ingestion_receipts_bind_exact_immutable_leaf(self):
         shared = {"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}
         for target in d.INGESTION_TARGETS:
-            for references, signer in (([], ".github/workflows/" + d.TARGET_WORKFLOWS[target]), ([shared], d.INGESTION_SIGNER)):
+            wrapper = {"path": f"{REPO}/.github/workflows/{d.TARGET_WORKFLOWS[target]}@{SHA}", "sha": SHA, "ref": "refs/heads/main"}
+            nested = dict(wrapper, referenced_workflows=[dict(wrapper, referenced_workflows=[shared])])
+            for references, signer in (([], ".github/workflows/" + d.TARGET_WORKFLOWS[target]),
+                                       ([shared], d.INGESTION_SIGNER), ([wrapper, shared], d.INGESTION_SIGNER),
+                                       ([nested], d.INGESTION_SIGNER),
+                                       ([dict(shared, path=shared["path"].replace(SHA, "refs/heads/main"))], d.INGESTION_SIGNER)):
                 self.emitter = {**run(), "referenced_workflows": references}
                 claim = record()
                 claim["payload"]["target"] = target

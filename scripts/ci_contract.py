@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
+from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
 from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
@@ -27,10 +28,9 @@ DEPLOYMENTS = (
     "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
-INGESTION_DEPLOYMENTS = frozenset({"mpatlas", "eamlis", "wdpa", "sea_ice"})
+INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CONFIGS.values())
 DEPLOYMENT_IMAGES = {
-    "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "sea_ice": "sea-ice-daily",
-    "wdpa": "wdpa-monthly", "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
+    **{config["selection"]: target for target, config in INGESTION_CONFIGS.items()}, "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
     "cron_alert_policy": "monitoring-slack",
 }
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"

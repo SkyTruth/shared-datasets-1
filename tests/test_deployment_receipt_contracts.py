@@ -34,7 +34,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.workflows.mkdir(parents=True)
         for name in contracts.WORKFLOWS:
             value = leaf(name)
-            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml"}:
+            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml"}:
                 source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
                 value = yaml.safe_load(source.read_text())
             self.write(name, value)

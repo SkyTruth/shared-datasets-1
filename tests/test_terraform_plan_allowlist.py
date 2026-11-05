@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from scripts import terraform_plan_allowlist
-from test_wdpa_monthly_deploy_workflow import shared_step, target_table
+from test_ingestion_deploy_workflow import shared_step, target_table
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

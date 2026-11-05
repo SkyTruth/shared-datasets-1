@@ -12,6 +12,8 @@ import pytest
 
 from scripts.ci_contract import ALWAYS, expected_tools, verify_results
 from scripts.tested_image_bundle import TARGETS as IMAGE_TARGETS
+from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
+from scripts.deployment_receipt_contracts import expanded_steps
 from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow
 
@@ -23,13 +25,13 @@ def deployment_steps(target):
     value = load_workflow(ROOT / ".github/workflows" / f"{target}-deploy.yml")
     if value['jobs'].get('deploy', {}).get('uses') == './.github/workflows/ingestion-deploy.yml':
         shared = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
-        config = json.loads(shared['env']['INGESTION_TARGETS'])[target]
-        steps = copy.deepcopy(shared['jobs']['prepare']['steps'] + shared['jobs']['apply']['steps'])
+        config = INGESTION_CONFIGS[target]
+        steps = copy.deepcopy(list(expanded_steps(ROOT, shared['jobs']['prepare'])) + list(expanded_steps(ROOT, shared['jobs']['apply'])))
         for step in steps:
             if 'run' in step:
                 step['run'] = step['run'].replace('$WORKFLOW_FILE', config['workflow']).replace('$TARGET', target)
         return steps
-    return next(job["steps"] for job in value["jobs"].values()
+    return next(list(expanded_steps(ROOT, job)) for job in value["jobs"].values()
                 if any("tested_image_authorization.py" in step.get("run", "") for step in job.get("steps", [])))
 
 

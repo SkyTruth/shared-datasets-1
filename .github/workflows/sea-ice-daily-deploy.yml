@@ -64,4 +64,3 @@ jobs:
       cancel_running_canary: ${{ inputs.cancel_running_canary || false }}
       canary_run_date: ${{ inputs.canary_run_date || '' }}
       resume_scheduler: ${{ github.event_name != 'workflow_dispatch' || inputs.resume_scheduler }}
-    secrets: inherit

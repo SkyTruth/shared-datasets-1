@@ -225,8 +225,8 @@ class ReleaseContractTests(unittest.TestCase):
             path.write_text(original)
 
     def test_shallow_mutable_checkout_rejected(self):
-        path = self.root / ".github/workflows/ingestion-deploy.yml"
-        path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor_sha }}", "ref: main"))
+        path = self.root / ".github/actions/deployment-bootstrap/action.yml"
+        path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor-sha }}", "ref: main"))
         self.assertTrue(any("complete history" in item for item in contracts.deployment_contract(self.root, "wdpa")))
 
     def test_candidate_cannot_replace_the_trusted_bootstrap(self):
@@ -235,22 +235,21 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("trusted main workflow" in item for item in contracts.deployment_contract(self.root, "wdpa")))
 
     def test_shared_runner_cannot_disable_or_replace_immutable_receipt_verifier(self):
-        path = self.root / ".github/workflows/ingestion-deploy.yml"
-        original = path.read_text()
-        for job_name in ("prepare", "apply", "verify"):
-            for mutation in ("removed", "disabled", "candidate-sha"):
-                with self.subTest(job=job_name, mutation=mutation):
-                    value = yaml.safe_load(original)
-                    steps = value["jobs"][job_name]["steps"]
-                    restore = next(step for step in steps if step.get("name") == "Restore immutable receipt verifier after candidate checkout")
-                    if mutation == "removed":
-                        steps.remove(restore)
-                    elif mutation == "disabled":
-                        restore["if"] = False
-                    else:
-                        restore["env"]["TRUSTED_WORKFLOW_SHA"] = "${{ inputs.executor_sha }}"
-                    path.write_text(yaml.safe_dump(value))
-                    self.assertTrue(any("verifier" in error for error in contracts.deployment_contract(self.root, "wdpa")))
+        action_path = self.root / ".github/actions/deployment-bootstrap/action.yml"
+        action_original = action_path.read_text()
+        for mutation in ("removed", "disabled", "candidate-sha"):
+            with self.subTest(mutation=mutation):
+                action = yaml.safe_load(action_original)
+                steps = action["runs"]["steps"]
+                restore = next(step for step in steps if step.get("name") == "Restore immutable receipt verifier after candidate checkout")
+                if mutation == "removed":
+                    steps.remove(restore)
+                elif mutation == "disabled":
+                    restore["if"] = False
+                else:
+                    restore["env"]["TRUSTED_WORKFLOW_SHA"] = "${{ inputs.executor_sha }}"
+                action_path.write_text(yaml.safe_dump(action))
+                self.assertTrue(any("verifier" in error for error in contracts.deployment_contract(self.root, "wdpa")))
 
     def test_each_wrapper_must_resolve_its_registered_target_and_exact_source(self):
         for target, slug in contracts.DEPLOYS.items():

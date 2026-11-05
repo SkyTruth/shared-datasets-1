@@ -19,13 +19,13 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.ingestion_targets import TARGETS
 
 IGNORED_ACTIONS = ([], ["no-op"], ["read"])
-JOB_IMAGE_TARGETS = {
-    "mpatlas-monthly": "module.mpatlas_monthly_job.google_cloud_run_v2_job.this",
-    "eamlis-monthly": "module.eamlis_monthly_job.google_cloud_run_v2_job.this",
-    "sea-ice-daily": "module.sea_ice_daily_job.google_cloud_run_v2_job.this",
-}
+JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.items()}
 
 
 def split_lines(value: str) -> list[str]:
@@ -33,14 +33,29 @@ def split_lines(value: str) -> list[str]:
 
 
 def job_image_scope(target: str) -> set[str]:
-    addresses = {JOB_IMAGE_TARGETS[target]}
-    if target == "mpatlas-monthly":
-        addresses.update({
-            "google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker",
-            "module.mpatlas_monthly_scheduler.google_cloud_scheduler_job.this",
-            "google_iam_deny_policy.canonical_destructive_actions[0]",
-        })
-    return addresses
+    return set(TARGETS[target]["targets"])
+
+
+def wdpa_errors(after, expected_image, expected_config):
+    task = after.get("template", [{}])[0].get("template", [{}])[0]
+    container = task.get("containers", [{}])[0]
+    env = {e.get("name"): e.get("value") for e in container.get("env", [])}
+    volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
+    disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
+    errors = []
+    if container.get("resources", [{}])[0].get("limits") != {"cpu": "4", "memory": "8Gi"} or task.get("timeout") != "86400s":
+        errors.append("unexpected WDPA processing limits")
+    if env.get("WDPA_BUILD_IMAGE") != expected_image or env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST") != expected_config:
+        errors.append("WDPA scheduled executions require the exact tested producer")
+    if "WDPA_PROMOTION_BUNDLE" in env or "RUN_DATE" in env:
+        errors.append("WDPA must not pin a monthly bundle or RUN_DATE")
+    if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(
+        m.get("name") == "work" and m.get("mount_path") == "/work" for m in container.get("volume_mounts", [])
+    ):
+        errors.append("WDPA requires the 100 GiB disk at /work")
+    if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":
+        errors.append("WDPA scratch paths must use /work")
+    return errors
 
 
 def blocked_changes(
@@ -51,6 +66,7 @@ def blocked_changes(
     block_deletes: bool,
     job_image: tuple[str, str] | None = None,
     delete_only: bool = False,
+    expected_config: str | None = None,
 ) -> list[str]:
     blocked = []
     for resource in plan.get("resource_changes", []):
@@ -67,6 +83,9 @@ def blocked_changes(
         if address not in allowed_exact and not any(pattern.match(address) for pattern in allowed_patterns):
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
+        if job_image is not None and job_image[0] == JOB_IMAGE_TARGETS["wdpa-monthly"] and actions != ["update"]:
+            blocked.append(f"{'/'.join(actions)} {address}")
+            continue
         if job_image is not None and address == job_image[0]:
             if actions != ["update"] and not (address == JOB_IMAGE_TARGETS["mpatlas-monthly"] and actions == ["create"]):
                 blocked.append(f"{'/'.join(actions)} {address}")
@@ -80,6 +99,8 @@ def blocked_changes(
             image = containers[0].get("image") if containers else None
             if image != job_image[1]:
                 blocked.append(f"unexpected image for {address}: {image!r}")
+            if address == JOB_IMAGE_TARGETS["wdpa-monthly"]:
+                blocked.extend(wdpa_errors(after, job_image[1], expected_config))
     return blocked
 
 
@@ -115,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         "--expected-image",
         help="Exact planned container image; required with --job-image-target.",
     )
+    parser.add_argument("--expected-config", help="Exact CI-tested config digest, required for WDPA.")
     parser.add_argument(
         "--refusal-prefix",
         required=True,
@@ -128,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.job_image_target is not None:
         if not args.expected_image:
             parser.error("--job-image-target requires a nonempty --expected-image")
+        if args.job_image_target == "wdpa-monthly" and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_config or ""):
+            parser.error("WDPA requires --expected-config with its tested config digest")
         address = JOB_IMAGE_TARGETS[args.job_image_target]
         scope = job_image_scope(args.job_image_target)
         if (args.allowed_exact is not None and allowed_exact != scope) or allowed_patterns:
@@ -151,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         block_deletes=args.block_deletes,
         job_image=job_image,
         delete_only=args.delete_only,
+        expected_config=args.expected_config,
     )
     if blocked:
         print(f"{args.refusal_prefix} because the Terraform plan changes non-allowlisted resources:")

@@ -147,44 +147,33 @@ class ManualAuthorityTests(unittest.TestCase):
 
 
 class IngestionTargetRecoveryTests(unittest.TestCase):
-    def test_every_registered_ingestion_target_resolves_and_reaches_refresh_plan(self):
+    def test_every_registered_target_reaches_refresh_with_original_image_variables(self):
         import json
         import subprocess
-        import sys
         import tempfile
-        workflow = yaml.safe_load((ROOT / '.github/workflows/deployment-recovery.yml').read_text())
-        steps = workflow['jobs']['reconcile']['steps']
-        resolver = next(s for s in steps if s.get('id') == 'ingestion-target')
-        # Execute the shipped resolver after its transport wrapper, with real YAML parsing.
-        code = resolver['run'].split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
-        table = json.loads(yaml.safe_load((ROOT / '.github/workflows/ingestion-deploy.yml').read_text())['env']['INGESTION_TARGETS'])
+        from scripts.ingestion_targets import TARGETS
+        steps = yaml.safe_load((ROOT / '.github/workflows/deployment-recovery.yml').read_text())['jobs']['reconcile']['steps']
         refresh = next(s for s in steps if s.get('name') == 'Refresh original target scope without applying')['run']
-        image = 'registry/job@sha256:' + 'a' * 64
-        for target in (*table, 'terraform-registered', 'foreign-job'):
+        for target in (*TARGETS, next(iter(deployment.TERRAFORM_WORKFLOWS))):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / 'outputs'
-                env = {**os.environ, 'TARGET': target, 'IMAGE': image, 'KIND': 'terraform' if target.startswith('terraform-') else 'ingestion',
-                       'GITHUB_OUTPUT': str(output), 'RUNNER_TEMP': directory}
-                result = subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env, capture_output=True, text=True)
-                if target == 'foreign-job':
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertFalse(output.exists())
-                    continue
+                targets = TARGETS[target]['targets'] if target in TARGETS else ['resource.reviewed']
+                image = 'registry/job@sha256:' + 'a' * 64
+                args = SimpleNamespace(command='recovery-inputs')
+                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_OUTPUT': str(output)}), \
+                     patch.object(deployment, 'recovery_record', return_value=({'sha': SHA}, {'target': target, 'artifact': image, 'targets': targets})):
+                    deployment.recover(args, Mock())
+                values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                variables = json.loads(values['image_variables'])
+                self.assertEqual(set(variables), {t['image_variable'] for t in TARGETS.values()})
+                self.assertEqual([k for k, v in variables.items() if v == image], [TARGETS[target]['image_variable']] if target in TARGETS else [])
+                log = Path(directory) / 'args'
+                recorder = 'terraform() { :; }\nbash() { printf "%s\\n" "$@" > "$ARGS"; }\n'
+                result = subprocess.run(['bash', '-c', recorder + refresh], cwd=ROOT, capture_output=True, text=True,
+                    env={**os.environ, 'IMAGE_VARIABLES': values['image_variables'], 'TARGETS_JSON': values['targets'], 'ARGS': str(log), 'RUNNER_TEMP': directory})
                 self.assertEqual(result.returncode, 0, result.stderr)
-                variables = json.loads(output.read_text().removeprefix('image_variables='))
-                self.assertEqual(set(variables), {t['image_variable'] for t in table.values()})
-                self.assertEqual([key for key, value in variables.items() if value == image], [table[target]['image_variable']] if target in table else [])
-                targets = table[target]['targets'] if target in table else ['resource.reviewed']
-                env.update(IMAGE_VARIABLES=json.dumps(variables), TARGETS_JSON=json.dumps(targets), ARGS=str(Path(directory) / 'args'))
-                fake = '''terraform() { :; }
-bash() { printf '%s\\n' "$@" > "$ARGS"; }
-'''
-                result = subprocess.run(['bash', '-c', fake + refresh], cwd=ROOT, env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                args = (Path(directory) / 'args').read_text().splitlines()
-                self.assertIn('plan', args)
-                self.assertNotIn('apply', args)
-                self.assertEqual({a.removeprefix('-target=') for a in args if a.startswith('-target=')}, set(targets))
-                self.assertEqual(dict(a.removeprefix('-var=').split('=', 1) for a in args if a.startswith('-var=')), variables)
-        # Trusted table resolution must survive checkout of executors predating consolidation.
-        self.assertLess(steps.index(resolver), next(i for i, s in enumerate(steps) if s.get('with', {}).get('ref') == '${{ steps.original.outputs.executor_sha }}' and s.get('with', {}).get('path') != 'original-executor'))
+                actual = log.read_text().splitlines()
+                self.assertIn('plan', actual)
+                self.assertNotIn('apply', actual)
+                self.assertEqual({a.removeprefix('-target=') for a in actual if a.startswith('-target=')}, set(targets))
+                self.assertEqual(dict(a.removeprefix('-var=').split('=', 1) for a in actual if a.startswith('-var=')), variables)

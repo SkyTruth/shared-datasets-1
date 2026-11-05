@@ -63,7 +63,9 @@ activate a worker still pinned to an October bundle or a persistent `RUN_DATE`.
 An unavailable November source may produce a verified skipped canary; the
 enabled schedule then retries during days 1–10 without a new monthly approval.
 While paused, deployment without an explicit canary date defers before mutation;
-it must not install code and leave an unverifiable deployment record.
+it must not install code and leave an unverifiable deployment record. If scheduled
+work starts after apply, verification waits up to 62.5 minutes for it to drain;
+timeout fails visibly. Explicit cancellation also waits for termination.
 The obsolete observer is removed by the protected scratch-cleanup retirement;
 WDPA deployment does not recreate it.
 
