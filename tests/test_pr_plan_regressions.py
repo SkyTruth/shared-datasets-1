@@ -11,6 +11,7 @@ import yaml
 from scripts.terraform_plan_permissions import PROJECT, plan_checks
 from scripts.ci_contract import CONTRACT_FILES
 from scripts.terraform_target_contracts import registry, callers
+from scripts.workflow_identity import WORKFLOW_NAMES
 from terraform_helpers import load_terraform, resources
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_new_planner_and_reusable_workflow_invalidate_evidence():
     assert {'scripts/pr_terraform_plan.py', '.github/workflows/pr-terraform-plan.yml'} <= set(CONTRACT_FILES)
+
+
+def test_pr_leaf_identity_is_registered_without_top_level_authority():
+    from scripts import workflow_failure_alert, deployment_revision
+    assert WORKFLOW_NAMES['pr-terraform-plan.yml'] == ('Infrastructure / Read-only PR plan',)
+    leaf = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())
+    assert set(leaf.get('on', leaf.get(True))) == {'workflow_call'}
+    assert 'pr-terraform-plan.yml' not in workflow_failure_alert.MONITORED_WORKFLOWS
+    assert 'pr-terraform-plan.yml' not in deployment_revision.TARGET_WORKFLOWS.values()
 
 @pytest.mark.parametrize('paths,expected', [([], False), (['docs/ci-deployment.md'], False),
     (['ingestion/eamlis_monthly/run.py'], False), (['terraform/README.md'], False),
