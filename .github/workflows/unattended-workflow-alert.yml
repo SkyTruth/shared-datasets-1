@@ -2,29 +2,16 @@ name: Alerts / Workflow health and Slack reconciliation
 
 on:
   workflow_run:
-    # Subscribe to names emitted today; API replay retains historical aliases.
+    # Subscribe only to current alert-producing events; API replay retains historical aliases.
     workflows:
       - "Bucket hygiene audit"
       - "CI / Validate and deliver"
       - "SDK / Publish TypeScript"
-      - "Catalog / PMTiles CDN sync"
       - "Catalog / Viewer deploy"
       - "Catalog / Web deploy"
-      - "Data / Approved mutation"
       - "Data / Scratch cleanup audit"
       - "Deployments / Completion check"
       - "Deployments / Read-only reconciliation"
-      - "Infrastructure / Artifact Registry IAM sync"
-      - "Infrastructure / Cron alert policy sync"
-      - "Infrastructure / Ingestion deploy IAM sync"
-      - "Infrastructure / Preview Terraform IAM sync"
-      - "Infrastructure / Scratch cleanup IAM sync"
-      - "Ingestion / EAMLIS monthly deploy"
-      - "Ingestion / MPAtlas monthly deploy"
-      - "Ingestion / Sea ice daily deploy"
-      - "Ingestion / WDPA monthly deploy"
-      - "Prod Terraform state reconciliation"
-      - "Terraform state read IAM sync"
     branches: [main]
     types: [completed]
   workflow_dispatch:

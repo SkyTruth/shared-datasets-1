@@ -271,7 +271,7 @@ def deployment_paths(root=None):
             raise ValueError("selection exceptions require a reason, kind and registered deployments")
     for edges in graphs:
         for name, row in exceptions.items():
-            if row["kind"] != "include":
+            if row["kind"] != "include" and not (name.endswith((".yml", ".yaml")) and row.get("deployments")):
                 edges[name] = set()
     sources = {name for path, rows in resource_index(root).items()
                if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
@@ -288,12 +288,12 @@ def deployment_paths(root=None):
         resources += [resource for config in registry(root).values() if config["workflow"] == workflow for resource in config["resources"]]
         resources += [resource for scope in registry(root, section="plan_scopes").get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
-        inputs = (dependency_closure(edges, [".github/workflows/" + workflow])
-                  - {name for name, item in exceptions.items() if item["kind"] == "exclude"}) | scope_inputs(resources, root)
+        inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
         if resources:
             inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
         if "image" in row:
             inputs.update(dependency_inputs(root=root)[4][row["image"]])
+        inputs.difference_update(name for name, item in exceptions.items() if item["kind"] == "exclude")
         for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
             paths.setdefault(path, set()).add(target)
     return paths

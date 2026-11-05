@@ -55,7 +55,7 @@ synchronization names, exact IAM target scopes, viewer/CDN/usage `plan_scopes` a
 named read-only `permission_probes`. Unknown permission targets fail closed.
 Execution, offline dependency checks, saved-plan guards and recovery read that
 same registry; names preserve historical signed hash identities. CI derives
-Terraform source consumers from these scopes. The registry’s `selection_exceptions` table owns traversal boundaries, excluded validators and reasoned per-deployment input additions. WDPA processing limits come from the same parsed HCL index.
+Terraform source consumers from these scopes. The registry’s `selection_exceptions` table owns traversal boundaries, excluded validators and reasoned per-deployment input additions. Excluded executor machinery selects its explicit representative `deployments`, after removing inferred workflow/Terraform/image callers. Content changes retain actual consumers; test selection and image validation remain separate. WDPA processing limits come from the same parsed HCL index.
 The [resolved CI plan](ci-preflight.md#selection-and-offline-checks) carries the
 resulting suites and required `production_image_targets` unchanged to consumers.
 
@@ -137,11 +137,9 @@ same-revision attempts require reconciliation. Successful identical revisions sk
 staging/planning. Different same-code bytes require reconciliation except reviewed catalog/
 index refreshes and historical WDPA scratch builds; separate publication approval remains.
 
-Ingestion skips apply/canary only with no saved-plan resource/output/deferred changes,
-a live digest matching tested bytes, and the latest exact-image execution's success.
-The signed claim records `noop_execution`; the signed `verified` outcome retains its URL.
-Missing/failed executions keep the canary path; unreadable evidence fails closed.
-Signing failures retain failure handling; explicit scheduler resume keeps canary verification.
+Every new ingestion claim runs saved-plan apply and its own canary, including unchanged
+plans. Older executions cannot verify a new claim. Same-revision success and supersession
+still skip before claiming. Only sea ice requests the optional scheduler resume hook.
 
 Canonical receipts bind record/status IDs, target, executor, source CI, artifact, scope
 and phase. Actions-bot metadata/URLs alone prove nothing. Protected leaves attest bytes;

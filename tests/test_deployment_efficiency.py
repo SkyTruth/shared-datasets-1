@@ -1,4 +1,4 @@
-"""No-op receipts and bounded read-only planning at their execution boundaries."""
+"""Representative deployment verification and bounded read-only planning."""
 from __future__ import annotations
 
 import io
@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 import textwrap
@@ -24,84 +23,102 @@ from scripts import pr_terraform_plan as planner
 from scripts.deployment_receipt_contracts import ingestion_boundary
 from test_deployment_emission import verified
 from test_offline_deployment_lifecycle import journey as journey
-from workflow_helpers import load_workflow, workflow_steps_by_name
+from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = planner.REPOSITORY
 URL = 'https://policytroubleshooter.googleapis.com/v3/iam:troubleshoot'
 
 
-@pytest.mark.parametrize('defect', [None, 'empty', 'digest', 'update', 'outputs', 'deferred', 'read', 'failed', 'missing', 'unsigned', 'live-error', 'execution-error'])
-def test_signed_noop_preserves_runtime_proof_and_skips_apply_and_canary(journey, monkeypatch, defect):
+@pytest.mark.parametrize('live_execution', ['old-image', 'failed', 'missing', 'unreadable'])
+def test_unchanged_plan_claim_does_not_consume_unrelated_runtime_evidence(journey, monkeypatch, live_execution):
     services, directory = journey
-    image = 'us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/sea-ice-daily@sha256:' + 'a' * 64
-    plan = {'resource_changes': [{'address': 'module.sea_ice_daily_job.google_cloud_run_v2_job.this',
-                                 'change': {'actions': ['update' if defect == 'update' else 'read' if defect == 'read' else 'no-op']}}]}
-    if defect == 'outputs':
-        plan['output_changes'] = {'output': {'actions': ['update']}}
-    if defect == 'deferred':
-        plan['deferred_changes'] = [{'reason': 'unknown'}]
-    if defect == 'empty':
-        plan['resource_changes'] = []
-    path = directory / 'plan.json'
-    path.write_text(json.dumps(plan))
-    execution = {'metadata': {'name': 'sea-ice-daily-abcde'},
-                 'spec': {'template': {'spec': {'containers': [{'image': image}]}}},
-                 'status': {'completionTime': 'now', 'succeededCount': 1}}
-    if defect == 'failed':
-        execution['status'] = {'completionTime': 'now', 'failedCount': 1}
+    image = 'image@sha256:' + 'a' * 64
+    path = directory / 'unchanged.json'
+    path.write_text(json.dumps({'resource_changes': [{'address': 'module.sea_ice_daily_job.google_cloud_run_v2_job.this',
+                                                    'change': {'actions': ['no-op']}}]}))
     original = subprocess.check_output
-
+    reads = []
     def external(command, **kwargs):
-        if command[:4] == ['gcloud', 'run', 'jobs', 'describe']:
-            if defect == 'live-error':
+        if command[0] == 'gcloud':
+            reads.append(command)
+            if live_execution == 'unreadable':
                 raise subprocess.CalledProcessError(1, command)
-            return (image if defect != 'digest' else image[:-1] + 'b') + '\n'
-        if command[:5] == ['gcloud', 'run', 'jobs', 'executions', 'list']:
-            if defect == 'execution-error':
-                raise subprocess.CalledProcessError(1, command)
-            return json.dumps([] if defect == 'missing' else [execution])
+            if command[:4] == ['gcloud', 'run', 'jobs', 'describe']:
+                return image
+            return json.dumps([] if live_execution == 'missing' else [{
+                'spec': {'template': {'spec': {'containers': [{'image': image[:-1] + 'b' if live_execution == 'old-image' else image}]}}},
+                'status': {'completionTime': 'now', 'failedCount': 1 if live_execution == 'failed' else 0, 'succeededCount': 1}}])
         return original(command, **kwargs)
-
     monkeypatch.setattr(subprocess, 'check_output', external)
     rehearsal = emission.emit(REPO, *emission.rehearsal(services, REPO))
     services.sign(rehearsal)
     args = SimpleNamespace(target='sea-ice-daily', workflow='sea-ice-daily-deploy.yml',
                            executor_sha=services.plan['tested_sha'], source_run_id=123, source_run_attempt=1,
                            artifact=image, plan_json=path)
-    if defect in {'live-error', 'execution-error'}:
-        with pytest.raises(subprocess.CalledProcessError):
-            deployment.start(args, services)
-        assert services.records == []
-        return
-    result = deployment.start(args, services)
-    noop = defect in {None, 'unsigned'}
-    assert result['noop'] == str(noop).lower()
-    claim = directory / 'deployment-receipts' / 'record-71-status-81.json'
-    if defect != 'unsigned':
-        services.sign(claim)
-    terminal = SimpleNamespace(deployment_id=71, phase='verified' if noop else 'applied',
-                               execution=result.get('execution', ''))
-    if defect == 'unsigned':
-        with pytest.raises((AssertionError, deployment.DeploymentError)):
-            deployment.finish(terminal, services)
-        assert len(services.statuses) == 1
-        return
-    deployment.finish(terminal, services)
-    services.sign(directory / 'deployment-receipts' / 'record-71-status-82.json')
-    deployment.verify_record(services, REPO, services.records[0])
-    deployment.verify_receipt(services, REPO, services.records[0], services.statuses[0])
-    if noop:
-        assert services.records[0]['payload']['noop_execution'] == execution['metadata']['name']
-        assert services.records[0]['payload']['targets'] == [plan['resource_changes'][0]['address']]
-        assert services.statuses[0]['environment_url'].endswith('/sea-ice-daily-abcde?project=shared-datasets-1')
-        assert deployment.check(args, services)['proceed'] == 'false'
-    steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml'), 'apply')
-    assert "steps.revision.outputs.noop != 'true'" in steps['Terraform apply']['if']
-    assert "steps.claim-receipt.outcome == 'success'" in steps['Terraform apply']['if']
-    assert "steps.revision.outputs.noop == 'true'" in steps['Record applied deployment']['run']
-    verify = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')['jobs']['verify']['if']
-    assert "needs.apply.outputs.noop != 'true'" in verify and "needs.apply.result != 'success'" in verify
+    assert deployment.start(args, services) == {'proceed': 'true', 'deployment_id': '71'}
+    assert reads == []
+    assert 'noop_execution' not in services.records[0]['payload']
+    assert services.statuses[0]['description'] == 'started'
+
+
+def expression_value(expression, values):
+    if not isinstance(expression, str) or not expression.startswith('${{'):
+        return expression
+    expression = expression.removeprefix('${{').removesuffix('}}').replace('always()', 'True')
+    for key, value in sorted(values.items(), key=lambda row: -len(row[0])):
+        expression = expression.replace(key, repr(value))
+    return eval(re.sub(r'!(?!=)', ' not ', expression.replace('&&', ' and ').replace('||', ' or ')), {'__builtins__': {}}, {})
+
+
+@pytest.mark.parametrize('wrapper', ['sea-ice-daily', 'eamlis-monthly', 'mpatlas-monthly', 'wdpa-monthly', 'dataset-usage'])
+@pytest.mark.parametrize('event,resume', [('push', None), ('workflow_dispatch', None), ('workflow_dispatch', False)])
+@pytest.mark.parametrize('result,claim', [('success', '71'), ('failure', '71'), ('cancelled', '71'), ('skipped', '')])
+def test_every_ingestion_caller_verifies_each_claim_on_push_and_dispatch(wrapper, event, resume, result, claim):
+    shared = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
+    caller = load_workflow(ROOT / '.github/workflows' / (wrapper + '-deploy.yml'))
+    inputs = {key: row.get('default', '') for key, row in shared['on']['workflow_call']['inputs'].items()}
+    dispatch = workflow_triggers(caller)['workflow_dispatch']['inputs']
+    default_resume = dispatch.get('resume_scheduler', {}).get('default', False)
+    values = {'github.event_name': event, 'inputs.resume_scheduler': default_resume if resume is None else resume}
+    job, = [job for job in caller['jobs'].values() if job.get('uses') == './.github/workflows/ingestion-deploy.yml']
+    inputs.update({key: expression_value(value, values) for key, value in job['with'].items() if key == 'resume_scheduler'})
+    values.update({'inputs.resume_scheduler': inputs['resume_scheduler'], 'needs.apply.result': result,
+                   'needs.apply.outputs.deployment_id': claim, 'needs.apply.outputs.noop': 'true'})
+    assert bool(expression_value(shared['jobs']['verify']['if'], values)) == bool(claim)
+    # A newly claimed unchanged plan still applies and records only the applied
+    # phase; the canary, rather than an old execution, owns terminal verification.
+    steps = workflow_steps_by_name(shared, 'apply')
+    values.update({'steps.revision.outputs.proceed': 'true', 'steps.claim-receipt.outcome': 'success',
+                   'steps.revision.outputs.noop': 'true'})
+    assert expression_value('${{ ' + steps['Terraform apply']['if'] + ' }}', values)
+    assert '--phase applied' in steps['Record applied deployment']['run']
+
+
+@pytest.mark.parametrize('defect', [None, 'unsigned-apply', 'unbound-claim', 'hidden-failure'])
+def test_signed_claim_and_failure_verification_barriers_remain_mandatory(defect):
+    workflow = copy.deepcopy(load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml'))
+    if defect == 'unsigned-apply':
+        step = next(step for step in workflow['jobs']['apply']['steps'] if step.get('name') == 'Terraform apply')
+        step['if'] = step['if'].replace(" && steps.claim-receipt.outcome == 'success'", '')
+    elif defect == 'unbound-claim':
+        workflow['jobs']['apply']['outputs']['deployment_id'] = '71'
+    elif defect == 'hidden-failure':
+        workflow['jobs']['verify']['if'] = "${{ needs.apply.result == 'success' && needs.apply.outputs.deployment_id != '' }}"
+    assert bool(ingestion_boundary(workflow)) == (defect is not None)
+
+
+def test_alert_subscriptions_only_include_current_workflows_that_emit_eligible_events():
+    from scripts.workflow_failure_alert import WORKFLOW_EVENTS
+    alert = load_workflow(ROOT / '.github/workflows/unattended-workflow-alert.yml')
+    expected = set()
+    for path in (ROOT / '.github/workflows').glob('*.yml'):
+        workflow = load_workflow(path)
+        # Safety reports own their health/absence delivery; the incident ledger
+        # must not subscribe recursively to itself or that health probe.
+        if path.name not in {'unattended-workflow-alert.yml', 'operational-safety-check.yml'} and set(workflow_triggers(workflow)) & WORKFLOW_EVENTS.get(path.name, set()):
+            expected.add(workflow['name'])
+    assert set(workflow_triggers(alert)['workflow_run']['workflows']) == expected
 
 
 @pytest.mark.parametrize('error', [TimeoutError('private'), urllib.error.URLError('private'),
@@ -198,42 +215,7 @@ def test_short_monthly_jobs_use_four_cpu_without_reducing_memory(target):
     assert job['cpu'] == '4' and job['memory'] == {'eamlis_monthly': '4Gi', 'mpatlas_monthly': '8Gi'}[target]
 
 
-@pytest.mark.parametrize('defect', [None, 'unsigned', 'unbound-noop', 'hidden-failure'])
-def test_noop_contract_requires_exact_signed_output_and_keeps_failure_verification(defect):
-    workflow = copy.deepcopy(load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml'))
-    jobs = workflow['jobs']
-    if defect == 'unsigned':
-        step = workflow_steps_by_name(workflow, 'apply')['Terraform apply']
-        step['if'] = step['if'].replace(" && steps.claim-receipt.outcome == 'success'", '')
-    if defect == 'unbound-noop':
-        jobs['apply']['outputs']['noop'] = 'true'
-    if defect == 'hidden-failure':
-        jobs['verify']['if'] = jobs['verify']['if'].replace(" || needs.apply.result != 'success'", '')
-    assert bool(ingestion_boundary(workflow)) == (defect is not None)
-
-
-@pytest.mark.parametrize('noop,resume,result,verify', [(True, False, 'success', False), (True, True, 'success', True),
-                                                    (True, False, 'failure', True), (False, False, 'success', True)])
-def test_noop_keeps_explicit_scheduler_resume_and_failed_apply_verification(noop, resume, result, verify):
-    workflow = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
-    values = {'needs.apply.outputs.deployment_id': '71', 'needs.apply.outputs.noop': str(noop).lower(),
-              'needs.apply.result': result, 'steps.revision.outputs.noop': str(noop).lower(), 'inputs.resume_scheduler': resume}
-
-    def evaluate(expression):
-        if not expression.startswith('${{'):
-            return expression
-        expression = expression.removeprefix('${{').removesuffix('}}').replace('always()', 'True')
-        for key, value in values.items():
-            expression = expression.replace(key, repr(value))
-        return eval(re.sub(r'!(?!=)', ' not ', expression.replace('&&', ' and ').replace('||', ' or ')), {'__builtins__': {}}, {})
-
-    assert bool(evaluate(workflow['jobs']['verify']['if'])) is verify
-    if result == 'success':
-        command = shlex.split(workflow_steps_by_name(workflow, 'apply')['Record applied deployment']['run'])
-        assert evaluate(command[command.index('--phase') + 1]) == ('verified' if noop and not resume else 'applied')
-
-
-def test_apply_noop_cli_runs_in_clean_hosted_stdlib_interpreter(journey):
+def test_unchanged_plan_start_cli_runs_in_clean_hosted_stdlib_interpreter(journey):
     services, directory = journey
     rehearsal = emission.emit(REPO, *emission.rehearsal(services, REPO))
     attestation = verified(json.loads(rehearsal.read_bytes()), emitter=services.run,
@@ -285,7 +267,8 @@ def test_apply_noop_cli_runs_in_clean_hosted_stdlib_interpreter(journey):
         '--source-run-attempt', '1', '--artifact', image, '--plan-json', str(plan)], cwd=ROOT,
         env={**os.environ, 'GITHUB_OUTPUT': str(output)}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert 'noop=true' in output.read_text() and 'execution=sea-ice-daily-abcde' in output.read_text()
+    assert 'deployment_id=71' in output.read_text() and 'proceed=true' in output.read_text()
+    assert 'noop=' not in output.read_text() and 'execution=' not in output.read_text()
 
 
 def test_pr_planner_cli_in_declared_locked_hosted_environment(tmp_path):

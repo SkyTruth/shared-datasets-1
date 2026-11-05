@@ -232,10 +232,10 @@ def ingestion_boundary(workflow):
     if (apply.get("needs") != "prepare" or apply.get("if") != "needs.prepare.outputs.ready == 'true'"
             or prepare.get("outputs", {}).get("ready") != "${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}"):
         errors.append("ingestion-deploy.yml: apply must require prepared replay and runtime admission")
-    if apply.get("outputs") != {"deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}", "noop": "${{ steps.revision.outputs.noop }}"}:
+    if apply.get("outputs") != {"deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}"}:
         errors.append("ingestion-deploy.yml: apply must export the exact claim and signature outcome")
     applies = [step for step in apply.get("steps", []) if mutations(step)[1]]
-    if len(applies) != 1 or applies[0].get("if") != "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.revision.outputs.noop != 'true'":
+    if len(applies) != 1 or applies[0].get("if") != "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'":
         errors.append("ingestion-deploy.yml: saved-plan apply requires the exact signed claim barrier")
     return errors + verification_boundary(workflow, "ingestion-deploy.yml", "apply", ["prepare", "apply"])
 
@@ -244,8 +244,6 @@ def verification_boundary(workflow, filename, parent, needs, *, apply_parent=Non
     errors = []
     verify = workflow["jobs"].get("verify", {})
     expected_if = "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}"
-    if filename == "ingestion-deploy.yml":
-        expected_if = expected_if.removesuffix(" }}") + " && (needs.apply.outputs.noop != 'true' || needs.apply.result != 'success' || inputs.resume_scheduler) }}"
     if verify.get("needs") != needs or verify.get("if") != expected_if:
         errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
     admission = {
