@@ -135,12 +135,12 @@ def test_viewer_and_usage_shared_resources_keep_both_deployments(path):
 
 
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
-    assert select_deployments(["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"]) == ["ingestion_iam", "dataset_usage"]
+    assert select_deployments(["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"]) == ["ingestion_iam"]
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
     assert set(select_deployments(["ingestion/common/publication.py"])) == {"mpatlas", "eamlis", "wdpa", "sea_ice", "catalog_viewer"}
-    assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
+    assert "catalog_viewer" not in select_deployments(["terraform/modules/cloud_run_job/main.tf"])  # Viewer is a service, not a job.
     assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"}
 
 
@@ -281,9 +281,9 @@ def test_bucket_cors_owner_precedes_logging_without_a_deployment_cycle():
 def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path):
     expected = {"cron_alert_policy"}
     if path.startswith('terraform/'):
-        expected.update({'artifact_registry_iam', 'ingestion_iam'})
+        expected.add('artifact_registry_iam')
     if path == 'terraform/envs/prod/monitoring.tf':
-        expected.update({'dataset_usage', 'catalog_viewer', 'pmtiles_cdn'})  # Shared health resources and their registered prerequisites.
+        expected.add('dataset_usage')  # This file owns the usage health resources.
     assert set(select_deployments([path])) == expected
     assert "production-images" in resolve_selection([path])["suites"]
 
@@ -368,9 +368,9 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     (["ingestion/wdpa_monthly/run.py", "ingestion/eamlis_monthly/run.py"],
      {"wdpa", "eamlis"}),
     (["ingestion/wdpa_monthly/run.py", "terraform/envs/prod/wdpa_monthly.tf"],
-     {"wdpa", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}),
+     {"wdpa"}),
     (["terraform/envs/prod/mpatlas_monthly.tf"],
-     {"mpatlas", "ingestion_iam", "dataset_usage", "artifact_registry_iam", "cron_alert_policy"}),
+     {"mpatlas", "ingestion_iam"}),
 ])
 def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
     from test_ci_preflight import fixture_repo, emit_plan

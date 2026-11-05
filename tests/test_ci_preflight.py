@@ -139,10 +139,10 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
     (["services/monitoring_slack/run.py"], {"monitoring-slack"}),
     (["ingestion/dataset_usage/run.py"], {"dataset-usage"}),
     (["docs/assets/ims-sea-ice-extent.md"], {"sea-ice-daily"}),
-    (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly", "monitoring-slack", "dataset-usage"}),
+    (["terraform/envs/prod/eamlis_monthly.tf"], {"eamlis-monthly"}),
     (["terraform/envs/prod/catalog_viewer.tf"], {"catalog-viewer"}),
-    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly", "monitoring-slack", "dataset-usage"}),
-    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], {"dataset-usage"}),
+    (["terraform/envs/prod/mpatlas_monthly.tf"], {"mpatlas-monthly"}),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], set()),
     (["README.md"], set()),
 ])
 def test_image_selection_follows_component_and_installed_probe_inputs(paths, expected):
@@ -626,7 +626,7 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     ([".claude/skills/new-tool.py"], set(SUITES), []),
     (["terraform/iam-plan-prerequisites.json"], ALWAYS, []),
     ([".github/workflows/ci.yml"], ALWAYS, []),
-    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS | {"production-images"}, ["ingestion_iam", "dataset_usage"]),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
     ([], ALWAYS, []),
 ])
 def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path, paths, suites, deployments):

@@ -1,6 +1,7 @@
 """Selection and read-only planning follow producer boundaries, never duplicate lists."""
 from pathlib import Path
 import shutil
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -87,10 +88,10 @@ def test_hcl_index_ignores_comment_declarations_and_preserves_indentation(source
     path = source / 'terraform/envs/prod/pr_plan_iam.tf'
     before = path.read_text()
     path.write_text('# resource "fake" "comment" {\n' + '\n'.join('  ' + line for line in before.splitlines()))
+    assert planner.scopes({'changed_paths': ['terraform/envs/prod/pr_plan_iam.tf'], 'deployments': []}, source)
     rows = contracts.resource_index(source)['terraform/envs/prod/pr_plan_iam.tf']
     assert 'fake.comment' not in rows
     assert 'google_service_account.pr_plan' in rows
-    assert planner.scopes({'changed_paths': ['terraform/envs/prod/pr_plan_iam.tf'], 'deployments': []}, source)
 
 
 def test_planner_image_bindings_follow_consumer_declarations(source):
@@ -115,13 +116,28 @@ def test_monitoring_installed_probe_never_executes_test_module_source(source, mo
     test.parent.mkdir()
     test.write_text('raise RuntimeError("test source must not execute")\n')
     command = images.commands('monitoring-slack', 'a' * 40)[1]
-    assert command[-1] == images.MONITORING_PROBE
     result = subprocess.run([images.sys.executable, '-c', command[-1]], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+    assert command[-1] == images.MONITORING_PROBE
 
 
-def test_pr_provider_failure_is_named_without_attribute_values(tmp_path):
-    with patch.object(planner.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, 'secret-value', 'secret-value')):
-        with pytest.raises(planner.PlanFailure, match='Terraform plan failed') as error:
-            planner.terraform('plan', directory=tmp_path)
-    assert 'secret-value' not in str(error.value)
+def test_cli_reports_failed_stage_without_provider_values(tmp_path, monkeypatch, capsys):
+    plan = tmp_path / 'plan.json'
+    plan.write_text(json.dumps({'changed_paths': ['terraform/envs/prod/terraform_state_read_iam.tf'], 'deployments': []}))
+    event = tmp_path / 'event.json'
+    event.write_text(json.dumps({'pull_request': {side: {'repo': {'full_name': planner.REPOSITORY}} for side in ('head', 'base')}}))
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'pull_request')
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event))
+    monkeypatch.setattr('sys.argv', ['pr_terraform_plan.py', 'run', '--plan', str(plan)])
+    def run(command, **kwargs):
+        if command[2] == 'version':
+            return subprocess.CompletedProcess(command, 0, '{"terraform_version":"1.8.5"}', '')
+        assert command[2] == 'init'
+        return subprocess.CompletedProcess(command, 1, 'secret-provider-value', 'secret-provider-value')
+    monkeypatch.setattr(planner.subprocess, 'run', run)
+    with pytest.raises(SystemExit) as error:
+        planner.main()
+    assert error.value.code == 1
+    captured = capsys.readouterr()
+    assert 'Terraform init failed' in captured.err
+    assert 'secret-provider-value' not in captured.out + captured.err

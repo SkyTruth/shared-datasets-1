@@ -31,7 +31,8 @@ def test_pr_leaf_identity_is_registered_without_top_level_authority():
 
 @pytest.mark.parametrize('paths,expected', [([], False), (['docs/ci-deployment.md'], False),
     (['ingestion/eamlis_monthly/run.py'], False), (['terraform/README.md'], False),
-    (['terraform/envs/prod/main.tf'], True), (['.github/terraform-targets.json'], True), (None, True)])
+    (['terraform/envs/prod/main.tf'], False), (['.github/terraform-targets.json'], False), (None, False),
+    (['terraform/envs/prod/pr_plan_iam.tf'], True), (['terraform/envs/prod/terraform_state_read_iam.tf'], True)])
 def test_select_serializes_real_ci_output(tmp_path, paths, expected):
     plan = tmp_path / 'plan.json'
     plan.write_text(json.dumps({'changed_paths': paths, 'deployments': []}))

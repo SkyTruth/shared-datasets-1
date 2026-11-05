@@ -797,7 +797,10 @@ class GitHub(deployments.GitHub):
 
 def worker_context(api, environment=os.environ):
     from scripts.operational_safety_check import context
-    return context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
+    try:
+        return context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
+    except (RuntimeError, ValueError) as error:
+        raise IncidentError("invalid incident worker provenance") from error
 
 
 

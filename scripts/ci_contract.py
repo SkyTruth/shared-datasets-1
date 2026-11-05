@@ -263,13 +263,14 @@ def deployment_paths(root=None):
     graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
     # These entrypoints validate an already-selected rollout. Their imported
     # policy changes invalidate CI evidence, not the resources being delivered.
+    validation_only = {"scripts/deployment_permissions.py": "Authority probes change CI evidence, never desired deployment content"}
     boundaries = {
+        **validation_only,
         "scripts/deployment_revision.py": "Signed execution admission; never a deployment content producer",
         "scripts/tested_image_authorization.py": "Checks retained image evidence; does not produce image bytes",
         "scripts/install_deployment_verifier.py": "Installs the pinned historical receipt verifier",
         "scripts/terraform_plan_allowlist.py": "Validates registered saved plans; no deployment content",
         "scripts/terraform_target_contracts.py": "Exports the scopes already consumed below",
-        "scripts/deployment_permissions.py": "Checks effective authority; does not produce resource configuration",
         "scripts/ingestion_targets.py": "Exports the target policy already consumed below",
         "scripts/ingestion_verification.py": "Checks a published release after deployment",
         "scripts/publication_rollout_gate.py": "Checks publication readiness; its source imports do not change the deployed image",
@@ -294,7 +295,7 @@ def deployment_paths(root=None):
         resources += [resource for config in registry(root).values() if config["workflow"] == workflow for resource in config["resources"]]
         resources += [resource for scope in registry(root, section="plan_scopes").get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
-        inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
+        inputs = (dependency_closure(edges, [".github/workflows/" + workflow]) - validation_only.keys()) | scope_inputs(resources, root)
         if resources:
             inputs.update(("terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"))
         if "image" in row:
@@ -326,7 +327,6 @@ def changed_ci_suites(base, root):
 def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
-    declarations = registry(root, section="deployments")
     for path in paths or []:
         if classify_change(path)[0] == "documentation":
             continue
@@ -334,9 +334,6 @@ def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), rel
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
             continue
         selected.update(target for pattern, targets in deployment_paths(root).items() if matches(path, {pattern}) for target in targets)
-    if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
-        selected.update(prerequisite for name in tuple(selected)
-                        for prerequisite in declarations[name].get("terraform_prerequisites", ()))
     return [target for target in DEPLOYMENTS if target in selected and target not in ingestion_holds]
 
 
