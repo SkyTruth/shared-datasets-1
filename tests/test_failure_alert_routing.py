@@ -87,7 +87,7 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
-    assert "CI" in subscriptions
+    assert not set(alerts.WORKFLOW_NAMES["ci.yml"] + alerts.WORKFLOW_NAMES["publish-typescript-sdk.yml"]) & set(subscriptions)
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
     worker_filter = workflow["jobs"]["notify"]["if"]
     assert "github.event.workflow_run.status == 'completed'" in worker_filter

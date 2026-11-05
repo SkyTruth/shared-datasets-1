@@ -7,8 +7,6 @@ on:
       - "Approved dataset mutation"
       - "Artifact Registry IAM sync"
       - "Bucket hygiene audit"
-      - "CI"
-      - "CI / Validate and deliver"
       - "Catalog / PMTiles CDN sync"
       - "Catalog / Viewer deploy"
       - "Catalog / Web deploy"
@@ -37,8 +35,6 @@ on:
       - "PMTiles CDN sync"
       - "Preview Terraform IAM sync"
       - "Prod Terraform state reconciliation"
-      - "Publish TypeScript SDK"
-      - "SDK / Publish TypeScript"
       - "Scheduled ingestion deploy IAM sync"
       - "Scratch cleanup IAM sync"
       - "Scratch cleanup audit"
@@ -84,7 +80,6 @@ jobs:
       (
         github.event.workflow_run.event == 'schedule' ||
         github.event.workflow_run.event == 'workflow_run' ||
-        (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name)) ||
         (github.event.workflow_run.event == 'workflow_dispatch' && contains(fromJSON('["Deployments / Completion check","Deployment completion check","Deployment terminal verification","Deployments / Read-only reconciliation","Deployment read-only reconciliation","Catalog / Web deploy","Catalog web deploy","Catalog / Viewer deploy","Catalog viewer deploy"]'), github.event.workflow_run.name))
       )
     runs-on: ubuntu-latest
@@ -123,8 +118,7 @@ jobs:
           (
             github.event.workflow_run.event == 'schedule' ||
             github.event.workflow_run.event == 'workflow_run' ||
-            github.event.workflow_run.event == 'workflow_dispatch' ||
-            (github.event.workflow_run.event == 'push' && contains(fromJSON('["CI / Validate and deliver","CI"]'), github.event.workflow_run.name))
+            github.event.workflow_run.event == 'workflow_dispatch'
           )
         )
       )
