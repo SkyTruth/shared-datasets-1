@@ -323,16 +323,27 @@ def test_canary_requires_successful_apply_and_signed_claim(tmp_path, apply_resul
     assert (result.returncode == 0) == (apply_result == claim == 'success')
 
 
-@pytest.mark.parametrize('target', ['mpatlas-monthly', 'eamlis-monthly', 'sea-ice-daily'])
-@pytest.mark.parametrize('defect', ['valid', 'image', 'foreign', 'delete', 'replace', 'create'])
+@pytest.mark.parametrize('target', [name for name, config in TARGETS.items() if config['plan_guard'] != 'usage'])
+@pytest.mark.parametrize('defect', ['valid', 'image', 'foreign', 'delete', 'replace', 'create', 'config'])
 def test_shared_allowlist_executes_real_guard_and_rejects_unauthorized_changes(tmp_path, target, defect):
     address = target_table()[target]['targets'][0]
     image = 'registry/job@sha256:' + 'a' * 64
     actions = {'delete': ['delete'], 'replace': ['delete', 'create'], 'create': ['create']}.get(defect, ['update'])
     plan = {'resource_changes': [{'address': address if defect != 'foreign' else 'module.foreign.google_cloud_run_v2_job.this', 'change': {'actions': actions, 'after': {'template': [{'template': [{'containers': [{'image': 'wrong' if defect == 'image' else image}]}]}]}}}]}
+    config_digest = 'sha256:' + 'b' * 64
+    if target == 'wdpa-monthly':
+        task = plan['resource_changes'][0]['change']['after']['template'][0]['template'][0]
+        task.update(timeout='43200s', volumes=[{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}])
+        task['containers'][0].update(resources=[{'limits': {'cpu': '4', 'memory': '8Gi'}}],
+            volume_mounts=[{'name': 'work', 'mount_path': '/work'}], env=[
+                {'name': 'TMPDIR', 'value': '/work/tmp'}, {'name': 'SHARED_DATASETS_WORKDIR', 'value': '/work/shared-datasets-1'},
+                {'name': 'WDPA_BUILD_IMAGE', 'value': image},
+                {'name': 'WDPA_BUILD_IMAGE_CONFIG_DIGEST', 'value': 'sha256:' + 'c' * 64 if defect == 'config' else config_digest}])
     (tmp_path / 'ingestion.tfplan.json').write_text(json.dumps(plan))
-    result = run_shell(tmp_path, shared_step('apply', 'Enforce ingestion resource-change allowlist')['run'], target=target, extra={'IMAGE': image})
-    assert (result.returncode == 0) == (defect == 'valid' or defect == 'create' and target == 'mpatlas-monthly'), result.stderr
+    result = run_shell(tmp_path, shared_step('apply', 'Enforce ingestion resource-change allowlist')['run'], target=target,
+                       extra={'IMAGE': image, 'TESTED_IMAGE_CONFIG': config_digest})
+    assert (result.returncode == 0) == (defect == 'valid' or defect == 'config' and target != 'wdpa-monthly'
+                                      or defect == 'create' and target == 'mpatlas-monthly'), result.stderr
 
 
 @pytest.mark.parametrize('job_status,phase,execution,expected', [

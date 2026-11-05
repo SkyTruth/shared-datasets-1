@@ -1,18 +1,22 @@
 name: Infrastructure / Read-only PR plan
 on:
   workflow_call:
+    inputs:
+      active:
+        type: boolean
+        default: false
 permissions:
   contents: read
   id-token: write
 jobs:
   activation:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER == '' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && !inputs.active }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - run: echo '::notice::Read-only PR Terraform planning is not yet activated. Provision the protected identity, then set the PR-plan repository variables. Static IaC checks still run.'
+      - run: echo '::notice::Read-only PR Terraform planning is not yet activated. Provision the protected identity, set repository variables, then enable the reviewed active default. Static IaC checks still run.'
   plan:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER != '' }}
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && inputs.active }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -22,6 +26,11 @@ jobs:
       TF_WORKSPACE: default
       PRODUCTION_TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
     steps:
+      - name: Require activated planner configuration
+        env:
+          PROVIDER: ${{ vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER }}
+          PLANNER: ${{ vars.GCP_PR_PLAN_SERVICE_ACCOUNT }}
+        run: test -n "$PROVIDER" && test -n "$PLANNER" && test -n "$PRODUCTION_TERRAFORM_SERVICE_ACCOUNT"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

@@ -15,25 +15,54 @@ from scripts.ci_preflight import suite_commands
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('provider', ['', 'configured-provider'])
-def test_activation_notice_and_required_failure_gate(provider):
-    leaf = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())['jobs']
-    assert "vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER == ''" in leaf['activation']['if']
-    assert "vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER != ''" in leaf['plan']['if']
-    notice = subprocess.run(['bash', '-e', '-c', leaf['activation']['steps'][0]['run']], capture_output=True, text=True, check=True)
-    assert '::notice::' in notice.stdout and 'not yet activated' in notice.stdout
-    assert not any('uses' in step for step in leaf['activation']['steps'])
+@pytest.mark.parametrize('active', [False, True])
+@pytest.mark.parametrize('missing', [None, 'PROVIDER', 'PLANNER', 'PRODUCTION_TERRAFORM_SERVICE_ACCOUNT'])
+def test_reviewed_activation_never_silently_disappears(active, missing):
+    from test_ci_deployments import condition_result
+    workflow = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())
+    declaration = workflow[True]['workflow_call']['inputs']['active']
+    assert declaration['type'] == 'boolean' and declaration['default'] is False
+    leaf = workflow['jobs']
+    values = {'github.event_name': 'pull_request', 'github.event.pull_request.head.repo.full_name': pr.REPOSITORY,
+              'github.repository': pr.REPOSITORY, 'inputs.active': active}
+    # Inject only the status predicate required by the shared expression evaluator.
+    enabled = {name: condition_result({'if': job['if'].replace('${{', '${{ !cancelled() && ')}, values)
+               for name, job in leaf.items()}
+    assert enabled == {'activation': not active, 'plan': active}
+    if not active:
+        notice = subprocess.run(['bash', '-e', '-c', leaf['activation']['steps'][0]['run']],
+                                capture_output=True, text=True, check=True, env={})
+        assert '::notice::' in notice.stdout and 'not yet activated' in notice.stdout
+        result = 'success'
+    else:
+        guard = next(s for s in leaf['plan']['steps'] if s.get('name') == 'Require activated planner configuration')
+        environment = dict.fromkeys(('PROVIDER', 'PLANNER', 'PRODUCTION_TERRAFORM_SERVICE_ACCOUNT'), 'configured')
+        if missing:
+            environment[missing] = ''
+        done = subprocess.run(['bash', '-euo', 'pipefail', '-c', guard['run']], env=environment)
+        assert (done.returncode == 0) is (missing is None)
+        result = 'failure' if done.returncode else 'success'
+        assert leaf['plan']['steps'].index(guard) < next(i for i, s in enumerate(leaf['plan']['steps'])
+            if s.get('uses', '').startswith('google-github-actions/auth'))
     ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    assert 'active' not in ci['pr-terraform-plan'].get('with', {})
     gate = next(step for step in ci['ci-ready']['steps'] if step.get('name') == 'Require selected same-repo Terraform plan')
-    # The reusable call succeeds via the notice job before activation. Once
-    # configured, a failed or skipped planner cannot pass the caller's gate.
-    results = ['success'] if not provider else ['failure', 'cancelled', 'skipped', 'success']
-    for result in results:
+    done = subprocess.run(['bash', '-c', gate['run']], env={'REQUIRED': 'true', 'RESULT': result})
+    assert (done.returncode == 0) is (not active or missing is None)
+    for result in ['failure', 'cancelled', 'skipped', 'success']:
         done = subprocess.run(['bash', '-c', gate['run']], env={'REQUIRED': 'true', 'RESULT': result})
-        assert done.returncode == (0 if result == 'success' else 1)
-    auth = next(s for s in leaf['plan']['steps'] if s.get('uses', '').startswith('google-github-actions/auth'))
-    assert auth['with'] == {'workload_identity_provider': '${{ vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER }}',
-                            'service_account': '${{ vars.GCP_PR_PLAN_SERVICE_ACCOUNT }}'}
+        assert (done.returncode == 0) is (result == 'success')
+
+
+@pytest.mark.parametrize('event,fork', [('pull_request', True), ('push', False), ('workflow_dispatch', False)])
+@pytest.mark.parametrize('active', [False, True])
+def test_activation_does_not_admit_forks_or_non_pr_events(event, fork, active):
+    from test_ci_deployments import condition_result
+    leaf = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())['jobs']
+    values = {'github.event_name': event, 'github.event.pull_request.head.repo.full_name': 'other/fork' if fork else pr.REPOSITORY,
+              'github.repository': pr.REPOSITORY, 'inputs.active': active}
+    assert not any(condition_result({'if': job['if'].replace('${{', '${{ !cancelled() && ').replace(
+        'vars.GCP_PR_PLAN_WORKLOAD_IDENTITY_PROVIDER', "''")}, values) for job in leaf.values())
 
 
 def test_exclusions_equal_exact_secret_refresh_dependency_closures(tmp_path):

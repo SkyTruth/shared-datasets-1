@@ -28,6 +28,7 @@ jobs:
         github.event.pull_request.draft == false
       }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     outputs:
@@ -99,6 +100,7 @@ jobs:
     needs: route
     if: ${{ needs.route.result == 'success' && needs.route.outputs.potential_mutation == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write

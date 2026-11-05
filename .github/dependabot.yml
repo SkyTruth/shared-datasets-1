@@ -1,6 +1,8 @@
 version: 2
 updates:
   - package-ecosystem: docker
+    reviewers:
+      - jonaraphael
     directories:
       - /ingestion/wdpa_monthly
       - /ingestion/mpatlas_monthly
