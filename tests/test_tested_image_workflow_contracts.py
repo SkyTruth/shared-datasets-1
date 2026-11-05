@@ -157,53 +157,30 @@ def test_production_cache_keeps_deployment_artifacts():
     assert '!${{ runner.temp }}/ci-results/production-images/**/*.docker.tar' in retained['path'].splitlines()
 
 
-def image_retention_steps():
-    steps = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']['steps']
-    images = {}
-    for step in steps:
-        name = step.get('with', {}).get('name', '')
-        match = re.fullmatch(r'ci-image-(.+)-attempt\$\{\{ github\.run_attempt \}\}', name)
-        if match:
-            assert match[1] not in images, 'image target must have one immutable upload'
-            images[match[1]] = step
-    assert set(images) == IMAGE_TARGETS, 'all seven tested images must be retained'
-    return steps, images
-
-
-def test_each_image_upload_is_required_and_contains_only_its_tar():
-    steps, images = image_retention_steps()
-    producer = next(step for step in steps if step.get('name') == 'Test the actual production image recipes')
-    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
-    for target, step in images.items():
-        assert step['uses'] == 'actions/upload-artifact@v4'
-        assert step.get('id') and not step.get('continue-on-error')
-        assert step["if"] == f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
-        assert step['with']['path'] == '${{ runner.temp }}/ci-results/production-images/images/' + target + '.docker.tar'
-        assert step['with']['if-no-files-found'] == 'error'
-        assert step['with']['retention-days'] == 14
-        assert steps.index(producer) < steps.index(step) < steps.index(compact)
-    assert len({step['id'] for step in images.values()}) == len(IMAGE_TARGETS)
-
-
+@pytest.mark.parametrize('target', sorted(IMAGE_TARGETS))
 @pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
-@pytest.mark.parametrize('selected', [IMAGE_TARGETS, {'eamlis-monthly'}, set()])
-def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcome, selected):
-    steps, images = image_retention_steps()
-    small = next(step for step in steps if step.get('id') == 'retained-results')
-    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
-    expression = compact['if'].removeprefix('${{').removesuffix('}}').strip()
-    uploads = [small, *images.values()]
-    for failed in uploads:
-        evaluated = ' '.join(expression.replace('always()', 'True').split())
-        for target in images:
-            condition = f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
-            evaluated = evaluated.replace(condition, repr(target in selected))
-        for step in uploads:
-            reference = f"steps.{step['id']}.outcome"
-            assert reference in expression, 'compact evidence must wait for every required upload'
-            evaluated = evaluated.replace(reference, repr(outcome if step is failed else 'success'))
-        required = failed is small or (failed['id'].removeprefix('retained-') in selected)
-        assert eval(evaluated.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}}) is (not required or outcome == 'success')
+def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, target, outcome):
+    from test_ci_gate_artifact_transport import package_upload
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
+    assert job['strategy']['fail-fast'] is True
+    assert job['strategy']['matrix']['target'] == '${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}'
+    steps = job['steps']
+    retained = next(step for step in steps if step.get('id') == 'retained-image')
+    path = tmp_path / 'ci-results/production-images/images' / (target + '.docker.tar')
+    path.parent.mkdir(parents=True)
+    path.write_bytes(target.encode())
+    name, archive = package_upload(retained, tmp_path, 'production-images-' + target, 1, tmp_path)
+    assert name == f'ci-image-{target}-attempt1'
+    import zipfile
+    with zipfile.ZipFile(archive) as bundle:
+        assert bundle.namelist() == [path.name]
+        assert bundle.read(path.name) == target.encode()
+    compact = next(step for step in steps if step.get('with', {}).get('name', '').startswith('ci-gate-result-'))
+    for failed in ('retained-image', 'retained-results'):
+        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True')
+        for upload in ('retained-image', 'retained-results'):
+            expression = expression.replace('steps.' + upload + '.outcome', repr(outcome if upload == failed else 'success'))
+        assert eval(expression.replace('&&', ' and '), {'__builtins__': {}}) is (outcome == 'success')
 
 
 @pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])

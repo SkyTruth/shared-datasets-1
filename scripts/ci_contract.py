@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -35,6 +36,24 @@ DEPLOYMENT_IMAGES = {
 }
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
+
+
+def rollout_holds(value, *, historical=False, now=None) -> tuple[str, ...]:
+    # Old commits used bare target names. Only comparison baselines may read that
+    # persisted format; all new plans require accountable, bounded holds.
+    if historical and isinstance(value, list) and all(isinstance(row, str) for row in value):
+        value = dict.fromkeys(value)
+    if not isinstance(value, dict) or not set(value) <= INGESTION_DEPLOYMENTS:
+        raise ValueError("rollout holds must map scheduled deployment targets to owner, reason and expires_at")
+    if not historical:
+        for target, hold in value.items():
+            if (not isinstance(hold, dict) or set(hold) != {"owner", "reason", "expires_at"}
+                    or any(not isinstance(item, str) or not item.strip() for item in hold.values())):
+                raise ValueError(f"{target}: rollout hold requires owner, reason and expires_at")
+            expiry = datetime.fromisoformat(hold["expires_at"].replace("Z", "+00:00"))
+            if expiry.tzinfo is None or expiry <= (now or datetime.now(timezone.utc)):
+                raise ValueError(f"{target}: rollout hold expired or lacks a timezone")
+    return tuple(value)
 NATIVE_TESTS = (
     "tests/test_feature_metadata_localization.py",
     "tests/test_translation_local_io.py",
@@ -78,9 +97,9 @@ CONTRACT_FILES = (
 )
 
 
-# These ingestion sources are copied into the catalog-viewer image and imported
-# by its HTTP/review reader. Keep validation coverage with the actual Docker COPY
-# boundary, independently of which deployment the changed path selects.
+# Viewer dependencies follow Docker COPY and HTTP/review imports. Suite
+# exceptions below are checked against reverse imports, subprocess callers and
+# image/browser boundaries in test_ci_preflight; unproved inputs stay broad.
 VIEWER_INGESTION_INPUTS = frozenset({
     "ingestion/__init__.py", "ingestion/common/__init__.py",
     "ingestion/common/decision_events.py", "ingestion/common/identity_index.py",
@@ -90,31 +109,14 @@ VIEWER_INGESTION_INPUTS = frozenset({
 })
 
 
-# Additional suites beyond ALWAYS, only after tracing imports (including other
-# scripts), subprocess/workflow callers, Docker COPY sources and generated data.
-# Unproved paths retain production-images; the image selector below narrows
-# only traced component ownership, independently of these suite exceptions.
-# SDK fixtures read checked-in JSON/web contracts; browser fixtures import
-# release_feature_model and execute catalog_site. Those shared producers and all
-# unproved scripts remain broad. Keep this proof with each exception; a new
-# consumer must expand its suites or remove the exception.
 NARROW_PATHS = {
-    # Alert workflows and ordinary Python tests only (including the exact
-    # incident tests below); no native, SDK or browser fixture producer or
-    # installed production-image consumer. The separate preview-service recipe
-    # copies all scripts but is not built by the production-images suite.
     "scripts/slack_incidents.py": (),
     "scripts/incident_verification_cache.py": (),
     "scripts/operational_snapshot.py": (),
     "scripts/operational_safety_check.py": (),
     "scripts/workflow_failure_alert.py": (),
     "scripts/repo_alerts.py": (),
-    # Exact reverse-import test closure of these automation scripts. SDK/WDPA names
-    # describe mocked incident histories, not SDK/native fixture execution.
     "tests/test_failure_alert_routing.py": (),
-    # Cross-source alert tests use local HTTP/storage fixtures and mocked
-    # deployment provenance; they produce no native, SDK or browser inputs.
-    # Receiver/image edits retain their own production-image coverage.
     "tests/test_execution_alerts.py": (),
     "tests/test_repo_alerts.py": (),
     "tests/test_sdk_incident_recovery.py": (),
@@ -127,22 +129,11 @@ NARROW_PATHS = {
     "tests/test_operational_safety_routing.py": (),
     "tests/test_wdpa_incident_recovery.py": (),
     "tests/test_workflow_identity.py": (),
-    # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
-    # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
-    # generator imports/calls it. Catalog tests retain SDKs/browser and images;
-    # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
     "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
-    # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
-    # produces translation workbooks/CSV/manifest, never API/browser fixtures.
-    # No other import/subprocess/workflow caller; translation test classification
-    # adds native/images.
     "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
-    # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
-    # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
-    # or other subprocess caller. WDPA test classification adds native/images;
-    # image selection stays conservative. Shared authority modules remain broad.
     "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
 }
+
 
 
 def classify_change(path: str) -> tuple[str, set[str]]:
@@ -313,9 +304,10 @@ def select_deployments(
     *,
     catalog_snapshots: tuple[str, str] | None = None,
     ingestion_holds: tuple[str, ...] = (),
+    released_holds: tuple[str, ...] = (),
 ) -> list[str]:
     """Explicit release dependencies; unknown changes broaden tests, not mutations."""
-    selected = set()
+    selected = set(released_holds)
     iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
     ingestion = INGESTION_DEPLOYMENTS
     for path in paths or []:
@@ -463,33 +455,41 @@ def verify_results(
         raise ValueError("core validation suites must always be selected")
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
+    targets = select_production_images(plan.get("changed_paths"))
+    matrix = any("image_target" in result for result in results)
+    required_results = set(selected)
+    if matrix and "production-images" in selected:
+        required_results.remove("production-images")
+        required_results.update("production-images-" + target for target in targets)
     by_suite: dict[str, dict] = {}
     seen_attempts = set()
     for result in results:
         suite = result.get("suite")
-        if suite not in selected:
+        key = suite + "-" + result["image_target"] if "image_target" in result and suite == "production-images" else suite
+        if key not in required_results or "image_target" in result and suite != "production-images":
             raise ValueError(f"duplicate or unexpected suite result: {suite}")
         if source_proofs is not None:
             source = result.get("source", {})
             attempt = source.get("run_attempt")
             if source.get("run_id") != run_id or type(attempt) is not int or not 1 <= attempt <= run_attempt:
                 raise ValueError(f"invalid {suite} source attempt")
-            key = (suite, attempt)
-            if key in seen_attempts:
+            source_key = (key, attempt)
+            if source_key in seen_attempts:
                 raise ValueError(f"duplicate {suite} result in attempt {attempt}")
-            seen_attempts.add(key)
+            seen_attempts.add(source_key)
             if any(result.get(field) != plan.get(field) for field in ("base", "head", "tested_sha", "tree", "contract_digest")):
                 raise ValueError(f"stale or mismatched {suite} evidence")
-            if suite in by_suite and by_suite[suite]["source"]["run_attempt"] > attempt:
+            if key in by_suite and by_suite[key]["source"]["run_attempt"] > attempt:
                 continue
-        elif suite in by_suite:
+        elif key in by_suite:
             raise ValueError(f"duplicate or unexpected suite result: {suite}")
-        by_suite[suite] = result
-    if set(by_suite) != set(selected):
-        raise ValueError(f"missing suite results: {sorted(set(selected) - set(by_suite))}")
+        by_suite[key] = result
+    if set(by_suite) != required_results:
+        raise ValueError(f"missing suite results: {sorted(required_results - set(by_suite))}")
     identity = ("base", "head", "tested_sha", "tree", "contract_digest")
-    for suite, result in by_suite.items():
-        if source_proofs is not None and job_name(suite) not in source_proofs.get(result["source"]["run_attempt"], set()):
+    for key, result in by_suite.items():
+        suite = result["suite"]
+        if source_proofs is not None and job_name(key) not in source_proofs.get(result["source"]["run_attempt"], set()):
             raise ValueError(f"{suite} has no successful producing job in its source attempt")
         if result.get("status") != "success" or not result.get("commands"):
             raise ValueError(f"{suite} did not execute successfully")
@@ -506,8 +506,8 @@ def verify_results(
                 images = validate_manifest(result.get("production_images"), plan["tested_sha"])
             except ImageError as exc:
                 raise ValueError(f"invalid production-image evidence: {exc}") from exc
-            targets = select_production_images(plan.get("changed_paths"))
-            if not targets or set(images) != set(targets) & IMAGE_TARGETS:
+            expected_images = {result["image_target"]} if matrix else set(targets) & IMAGE_TARGETS
+            if not targets or set(images) != expected_images:
                 raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
         expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}

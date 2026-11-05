@@ -18,7 +18,7 @@ from scripts.deployment_revision import DeploymentError
 
 
 PRODUCER = '''
-import argparse, fcntl, json, subprocess, time
+import argparse, fcntl, json, subprocess, time, signal
 from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument('--target', action='append')
@@ -40,14 +40,19 @@ def update(delta):
         json.dump(state, stream)
         return state
 state = update(1)
+def stop(*_):
+    raise SystemExit(143)
+signal.signal(signal.SIGTERM, stop)
 try:
     deadline = time.monotonic() + 5
     while COUNT > 1 and state['started'] < 2:
         assert time.monotonic() < deadline, 'targets did not execute concurrently'
         time.sleep(0.01)
         state = update(0)
-    if target == BROKEN and DEFECT == 'command':
-        raise SystemExit(7)
+    if DEFECT == 'command':
+        if target == BROKEN:
+            raise SystemExit(7)
+        time.sleep(30)  # Must be terminated when the other target fails.
     sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     images = {target: dict(IMAGES[target], source_tag=f'shared-datasets-preflight/{target}:{sha}')}
     if target == BROKEN and DEFECT == 'wrong-set':
@@ -88,11 +93,12 @@ def test_historical_fresh_images_remain_loadable_with_unrelated_reused_suites(ha
         assert download(handoff)["config_digest"] == handoff["manifest"]["images"]["sea-ice-daily"]["config_digest"]
 
 
+@pytest.mark.parametrize("matrix", [False, True])
 @pytest.mark.parametrize("paths", [["ingestion/eamlis_monthly/run.py"], ["pyproject.toml"]])
 @pytest.mark.parametrize("defect", [None, "command", "missing-manifest", "wrong-set", "stale", "missing-tar"])
-def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tmp_path, monkeypatch, paths, defect):
+def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tmp_path, monkeypatch, paths, defect, matrix):
     source, git = fixture_repo(tmp_path)
-    targets = select_production_images(paths)
+    targets = select_production_images(paths)[:1] if matrix else select_production_images(paths)
     producer = source / "scripts/production_image_contracts.py"
     # The external Docker producer is a small executable fixture. The real
     # command builder, child processes, JSON files and suite CLI remain in use.
@@ -116,12 +122,14 @@ def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tm
     monkeypatch.setattr(preflight, "probe_tools", lambda suite, environment: expected_tools(suite))
     monkeypatch.chdir(source)
     monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "run-suite", "--plan", str(plan_path),
-                                      "--suite", "production-images", "--output", str(output)])
+                                      "--suite", "production-images", "--output", str(output), *(["--image-target", targets[0]] if matrix else [])])
     assert preflight.main() == (1 if defect else 0)
     result = json.loads((output / "result.json").read_text())
     metrics = json.loads((output / "metrics.json").read_text())
     assert metrics["active"] == 0, "the suite returned while a child was still running"
     assert metrics["peak"] == min(2, len(targets))
+    if defect == "command":
+        assert metrics["started"] <= 2, "failure started queued image work"
     if defect:
         assert result["status"] == "failure"
         assert "production_images" not in result

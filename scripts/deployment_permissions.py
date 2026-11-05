@@ -159,7 +159,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "terraform-state-read", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "wdpa-monthly-build", "sea-ice-daily", "dataset-usage"])
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
+    parser.add_argument("--static-base", help="Check changed HCL against apply scopes and permission manifests without credentials")
+    parser.add_argument("--static-head", default="HEAD")
     args = parser.parse_args()
+    if args.static_base:
+        from scripts.terraform_plan_permissions import static_checks
+        static_checks(Path.cwd(), args.static_base, args.static_head)
+        print("Changed HCL apply scopes and permission contracts verified; live IAM and saved plans remain protected checks.")
+        return
     if not (args.target or args.plan_json):
         parser.error("--target or --plan-json is required")
     if args.target == "artifact-registry-images" and args.plan_json:

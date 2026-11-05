@@ -12,6 +12,7 @@ import pytest
 from scripts import ci_preflight as preflight
 from scripts import ci_source_proof as proof
 from scripts.ci_contract import SUITES, expected_tools
+from scripts.tested_image_bundle import BUILD_TARGETS
 from ci_result_fixtures import production_images
 from test_ci_preflight import fixture_repo
 from workflow_helpers import load_workflow
@@ -24,11 +25,12 @@ REPOSITORY = "SkyTruth/shared-datasets-1"
 def expand(value, runner, suite, attempt):
     return (value.replace("${{ runner.temp }}", str(runner))
             .replace("${{ matrix.node }}", suite.removeprefix("sdk-node"))
+            .replace("${{ matrix.target }}", suite.removeprefix("production-images-"))
             .replace("${{ github.run_attempt }}", str(attempt)))
 
 
 def producer_steps(workflow, suite):
-    job = "sdk-validation" if suite.startswith("sdk-node") else suite
+    job = "sdk-validation" if suite.startswith("sdk-node") else "production-images" if suite.startswith("production-images-") else suite
     return workflow["jobs"][job]["steps"]
 
 
@@ -65,8 +67,10 @@ def transport(tmp_path):
     archives.mkdir()
     downloaded.mkdir()
     uploaded = {}
-    for suite in SUITES:
-        output = runner / "ci-results" / suite
+    suites = [suite for suite in SUITES if suite != "production-images"] + ["production-images-" + target for target in BUILD_TARGETS]
+    for key in suites:
+        suite = "production-images" if key.startswith("production-images-") else key
+        output = runner / key / "ci-results" / suite
         output.mkdir(parents=True)
         result = {
             **{key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")},
@@ -75,6 +79,8 @@ def transport(tmp_path):
         }
         if suite == "production-images":
             result["production_images"] = production_images(plan["tested_sha"])
+            result["image_target"] = key.removeprefix("production-images-")
+            result["production_images"]["images"] = {result["image_target"]: result["production_images"]["images"][result["image_target"]]}
             images = output / "images"
             images.mkdir()
             (images / "manifest.json").write_text(json.dumps(result["production_images"]))
@@ -92,9 +98,9 @@ def transport(tmp_path):
             (package / "skytruth-shared-datasets.tgz").write_bytes(b"fixture-package-bytes" * 1024)
         (output / "runner.log").write_text("retained diagnostics\n")
         (output / "result.json").write_text(json.dumps(result))
-        for step in producer_steps(workflow, suite):
+        for step in producer_steps(workflow, key):
             if step.get("uses", "").startswith("actions/upload-artifact@"):
-                name, archive = package_upload(step, runner, suite, 1, archives)
+                name, archive = package_upload(step, runner / key, key, 1, archives)
                 assert name not in uploaded
                 uploaded[name] = archive
     gate = workflow["jobs"]["ci-ready"]
@@ -144,7 +150,7 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
         source_jobs.extend({"id": index + 2, "name": proof.job_name(suite), "status": "completed",
                             "conclusion": defect.removeprefix("producer-") if suite == "tests" and defect in {
                                 "producer-failure", "producer-cancelled", "producer-skipped",
-                            } else "success"} for index, suite in enumerate(SUITES))
+                            } else "success"} for index, suite in enumerate([s for s in SUITES if s != "production-images"] + ["production-images-" + target for target in BUILD_TARGETS]))
         return {"total_count": len(source_jobs), "jobs": source_jobs}
     monkeypatch.setattr(proof, "api", api)
     monkeypatch.chdir(transport["source"])
@@ -158,7 +164,7 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
 
 
 def test_gate_packages_only_results_and_verifier_retains_original_bundle_identity(transport, tmp_path, monkeypatch):
-    assert len(transport["selected"]) == len(SUITES)
+    assert len(transport["selected"]) == len(SUITES) - 1 + len(BUILD_TARGETS)
     gate_members = {}
     for archive in transport["selected"].values():
         with zipfile.ZipFile(archive) as bundle:
@@ -167,7 +173,7 @@ def test_gate_packages_only_results_and_verifier_retains_original_bundle_identit
     assert gate_members["production-images"] == ["result.json"], "ci-ready downloaded unused retained image bytes"
     assert set(gate_members) == set(SUITES)
     assert all(members == ["result.json"] for members in gate_members.values())
-    retained = transport["uploaded"]["ci-result-production-images-attempt1"]
+    retained = transport["uploaded"]["ci-result-production-images-sea-ice-daily-attempt1"]
     with zipfile.ZipFile(retained) as bundle:
         assert "images/manifest.json" in bundle.namelist()
         assert not any(name.endswith(".docker.tar") for name in bundle.namelist())
@@ -187,7 +193,7 @@ def test_gate_packages_only_results_and_verifier_retains_original_bundle_identit
     result = json.loads(evidence.read_text())
     assert result["source"] == {"run_id": "123", "run_attempt": 2}
     assert result["plan_artifact"] == "ci-validation-plan-attempt1"
-    assert result["suite_artifacts"] == {suite: f"ci-result-{suite}-attempt1" for suite in SUITES}
+    assert result["suite_artifacts"] == {suite: f"ci-result-{suite}-attempt1" for suite in [s for s in SUITES if s != "production-images"] + ["production-images-" + target for target in BUILD_TARGETS]}
     assert result["tested_sha"] == transport["plan"]["tested_sha"]
     assert len(requests) == 2 and requests[-1].endswith("/jobs?per_page=100&page=1")
 
@@ -201,12 +207,7 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     assert steps.index(retained) < steps.index(receipt)
     condition = "always() && steps.retained-results.outcome == 'success'"
     if suite == "production-images":
-        uploads = []
-        for step in steps:
-            if step.get("with", {}).get("name", "").startswith("ci-image-"):
-                selected = step['if']
-                uploads.append(f"(!{selected} || steps.{step['id']}.outcome == 'success')")
-        condition += " && " + " && ".join(uploads)
+        condition += " && steps.retained-image.outcome == 'success'"
     assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"

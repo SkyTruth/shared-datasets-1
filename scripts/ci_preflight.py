@@ -9,17 +9,19 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager, nullcontext
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from threading import Event
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,7 +32,7 @@ from scripts.deployment_revision import DeploymentError
 from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    INGESTION_DEPLOYMENTS, INGESTION_ROLLOUT_HOLDS, documentation_only, select_deployments,
+    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, select_deployments,
     select_production_images, select_suites, verify_results, write_json,
 )
 
@@ -220,15 +222,10 @@ def require_complete_history(root: Path) -> None:
         raise ValueError("full checkout history is required; fetch --unshallow before preflight")
 
 
-def ingestion_rollout_holds(root: Path, revision: str) -> tuple[str, ...]:
+def ingestion_rollout_holds(root: Path, revision: str, *, historical=False) -> tuple[str, ...]:
     if not git(root, "ls-tree", "--name-only", revision, "--", INGESTION_ROLLOUT_HOLDS):
         return ()
-    holds = json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True))
-    if (not isinstance(holds, list)
-            or any(not isinstance(target, str) or target not in INGESTION_DEPLOYMENTS for target in holds)
-            or len(set(holds)) != len(holds)):
-        raise ValueError("ingestion rollout holds must be a list of distinct scheduled deployment targets")
-    return tuple(holds)
+    return rollout_holds(json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True)), historical=historical)
 
 
 def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None) -> dict:
@@ -247,6 +244,10 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         resolved_base = base
         paths = None
     suites, reason = select_suites(paths)
+    holds = ingestion_rollout_holds(root, tested_sha)
+    released = ()
+    if paths and INGESTION_ROLLOUT_HOLDS in paths:
+        released = tuple(set(ingestion_rollout_holds(root, resolved_base, historical=True)) - set(holds))
     catalog_snapshots = None
     if paths and "catalog/shared-datasets-catalog.csv" in paths:
         try:
@@ -261,7 +262,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "contract_digest": contract_digest(root), "suites": suites,
         "selection_reason": reason, "changed_paths": paths,
         "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots,
-            ingestion_holds=ingestion_rollout_holds(root, tested_sha)),
+            ingestion_holds=holds, released_holds=released),
     }
 
 
@@ -298,10 +299,14 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
+        if (root / INGESTION_ROLLOUT_HOLDS).exists():
+            rollout_holds(json.loads((root / INGESTION_ROLLOUT_HOLDS).read_text()))
         if documentation_only(plan.get("changed_paths")):
             add("git", "diff", "--check", base, head)
             return commands
         add("uv", "sync", "--locked", "--all-groups")
+        if any(path.startswith("terraform/") for path in plan.get("changed_paths") or []):
+            add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")
@@ -354,6 +359,10 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
     elif suite == "production-images":
         # Host checks use only the standard library; image dependencies stay in Docker.
         targets = select_production_images(plan.get("changed_paths"))
+        if "image_target" in plan:
+            if plan["image_target"] not in targets:
+                raise ValueError("image target was not selected by the validation plan")
+            targets = [plan["image_target"]]
         if not targets:
             raise ValueError("production image suite selected without image targets")
         for target in targets:
@@ -388,12 +397,17 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     return versions
 
 
-def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
+def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None) -> dict:
     if suite not in plan["suites"]:
         raise ValueError(f"suite {suite} was not selected")
     output.mkdir(parents=True, exist_ok=True)
     result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
     result.update({"schema_version": 1, "suite": suite, "status": "failure", "commands": [], "tools": {}})
+    if image_target is not None:
+        if suite != "production-images":
+            raise ValueError("image target requires the production-images suite")
+        plan = {**plan, "image_target": image_target}
+        result["image_target"] = image_target
     if os.environ.get("GITHUB_RUN_ID"):
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
     environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
@@ -421,24 +435,47 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
         if suite == "production-images":
             result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
             result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
+        cancelled = Event()
         def execute(item):
+            if cancelled.is_set():
+                return None
             index, (command, cwd) = item
             print(f"[{suite}] {' '.join(command)}", flush=True)
             log = output / f"command-{index:02d}.log"
             with log.open("w") as stream:
-                completed = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, check=False)
-            return {"argv": command, "exit_code": completed.returncode, "log": log.name}
+                if suite != "production-images":
+                    code = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, check=False).returncode
+                else:
+                    with subprocess.Popen(command, cwd=cwd, env=environment, stdout=stream,
+                                          stderr=subprocess.STDOUT, start_new_session=True) as process:
+                        while process.poll() is None:
+                            if cancelled.wait(0.1):
+                                os.killpg(process.pid, signal.SIGTERM)
+                                try:
+                                    process.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                break
+                        code = process.wait()
+                    if code:
+                        cancelled.set()
+            return {"argv": command, "exit_code": code, "log": log.name}
 
         # Only independent image targets run concurrently. Policy/setup commands
         # retain their serial, fail-fast ordering. Both paths keep one suite proof.
         with ThreadPoolExecutor(max_workers=2) if suite == "production-images" else nullcontext() as executor:
             commands = enumerate(suite_commands(suite, root, plan, output))
-            reports = executor.map(execute, commands) if executor else map(execute, commands)
-            for report in reports:
-                result["commands"].append(report)
-                if report["exit_code"] != 0:
-                    print((output / report["log"]).read_text()[-12000:], file=sys.stderr)
-                    raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
+            reports = (future.result() for future in as_completed([executor.submit(execute, item) for item in commands])) if executor else map(execute, commands)
+            try:
+                for report in reports:
+                    if report is None:
+                        continue
+                    result["commands"].append(report)
+                    if report["exit_code"] != 0:
+                        print((output / report["log"]).read_text()[-12000:], file=sys.stderr)
+                        raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
+            finally:
+                cancelled.set()
         if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
             if suite == "geospatial-integration":
@@ -446,7 +483,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
             (output / "images").mkdir(exist_ok=True)
-            for target in select_production_images(plan.get("changed_paths")):
+            for target in [image_target] if image_target else select_production_images(plan.get("changed_paths")):
                 directory = output / target / "images"
                 images = validate_manifest(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
                 if set(images) != {target}:
@@ -626,6 +663,7 @@ def main() -> int:
     runner.add_argument("--plan", type=Path, required=True)
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
+    runner.add_argument("--image-target")
     verifier = commands.add_parser("verify")
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
@@ -651,7 +689,7 @@ def main() -> int:
             return 0
         if args.command == "run-suite":
             plan = load_plan(args.plan)
-            return 0 if run_suite(root, plan, args.suite, args.output)["status"] == "success" else 1
+            return 0 if run_suite(root, plan, args.suite, args.output, image_target=args.image_target)["status"] == "success" else 1
         if args.command == "verify":
             run_id = os.environ.get("GITHUB_RUN_ID")
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
