@@ -2,19 +2,21 @@
 
 - Deploy or replace the preview with the GitHub Actions workflow named
   `Preview / Deploy feature branch`.
-- Select `main` in the **Run workflow** dropdown; set `source_ref` to the full
-  feature branch or tag ref (`refs/heads/...` or `refs/tags/...`).
+- Select `main` in the **Run workflow** dropdown and set `source_ref` to
+  `refs/heads/main`. The source must resolve to that dispatch's exact main SHA;
+  unmerged feature branches and older tags fail before dependency installation
+  or authentication. Preview currently supports reviewed main code only.
 - Select `preview_data_mode=preserve` when redeploying preview service or
   catalog viewer code against already loaded preview data. This is the default
   and rebuilds the preview catalog from existing preview release indexes.
 - Select `preview_data_mode=reset` only when a clean preview slot is intended;
   it destroys disposable preview bucket contents, publishes an
   empty preview catalog shell, and requires reloading preview data.
-- For code-only preview fixes, push the branch, dispatch the deploy workflow
+- For code-only preview fixes, merge the reviewed fix, dispatch the deploy workflow
   with `preview_data_mode=preserve`, wait for the workflow to finish, and
   validate the live preview URL before reporting that the issue is fixed.
-- The deploy plans and applies `preview-source/terraform/envs/preview` from the
-  selected branch through the preview resource-change allowlist, while stable
+- The deploy plans and applies `terraform/envs/preview` from the immutable main
+  workflow checkout through the preview resource-change allowlist, while stable
   production-scoped IAM bootstrap remains in the separate main-only sync
   workflow.
 - The deploy reports both the preview API URL and the preview catalog viewer

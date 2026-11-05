@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Full branch or tag ref to deploy (refs/heads/... or refs/tags/...)"
+        description: "Full ref resolving to this exact reviewed main revision (normally refs/heads/main)"
         type: string
         required: true
       preview_data_mode:
@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
@@ -29,7 +30,7 @@ env:
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
-  PREVIEW_TERRAFORM_DIR: preview-source/terraform/envs/preview
+  PREVIEW_TERRAFORM_DIR: terraform/envs/preview
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
@@ -67,6 +68,11 @@ jobs:
             refs/heads/*|refs/tags/*) git check-ref-format "${PREVIEW_REF}" ;;
             *) echo "source_ref must be a full branch or tag ref." >&2; exit 1 ;;
           esac
+          git fetch --no-tags --depth=1 origin "${PREVIEW_REF}"
+          if [[ "$(git rev-parse FETCH_HEAD)" != "${GITHUB_SHA}" ]]; then
+            echo "Preview source must resolve to this exact reviewed main revision; unmerged branch code cannot use production authority." >&2
+            exit 1
+          fi
           case "${PREVIEW_DATA_MODE}" in
             preserve|reset) ;;
             *)
@@ -75,14 +81,13 @@ jobs:
               ;;
           esac
           echo "Preview data mode: ${PREVIEW_DATA_MODE}"
-      - name: Check out selected feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_ref }}
-          path: preview-source
       - name: Record checked-out SHA
         run: echo "PREVIEW_DEPLOY_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
-        working-directory: preview-source
+      - name: Verify owner acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ github.workflow_sha }}
+        run: python -I -S .github/actions/deployment-bootstrap/approval.py
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -92,73 +97,35 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-      - name: Sync selected branch dependencies
+      - name: Sync reviewed main dependencies
         run: uv sync --frozen
-        working-directory: preview-source
       - name: Authenticate protected preview deployer
         uses: ./.github/actions/deployment-auth
       - name: Validate preview IAM bootstrap
         run: |
-          set -euo pipefail
-          preview_service_account="feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          preview_loader_service_account="feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          project_number="$(gcloud projects describe "${GOOGLE_CLOUD_PROJECT}" --format='value(projectNumber)')"
-          preview_loader_wif_member="principalSet://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/attribute.preview/allowed"
-          gcloud projects get-iam-policy "${GOOGLE_CLOUD_PROJECT}" --format=json > "${RUNNER_TEMP}/preview-project-iam.json"
-          gcloud iam service-accounts get-iam-policy "${preview_service_account}" \
-            --project="${GOOGLE_CLOUD_PROJECT}" \
-            --format=json > "${RUNNER_TEMP}/preview-service-iam.json"
-          gcloud iam service-accounts get-iam-policy "${preview_loader_service_account}" \
-            --project="${GOOGLE_CLOUD_PROJECT}" \
-            --format=json > "${RUNNER_TEMP}/preview-loader-iam.json"
-          export PREVIEW_LOADER_WIF_MEMBER="${preview_loader_wif_member}"
-          python - "${RUNNER_TEMP}/preview-project-iam.json" "${RUNNER_TEMP}/preview-service-iam.json" "${RUNNER_TEMP}/preview-loader-iam.json" <<'PY'
-          import json
-          import os
-          import sys
-          project_policy = json.load(open(sys.argv[1]))
-          service_policy = json.load(open(sys.argv[2]))
-          loader_policy = json.load(open(sys.argv[3]))
+          python -I -S - <<'PY'
+          import json, os, subprocess
           project = os.environ["GOOGLE_CLOUD_PROJECT"]
-          terraform_service_account = os.environ["TERRAFORM_SERVICE_ACCOUNT"]
-          preview_service_member = f"serviceAccount:feature-preview-service@{project}.iam.gserviceaccount.com"
-          preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
-          preview_sign_blob_role = f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob"
-          loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
-          def service_account_binding_exists(policy, role, member):
-              return any(
-                  binding.get("role") == role and member in binding.get("members", [])
-                  for binding in policy.get("bindings", [])
-              )
-          missing = []
-          if not service_account_binding_exists(project_policy, preview_terraform_role, f"serviceAccount:{terraform_service_account}"):
-              missing.append("preview Terraform custom role binding")
-          if not service_account_binding_exists(service_policy, preview_sign_blob_role, preview_service_member):
-              missing.append("preview service self signBlob binding")
-          if not service_account_binding_exists(loader_policy, "roles/iam.workloadIdentityUser", loader_wif_member):
-              missing.append("preview loader Workload Identity binding")
-          if missing:
-              print("Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first.")
-              for item in missing:
-                  print(f"- {item}")
-              raise SystemExit(1)
+          def read(*args):
+              return subprocess.check_output(["gcloud", *args], text=True).strip()
+          number = read("projects", "describe", project, "--format=value(projectNumber)")
+          service = f"feature-preview-service@{project}.iam.gserviceaccount.com"
+          loader = f"feature-preview-loader@{project}.iam.gserviceaccount.com"
+          checks = [
+              (("projects", "get-iam-policy", project), f"projects/{project}/roles/sharedDatasetsPreviewTerraform",
+               "serviceAccount:" + os.environ["TERRAFORM_SERVICE_ACCOUNT"]),
+              (("iam", "service-accounts", "get-iam-policy", service), f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob",
+               "serviceAccount:" + service),
+              (("iam", "service-accounts", "get-iam-policy", loader), "roles/iam.workloadIdentityUser",
+               f"principalSet://iam.googleapis.com/projects/{number}/locations/global/workloadIdentityPools/github/attribute.preview/allowed"),
+          ]
+          for args, role, member in checks:
+              policy = json.loads(read(*args, "--format=json"))
+              if not any(binding.get("role") == role and member in binding.get("members", []) for binding in policy.get("bindings", [])):
+                  raise SystemExit(f"Preview IAM bootstrap is incomplete: {role} for {member}. Run protected Preview Terraform IAM sync.")
           PY
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-      - name: Verify selected feature branch contains preview services
-        run: |
-          set -euo pipefail
-          test -f preview-source/services/feature_preview_service/Dockerfile
-          grep -q "GcsSidecarFeatureIndex" preview-source/services/feature_preview_service/run.py
-          if grep -q 'resource "google_firestore_database"' preview-source/terraform/envs/preview/*.tf; then
-            echo "The selected branch must include Firestore retirement before preview deployment." >&2
-            exit 1
-          fi
-          test -f preview-source/services/catalog_viewer/Dockerfile
-          if ! grep -q "SHARED_DATASETS_SITE_PREFIX" preview-source/services/catalog_viewer/run.py; then
-            echo "The selected feature branch must support the catalog viewer site-prefix override before it can run in preview." >&2
-            exit 1
-          fi
       - name: Build preview service image
         run: |
           set -euo pipefail
@@ -171,9 +138,9 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:preview-${safe_ref}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build \
             --platform linux/amd64 \
-            -f preview-source/services/feature_preview_service/Dockerfile \
+            -f services/feature_preview_service/Dockerfile \
             -t "${image_tag}" \
-            preview-source
+            .
           docker push "${image_tag}"
           image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
@@ -192,9 +159,9 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${CATALOG_VIEWER_IMAGE_NAME}:preview-${SAFE_PREVIEW_REF}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build \
             --platform linux/amd64 \
-            -f preview-source/services/catalog_viewer/Dockerfile \
+            -f services/catalog_viewer/Dockerfile \
             -t "${image_tag}" \
-            preview-source
+            .
           docker push "${image_tag}"
           image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
@@ -414,7 +381,6 @@ jobs:
             --force-access-tier private \
             --metadata-sidecar-autoload-max-bytes 33554432 \
             --out "${RUNNER_TEMP}/preview-catalog-web"
-        working-directory: preview-source
       - name: Authenticate as preview catalog publisher
         uses: google-github-actions/auth@v2
         with:
@@ -429,4 +395,3 @@ jobs:
             --source "${RUNNER_TEMP}/preview-catalog-web" \
             --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
             --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
-        working-directory: preview-source

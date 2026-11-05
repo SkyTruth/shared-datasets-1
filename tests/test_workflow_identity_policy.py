@@ -157,8 +157,16 @@ def test_pr_bucket_read_exception_is_confined_to_exact_advisory_leaf(filename, e
 
 
 def run_guard(command, *, ref=MAIN, source=FEATURE, mode='preserve'):
+    command = '''git() {
+      case "$1" in
+        fetch) return 0;;
+        rev-parse) printf '%s\\n' "$GITHUB_SHA";;
+        *) command git "$@";;
+      esac
+    }
+    ''' + command
     return subprocess.run(['bash', '-euo', 'pipefail', '-c', command], text=True, capture_output=True,
-                          env={**os.environ, 'GITHUB_REF': ref, 'PREVIEW_REF': source,
+                          env={**os.environ, 'GITHUB_SHA': 'a' * 40, 'GITHUB_REF': ref, 'PREVIEW_REF': source,
                                'PREVIEW_SOURCE_REF': ref, 'PREVIEW_DATA_MODE': mode, 'GITHUB_REPOSITORY': REPO,
                                'GITHUB_WORKFLOW_REF': f'{REPO}/.github/workflows/feature-preview-deploy.yml@{ref}'})
 
@@ -176,7 +184,7 @@ def test_preview_dispatch_validates_control_ref_and_independent_source(ref, sour
     assert job['env']['PREVIEW_REF'] == '${{ inputs.source_ref }}'
     steps = {step['name']: step for step in job['steps'] if 'name' in step}
     assert steps['Check out preview control plane']['with']['ref'] == '${{ github.workflow_sha }}'
-    assert steps['Check out selected feature branch']['with']['ref'] == '${{ inputs.source_ref }}'
+    assert not any('source_ref' in step.get('with', {}).get('ref', '') for step in job['steps'])
     command = steps['Require trusted main workflow']['run'] + '\n' + steps['Validate selected ref']['run']
     assert (run_guard(command, ref=ref, source=source, mode=mode).returncode == 0) is expected
 

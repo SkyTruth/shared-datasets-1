@@ -6,6 +6,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
@@ -38,7 +39,13 @@ jobs:
       - name: Check out preview control plane
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.workflow_sha }}
+
+      - name: Verify owner acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ github.workflow_sha }}
+        run: python -I -S .github/actions/deployment-bootstrap/approval.py
 
       - name: Validate Terraform auth configuration
         run: |
