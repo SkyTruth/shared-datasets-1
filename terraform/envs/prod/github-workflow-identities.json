@@ -1,0 +1,10 @@
+{
+  "terraform": ["catalog-viewer-deploy.yml", "deployment-recovery.yml", "feature-preview-deploy.yml", "feature-preview-destroy.yml", "ingestion-deploy.yml", "pmtiles-cdn-sync.yml", "prod-terraform-target-apply.yml"],
+  "publisher": ["catalog-web-deploy.yml", "eamlis-held-candidate-preview.yml", "publish-dataset.yml", "release-index-rebuild.yml", "scratch-cleanup-audit.yml"],
+  "preview": ["eamlis-held-candidate-preview.yml", "feature-preview-deploy.yml"],
+  "observer": ["catalog-viewer-deploy.yml", "deployment-verification.yml", "ingestion-deploy.yml", "pmtiles-cdn-sync.yml", "publish-dataset.yml"],
+  "runtime": ["catalog-viewer-deploy.yml", "ingestion-deploy.yml", "ingestion-schedule-control.yml", "pmtiles-cdn-sync.yml"],
+  "heartbeat": ["operational-safety-check.yml"],
+  "reconciler": ["identity-decision-reconcile.yml", "resolve-workflow-alert.yml"],
+  "bucket_reader": ["bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml"]
+}

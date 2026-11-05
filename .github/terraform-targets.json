@@ -6,7 +6,9 @@
       "readiness_target": "iam-bootstrap",
       "resources": [
         "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-        "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager"
+        "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+        "google_project_iam_custom_role.github_identity_manager",
+        "google_project_iam_member.github_identity_manager"
       ],
       "post_apply_wait_seconds": 30
     },
@@ -24,9 +26,7 @@
         "google_project_service.monitoring_slack_pubsub",
         "google_project_iam_custom_role.monitoring_alert_policy_manager",
         "google_project_iam_member.github_actions_monitoring_alert_policy_manager",
-        "google_project_iam_custom_role.monitoring_incident_reader",
-        "google_project_iam_custom_role.operational_safety_reader",
-        "google_project_iam_member.operational_safety_reader"
+        "google_project_iam_custom_role.monitoring_incident_reader"
       ],
       "block_deletes": true,
       "post_apply_wait_seconds": 30
@@ -284,6 +284,41 @@
       ],
       "block_deletes": true,
       "image_placeholder": "unused-by-state-read-iam-sync"
+    },
+    "GitHub workflow identity sync": {
+      "workflow": "artifact-registry-iam-sync.yml",
+      "readiness_target": "iam-bootstrap",
+      "resources": [
+        "google_iam_workload_identity_pool_provider.github",
+        "google_iam_workload_identity_pool_provider.github_readonly",
+        "google_service_account_iam_binding.github_actions_terraform_wif",
+        "google_service_account_iam_member.shared_datasets_publisher_github_wif",
+        "google_service_account_iam_member.github_readonly_wif",
+        "google_service_account.github_job[\"observer\"]",
+        "google_project_iam_custom_role.github_job[\"observer\"]",
+        "google_project_iam_member.github_job[\"observer\"]",
+        "google_service_account_iam_member.github_job_wif[\"observer\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"observer\"]",
+        "google_service_account.github_job[\"runtime\"]",
+        "google_project_iam_custom_role.github_job[\"runtime\"]",
+        "google_project_iam_member.github_job[\"runtime\"]",
+        "google_service_account_iam_member.github_job_wif[\"runtime\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"runtime\"]",
+        "google_service_account.github_job[\"heartbeat\"]",
+        "google_project_iam_custom_role.github_job[\"heartbeat\"]",
+        "google_project_iam_member.github_job[\"heartbeat\"]",
+        "google_service_account_iam_member.github_job_wif[\"heartbeat\"]",
+        "google_storage_bucket_iam_member.github_job_reader[\"heartbeat\"]",
+        "google_service_account.github_job[\"reconciler\"]",
+        "google_project_iam_custom_role.github_job[\"reconciler\"]",
+        "google_project_iam_member.github_job[\"reconciler\"]",
+        "google_service_account_iam_member.github_job_wif[\"reconciler\"]",
+        "google_project_iam_custom_role.operational_safety_reader",
+        "google_project_iam_member.operational_safety_reader",
+        "google_service_account_iam_member.feature_preview_loader_github_wif",
+        "google_storage_bucket_iam_member.monitoring_slack_recovery"
+      ],
+      "block_deletes": false
     }
   },
   "plan_scopes": {
@@ -385,7 +420,7 @@
     "artifact-registry": [["https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions", ["artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"]]],
     "artifact-registry-images": [["https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions", ["artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts", "artifactregistry.repositories.uploadArtifacts", "artifactregistry.dockerimages.get", "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update"]]],
     "monitoring-slack-secret": [["https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/shared-datasets-slack-bot-token:testIamPermissions", ["secretmanager.versions.add"]]],
-    "monitoring-alerts": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update", "logging.logMetrics.delete", "logging.notificationRules.create", "logging.notificationRules.delete", "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete", "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update", "monitoring.notificationChannels.get", "monitoring.notificationChannels.list"]]],
+    "monitoring-alerts": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update", "logging.notificationRules.create", "logging.notificationRules.delete", "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete", "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update", "monitoring.notificationChannels.get", "monitoring.notificationChannels.list"]]],
     "preview-service-account-iam": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list"]], ["https://iam.googleapis.com/v1/projects/shared-datasets-1/locations/global/workloadIdentityPools/github:testIamPermissions", ["iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules"]]],
     "bucket-iam": [["https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.buckets.getIamPolicy&permissions=storage.buckets.setIamPolicy", ["storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy"]]],
     "pmtiles-cdn": [["https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get&permissions=storage.managedFolders.create&permissions=storage.managedFolders.get&permissions=storage.managedFolders.list&permissions=storage.managedFolders.getIamPolicy&permissions=storage.managedFolders.setIamPolicy", ["storage.buckets.get", "storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.list", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy"]]],
@@ -399,6 +434,7 @@
     "wdpa-monthly": ["job-runtime", "translation-bootstrap"],
     "wdpa-monthly-build": ["job-runtime"],
     "sea-ice-daily": ["job-runtime"],
-    "dataset-usage": ["job-runtime"]
+    "dataset-usage": ["job-runtime"],
+    "catalog-viewer-observe": [["https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions", ["run.services.get", "secretmanager.secrets.get"]]]
   }
 }

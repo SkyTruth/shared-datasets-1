@@ -335,7 +335,8 @@ def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), rel
     iam = set(DEPLOYMENTS) - ingestion - {"catalog_viewer", "dataset_usage", "pmtiles_cdn"}
     shared = {
         (".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py"): executors,
-        (".github/actions/deployment-bootstrap/action.yml",): set(DEPLOYMENTS),
+        (".github/actions/deployment-bootstrap/action.yml", ".github/actions/deployment-auth/"): set(DEPLOYMENTS),
+        ("terraform/envs/prod/github-workflow-identities.json",): {"artifact_registry_iam"},
         (".github/actions/deployment-bootstrap/terraform/action.yml",): iam | {"dataset_usage"},
         (".github/terraform-targets.json", "scripts/terraform_target_contracts.py"): iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
         (".github/workflows/prod-terraform-target-apply.yml",): iam,

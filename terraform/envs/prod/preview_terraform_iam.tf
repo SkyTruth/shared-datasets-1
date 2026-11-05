@@ -87,7 +87,7 @@ resource "google_project_iam_member" "github_actions_preview_terraform" {
 resource "google_service_account_iam_member" "feature_preview_loader_github_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.preview/allowed"
 }
 
 resource "google_service_account_iam_member" "feature_preview_service_self_sign_blob" {

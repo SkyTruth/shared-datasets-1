@@ -296,7 +296,8 @@ def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollo
         assert names.index('Verify executor before candidate checkout') < names.index('Check out repository')
         assert names.index('Verify tested main revision') < names.index('Authenticate to Google Cloud')
         auth = next(s for s in sequence if s.get('uses', '').startswith('google-github-actions/auth@'))
-        assert auth['with'] == {'workload_identity_provider': '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}', 'service_account': '${{ env.TERRAFORM_SERVICE_ACCOUNT }}'}
+        assert auth['with']['workload_identity_provider'] == '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}'
+        assert 'inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT' in auth['with']['service_account']
     for target in target_table():
         wrapper = load_workflow(REPO_ROOT / f'.github/workflows/{target}-deploy.yml')
         job = wrapper['jobs']['deploy']

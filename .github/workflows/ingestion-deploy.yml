@@ -64,8 +64,10 @@ jobs:
       run: |
         python scripts/deployment_revision.py check --target "$TARGET" --workflow "$WORKFLOW_FILE" \
           --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-    - name: Authenticate protected deployer
+    - name: Authenticate protected runtime
       uses: ./.github/actions/deployment-auth
+      with:
+        service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com
       if: steps.replay.outputs.proceed == 'true'
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -85,9 +87,6 @@ jobs:
       if: steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'
       run: |
         uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET"
-    - name: Verify live deployment permissions
-      run: python scripts/deployment_permissions.py --target "$TARGET"
-      if: steps.replay.outputs.proceed == 'true'
     - name: Check runtime verification window
       id: window
       run: |
@@ -131,7 +130,6 @@ jobs:
         TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
       run: |
         set -euo pipefail
-
         docker push "${IMAGE_TAG}"
         docker buildx imagetools inspect --raw "${IMAGE_TAG}" > "$RUNNER_TEMP/$TARGET-manifest.json"
         python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_CONFIG"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/$TARGET-manifest.json"
@@ -161,7 +159,7 @@ jobs:
       deployment_id: ${{ steps.revision.outputs.deployment_id }}
       claim_signed: ${{ steps.claim-receipt.outcome }}
     steps:
-    - name: Validate main ref before state operations
+    - name: Validate main ref
       run: |
         if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
     - name: Check out trusted verifier
@@ -287,8 +285,10 @@ jobs:
         CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
       run: |
         test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
-    - name: Authenticate protected deployer
+    - name: Authenticate protected observer
       uses: ./.github/actions/deployment-auth
+      with:
+        service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -303,13 +303,16 @@ jobs:
     - name: Confirm deployed digest
       run: |
         set -euo pipefail
-
         deployed_image="$(gcloud run jobs describe "${TARGET}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
         echo "Deployed image: ${deployed_image}"
         if [[ "${deployed_image}" != "${IMAGE}" ]]; then
           echo "Cloud Run job image does not match expected digest." >&2
           exit 1
         fi
+    - name: Authenticate canary runner
+      uses: ./.github/actions/deployment-auth
+      with:
+        service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com
     - name: Check runtime verification window
       id: window
       run: |
@@ -341,6 +344,10 @@ jobs:
         execution="$(gcloud run jobs execute "${args[@]}")"
         if [[ -z "$execution" ]]; then echo 'Canary returned no execution identity.' >&2; exit 1; fi
         echo "CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
+    - name: Restore observer for canary reads
+      uses: ./.github/actions/deployment-auth
+      with:
+        service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
     - name: Watch ingestion canary
       run: |
         set -euo pipefail
@@ -373,6 +380,11 @@ jobs:
     - name: Verify usage scheduler
       if: env.PLAN_GUARD == 'usage'
       run: gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state,schedule,timeZone)'
+    - name: Authenticate scheduler controller
+      if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
+      uses: ./.github/actions/deployment-auth
+      with:
+        service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com
     - name: Resume verified ingestion scheduler
       if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
       run: bash -euo pipefail -c "$AFTER_VERIFY"

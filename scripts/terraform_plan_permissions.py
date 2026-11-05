@@ -33,18 +33,17 @@ PROJECT_OPERATIONS = {
     "google_project_iam_custom_role": ("iam.roles", ("role_id",), {"create", "update", "delete"}),
     "google_project_iam_audit_config": (("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"), (), {"create", "update", "delete"}),
     "google_project_iam_member": (("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"), (), {"create", "update", "delete"}),
-    "google_iam_workload_identity_pool_provider": ("iam.workloadIdentityPoolProviders", ("workload_identity_pool_id", "workload_identity_pool_provider_id"), {"delete"}),
+    "google_iam_workload_identity_pool_provider": ("iam.workloadIdentityPoolProviders", ("workload_identity_pool_id", "workload_identity_pool_provider_id"), {"update", "delete"}),
     "google_logging_project_sink": ("logging.sinks", (), {"create", "update", "delete"}),
     "google_logging_project_exclusion": ("logging.exclusions", ("name",), {"create", "update", "delete"}),
     "google_logging_metric": ("logging.logMetrics", ("name",), {"create", "update", "delete"}),
     "google_secret_manager_secret": ("secretmanager.secrets", ("secret_id",), {"create"}),
     "google_monitoring_notification_channel": ("monitoring.notificationChannels", (), {"create", "update"}),
 }
-# Static permission manifest; behavior tests exercise every declared runtime class.
-# Operation/identity validation remains exclusively in plan_checks.
+# plan_checks owns operation and identity validation.
 RESOURCE_KINDS = PROJECT_OPERATIONS.keys() | frozenset('''
 google_logging_log_view google_monitoring_metric_descriptor
-google_service_account google_service_account_iam_member
+google_service_account google_service_account_iam_member google_service_account_iam_binding
 google_storage_bucket google_storage_bucket_iam_member google_storage_managed_folder
 google_storage_managed_folder_iam_member google_secret_manager_secret_iam_member
 google_artifact_registry_repository_iam_member google_cloud_run_v2_job google_cloud_run_v2_service
@@ -289,7 +288,7 @@ def plan_checks(plan, *, project_number, target=None):
                     add(PROJECT_URL, ("iam.serviceAccounts.create", "iam.serviceAccounts.get"))
                 else:
                     sa(account, ("iam.serviceAccounts.get", "iam.serviceAccounts." + action), row)
-            elif kind == "google_service_account_iam_member":
+            elif kind in {"google_service_account_iam_member", "google_service_account_iam_binding"}:
                 sa(current.get("service_account_id"), ("iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"), row)
             elif kind == "google_storage_bucket":
                 project(current)

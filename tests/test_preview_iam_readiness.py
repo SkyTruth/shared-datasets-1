@@ -36,7 +36,7 @@ class PreviewIamReadinessTests(unittest.TestCase):
         permissions = re.findall(r'"(iam\.[^"]+)"', role)
         self.assertEqual({p for p in permissions if p.startswith("iam.workloadIdentityPools.")}, set(POOL_READS))
         # Preserve the managed identity-pool dependency and exact reviewed member.
-        self.assertIn('member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"', source)
+        self.assertIn('member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.preview/allowed"', source)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', source)
 
     def test_read_probe_uses_actual_pool_and_all_observed_refresh_dependencies(self):

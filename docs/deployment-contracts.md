@@ -89,8 +89,8 @@ Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_s
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
 snapshots the restored entrypoints’ local import closure from that immutable SHA,
 then restores it, package initializers, receipt/auth actions and target registry. It
-verifies the tested checkout before authentication. The Terraform service
-account and `shared-datasets-production` environment remain unchanged. Jobs
+verifies the tested checkout before authentication. The protected environment
+remains required; Terraform and verification reads use separate identities. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.
 

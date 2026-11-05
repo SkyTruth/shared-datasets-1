@@ -170,11 +170,11 @@ dispatch incident replay nor count toward its three-dispatch escalation. Report
 upload/notification and infrastructure failures remain visible workflow failures.
 
 Before relying on the checks, use the protected monitoring sync to provision
-`google_project_iam_custom_role.operational_safety_reader` and its publisher
-binding. The role grants exactly `cloudscheduler.jobs.get`, `run.executions.get`
-and `logging.logEntries.create`; the safety job retains its existing service
-account and protected environment. The bootstrap scope includes both IAM
-resources; the cron-sync scope adds `google_logging_metric.operational_safety_heartbeat`
+the workflow identities and `google_project_iam_custom_role.operational_safety_reader`.
+Only `shared-datasets-heartbeat` receives its `logging.logEntries.create` grant;
+its separate read role permits the safety probes. The publisher cannot emit
+heartbeats. The resources scope provisions these identities before cron-sync adds
+`google_logging_metric.operational_safety_heartbeat`
 and `google_monitoring_alert_policy.operational_safety_absent`.
 
 A completed health read writes the authenticated `operational-safety-heartbeat`

@@ -8,6 +8,23 @@ For Terraform changes, also load the
 Read the selected job's runtime README when changing its data or processing
 behavior; source-specific operations are linked below.
 
+Protected cloud identities are bound to exact workflow filenames on main in
+[`github-workflow-identities.json`](../terraform/envs/prod/github-workflow-identities.json).
+Tests compare this generated list with registered executors and authentication
+steps. Reusable jobs use `job_workflow_ref`; standalone jobs use `workflow_ref`.
+The provider also requires this repository, main and the protected environment.
+The Terraform SA's authoritative WIF role binding removes its former shared
+environment-wide subject grant. Artifact Registry IAM sync provisions the
+identity-manager bootstrap, then the identity scope before its writer phase.
+That prerequisite makes the new credentials available before dependent rollouts.
+
+Observer reads have no mutation, IAM administration, Terraform state or secret-version access.
+Image pushes, canary launch/cancellation, schedule control and cache invalidation
+use the separate runtime identity; verification restores the observer afterward.
+The two reconcilers need a separate identity with private incident-state writes.
+Only the safety workflow's heartbeat identity can emit heartbeat logs. None of
+these identities changes receipt signing, tested-image digests or dataset approval.
+
 1. **Declare the change and its owner.** Name the target, affected resources and
    intended runtime/data outcome. For overlapping PRs, record dependencies and
    one integration owner using [agent integration](agent-integration.md).
