@@ -86,7 +86,7 @@ def test_manual_bootstrap_and_state_only_scopes_remain_separate():
              'google_project_iam_member.github_actions_terraform_state_reader'}
     assert declared(inputs['targets']) == declared(inputs['allowed_exact']) == scope
     assert inputs['block_deletes'] is True and inputs['readiness_target'] == 'iam-bootstrap'
-    assert TERRAFORM_SYNCS[inputs['sync_name']] == inputs['caller_workflow']
+    assert TERRAFORM_SYNCS[inputs['sync_name']]['workflow'] == inputs['caller_workflow']
     assert not inputs.get('allowed_patterns') and not inputs.get('prepare_monitoring_slack')
     state = callers(ROOT)['prod-terraform-state-reconcile.yml/reconcile']
     assert not state.get('needs')

@@ -42,7 +42,7 @@ def test_registered_state_only_caller_has_no_resource_scope_or_side_effect_prepa
     assert inputs['targets'] == inputs['allowed_exact'] == ''
     assert not inputs.get('allowed_patterns') and not inputs.get('prepare_monitoring_slack')
     assert inputs['tf_vars'] == '${{ inputs.tf_vars }}'
-    assert TERRAFORM_SYNCS[inputs['sync_name']] == inputs['caller_workflow']
+    assert TERRAFORM_SYNCS[inputs['sync_name']]['workflow'] == inputs['caller_workflow']
 
 
 def test_actual_plan_shell_has_no_targets_and_keeps_deployment_variables_as_arguments(tmp_path):
