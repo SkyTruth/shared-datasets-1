@@ -20,7 +20,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
-from scripts.github_api_read import read
+from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
 from scripts.terraform_target_contracts import registry
 from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image_variables
 
@@ -55,22 +55,7 @@ def require(condition, message):
         raise DeploymentError(message)
 
 
-class GitHub:
-    def get(self, path):
-        return json.loads(read(path))
-
-    def pages(self, path, field=None):
-        pages = json.loads(read(path, paginate=True))
-        require(isinstance(pages, list) and pages, "missing API pages")
-        if field:
-            count = pages[0].get("total_count")
-            require(type(count) is int and all(p.get("total_count") == count for p in pages), "inconsistent API enumeration")
-            rows = [row for page in pages for row in page[field]]
-            require(len(rows) == count, "incomplete API enumeration")
-            return rows
-        require(all(isinstance(p, list) for p in pages), "invalid API pages")
-        return [row for page in pages for row in page]
-
+class GitHub(ReadOnlyGitHub):
     def post(self, path, payload):
         return json.loads(subprocess.check_output(["gh", "api", "--method", "POST", path, "--input", "-"], input=json.dumps(payload).encode()))
 
@@ -99,7 +84,7 @@ def verify_ci(api, repository, executor, run_id, attempt):
                reason="source must be the repository CI workflow on main push")
     require(run.get("id") == run_id and run.get("run_attempt") == attempt, "CI run attempt mismatch")
     require(run.get("head_sha") == executor, "executor differs from tested CI revision")
-    jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "jobs")
+    jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
     ready = [job for job in jobs if job.get("name") == "ci-ready"]
     require(len(ready) == 1 and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success", "ci-ready is missing, ambiguous, cancelled or unsuccessful")
     return run
@@ -230,19 +215,14 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
         accepted = {"verified"} if record_payload(latest)["target"] in INGESTION_TARGETS else {"applied", "verified"}
-        if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
-            if target == "wdpa-monthly-build":
-                # A new scratch build is an explicit invocation, even at the same
-                # producer revision. Its bytes require separate promotion approval.
-                return "superseded" if superseded else "proceed"
-            prior_artifact = record_payload(latest)["artifact"]
-            if artifact is None or prior_artifact == artifact:
+        require(terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted,
+                "this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
+        # Scratch builds are explicit invocations; catalog refreshes may contain
+        # new authorized data at the same executor revision.
+        if target != "wdpa-monthly-build":
+            if artifact is None or record_payload(latest)["artifact"] == artifact:
                 return "superseded" if superseded else "noop"
             require(target == "catalog-web", "same revision now produces different artifact bytes; reconcile before recovery")
-            # Catalog bytes depend on authorized dataset/index mutations as well
-            # as executor code. A distinct current-state bundle is a new refresh.
-            return "superseded" if superseded else "proceed"
-        raise DeploymentError("this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
     return "superseded" if superseded else "proceed"
 
 
@@ -412,7 +392,7 @@ def wait_applied(args, api, *, attempts=1440, pause=time.sleep):
     applied_name = apply_job_path(args.target)
     path = f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}/attempts/{os.environ['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"
     for attempt in range(attempts):
-        jobs = api.pages(path, "jobs")
+        jobs = api.pages(path, field="jobs")
         applied = [job for job in jobs if job["name"] == applied_name]
         require(len(applied) <= 1, "ambiguous usage apply job")
         if applied and applied[0]["status"] == "completed":
@@ -527,7 +507,7 @@ def observe(args, api):
         print(f"Execution {match[1]} is pending; terminal verification remains incomplete.")
         return
     post_status(api, repository, record, {
-        "state": {"verified": "success", "failed": "failure", "unknown": "error"}[phase],
+        "state": emissions.PHASES[phase],
         "description": phase, "auto_inactive": False, "environment_url": statuses[0]["environment_url"],
     })
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:

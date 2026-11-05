@@ -29,10 +29,6 @@ JOB_IMAGE_TARGETS = {target: config["targets"][0] for target, config in TARGETS.
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def split_lines(value: str) -> list[str]:
-    return [line.strip() for line in value.splitlines() if line.strip()]
-
-
 def wdpa_errors(after, expected_image, expected_config):
     module = resource_index(ROOT)["terraform/envs/prod/wdpa_monthly.tf"]["module.wdpa_monthly_job"]
     limits = {key: module.get(key) for key in ("cpu", "memory", "timeout")}
@@ -111,8 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--refusal-prefix", required=True, help="Message prefix printed before blocked resources.")
     args = parser.parse_args(argv)
 
-    allowed_exact = set(split_lines(args.allowed_exact or ""))
-    allowed_patterns = [re.compile(pattern) for pattern in split_lines(args.allowed_patterns)]
+    allowed_exact = {line.strip() for line in (args.allowed_exact or "").splitlines() if line.strip()}
+    allowed_patterns = [re.compile(line.strip()) for line in args.allowed_patterns.splitlines() if line.strip()]
     job_image = None
     if args.registered_scope:
         if args.allowed_exact is not None or args.allowed_patterns or args.job_image_target or args.expected_image:

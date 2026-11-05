@@ -17,6 +17,9 @@ merge acceptance. Missing, ambiguous, stale, dismissed and unreadable acceptance
 fail closed; successful output records the PR and acceptance evidence. Direct
 main pushes cannot authorize a deployment. Callers need read access to PRs and
 reviews as well as the existing Actions provenance permissions.
+Reusable callers retain `pull-requests: read` through every layer. The ingestion
+plan guard installs the locked `ci-plan` parsers before authentication; the usage
+apply waiter uses that same small dependency group.
 
 Production identities are registered in [`github-workflow-identities.json`](../terraform/envs/prod/github-workflow-identities.json): exact workflow filenames on main, `job_workflow_ref` for reusable jobs, `workflow_ref` otherwise, repository/environment constraints. The separate PR planner requires exact CI/planner refs; advisory PR bucket reads admit only the exact schema-alert leaf at a numeric merge ref after the same-repository gate. Artifact Registry IAM bootstrap provisions the identity manager and workflow identity scope before writer rollout. The authoritative Terraform WIF binding removes the shared environment subject grant.
 

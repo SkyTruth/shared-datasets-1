@@ -206,7 +206,9 @@
         "google_project_iam_custom_role.github_job[\"reconciler\"]", "google_project_iam_member.github_job[\"reconciler\"]",
         "google_service_account_iam_member.github_job_wif[\"reconciler\"]", "google_project_iam_custom_role.operational_safety_reader",
         "google_project_iam_member.operational_safety_reader", "google_service_account_iam_member.feature_preview_loader_github_wif",
-        "google_storage_bucket_iam_member.monitoring_slack_recovery"
+        "google_storage_bucket_iam_member.monitoring_slack_recovery", "google_storage_bucket_iam_member.github_readonly_object_viewer",
+        "google_service_account.github_job[\"cleanup\"]", "google_project_iam_custom_role.github_job[\"cleanup\"]",
+        "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]"
       ],
       "block_deletes": false
     },
@@ -432,6 +434,10 @@
     "eamlis-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required."
   },
   "selection_exceptions": {
+    ".github/actions/deployment-bootstrap/approval.py": {
+      "kind": "boundary",
+      "reason": "Validates owner acceptance before candidate checkout; imported dataset policy does not produce deployment content"
+    },
     "scripts/deployment_emission.py": {
       "kind": "boundary",
       "reason": "Signs and verifies deployment receipts; its imported policy does not produce deployment content"

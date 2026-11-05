@@ -12,6 +12,7 @@ on:
       source_run_attempt: {description: Exact successful ci-ready attempt, required: true, type: string}
 permissions:
   actions: read
+  pull-requests: read
   deployments: write
   contents: read
   id-token: write

@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ingestion_targets import DEPLOY_TARGETS
+from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
 
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
@@ -36,13 +37,6 @@ REHEARSAL_SIGNERS = {
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
     "publish-typescript-sdk.yml", "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
 }
-
-
-class ReadOnlyGitHub:
-    """Read-only API client for the current deployment's signing check."""
-
-    def get(self, path):
-        return json.loads(subprocess.check_output(["gh", "api", path]))
 
 
 class EmissionError(RuntimeError):
@@ -234,7 +228,6 @@ def main():
         verify_rehearsal(api, repository, ".github/workflows/" + args.signer_workflow)
     else:
         from scripts import deployment_revision as revision
-        api = revision.GitHub()
         value = json.loads(args.receipt.read_bytes())
         require(value.get("schema") == SCHEMA and value.get("repository") == repository, "invalid receipt file")
         record = api.get(f"repos/{repository}/deployments/{value['deployment_id']}")

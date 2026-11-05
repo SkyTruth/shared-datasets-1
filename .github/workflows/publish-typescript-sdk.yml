@@ -19,6 +19,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
   deployments: read
   attestations: read
 
@@ -98,6 +99,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write

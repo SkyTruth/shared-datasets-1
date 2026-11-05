@@ -104,7 +104,7 @@ def test_apply_signal_uses_exact_current_attempt_job_and_preserves_skip_policy(m
             revision.wait_applied(args, api, attempts=2, pause=pause)
     pause.assert_called_once_with(10)
     context.assert_called_once_with(args, api)
-    assert api.pages.call_args.args == ('repos/SkyTruth/shared-datasets-1/actions/runs/13/attempts/2/jobs?per_page=100', 'jobs')
+    assert api.pages.call_args == (('repos/SkyTruth/shared-datasets-1/actions/runs/13/attempts/2/jobs?per_page=100',), {'field': 'jobs'})
     assert replay.call_count == int(conclusion == 'skipped')
     api.post.assert_not_called()
 

@@ -430,6 +430,7 @@ jobs:
     permissions: &terraform-permissions
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write
@@ -521,7 +522,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         EXECUTOR_SHA: ${{ needs.ci-ready.outputs.tested_sha }}
       run: |
-        uv run --frozen --no-dev python scripts/deployment_revision.py wait-applied --target dataset-usage --workflow dataset-usage-deploy.yml \
+        uv run --frozen --only-group ci-plan python scripts/deployment_revision.py wait-applied --target dataset-usage --workflow dataset-usage-deploy.yml \
           --executor-sha "$EXECUTOR_SHA" --source-run-id "$GITHUB_RUN_ID" --source-run-attempt "$GITHUB_RUN_ATTEMPT"
 
   dataset-usage-rollout:

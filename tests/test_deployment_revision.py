@@ -32,7 +32,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
     def test_completed_gate_in_still_running_main_ci_can_authorize_dependents(self):
         self.run["status"] = "in_progress"
         self.assertEqual(d.verify_ci(self.api, REPO, CURRENT, 13, 2), self.run)
-        self.api.pages.assert_called_once_with(f"repos/{REPO}/actions/runs/13/attempts/2/jobs?per_page=100", "jobs")
+        self.api.pages.assert_called_once_with(f"repos/{REPO}/actions/runs/13/attempts/2/jobs?per_page=100", field="jobs")
 
     def test_rejects_untested_or_untrusted_source_before_mutation(self):
         for key, value in [("event", "pull_request"), ("head_branch", "feature"), ("head_sha", OLD), ("path", ".github/workflows/fake.yml"),
@@ -340,7 +340,7 @@ class VerifiedSupersessionTests(unittest.TestCase):
         self.assertEqual(result, {"proceed": "false", "outcome": "superseded", "superseded_by_sha": NEW})
         self.api.post.assert_not_called()
         self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1"), self.api.get.call_args_list)
-        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1/jobs?per_page=100", "jobs"), self.api.pages.call_args_list)
+        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1/jobs?per_page=100", field="jobs"), self.api.pages.call_args_list)
 
     def test_forged_newer_source_or_untrusted_record_cannot_be_a_successful_supersession(self):
         for change in ({"head_sha": OLD}, {"workflow_id": 99}, {"event": "pull_request"}, {"repository": {"id": 18, "full_name": REPO}}):

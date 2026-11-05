@@ -35,6 +35,13 @@ def source(tmp_path):
 
 def test_normalized_registry_preserves_every_preexisting_value():
     value = json.loads((ROOT / '.github/terraform-targets.json').read_text())
+    identity = value['targets']['GitHub workflow identity sync']['resources']
+    additions = {'google_storage_bucket_iam_member.github_readonly_object_viewer',
+                 *(f'{kind}.github_job["cleanup"]' for kind in (
+                     'google_service_account', 'google_project_iam_custom_role', 'google_project_iam_member')),
+                 'google_service_account_iam_member.github_job_wif["cleanup"]'}
+    assert additions <= set(identity)
+    identity[:] = [row for row in identity if row not in additions]
     exceptions = value.pop('selection_exceptions')
     for path, row in exceptions.items():
         for target, reason in row.get('deployments', {}).items():
@@ -126,7 +133,7 @@ def test_real_historical_wrapper_receipt_remains_bound_to_its_original_signer(tm
     record = copy.deepcopy(fixture['record'])
     api = Mock()
     api.get.side_effect = fixture['api'].__getitem__
-    api.pages.side_effect = lambda path, *args: fixture['api'][path]
+    api.pages.side_effect = lambda path, *args, **kwargs: fixture['api'][path]
     calls = []
     def verified(command, repository, digest):
         calls.append(command)
@@ -165,9 +172,12 @@ def isolated_python(tmp_path, packages, code, *args, env=None):
 def test_hosted_wdpa_allowlist_executes_with_only_its_locked_declared_dependencies(tmp_path):
     workflow = yaml.safe_load((ROOT / '.github/workflows/ingestion-deploy.yml').read_text())
     step = next(s for s in workflow['jobs']['apply']['steps'] if s.get('name') == 'Enforce ingestion resource-change allowlist')
-    assert 'uv run --frozen python scripts/terraform_plan_allowlist.py' in step['run']
+    assert 'uv run --frozen --only-group ci-plan python scripts/terraform_plan_allowlist.py' in step['run']
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text())
-    assert any(item.startswith('python-hcl2') for item in project['dependency-groups']['dev'])
+    assert any(item.startswith('python-hcl2') for item in project['dependency-groups']['ci-plan'])
+    steps = workflow['jobs']['apply']['steps']
+    sync = next(i for i, item in enumerate(steps) if item.get('run') == 'uv sync --locked --only-group ci-plan')
+    assert sync < next(i for i, item in enumerate(steps) if item.get('uses') == './.github/actions/deployment-auth')
     image, config = 'image@sha256:' + 'a' * 64, 'sha256:' + 'b' * 64
     task = {'timeout': '43200s', 'volumes': [{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}],
             'containers': [{'image': image, 'resources': [{'limits': {'cpu': '4', 'memory': '8Gi'}}],
@@ -185,12 +195,12 @@ def test_hosted_wdpa_allowlist_executes_with_only_its_locked_declared_dependenci
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_hosted_usage_gate_imports_only_base_dependencies_and_resolves_real_yaml(tmp_path):
+def test_hosted_usage_gate_imports_only_ci_plan_dependencies_and_resolves_real_yaml(tmp_path):
     ci_jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     step = next(s for s in ci_jobs['dataset-usage']['steps'] if 'wait-applied' in s.get('run', ''))
-    assert 'uv run --frozen --no-dev python' in step['run']
+    assert 'uv run --frozen --only-group ci-plan python' in step['run']
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text())
-    assert any(item.startswith('PyYAML') for item in project['project']['dependencies'])
+    assert any(item.startswith('PyYAML') for item in project['dependency-groups']['ci-plan'])
     sha, repository = 'a' * 40, 'SkyTruth/shared-datasets-1'
     run = {'id': 13, 'run_attempt': 2, 'head_sha': sha, 'head_branch': 'main', 'event': 'push',
            'path': '.github/workflows/ci.yml', 'workflow_id': 17,

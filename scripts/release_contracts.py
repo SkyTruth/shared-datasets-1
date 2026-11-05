@@ -38,12 +38,9 @@ IMAGE_PROBE_WORKFLOWS = (
 )
 
 
-def role_permissions(text, name):
-    match = re.search(r'resource "google_project_iam_custom_role" "' + re.escape(name) + r'"\s*\{(.*?)\n\}', text, re.S)
-    if not match:
-        return set()
-    permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
-    return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
+def role_permissions(root, filename, name):
+    return set(terraform_targets.resource_index(root)['terraform/envs/prod/' + filename].get(
+        'google_project_iam_custom_role.' + name, {}).get('permissions', []))
 
 
 def saved_plan_permission_contract(root, filenames=PLAN_PROBE_WORKFLOWS):
@@ -121,6 +118,7 @@ def image_permission_contract(root):
 
 
 def iam_contract(root):
+    terraform_targets.resource_index.cache_clear()
     errors = []
     syncs = {name: item['workflow'] for name, item in terraform_targets.registry(root).items()}
     errors += cdn.bootstrap_definition_errors((root / 'terraform/envs/prod/shared_bucket_public.tf').read_text())
@@ -129,9 +127,8 @@ def iam_contract(root):
     for path in (root / '.github/workflows').glob('*.yml'):
         if path.name != 'pmtiles-cdn-sync.yml' and cdn.ROLE_ADDRESS in path.read_text():
             errors.append(f'{path.name}: URL-map role adoption belongs only to the constrained CDN bootstrap')
-    text = (root / "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf").read_text()
     for role, expected in (("scheduled_ingestion_deployer", PROJECT_PERMISSIONS), ("translation_notice_iam_manager", SECRET_PERMISSIONS)):
-        missing = set(expected) - role_permissions(text, role)
+        missing = set(expected) - role_permissions(root, "scheduled_ingestion_deploy_iam.tf", role)
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     iam = workflow(root, "scheduled-ingestion-deploy-iam-sync.yml")["jobs"]
@@ -142,8 +139,7 @@ def iam_contract(root):
         errors.append("translation secret authority has no explicit bootstrap target")
     if iam["sync"].get("with", {}).get("readiness_target") != "ingestion-iam":
         errors.append("runtime grants must verify live secret permission readiness after bootstrap")
-    monitoring = (root / "terraform/envs/prod/monitoring_alert_policy_iam.tf").read_text()
-    missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
+    missing = set(MONITORING_PERMISSIONS) - role_permissions(root, "monitoring_alert_policy_iam.tf", "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
     for filename, role, expected in (
@@ -151,7 +147,7 @@ def iam_contract(root):
         ("preview_terraform_iam.tf", "preview_terraform", {"iam.serviceAccounts.actAs", "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.update", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}),
         ("shared_bucket_public.tf", "pmtiles_managed_folder_sync", {"storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy"}),
     ):
-        missing = expected - role_permissions((root / "terraform/envs/prod" / filename).read_text(), role)
+        missing = expected - role_permissions(root, filename, role)
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")

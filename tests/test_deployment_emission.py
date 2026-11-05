@@ -381,7 +381,7 @@ class EmissionTests(unittest.TestCase):
         )
         binary.chmod(0o755)
         environment["PATH"] = str(binary.parent) + os.pathsep + environment["PATH"]
-        result = subprocess.run([sys.executable, str(ROOT / "scripts/deployment_emission.py"), "verify-file", "--receipt", str(receipt_path)], cwd=self.root, env=environment, capture_output=True, text=True)
+        result = subprocess.run([sys.executable, "-I", "-S", str(ROOT / "scripts/deployment_emission.py"), "verify-file", "--receipt", str(receipt_path)], cwd=self.root, env=environment, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cryptographic verification failed", result.stderr)
         self.assertNotIn("ModuleNotFoundError", result.stderr)
