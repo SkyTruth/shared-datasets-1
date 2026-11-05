@@ -120,7 +120,9 @@ def test_runtime_release_does_not_select_iam_syncs(path, target):
 @pytest.mark.parametrize("path", ["services/catalog_viewer/run.py", "services/feature_preview_service/run.py",
     "services/http_base.py", "services/__init__.py", "api/python/src/skytruth_shared_datasets/client.py", "scripts/compare_releases.py"])
 def test_viewer_runtime_does_not_redeploy_usage_collector(path):
-    assert select_deployments([path, "terraform/README.md"]) == ["catalog_viewer"]
+    selected = select_deployments([path, "terraform/README.md"])
+    assert "dataset_usage" not in selected
+    assert set(selected) == ({"eamlis", "wdpa", "catalog_viewer"} if path == "scripts/compare_releases.py" else {"catalog_viewer"})
 
 
 @pytest.mark.parametrize("path", ["terraform/envs/prod/catalog_viewer.tf", "terraform/modules/service_account/main.tf",

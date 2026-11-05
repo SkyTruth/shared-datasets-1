@@ -13,7 +13,24 @@ import tarfile
 import tempfile
 from time import perf_counter
 
-TARGETS = frozenset({"wdpa-monthly", "monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
+from scripts.ingestion_targets import TARGETS as INGESTION_TARGETS
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def image_recipes(root=ROOT):
+    """Scheduled registry plus Terraform image consumers, never a second target list."""
+    recipes = {target: f"ingestion/{target.replace('-', '_')}/Dockerfile" for target in INGESTION_TARGETS}
+    for recipe in (*root.glob("services/*/Dockerfile"), *root.glob("ingestion/*/Dockerfile")):
+        package = recipe.parent.name
+        configuration = root / f"terraform/envs/prod/{package}.tf"
+        if configuration.is_file() and re.search(rf"\bimage\s*=\s*var\.{package}_image\b", configuration.read_text()):
+            recipes[package.replace("_", "-")] = recipe.relative_to(root).as_posix()
+    return recipes
+
+
+RECIPES = image_recipes()
+TARGETS = frozenset(RECIPES)
 BUILD_TARGETS = tuple(sorted(TARGETS))
 MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2

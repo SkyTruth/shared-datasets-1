@@ -7,7 +7,11 @@ not permission to publish or deploy.
 
 from __future__ import annotations
 
+import ast
+from functools import lru_cache
+from fnmatch import fnmatchcase
 import hashlib
+import shlex
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,7 +22,7 @@ from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
-from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
 SUITES = (
@@ -103,93 +107,120 @@ CONTRACT_FILES = (
 )
 
 
-# Viewer dependencies follow Docker COPY and HTTP/review imports. Suite
-# exceptions below are checked against reverse imports, subprocess callers and
-# image/browser boundaries in test_ci_preflight; unproved inputs stay broad.
-VIEWER_INGESTION_INPUTS = frozenset({
-    "ingestion/__init__.py", "ingestion/common/__init__.py",
-    "ingestion/common/decision_events.py", "ingestion/common/identity_index.py",
-    "ingestion/common/publication.py", "ingestion/common/runtime.py",
-    "ingestion/common/http.py", "ingestion/wdpa_monthly/__init__.py",
-    "ingestion/wdpa_monthly/identity_review.py",
-})
+@lru_cache(maxsize=1)
+def dependency_inputs():
+    """Generate dependencies from local imports, script calls and Docker COPY.
+
+    Include package initializers, relative imports and literal subprocess paths.
+    Directory COPY declarations remain prefixes, including newly added files.
+    Parsing errors fail selection rather than silently omitting a dependency.
+    """
+    sources = {path.relative_to(ROOT).as_posix(): path for directory in
+               ("scripts", "ingestion", "services", "api/python/src", "tests")
+               for path in (ROOT / directory).rglob("*.py") if "__pycache__" not in path.parts}
+    modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
+               for name in sources}
+    modules.update({Path(name).stem: name for name in sources if name.startswith("tests/") and name.count("/") == 1})
+    edges = {}
+    for name, path in sources.items():
+        dependencies = set()
+        package = name.removeprefix("api/python/src/").split("/")[:-1]
+        for node in ast.walk(ast.parse(path.read_text(), filename=name)):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
+                module = ".".join(filter(None, (prefix, node.module)))
+                names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+            elif isinstance(node, ast.Call):
+                function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if function in {"run", "run_command", "Popen", "check_output", "check_call"}:
+                    dependencies.update(item.value for arg in node.args for item in ast.walk(arg)
+                                        if isinstance(item, ast.Constant) and isinstance(item.value, str) and item.value in sources)
+                elif function == "import_module" and node.args and isinstance(node.args[0], ast.Constant):
+                    names = [node.args[0].value]
+            for module in names:
+                parts = module.split(".")
+                for index in range(1, len(parts) + 1):
+                    prefix = ".".join(parts[:index])
+                    dependencies.update(modules[key] for key in (prefix, prefix + ".__init__") if key in modules)
+        edges[name] = dependencies
+
+    def closure(roots):
+        seen, pending = set(), list(roots)
+        while pending:
+            name = pending.pop()
+            if name not in seen:
+                seen.add(name)
+                pending.extend(edges.get(name, ()))
+        return seen
+
+    images, copies = {}, {}
+    for target, recipe in RECIPES.items():
+        copied = {recipe, ".dockerignore"}
+        for line in (ROOT / recipe).read_text().replace("\\\n", " ").splitlines():
+            operation, _, arguments = line.strip().partition(" ")
+            if operation.upper() != "COPY" or arguments.startswith("--from="):
+                continue
+            words = json.loads(arguments) if arguments.startswith("[") else shlex.split(arguments, comments=True)
+            if len(words) < 2 or any(word.startswith("--") or "$" in word for word in words):
+                raise ValueError(f"unsupported COPY inputs in {recipe}: {arguments}")
+            for source in words[:-1]:
+                source = source.removeprefix("./").rstrip("/")
+                source = "" if source == "." else source
+                copied.add(source + "/" if (ROOT / source).is_dir() else source)
+        copies[target] = set(copied)
+        fixture = f"tests/fixtures/production_images/{target}.json"
+        if (ROOT / fixture).is_file():
+            copied.add(fixture)
+        copied.add(f"tests/test_{target.replace('-', '_')}.py")
+        images[target] = copied | closure(name for name in sources if matches(name, copied) and not name.startswith("tests/"))
+    native = closure(NATIVE_TESTS)
+    native.update({name for name, inputs in edges.items() if name.startswith("tests/")
+                   and inputs & {item for item in native if not item.endswith("/__init__.py")}})
+    browser = closure(name for name in sources if name.startswith("tests/browser/"))
+    return images, native, browser, sources.keys(), copies
 
 
-NARROW_PATHS = {
-    "scripts/slack_incidents.py": (),
-    "scripts/incident_verification_cache.py": (),
-    "scripts/operational_snapshot.py": (),
-    "scripts/operational_safety_check.py": (),
-    "scripts/workflow_failure_alert.py": (),
-    "scripts/repo_alerts.py": (),
-    "tests/test_failure_alert_routing.py": (),
-    "tests/test_execution_alerts.py": (),
-    "tests/test_repo_alerts.py": (),
-    "tests/test_sdk_incident_recovery.py": (),
-    "tests/test_slack_incident_claim_cli.py": (),
-    "tests/test_slack_incidents.py": (),
-    "tests/test_slack_incidents_incremental.py": (),
-    "tests/test_incident_verification_cache.py": (),
-    "tests/test_operational_snapshot.py": (),
-    "tests/test_operational_safety_check.py": (),
-    "tests/test_operational_safety_routing.py": (),
-    "tests/test_wdpa_incident_recovery.py": (),
-    "tests/test_workflow_identity.py": (),
-    "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
-    "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
-    "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
-}
-
+def matches(path, inputs):
+    return any((item == "/" or path.startswith(item)) if item.endswith("/") else fnmatchcase(path, item) for item in inputs)
 
 
 def classify_change(path: str) -> tuple[str, set[str]]:
-    """One path's tier and additional suites; deployment authority stays explicit."""
-    if path in CONTRACT_FILES or path.startswith("tests/fixtures/") and path.endswith(".md"):
+    """Runtime selection follows generated dependencies; unknown paths stay broad."""
+    if (path.startswith("scripts/ci_") or path in {
+            "pyproject.toml", "uv.lock", ".github/workflows/ci.yml", ".github/actions/ci-tools/action.yml",
+            ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
+            "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py", "terraform/iam-plan-prerequisites.json",
+        } or path.startswith("tests/fixtures/") and path.endswith(".md")):
         return "shared", set(SUITES)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
-            suites.update({"geospatial-integration", "production-images"})
+        if path.startswith("catalog/") or any(matches(path, inputs) for inputs in dependency_inputs()[0].values()):
+            suites.add("geospatial-integration")
         return "metadata", suites
-    # The SDK ships its README and release-policy.mjs requires a version bump
-    # when those package bytes change. It must reach both runtime policy checks.
     if path == "api/typescript/README.md":
         return "component", {"sdk-node22", "sdk-node24", "browser"}
     if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
-    if path.startswith(".github/"):
-        return "shared", set(SUITES)
-    if path in VIEWER_INGESTION_INPUTS:
-        return "component", {"geospatial-integration", "production-images", "browser"}
-    if path.startswith("ingestion/") or path in NATIVE_TESTS:
-        return "component", {"geospatial-integration", "production-images"}
-    if path.startswith("api/"):
-        suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("api/python/"):
-            suites.add("production-images")
+    images, native, browser, sources, _ = dependency_inputs()
+    suites = set()
+    if any(matches(path, inputs) for inputs in images.values()):
+        suites.add("production-images")
+    if path in native or path in NATIVE_TESTS or path.startswith("ingestion/") or any(
+            path.startswith(f"tests/test_{target.replace('-', '_')}") for target in INGESTION_CONFIGS):
+        suites.add("geospatial-integration")
+    if path in browser or path.startswith(("services/catalog_viewer/", "api/", "web/", "tests/browser/")):
+        suites.add("browser")
+    if path.startswith(("api/", "web/", "tests/browser/")) or path == "scripts/catalog_web_publish.py":
+        suites.update({"sdk-node22", "sdk-node24", "browser"})
+    if suites or path in sources or path.startswith(("ingestion/", "services/", "api/", "web/", "tests/browser/")):
         return "component", suites
-    if path.startswith("services/catalog_viewer/"):
-        return "component", {"production-images", "browser"}
-    if path.startswith(("web/", "tests/browser/")):
-        return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path in NARROW_PATHS:
-        return "component", set(NARROW_PATHS[path])
-    if path.startswith("scripts/"):
-        return "shared", set(SUITES)
-    if path.startswith("tests/"):
-        if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "mpatlas", "translation")):
-            return "component", {"geospatial-integration", "production-images"}
-        if any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
-            return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path in {
-        "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_slack.tf",
-        "terraform/envs/prod/monitoring_alert_policy_iam.tf", "terraform/envs/prod/monitoring_variables.tf",
-        "terraform/envs/prod/canonical_mutation_iam.tf",
-        "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-    }:
-        return "infrastructure", {"production-images"}
+    if path.startswith(".github/") and (ROOT / path).is_file():
+        return "component", suites
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
-        return "infrastructure", set()
+        return "infrastructure", suites
     return "unknown", set(SUITES)
 
 
@@ -207,72 +238,27 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             return list(SUITES), f"{tier} dependency: {path}"
         selected.update(suites)
         tiers.add(tier)
-    if set(select_deployments(paths)) & DEPLOYMENT_IMAGES.keys():
+    if select_production_images(paths):
         selected.add("production-images")
+    else:
+        selected.discard("production-images")
     return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
 
 
 def select_production_images(paths: list[str] | None) -> list[str]:
-    """Derive build coverage from the same verified comparison as suite selection.
-
-    These exceptions follow the narrowed Docker COPY inputs and installed
-    probes. Unknown inputs keep every recipe; deployment needs are a floor,
-    never a replacement for build/test dependencies.
-    """
+    """Select COPY/import consumers plus the exact-image deployment floor."""
     if paths is None:
         return list(BUILD_TARGETS)
     if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
         raise ValueError("image selection requires a changed-path list")
-    components = {
-        "mpatlas_monthly": "mpatlas-monthly", "eamlis_monthly": "eamlis-monthly",
-        "sea_ice_daily": "sea-ice-daily", "wdpa_monthly": "wdpa-monthly",
-        "dataset_usage": "dataset-usage",
-    }
-    prefixes = {f"ingestion/{package}/": {target} for package, target in components.items()}
-    prefixes.update({
-        "services/catalog_viewer/": {"catalog-viewer"},
-        "services/feature_preview_service/": {"catalog-viewer"},
-        "services/monitoring_slack/": {"monitoring-slack"},
-        "api/python/src/": {"catalog-viewer"},
-        "tests/test_mpatlas_": {"mpatlas-monthly"},
-        "tests/test_eamlis_": {"eamlis-monthly"},
-        "tests/test_sea_ice_": {"sea-ice-daily"},
-        "tests/test_wdpa_": {"wdpa-monthly"},
-        "tests/test_dataset_usage": {"dataset-usage"},
-        "tests/test_catalog_viewer": {"catalog-viewer"},
-        "tests/test_production_viewer_image_contract": set(BUILD_TARGETS),
-        "tests/test_monitoring_slack": {"monitoring-slack"},
-    })
+    inputs = dependency_inputs()[0]
     selected = set()
     for path in paths:
-        if path in CONTRACT_FILES:
+        tier, _ = classify_change(path)
+        if tier in {"shared", "unknown"}:
             return list(BUILD_TARGETS)
-        if classify_change(path)[0] == "documentation":
-            continue
-        # IaC is not a Docker input. Its selected deployments below supply the
-        # exact tested-image floor, even for job-only configuration changes.
-        if path.startswith("terraform/"):
-            continue
-        if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
-            continue
-        if path in VIEWER_INGESTION_INPUTS:
-            selected.add("catalog-viewer")
-        if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
-            selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
-            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
-                selected.add("monitoring-slack")
-        elif path in {"services/__init__.py", "services/http_base.py"}:
-            selected.add("catalog-viewer")
-        elif path == "docs/assets/ims-sea-ice-extent.md":
-            selected.add("sea-ice-daily")
-        else:
-            owners = next((targets for prefix, targets in prefixes.items() if path.startswith(prefix)), None)
-            if owners is None:
-                return list(BUILD_TARGETS)
-            selected.update(owners)
-    # WDPA's installed smoke imports sea ice; both images contain those inputs.
-    if "sea-ice-daily" in selected:
-        selected.add("wdpa-monthly")
+        if tier != "documentation":
+            selected.update(target for target, copied in inputs.items() if matches(path, copied))
     selected.update(DEPLOYMENT_IMAGES[target] for target in select_deployments(paths) if target in DEPLOYMENT_IMAGES)
     return [target for target in BUILD_TARGETS if target in selected]
 
@@ -327,46 +313,32 @@ def select_deployments(
             selected.update(ingestion)
         if path == ".github/actions/deployment-bootstrap/action.yml":
             selected.update(ingestion | {"dataset_usage"})
-        if path.startswith("ingestion/common/") or path in {
-            "ingestion/__init__.py",
-            "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
-            "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
-            "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
-        }:
+        if path.startswith("scripts/"):
+            selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items()
+                            if matches(path, dependency_inputs()[4][image]))
+        if path.startswith("ingestion/common/") or path == "ingestion/__init__.py":
             selected.update(ingestion)
             if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
                 selected.add("cron_alert_policy")
-        if path == "scripts/catalog_csv.py":
-            selected.update({"eamlis", "wdpa", "dataset_usage"})
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
-        if path == "scripts/feature_metadata_translation_reuse.py":
-            selected.update({"eamlis", "wdpa"})
         if path.startswith("catalog/feature-identity-resolutions/"):
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":
             selected.add("sea_ice")
-        if path.startswith("ingestion/mpatlas_monthly/") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
-            selected.add("mpatlas")
-        if path.startswith("ingestion/eamlis_monthly/") or path in {
-            ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
-            "catalog/ingestion-quality.json",
-        }:
+        for target, config in INGESTION_CONFIGS.items():
+            package = config["image_variable"].removesuffix("_image")
+            if (path.startswith(f"ingestion/{package}/") or path.startswith(f"terraform/envs/prod/{package}")
+                    or path == f".github/workflows/{config['workflow']}"):
+                selected.add(config["selection"])
+        if path == "catalog/ingestion-quality.json":
             selected.add("eamlis")
-        if path.startswith("ingestion/sea_ice_daily/") or path in {
-            ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
-        }:
-            selected.add("sea_ice")
-        if path.startswith("ingestion/wdpa_monthly/") or path in {
-            ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
-            "catalog/wdpa-processing-acceptance.json",
-        }:
+        if path == "catalog/wdpa-processing-acceptance.json":
             selected.add("wdpa")
         if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {
             "services/__init__.py", "services/http_base.py",
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
-            "scripts/compare_releases.py", "scripts/release_feature_model.py",
             "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
             "terraform/envs/prod/pmtiles_cdn.tf", "terraform/envs/prod/pmtiles_cdn_variables.tf",
             "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
@@ -398,7 +370,7 @@ def select_deployments(
             "terraform/envs/prod/monitoring_variables.tf",
         }:
             selected.add("cron_alert_policy")
-        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/slack_incident_api.py", "scripts/monitoring_slack_prepare.py"}:
+        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/monitoring_slack_prepare.py"}:
             selected.add("cron_alert_policy")
         if path == "catalog/categories.yaml":
             selected.update({"scratch_cleanup_iam", "cron_alert_policy"})

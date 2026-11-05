@@ -123,7 +123,7 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
 
 @pytest.mark.parametrize("paths,targets", [
     (["ingestion/eamlis_monthly/run.py"], {"eamlis-monthly"}),
-    (["ingestion/wdpa_monthly/run.py"], {"wdpa-monthly"}),
+    (["ingestion/wdpa_monthly/run.py"], {"catalog-viewer", "wdpa-monthly"}),
 ])
 def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets):
     plan, results, image_result = image_results()

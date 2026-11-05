@@ -23,6 +23,13 @@ state-reader and state-only reconciliation remain manual. Static checks cannot p
 instance keys or effective IAM; protected saved-plan/live probes remain required.
 Unknown inputs keep broad validation; selection never authorizes deployment.
 
+Image inputs come from each production Dockerfile's COPY declarations and local
+Python import closure, including relative imports and literal subprocess scripts.
+Native/browser suites follow their fixture import closures. Unrelated scripts and
+workflows retain lint and Python tests without building images. Scheduled targets
+come from the ingestion registry; other image consumers come from Terraform.
+Deployment selection is an image-validation floor, even when rollout is held.
+
 Hosted images use a fail-fast target matrix; local image batches run two targets
 and terminate remaining producers on failure. Each matrix result binds its target,
 SHA/tree, toolchain and producing attempt. Its compact receipt requires both TAR
@@ -31,6 +38,11 @@ SDK runtimes, with API-proven successful producers. Missing/stale/failed/cancell
 or unexpectedly skipped evidence fails. Same-run selective reruns retain exact
 attempt proof; cross-run reuse is unsupported. Historical image receipts remain
 readable. Loaders verify retained/registry bytes without a rebuild fallback.
+Image probes use Terraform CPU/memory limits (Cloud Run defaults for an unset
+service limit). EAMLIS and MPAtlas build tiny native-test fixtures inside the
+installed image without network access; WDPA retains its installed synthetic build.
+The image matrix installs pinned Python through uv; viewer/Slack skip buildx and
+remote layer-cache setup. Exact per-target TARs and attempt proofs remain required.
 Artifacts last 14 days. PR runs cancel obsolete PR graphs; main/dispatch evidence
 and protected mutation locks remain independent.
 
