@@ -3,6 +3,10 @@ from __future__ import annotations
 import contextlib
 import io
 import tempfile
+import subprocess
+import sys
+
+import pytest
 import unittest
 from pathlib import Path
 
@@ -560,3 +564,29 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("defect", [None, "generation", "digest", "modified", "deleted"])
+def test_offline_plan_cli_checks_committed_bytes_and_immutability(tmp_path, defect):
+    from test_ci_preflight import fixture_repo
+    from test_dataset_mutation_authorization import document
+    p = reviewed_dataset_plan
+    root, git = fixture_repo(tmp_path)
+    path = p.write_document(document(), repo_root=root)
+    if defect in {"modified", "deleted"}:
+        git("add", ".")
+        git("commit", "-m", "old immutable plan")
+    base = git("rev-parse", "HEAD")
+    if defect == "generation":
+        broken = document()
+        broken["publish"]["promotions"][0]["source_generation"] = "0"
+        path.write_bytes(p.canonical_bytes(broken))
+    elif defect in {"digest", "modified"}:
+        path.write_bytes(path.read_bytes() + b" ")
+    elif defect == "deleted":
+        path.unlink()
+    git("add", ".")
+    git("commit", "-m", "candidate plan")
+    result = subprocess.run([sys.executable, str(Path(p.__file__)), "check-diff", "--base", base, "--head", "HEAD"],
+                            cwd=root, capture_output=True, text=True)
+    assert result.returncode == (2 if defect else 0), result.stderr

@@ -74,7 +74,7 @@ finally:
 def test_empty_image_selection_cannot_start_a_producer(tmp_path):
     with pytest.raises(ValueError, match="without image targets"):
         preflight.suite_commands("production-images", tmp_path,
-                                 {"base": "base", "tested_sha": "head", "changed_paths": []}, tmp_path)
+                                 {"base": "base", "tested_sha": "head", "changed_paths": [], "production_image_targets": [], "suites": []}, tmp_path)
 
 
 @pytest.mark.parametrize("suite", ["browser", "geospatial-integration", "production-images"])

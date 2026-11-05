@@ -13,6 +13,7 @@ from fnmatch import fnmatchcase
 import hashlib
 import shlex
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree
@@ -22,6 +23,7 @@ from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.ingestion_targets import TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
+from scripts.terraform_target_contracts import registry
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
@@ -173,7 +175,7 @@ def classify_change(path: str) -> tuple[str, set[str]]:
     if (path.startswith("scripts/ci_") or path in {
             "pyproject.toml", "uv.lock", ".github/workflows/ci.yml", ".github/actions/ci-tools/action.yml",
             ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
-            "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py", "terraform/iam-plan-prerequisites.json",
+            "scripts/production_image_contracts.py", "scripts/installed_ingestion_fixture.py", "scripts/tested_image_bundle.py", "terraform/iam-plan-prerequisites.json",
         } or path.startswith("tests/fixtures/") and path.endswith(".md")):
         return "shared", set(SUITES)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
@@ -209,39 +211,56 @@ def documentation_only(paths: list[str] | None) -> bool:
     return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
 
 
-def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
+def resolve_selection(paths, **deployment_inputs):
+    """Resolve deployments first, then their validation floor, exactly once."""
+    if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
+        raise ValueError("selection requires a changed-path list")
+    deployments = select_deployments(paths, **deployment_inputs)
+    images = {DEPLOYMENT_IMAGES[target] for target in deployments if target in DEPLOYMENT_IMAGES}
+    suites, tiers = set(ALWAYS), set()
+    reason = "comparison history unavailable"
     if paths is None:
-        return list(SUITES), "comparison history unavailable"
-    selected, tiers = set(ALWAYS), set()
-    for path in paths:
-        tier, suites = classify_change(path)
-        if tier in {"shared", "unknown"}:
-            return list(SUITES), f"{tier} dependency: {path}"
-        selected.update(suites)
-        tiers.add(tier)
-    if select_production_images(paths):
-        selected.add("production-images")
+        suites.update(SUITES)
+        images.update(BUILD_TARGETS)
     else:
-        selected.discard("production-images")
-    return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
+        inputs = dependency_inputs()[0]
+        for path in paths:
+            tier, required = classify_change(path)
+            suites.update(required)
+            tiers.add(tier)
+            if tier in {"shared", "unknown"}:
+                images.update(BUILD_TARGETS)
+                reason = f"{tier} dependency: {path}"
+            elif tier != "documentation":
+                images.update(target for target, copied in inputs.items() if matches(path, copied))
+        if not tiers & {"shared", "unknown"}:
+            reason = "tiers: " + ", ".join(sorted(tiers))
+    suites.discard("production-images")
+    if images:
+        suites.add("production-images")
+    if deployment_inputs.get("released_holds"):
+        suites.add("geospatial-integration")
+    return dict(deployments=deployments, production_image_targets=[target for target in BUILD_TARGETS if target in images],
+                suites=[suite for suite in SUITES if suite in suites], selection_reason=reason)
 
 
-def select_production_images(paths: list[str] | None) -> list[str]:
-    """Select COPY/import consumers plus the exact-image deployment floor."""
-    if paths is None:
-        return list(BUILD_TARGETS)
-    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
-        raise ValueError("image selection requires a changed-path list")
-    inputs = dependency_inputs()[0]
-    selected = set()
-    for path in paths:
-        tier, _ = classify_change(path)
-        if tier in {"shared", "unknown"}:
-            return list(BUILD_TARGETS)
-        if tier != "documentation":
-            selected.update(target for target, copied in inputs.items() if matches(path, copied))
-    selected.update(DEPLOYMENT_IMAGES[target] for target in select_deployments(paths) if target in DEPLOYMENT_IMAGES)
-    return [target for target in BUILD_TARGETS if target in selected]
+def select_suites(paths):
+    plan = resolve_selection(paths)
+    return plan["suites"], plan["selection_reason"]
+
+
+def select_production_images(paths):
+    return resolve_selection(paths)["production_image_targets"]
+
+
+def planned_images(plan):
+    """Consume the resolved plan; never infer a different matrix from paths."""
+    images = plan["production_image_targets"]
+    if (not isinstance(images, list) or images != [target for target in BUILD_TARGETS if target in images]
+            or bool(images) != ("production-images" in plan["suites"])
+            or not {DEPLOYMENT_IMAGES[target] for target in plan.get("deployments", []) if target in DEPLOYMENT_IMAGES} <= set(images)):
+        raise ValueError("invalid resolved production-image selection")
+    return images
 
 
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
@@ -272,106 +291,96 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
-def select_deployments(
-    paths: list[str] | None,
-    *,
-    catalog_snapshots: tuple[str, str] | None = None,
-    ingestion_holds: tuple[str, ...] = (),
-    released_holds: tuple[str, ...] = (),
-) -> list[str]:
-    """Explicit release dependencies; unknown changes broaden tests, not mutations."""
+@lru_cache(maxsize=1)
+def deployment_paths():
+    """Derive IaC source files from the same exact scopes used by executors."""
+    workflows = {config["workflow"]: config["selection"] for config in INGESTION_CONFIGS.values()}
+    workflows.update({target.replace("_", "-") + ("-deploy.yml" if target in {"catalog_viewer", "dataset_usage"} else "-sync.yml"): target
+                      for target in DEPLOYMENTS if target not in INGESTION_DEPLOYMENTS})
+    workflows["scheduled-ingestion-deploy-iam-sync.yml"] = "ingestion_iam"
+    sources = {}
+    for path in (ROOT / "terraform/envs/prod").glob("*.tf"):
+        for kind, first, second in re.findall(r'^(resource|module|data) "([^"\n]+)"(?: "([^"\n]+)")?\s*{', path.read_text(), re.M):
+            sources[(first + "." + second) if kind == "resource" else kind + "." + first + ("." + second if second else "")] = path.relative_to(ROOT).as_posix()
+    policy = json.loads((ROOT / "terraform/iam-plan-prerequisites.json").read_text())
+    for job, prerequisites in policy["jobs"].items():
+        for resource in prerequisites:
+            if not any(resource == root or resource.startswith(root + ".") for root in sources):
+                raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
+    scopes = [(config["workflow"], config["targets"]) for config in INGESTION_CONFIGS.values()]
+    scopes += [(config["workflow"], config["resources"]) for config in registry(ROOT).values()]
+    scopes += [(workflow, [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})])
+               for workflow, rows in registry(ROOT, section="plan_scopes").items() for scope in rows.values()]
+    paths = {".github/workflows/" + workflow: {target} for workflow, target in workflows.items()}
+    for workflow, resources in scopes:
+        if workflow not in workflows:
+            continue  # Manual-only executors never become automatic deployments.
+        for resource in resources:
+            source = sources.get(".".join(resource.split(".")[:2]).split("[", 1)[0])
+            if source:
+                for path in (source, source.removesuffix(".tf") + "_variables.tf"):
+                    paths.setdefault(path, set()).add(workflows[workflow])
+    return paths
+
+
+def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=()):
+    """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
-    iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
     ingestion = INGESTION_DEPLOYMENTS
+    iam = set(DEPLOYMENTS) - ingestion - {"catalog_viewer", "dataset_usage", "pmtiles_cdn"}
+    shared = {
+        ".github/workflows/ingestion-deploy.yml": ingestion,
+        "scripts/ingestion_targets.py": ingestion, "scripts/ingestion_verification.py": ingestion,
+        ".github/actions/deployment-bootstrap/action.yml": set(DEPLOYMENTS),
+        ".github/actions/deployment-bootstrap/terraform/action.yml": iam | {"dataset_usage"},
+        ".github/terraform-targets.json": iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
+        "scripts/terraform_target_contracts.py": iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"},
+        ".github/workflows/prod-terraform-target-apply.yml": iam,
+        "catalog/ingestion-quality.json": {"eamlis"}, "catalog/wdpa-processing-acceptance.json": {"wdpa"},
+        "docs/assets/ims-sea-ice-extent.md": {"sea_ice"},
+        "catalog/categories.yaml": {"catalog_viewer", "scratch_cleanup_iam", "cron_alert_policy"},
+        "scripts/monitoring_slack_prepare.py": {"cron_alert_policy"},
+        "terraform/envs/prod/main.tf": {"catalog_viewer", "artifact_registry_iam", "preview_terraform_iam"},
+        "terraform/envs/prod/canonical_mutation_iam.tf": {"catalog_viewer", "cron_alert_policy"},
+        "terraform/envs/prod/shared_bucket_public.tf": {"dataset_usage"},
+        "scripts/pmtiles_cdn_sync.py": {"pmtiles_cdn"}, "scripts/dataset_usage_deploy.py": {"dataset_usage"},
+        "catalog/dataset-usage.json": {"dataset_usage", "catalog_viewer"},
+        "catalog/dataset-usage-activation.json": {"dataset_usage", "catalog_viewer"},
+    }
     for path in paths or []:
         if classify_change(path)[0] == "documentation":
             continue
+        selected.update(deployment_paths().get(path, ()))
+        selected.update(shared.get(path, ()))
         if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
             selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
-        if path in {".github/workflows/ingestion-deploy.yml", "scripts/ingestion_targets.py", "scripts/ingestion_verification.py"}:
-            selected.update(ingestion)
-        if path == ".github/actions/deployment-bootstrap/action.yml":
-            selected.update(ingestion | iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"})
-        if path == ".github/actions/deployment-bootstrap/terraform/action.yml":
-            selected.update(iam | {"dataset_usage"})
+            selected.update(DEPLOYMENT_IMAGES)
         if path.startswith("scripts/"):
-            selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items()
-                            if matches(path, dependency_inputs()[4][image]))
+            selected.update(selection for selection, image in DEPLOYMENT_IMAGES.items() if matches(path, dependency_inputs()[4][image]))
         if path.startswith("ingestion/common/") or path == "ingestion/__init__.py":
             selected.update(ingestion)
             if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
                 selected.add("cron_alert_policy")
-        if path == "catalog/shared-datasets-catalog.csv":
-            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
+        for target, config in INGESTION_CONFIGS.items():
+            if (path.startswith("ingestion/" + config["image_variable"].removesuffix("_image") + "/")
+                    or path.startswith("terraform/envs/prod/" + config["image_variable"].removesuffix("_image"))):
+                selected.add(config["selection"])
+        if path.startswith("ingestion/dataset_usage/"):
+            selected.add("dataset_usage")
+        if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {"services/__init__.py", "services/http_base.py"}:
+            selected.add("catalog_viewer")
+        if path.startswith("services/monitoring_slack/"):
+            selected.add("cron_alert_policy")
+        if path.startswith("terraform/modules/pmtiles-cdn/"):
+            selected.add("pmtiles_cdn")
         if path.startswith("catalog/feature-identity-resolutions/"):
             selected.update({"sea_ice", "wdpa"})
-        if path == "docs/assets/ims-sea-ice-extent.md":
-            selected.add("sea_ice")
-        for target, config in INGESTION_CONFIGS.items():
-            package = config["image_variable"].removesuffix("_image")
-            if (path.startswith(f"ingestion/{package}/") or path.startswith(f"terraform/envs/prod/{package}")
-                    or path == f".github/workflows/{config['workflow']}"):
-                selected.add(config["selection"])
-        if path == "catalog/ingestion-quality.json":
-            selected.add("eamlis")
-        if path == "catalog/wdpa-processing-acceptance.json":
-            selected.add("wdpa")
-        if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {
-            "services/__init__.py", "services/http_base.py",
-            ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
-            "terraform/envs/prod/catalog_viewer_variables.tf",
-            "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-            "terraform/envs/prod/pmtiles_cdn.tf", "terraform/envs/prod/pmtiles_cdn_variables.tf",
-            "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
-        }:
-            selected.add("catalog_viewer")
-        if path in {"catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"}:
-            selected.add("catalog_viewer")
-        if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
-            ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
-            "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",
-            "terraform/envs/prod/shared_bucket_public.tf",
-            "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-        }:
-            selected.add("pmtiles_cdn")
-        if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf", "terraform/envs/prod/wdpa_monthly_build.tf"}:
-            selected.add("ingestion_iam")
-        if path in {"terraform/envs/prod/wdpa_validation_retirement_iam.tf", "terraform/envs/prod/operational_retirement_iam.tf"}:
-            selected.add("scratch_cleanup_iam")
-        for target, filename in {
-            "artifact_registry_iam": "artifact_registry_iam.tf",
-            "preview_terraform_iam": "preview_terraform_iam.tf",
-            "scratch_cleanup_iam": "canonical_mutation_iam.tf",
-        }.items():
-            if path == f"terraform/envs/prod/{filename}" or path == f".github/workflows/{target.replace('_', '-')}-sync.yml":
-                selected.add(target)
-        if path in {
-            ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
-            "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
-            "terraform/envs/prod/monitoring_variables.tf",
-        }:
-            selected.add("cron_alert_policy")
-        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/monitoring_slack_prepare.py"}:
-            selected.add("cron_alert_policy")
-        if path == "catalog/categories.yaml":
-            selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
-        if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
-            selected.update(iam)
-        if path in {".github/terraform-targets.json", "scripts/terraform_target_contracts.py"}:
-            selected.update(iam | {"dataset_usage", "catalog_viewer", "pmtiles_cdn"})
-        if path == "terraform/envs/prod/main.tf":
-            selected.update({"artifact_registry_iam", "preview_terraform_iam"})
-        if path.startswith("ingestion/dataset_usage/") or path in {
-            ".github/workflows/dataset-usage-deploy.yml", "terraform/envs/prod/dataset_usage.tf", "terraform/envs/prod/shared_bucket_public.tf",
-            "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "scripts/dataset_usage_deploy.py",
-        }:
-            selected.add("dataset_usage")
-    # Runtime deployment reuses installed IAM. Only infrastructure edits select
-    # bootstrap syncs; direct IAM workflow/input rules above stay explicit.
+        if path == "catalog/shared-datasets-catalog.csv":
+            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
+        if path in {"terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
+            selected.update(iam | {"catalog_viewer", "pmtiles_cdn"})
     if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
-        # Viewer and usage share bucket/IAM resources, not runtime image inputs.
         if "catalog_viewer" in selected:
             selected.add("dataset_usage")
         if "mpatlas" in selected:
@@ -380,8 +389,7 @@ def select_deployments(
             selected.add("ingestion_iam")
         if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
             selected.add("artifact_registry_iam")
-    selected.difference_update(ingestion_holds)
-    return [target for target in DEPLOYMENTS if target in selected]
+    return [target for target in DEPLOYMENTS if target in selected and target not in ingestion_holds]
 
 
 def contract_digest(root: Path) -> str:
@@ -420,7 +428,7 @@ def verify_results(
         raise ValueError("core validation suites must always be selected")
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
-    targets = select_production_images(plan.get("changed_paths"))
+    targets = planned_images(plan)
     matrix = any("image_target" in result for result in results)
     required_results = set(selected)
     if matrix and "production-images" in selected:

@@ -157,6 +157,22 @@ class TerraformRetryTests(unittest.TestCase):
         self.assertEqual(counter.read_text().strip(), "3")
         self.assertIn("giving up", result.stderr)
 
+    def test_transient_plan_reads_retry_but_apply_authorization_and_plan_errors_never_do(self):
+        for message, operation, attempts in (
+            ("oauth2/google: status code 503: unavailable", "plan", 2),
+            ("TLS handshake timeout", "plan", 2),
+            ("googleapi: Error 502: Bad Gateway", "plan", 2),
+            ("TLS handshake timeout", "apply", 1),
+            ("status code 503", "apply", 1),
+            ("Permission denied; status code 503", "plan", 1),
+            ("Invalid plan; status code 503", "plan", 1),
+            (LOCK_ERROR + "googleapi: Error 403: Forbidden", "apply", 1),
+        ):
+            with self.subTest(message=message, operation=operation):
+                binary, counter = fake_terraform(f"cat <<'EOF'\n{message}\nEOF\nexit 3")
+                self.assertEqual(run_wrapper(binary, attempts=2, operation=operation).returncode, 3)
+                self.assertEqual(int(counter.read_text()), attempts)
+
     def test_arguments_reach_terraform_unchanged(self):
         binary, _counter = fake_terraform('echo "args:$*"; exit 0')
 

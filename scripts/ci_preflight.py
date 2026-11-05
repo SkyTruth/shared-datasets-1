@@ -32,8 +32,7 @@ from scripts.deployment_revision import DeploymentError
 from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, select_deployments,
-    select_production_images, select_suites, verify_results, write_json,
+    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -243,7 +242,6 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         # commands still fail when their required base cannot be resolved.
         resolved_base = base
         paths = None
-    suites, reason = select_suites(paths)
     holds = ingestion_rollout_holds(root, tested_sha)
     released = ()
     if paths and INGESTION_ROLLOUT_HOLDS in paths:
@@ -259,10 +257,8 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
-        "contract_digest": contract_digest(root), "suites": suites,
-        "selection_reason": reason, "changed_paths": paths,
-        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots,
-            ingestion_holds=holds, released_holds=released),
+        "contract_digest": contract_digest(root), "changed_paths": paths,
+        **resolve_selection(paths, catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
     }
 
 
@@ -308,8 +304,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             add("git", "diff", "--check", base, head)
             return commands
         add("uv", "sync", "--locked", "--all-groups")
-        if any(path.startswith("terraform/") for path in plan.get("changed_paths") or []):
-            add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
+        add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
+        add("uv", "run", "--no-sync", "python", "scripts/reviewed_dataset_plan.py", "check-diff", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")
@@ -361,7 +357,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
         # Host checks use only the standard library; image dependencies stay in Docker.
-        targets = select_production_images(plan.get("changed_paths"))
+        targets = planned_images(plan)
         if "image_target" in plan:
             if plan["image_target"] not in targets:
                 raise ValueError("image target was not selected by the validation plan")
@@ -486,7 +482,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
             (output / "images").mkdir(exist_ok=True)
-            for target in [image_target] if image_target else select_production_images(plan.get("changed_paths")):
+            for target in [image_target] if image_target else planned_images(plan):
                 directory = output / target / "images"
                 images = validate_manifest(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
                 if set(images) != {target}:
@@ -682,7 +678,7 @@ def main() -> int:
             write_json(args.output, plan)
             if args.github_output:
                 with args.github_output.open("a") as output:
-                    output.write("production-image-targets=" + json.dumps(select_production_images(plan["changed_paths"])) + "\n")
+                    output.write("production-image-targets=" + json.dumps(planned_images(plan)) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
                     for target in DEPLOYMENTS:
@@ -698,8 +694,6 @@ def main() -> int:
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
             plan = load_plan(args.plan)
             validate_checkout(root, plan)
-            if make_plan(root, plan["base"], "HEAD", original_head=plan["head"]) != {key: value for key, value in plan.items() if key != "source"}:
-                raise ValueError("selection plan does not match the current comparison")
             results = [json.loads(report.read_text()) for report in sorted(args.results.rglob("result.json"))]
             jobs = json.loads(args.jobs.read_text()) if args.jobs else None
             proofs = None

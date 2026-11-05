@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
-# Run a Terraform command, retrying only when it fails to acquire the state lock.
-#
-# `-lock-timeout` waits for a lock that is *held*, but the GCS backend has a
-# failure mode it does not cover: it creates the lock with ifGenerationMatch=0,
-# and on 412 it reads the existing lock to report the holder. When the holder
-# releases in that window the read fails with "object doesn't exist", and the
-# backend surfaces the compound error as fatal. Two runs starting together hit
-# this reliably, which is how separate concurrency lanes broke production on
-# 2026-08-05.
-#
-# Anything that is not a lock-acquisition failure exits immediately with the
-# original status: this must not paper over real Terraform errors.
+# Retry lock acquisition and proven transient reads during plan only.
+# GCS can reject lock creation with 412, then find that the holder already
+# released it; Terraform's -lock-timeout does not cover that acquisition race.
+# Apply transport failures can follow partial writes: only pre-mutation lock
+# acquisition may retry apply. Authorization, invalid plans and lock-release
+# failures always retain their original exit status.
 set -uo pipefail
 
 TERRAFORM_RETRY_ATTEMPTS="${TERRAFORM_RETRY_ATTEMPTS:-5}"
@@ -22,13 +16,29 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
-lock_acquisition_failure() {
+retryable_failure() {
   # A release failure can follow completed or partial writes. Its state must
   # be reconciled explicitly; never run the saved apply again automatically.
-  ! grep -qi "Error releasing the state lock" "$1" &&
-    grep -qi "Error acquiring the state lock" "$1"
+  if grep -Eqi 'Error releasing the state lock|Permission denied|Forbidden|Unauthorized|Unauthenticated|PERMISSION_DENIED|invalid_grant|status code (400|401|403)|HTTP (400|401|403)|Error (400|401|403):|Invalid |Saved plan' "$1"; then
+    return 1
+  fi
+  if grep -qi "Error acquiring the state lock" "$1"; then
+    reason='state lock contended'
+    return 0
+  fi
+  # Plans only read cloud resources. A provider failure during apply can follow
+  # partial writes, so never replay apply for a transport/server failure.
+  if [[ "${operation}" == plan ]] && grep -Eqi 'TLS handshake timeout|The handshake operation timed out|status code (500|502|503|504)|googleapi: Error (500|502|503|504):' "$1"; then
+    reason='transient plan read failure'
+    return 0
+  fi
+  return 1
 }
 
+operation=''
+for argument in "$@"; do
+  if [[ "$argument" != -* ]]; then operation="$argument"; break; fi
+done
 attempt=1
 while true; do
   output_file="$(mktemp)"
@@ -42,19 +52,19 @@ while true; do
     exit 0
   fi
 
-  if ! lock_acquisition_failure "${output_file}"; then
+  if ! retryable_failure "${output_file}"; then
     rm -f "${output_file}"
     exit "${status}"
   fi
 
   if [[ "${attempt}" -ge "${TERRAFORM_RETRY_ATTEMPTS}" ]]; then
-    echo "terraform_retry: state lock still contended after ${attempt} attempt(s); giving up" >&2
+    echo "terraform_retry: ${reason} after ${attempt} attempt(s); giving up" >&2
     rm -f "${output_file}"
     exit "${status}"
   fi
 
   delay=$(( TERRAFORM_RETRY_BASE_DELAY * attempt ))
-  echo "terraform_retry: state lock contended (attempt ${attempt}/${TERRAFORM_RETRY_ATTEMPTS}); retrying in ${delay}s" >&2
+  echo "terraform_retry: ${reason} (attempt ${attempt}/${TERRAFORM_RETRY_ATTEMPTS}); retrying in ${delay}s" >&2
   rm -f "${output_file}"
   sleep "${delay}"
   attempt=$(( attempt + 1 ))

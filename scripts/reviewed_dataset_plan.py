@@ -8,6 +8,7 @@ import hashlib
 import json
 import pathlib
 import re
+import subprocess
 import sys
 from typing import Any
 
@@ -658,6 +659,26 @@ def command_prepare(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_check_diff(args: argparse.Namespace) -> int:
+    """Validate new immutable bytes offline; this grants no mutation authority."""
+    def git(*words):
+        return subprocess.check_output(["git", "--no-replace-objects", *words])
+    changes = git("diff", "--no-renames", "--name-status", "-z", args.base, args.head, "--", PLAN_DIRECTORY).decode().split("\0")
+    for status, path in zip(changes[0:-1:2], changes[1::2], strict=True):
+        if not path.endswith(".json"):
+            continue
+        if status != "A":
+            raise PlanValidationError("existing mutation plans are immutable: " + path)
+        raw = git("show", f"{args.head}:{path}")
+        if re.fullmatch(r"\.github/dataset-plans/wdpa-build-[0-9a-f]{64}\.json", path):
+            # Owned builds retain their dedicated evidence/approval validator.
+            if strict_json_loads(raw).get("kind") != "wdpa_owned_build_promotion":
+                raise PlanValidationError("unexpected WDPA build plan")
+        else:
+            read_document(raw, path=path)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -673,6 +694,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare.add_argument("--repo-root", default=".")
     prepare.set_defaults(func=command_prepare)
+    check = subparsers.add_parser("check-diff", help="Check immutable plan bytes without credentials or approval.")
+    check.add_argument("--base", required=True)
+    check.add_argument("--head", required=True)
+    check.set_defaults(func=command_check_diff)
 
     return parser
 

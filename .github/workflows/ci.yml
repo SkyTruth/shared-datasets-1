@@ -47,11 +47,13 @@ jobs:
       scratch_cleanup_iam: ${{ steps.plan.outputs.scratch_cleanup_iam }}
       cron_alert_policy: ${{ steps.plan.outputs.cron_alert_policy }}
     steps:
-      - uses: actions/checkout@v4
+      - &validation-checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - &validation-python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12.12'
       - name: Check publication runtime before validation fanout
@@ -76,31 +78,31 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
-      - uses: actions/download-artifact@v4
+      - &validation-plan
+        uses: actions/download-artifact@v4
         with:
           pattern: ci-validation-plan-attempt*
           path: ${{ runner.temp }}/ci-plans
       - name: Run selected lint checks
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
-      - uses: actions/upload-artifact@v4
+      - &retained-validation-results
+        uses: actions/upload-artifact@v4
         id: retained-results
         if: always()
         with:
-          name: ci-result-lint-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/lint
+          name: ci-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}
           if-no-files-found: error
           retention-days: 14
-      - name: Upload compact gate result
+      - &compact-gate-result
+        name: Upload compact gate result
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.retained-results.outcome == 'success' }}
         with:
-          name: ci-gate-result-lint-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/lint/result.json
+          name: ci-gate-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -109,54 +111,28 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
         with:
           binaries: gitleaks terraform
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-plan
       - name: Run selected secret, guardrail and Python checks
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-tests-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/tests
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-tests-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/tests/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   geospatial-integration:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    permissions:
+    permissions: &validation-permissions
       contents: read
       actions: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-checkout
+      - *validation-plan
       - uses: docker/setup-buildx-action@v3
       - name: Build geospatial CI image
         uses: docker/build-push-action@v6
@@ -179,46 +155,23 @@ jobs:
             shared-datasets-geospatial-ci:local python scripts/ci_preflight.py run-suite \
             --plan /evidence/ci-plans --suite geospatial-integration \
             --output /evidence/ci-results/geospatial-integration
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/geospatial-integration
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-geospatial-integration-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/geospatial-integration/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   production-images:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.production_images == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     name: production-images (${{ matrix.target }})
     strategy:
       fail-fast: true
       matrix:
         target: ${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-checkout
+      - *validation-plan
       - uses: astral-sh/setup-uv@v5
         with:
           version: '0.11.8'
@@ -280,84 +233,40 @@ jobs:
       fail-fast: false
       matrix:
         node: ['22', '24']
+    env:
+      ARTIFACT_SUITE: sdk-node${{ matrix.node }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
         with:
           node: ${{ matrix.node }}
           binaries: gitleaks
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-plan
       - name: Run shared SDK version, runtime and packed consumer validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   browser:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-checkout
+      - *validation-plan
       - uses: ./.github/actions/ci-tools
         with:
           binaries: gitleaks
       - name: Run shared real-browser validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-browser-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/browser
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-browser-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/browser/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   ci-ready:
     name: ci-ready
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     if: always()
     needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser]
     runs-on: ubuntu-24.04
@@ -365,17 +274,9 @@ jobs:
     outputs:
       tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.12'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-checkout
+      - *validation-python
+      - *validation-plan
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-gate-result-*
@@ -427,9 +328,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/catalog_web_changes.py
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.12'
+      - *validation-python
       - uses: astral-sh/setup-uv@v5
         with:
           version: '0.11.8'
