@@ -45,8 +45,8 @@ module "sea_ice_daily_job" {
   name                  = "sea-ice-daily"
   image                 = var.sea_ice_daily_image
   service_account_email = module.sea_ice_job_service_account.email
-  cpu                   = "4"
-  memory                = "16Gi"
+  cpu                   = "2"
+  memory                = "512Mi"
   timeout               = "3600s"
   max_retries           = 0
 

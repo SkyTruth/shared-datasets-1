@@ -2,7 +2,7 @@ name: Operations / Safety check
 
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 */3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -89,10 +89,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run deployment-verification.yml --ref main
       - name: Request operational reconciliation
-        if: ${{ steps.probe.outputs.reconcile == 'true' }}
+        if: ${{ always() && steps.probe.outputs.reconcile == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh workflow run unattended-workflow-alert.yml --ref main
           -f incident_id=operational-batch -f delivery_result=batch
           -f operation="safety:${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Check freshness and stalled operations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
+      - name: Report safety failure directly
+        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' }}
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: >-
+          python scripts/slack_notify.py "Operational safety check failed"
+          "Freshness, reconciliation or probe failure. Inspect https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

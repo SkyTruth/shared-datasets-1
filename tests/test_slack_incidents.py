@@ -6,12 +6,14 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import subprocess
 from pathlib import Path
 from unittest import mock
 import urllib.error
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import yaml
 
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
@@ -818,7 +820,7 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     conclusion = scenario if scenario in {"failure", "timed_out", "startup_failure"} else "success"
     repository = {"id": 1, "full_name": incidents.REPOSITORY}
     source = {"id": 100, "run_attempt": 1, "name": name, "event": "push" if scenario == "empty-ci" else "schedule",
-              "workflow_id": 2, "path": ".github/workflows/" + filename, "head_sha": SHA,
+              "workflow_id": 2, "path": ".github/workflows/" + filename, "head_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=incidents.ROOT, text=True).strip(),
               "conclusion": conclusion, "updated_at": "2026-10-06T10:18:44Z", "status": "completed",
               "head_branch": "main", "head_repository": repository, "repository": repository}
     event_path = tmp_path / "event.json"
@@ -930,7 +932,7 @@ def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_pa
     timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     source = {"id": 100, "run_attempt": 1, "name": incidents.alerts.WORKFLOW_NAMES["deployment-verification.yml"][0],
               "event": "schedule", "workflow_id": 2, "path": ".github/workflows/deployment-verification.yml",
-              "head_sha": SHA, "conclusion": "success", "updated_at": timestamp, "created_at": timestamp,
+              "head_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=incidents.ROOT, text=True).strip(), "conclusion": "success", "updated_at": timestamp, "created_at": timestamp,
               "status": "completed", "head_branch": "main", "head_repository": repository, "repository": repository}
     ci = {**source, "id": 101, "workflow_id": 3, "path": ".github/workflows/ci.yml", "name": "CI", "event": "push"}
     worker = {**source, "id": 200, "workflow_id": 4, "path": incidents.WORKFLOW, "event": "workflow_run"}
@@ -1230,13 +1232,13 @@ def test_hourly_replay_is_complete_bounded_main_only_and_activation_limited(name
     api.pages.return_value = [{"status": "completed", "name": name, "head_branch": "main", "head_repository": {"full_name": incidents.REPOSITORY}}]
     inside = observation(time="2026-10-06T13:00:00Z")
     with mock.patch.object(incidents, "source_observations", return_value=[observation(), inside, observation(time="2026-10-07T13:00:00Z")]):
-        assert incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [inside]
+        assert incidents.replay_observations(api, "2026-10-06T08:00:00Z", now=datetime(2026, 10, 7, 12, tzinfo=timezone.utc)) == [inside]
     path = api.pages.call_args.args[0]
     assert "2026-10-06T12%3A00%3A00Z..2026-10-07T12%3A00%3A00Z" in path and "branch=main" in path
     assert api.pages.call_args.kwargs == {"field": "workflow_runs"}
     api.pages.side_effect = deployments.DeploymentError("incomplete API enumeration")
     with pytest.raises(deployments.DeploymentError, match="incomplete"):
-        incidents.replay_observations(api, {}, "2026-10-06T08:00:00Z")
+        incidents.replay_observations(api, "2026-10-06T08:00:00Z")
 
 
 def test_owner_cutover_replay_uses_existing_recovery_and_closed_daily_windows(tmp_path, monkeypatch):
@@ -1245,7 +1247,7 @@ def test_owner_cutover_replay_uses_existing_recovery_and_closed_daily_windows(tm
     with mock.patch.object(incidents, "replay_observations", return_value=[observation()]) as replay, \
             mock.patch.object(incidents, "prepare", return_value=[]) as prepare:
         assert incidents.replay_window(ledger, IDENTITY, operation, now=datetime(2026, 10, 9, tzinfo=timezone.utc)) == []
-    assert [(call.args[2], call.kwargs["now"].isoformat()) for call in replay.call_args_list] == [
+    assert [(call.args[1], call.kwargs["now"].isoformat()) for call in replay.call_args_list] == [
         ("2026-10-06T00:00:00Z", "2026-10-07T00:00:00+00:00"),
         ("2026-10-07T00:00:00Z", "2026-10-08T00:00:00+00:00"),
         ("2026-10-08T00:00:00Z", "2026-10-08T12:00:00+00:00"),
@@ -1424,3 +1426,60 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     assert "always()" in steps["attest-outcomes"]["if"]
     assert "workflow_dispatch" in workflow_triggers(workflow)
     assert "Approved dataset mutation" in workflow_triggers(workflow)["workflow_run"]["workflows"]
+
+
+HISTORICAL_GRAPH_SHA = subprocess.check_output(['git', 'rev-parse', '7bd972e'], text=True).strip()
+
+
+def historical_workflow(filename):
+    return yaml.safe_load(subprocess.check_output(['git', 'show', HISTORICAL_GRAPH_SHA + ':.github/workflows/' + filename], text=True))
+
+
+@pytest.mark.parametrize('target,caller', [('wdpa-monthly','wdpa'), ('mpatlas-monthly','mpatlas'),
+                                         ('eamlis-monthly','eamlis'), ('sea-ice-daily','sea-ice')])
+@pytest.mark.parametrize('entrypoint', ['ci', 'manual'])
+def test_replay_and_legacy_keep_historical_recovery_identity(target, caller, entrypoint):
+    filename = target + '-deploy.yml'
+    name = historical_workflow(filename)['jobs']['deploy'].get('name', 'deploy')
+    if entrypoint == 'ci':
+        name = historical_workflow('ci.yml')['jobs'][caller].get('name', caller) + ' / ' + name
+        filename = 'ci.yml'
+    repository = {'id': 17, 'full_name': incidents.REPOSITORY}
+    run = {'id': 41701840527, 'run_attempt': 1, 'head_sha': HISTORICAL_GRAPH_SHA, 'workflow_id': 7,
+           'name': incidents.alerts.WORKFLOW_NAMES[filename][0], 'path': '.github/workflows/' + filename,
+           'head_branch': 'main', 'event': 'push' if entrypoint == 'ci' else 'workflow_run',
+           'repository': repository, 'head_repository': repository, 'status': 'completed',
+           'conclusion': 'failure', 'updated_at': '2026-11-03T10:00:00Z'}
+    failure = {'id': 10, 'name': name, 'status': 'completed', 'conclusion': 'failure',
+               'completed_at': run['updated_at']}
+    jobs = [failure, {**failure, 'id': 11, 'name': 'ci-ready', 'conclusion': 'success'}] if entrypoint == 'ci' else [failure]
+    api = mock.Mock()
+    api.get.side_effect = lambda path: repository if path == 'repos/' + incidents.REPOSITORY else (
+        {'id': 7, 'path': run['path']} if '/actions/workflows/' in path else copy.deepcopy(run))
+    api.pages.side_effect = lambda path, **_: [run] if '/actions/runs?' in path else jobs
+    observations = incidents.replay_observations(api, '2026-11-03T00:00:00Z',
+                                              now=datetime(2026,11,4,tzinfo=timezone.utc))
+    failed = [item for item in observations if item['conclusion'] == 'failure']
+    assert len(failed) == 1 and failed[0]['scope'] == 'deployment:' + target
+    recovery = {**failed[0], 'run_id': 41701840528, 'job_id': 0, 'conclusion': 'success',
+                'time': '2026-11-03T11:00:00Z',
+                'proof': {'record_id': 20, 'status_id': 21, 'artifact': 'image@sha256:' + 'f'*64}}
+    ledger, slack = MemoryLedger(), FakeSlack()
+    records = incidents.prepare(ledger, IDENTITY, failed, success=lambda *_: (None, None))
+    incidents.deliver(ledger, records, slack)
+    records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: (recovery, None))
+    incidents.deliver(ledger, records, slack)
+    assert ledger.states['deployment:' + target]['incident']['resolution'] == recovery
+    with mock.patch.dict(incidents.verified_recovery.__kwdefaults__, success=lambda *_: (recovery, None)), \
+         mock.patch.object(incidents.deployments, 'git_ancestor', return_value=True):
+        incidents.alerts.resolve_legacy(api, slack, run['id'], '1791270000.000001')
+    assert 'Verified ' + target + ' recovery' in json.dumps(slack.calls[-1])
+
+
+def test_source_graph_rejects_unknown_revision_and_unregistered_paths():
+    with pytest.raises(incidents.IncidentError, match='revision'):
+        incidents.job_targets(revision='main', workflow='ci.yml')
+    with pytest.raises(subprocess.CalledProcessError):
+        incidents.job_targets(revision='f'*40, workflow='ci.yml')
+    targets = incidents.job_targets(revision=HISTORICAL_GRAPH_SHA, workflow='ci.yml')
+    assert incidents.scope_for_job('unknown / Deploy tested WDPA ingestion image', targets, 'ci.yml')[1] == 'job'

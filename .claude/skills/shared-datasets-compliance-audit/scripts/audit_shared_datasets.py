@@ -36,6 +36,7 @@ from scripts.raster_asset import (
     validate_zarr_manifest_payload,
 )
 from scripts import release_feature_model
+from scripts.operational_safety_check import FRESHNESS_DAYS as SCHEDULE_FRESHNESS_DAYS, fresh_activity
 from ingestion.common.publication import RUN_RECORD_NAME, protocol_path_kind
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
@@ -71,7 +72,6 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 UPLOADER_METADATA_KEYS = ("uploaded_by", "uploader", "created_by", "creator", "owner", "author")
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_MODES = {"report": "INFO", "warn": "WARN", "enforce": "ERROR"}
-SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 GENERIC_PROPERTIES_ROW_RE = re.compile(r"(?mi)^\|\s*Source fields\s*\|\s*varies\s*\|")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -1628,13 +1628,13 @@ def validate_release_integrity(
                 continue
             max_age = SCHEDULE_FRESHNESS_DAYS[cadence]
             age_days = (current_date - latest_run_date).days
-            if age_days > max_age:
+            if not fresh_activity(payload, cadence, now=dt.datetime.combine(current_date, dt.time.max, dt.UTC) if today else dt.datetime.now(dt.UTC)):
                 findings.append(
                     Finding(
                         severity,
                         f"gs://{bucket}/{index_name}",
                         "release-index-latest-run-fresh",
-                        f"Scheduled {cadence} asset latest_run is {age_days} day(s) old; expected <= {max_age}.",
+                        f"Scheduled {cadence} asset has no healthy check-in within {max_age} days (latest_run age {age_days} days).",
                         uploader_hint(index_blob),
                         "Check the Cloud Scheduler/Cloud Run job and update latest_run after a successful retry or source-unchanged skip.",
                     )

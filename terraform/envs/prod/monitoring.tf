@@ -422,3 +422,18 @@ EOT
     google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
 }
+
+# The safety probe retains its publisher identity. This adds only the single
+# Scheduler read it needs; the protected monitoring sync must provision it first.
+resource "google_project_iam_custom_role" "operational_safety_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalSafetyReader"
+  title       = "Shared datasets operational safety reader"
+  permissions = ["cloudscheduler.jobs.get"]
+}
+
+resource "google_project_iam_member" "operational_safety_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_safety_reader.name
+  member  = module.shared_datasets_publisher_service_account.member
+}

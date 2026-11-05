@@ -49,278 +49,188 @@ WDPA uses the same Cloud Run execution-failure and Scheduler dispatch-failure
 policies as the other ingestion jobs. Successes and meaningful skips update
 each asset's release index, which supplies the catalog's **Last check-in**.
 An old check-in while no update is scheduled is not an observer outage.
-The hourly operational safety check discovers pending deployment records and
+The three-hour operational safety check discovers pending deployment records and
 requests the existing completion workflow only when work is needed; it does not
 launch a per-dataset observer while WDPA is idle.
 
-The obsolete `wdpa-execution-observer` job, schedule, service account, narrow
-IAM grants, bootstrap role and disabled health policy are removed through the
-protected scratch-cleanup retirement. Its exact ten-resource deletion inventory
-is separate from the active WDPA worker. Routine WDPA deployment cannot recreate
-those resources. Verify their absence after the reviewed teardown runs.
-
-Worker and Scheduler failure filters cover all jobs in the project/region;
-the retired observer has no alert or canonical-writer exception. The historical
-`_catalog/wdpa-monthly-execution.json` object and existing incident receipts are
-retained. The catalog does not read or poll that object.
+The retired `wdpa-execution-observer` infrastructure has no alert/writer
+exception and cannot be recreated by routine WDPA deployment. Its historical
+status object and receipts remain; the catalog no longer polls that object.
+Verify teardown through the protected retirement contract.
 
 ## Editable Monitoring messages
 
-Monitoring sends events through Pub/Sub to the authenticated `monitoring-slack`
-Cloud Run service. The existing Slack bot posts one parent per native incident;
-closure edits that exact parent to **Closed by Monitoring**, with no recovery
-reply or new parent. Duplicate events are quiet, closure is permanent for that
-incident ID, and an out-of-order open cannot turn the message red again.
-Google's original Slack app messages cannot be adopted by a different bot.
+Monitoring sends events through Pub/Sub to private authenticated `monitoring-slack`.
+Its bot creates one parent per native incident and edits that same parent to
+**Closed by Monitoring** after authoritative closure. Duplicate/out-of-order opens
+cannot reopen it. Other apps' historical messages cannot be adopted. Impact and
+mutation outcome remain unknown, including after closure; triage belongs to
+`jonaraphael` and assigns the operation owner.
 
-Standalone Monitoring messages include impact, mutation state, owner and required action. Monitoring
-cannot establish consumer impact or mutation outcome, so both remain explicitly
-unknown, including after closure. `jonaraphael` owns triage while the operation
-owner is unknown. The action directs triage to the linked incident and affected
-execution; closure still requires separate recovery verification. Existing
-Monitoring parents receive these fields on their next closure update; duplicate
-open events remain quiet. Receipt state and delivery safeguards are unchanged.
+Execution failures and identity reviews share a parent keyed by exact project,
+job and execution, never by time. Failure-policy extraction uses
+`protoPayload.response.metadata.name`; typed reviews carry the same execution key.
+`executions/<context-hash>.json` claims the post first; incident receipts alias its
+confirmed string timestamp. Either event order enriches the same parent.
+The receiver reads at most twenty error entries, prefers escaped application
+errors, and otherwise retains the audit reason. Failed reads remain queued.
+The reader gains only `logging.logEntries.list`, no data writes. Historical
+uncorrelated parents keep their original reconciliation paths.
 
-Execution failures and feature identity reviews share one parent keyed by the
-exact project, job and Cloud Run execution. The failure policy extracts
-`protoPayload.response.metadata.name`; the review policy and typed decision
-events supply the same execution name. Distinct executions remain distinct.
-The private `executions/<context-hash>.json` receipt claims the parent before
-posting, and each Monitoring receipt aliases its confirmed string timestamp.
-Events in either order enrich that parent instead of creating another one.
-Uncertain posts block every producer until the original receipt is repaired.
-
-Failure parents identify the job and execution, show a bounded error from that
-execution's logs, and link directly to its execution, filtered logs and
-Monitoring incident. The receiver reads at most twenty recent error entries,
-prefers an application exception over generic task-exit summaries, and escapes
-the error text. Empty error results retain the audit failure reason; failed API
-reads remain queued. The existing incident-reader role adds only
-`logging.logEntries.list` for this read. It gains no data-write permissions.
-Identity evidence and recorded decisions enrich the same parent. Recording a
-decision cannot resolve an execution failure; Monitoring closure cannot establish
-publication or deployment recovery. Other policies retain one parent per native
-incident. Historical parents and uncorrelated pre-rollout incidents keep their
-existing receipt and reconciliation paths rather than being matched by time.
-
-The deleted WDPA metric policy used `OPENED` and `CLOSED`; its existing
-incident receipts and Slack parents remain available. Google supports only
-`OPENED` for log-based policies ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
-Those alerts are bot-owned too. After investigating recovery, the owner can use
-**Alerts / Legacy workflow resolution**, supplying only `monitoring_incident_id`.
-That protected, owner-only main workflow reads Monitoring once, requires its
-exact incident to be `CLOSED`, and edits the recorded parent. It does not poll,
-accept arbitrary Slack timestamps, create parents, or treat log expiry as proof
-of dataset/deployment recovery. Keep genuine identity decisions and consumer
-breaking-change notifications intact.
-
-Receipts live at
+Private receipts live under
 `gs://skytruth-shared-datasets-1-monitoring-slack/incidents/<incident-id>.json`.
-Generation preconditions arbitrate delivery claims; receipts bind the bot user,
-workspace, channel and string message timestamp. A claimed post with no confirmed
-timestamp remains an error. Inspect the service's `Monitoring Slack receipt` log
-and the original Slack parent; an owner must repair that exact receipt with its
-current generation before retrying. Never delete a claim or repost to escape an
-uncertain delivery. Pub/Sub retains failed deliveries for seven days. Inspect
-subscription backlog and receiver errors during incident recovery.
+Generation preconditions arbitrate claims and bind workspace/bot/channel/timestamp.
+An unconfirmed claim blocks every producer; inspect the `Monitoring Slack receipt`
+log and original parent before owner repair of that exact generation. Never delete
+claims or repost to escape uncertainty. Pub/Sub retains failures for seven days;
+inspect backlog and receiver errors during recovery.
 
-The existing protected cron policy sync provisions private resources, loads
-only exact CI-tested image bytes, and copies the existing GitHub bot secret to
-Secret Manager through stdin. The token never enters Terraform state. The bot
-must authenticate and verify its private receipt permissions before the service
-starts listening. Terraform waits for that service, authenticated subscription
-and Monitoring publisher grant before changing any of the five policy routes;
-startup failure leaves the existing native routes in place. Native channel
-configuration is retained for reviewed rollback. No alert conditions, grace
-windows, publication authority or dataset permissions are relaxed.
+Log policies support only `OPENED` ([API contract](https://docs.cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertStrategy)).
+After investigating recovery, the owner may dispatch **Alerts / Legacy workflow
+resolution** on main with only `monitoring_incident_id`. It requires that exact
+incident to be `CLOSED` and updates its recorded parent; it neither polls nor
+accepts arbitrary timestamps. Closure/log expiry cannot establish deployment or
+publication recovery. Historical WDPA metric incidents retain their receipts.
+
+The protected cron sync uses exact CI-tested image bytes, passes the bot secret
+through stdin (never Terraform state), and validates bot auth/receipt permissions
+before listening. Terraform waits for service, authenticated subscription and
+Monitoring publisher grant before switching the five policy routes. Startup
+failure leaves native routes intact; retained channel config supports reviewed
+rollback. No failure conditions, grace windows or publication authority change.
 
 ## Identity decision threads
 
-Scheduled feature identity review uses a typed event on the private
-`identity-decision-events` Pub/Sub topic. The existing Monitoring Slack service
-owns the **Decision needed** parent and its string timestamp. Local diagnostics
-do not send production messages. Cloud Run publishers must match the configured
-asset/job pair; each event binds project, execution, asset, release and the full
-captured identity hashes and match sets.
+Typed events on private `identity-decision-events` bind project, execution, asset,
+release, full captured hashes and case sets. Publishers must match configured
+asset/job pairs. Generation preconditions claim every parent/reply before posting;
+local diagnostics never post production messages. The private operations bucket
+retains approved decisions and `identity/events/<event-id>.json` receipts/links.
 
-After WDPA retains complete review evidence, a separate typed
-`feature-identity-review-ready-v1` event attaches its generation/size/checksum
-reference to that same captured context. The existing parent gains direct
-links to each visible case and a selector for the complete captured case set.
-The IAP-protected catalog checks the exact bundle before displaying fields and
-stored footprints. A late original event cannot downgrade a linked review;
-changed cases or references are rejected. The receipt persists the configured
-authenticated catalog origin, so retries keep the original links. Existing
-v1 events and their persisted receipts remain readable; linked captures use an
-explicit `identity-review-notification-v1` receipt schema. See
-[WDPA review evidence](wdpa-identity-review.md#review-from-the-alert).
+`feature-identity-review-ready-v1` attaches generation/size/checksum-bound WDPA
+review evidence to the same context. The authenticated catalog verifies the bundle
+before rendering. Receipts freeze the configured origin and pinned links, so late
+original events cannot downgrade the linked review. Old events/receipts remain
+readable. See [WDPA review evidence](wdpa-identity-review.md#review-from-the-alert).
 
-After reviewed curation merges to main, **Alerts / Identity decision
-reconciliation** verifies the exact accepted PR head and runtime-legal choice.
-It replies in the original thread with the decision of record, `jonaraphael` as
-the decision maker, the recorded recommendation rationale and the reviewed PR.
-The reply does not broadcast to the channel. Each case must be covered before
-the review is marked **Decision recorded**. Partial decisions receive replies
-while the remaining cases stay open.
+After curation merges, **Alerts / Identity decision reconciliation** verifies the
+exact accepted final PR head and runtime-legal choices. It replies in the original
+thread with choice, decision maker (`jonaraphael`), rationale and reviewed PR,
+without channel broadcast. Every case must be covered before **Decision recorded**;
+partial decisions leave other cases open. Preserve the original **Decision needed**
+body, cases, context and links; status is separate. Older shortened bot parents can
+be restored from their frozen event without another decision reply.
 
-The original **Decision needed** request remains in the parent, including its
-case summaries, context and source/review links. A shared execution parent shows
-review status separately above that retained request. Acceptance never replaces
-the request body with a short resolved summary. For an older bot-owned parent
-already shortened by that renderer, reconciliation restores the request from
-its frozen event and pinned links while retaining the existing decision replies.
-Legacy parents and uncertain delivery claims keep their existing safeguards.
+Shared execution parents and historical decision-policy parents settle only when
+execution/asset/release identities match. Review acceptance establishes neither
+native Monitoring closure nor publication/execution recovery; late duplicates
+cannot reopen it. New workers wait for the selected protected transport sync.
+Shared decision receipts freeze complete cases before execution rendering;
+interrupted timestamp association reuses the already confirmed post.
 
-The same reconciliation updates the shared execution parent, including its
-identity review, and historical bot-owned **Shared datasets release
-waiting on a maintainer decision** parents whose authoritative Monitoring incident
-matches the exact execution, asset and release. Policy label extractors provide
-these keys; unrelated failure incidents are excluded. This settles the review
-request without asserting native Monitoring closure, publication success or
-consumer recovery. Duplicate or late open notifications cannot reopen it.
-New workers wait for the selected protected transport sync to succeed.
-
-The private operations bucket retains the approved decision index and
-`identity/events/<event-id>.json` parent/reply receipts, plus exact incident links.
-New shared parents use the `identity-execution-notification-v1` decision receipt;
-it freezes the event's complete cases before the execution outbox can render it.
-If recording its shared timestamp is interrupted after a confirmed execution
-post, redelivery reuses that timestamp. Historical unconfirmed decision-post
-claims still require owner repair and cannot be reinterpreted as unsent.
-Generation preconditions claim each non-idempotent post before sending it.
-Uncertain parent/reply delivery blocks another post; inspect the service's
-`Identity decision Slack receipt` log and original thread before a reviewed
-receipt repair. The existing Slack `chat:write` scope is sufficient; no channel
-history/search permission is added. Reviewed legacy adoption documents under
-`.github/identity-decision-adoptions/` can bind inspected historical webhook
-parents and already-confirmed replies without duplicating them. These documents
-carry notification bookkeeping authority only.
+Uncertain legacy parent/reply claims require owner inspection of the `Identity
+decision Slack receipt` log and original thread before generation-safe repair.
+Existing `chat:write` suffices; no history/search access is added. Reviewed
+`.github/identity-decision-adoptions/` documents may bind inspected webhook parents
+and confirmed replies without duplication, carrying notification bookkeeping
+only. Legacy parents and delivery claims retain their existing safeguards.
 
 ## Execution and delivery verification
 
-WDPA's ten-minute worker watch retains Cloud Monitoring coverage.
-Do not suppress it based solely on its creator, branch, or workflow trigger.
-Verify delivery using an actual failed execution's Monitoring incident, transport
-receipt and matching Slack message. Record the exact execution and incident IDs
-with that evidence. Policy configuration and local tests alone do not prove live
-delivery; report it as unverified when matching failure evidence is unavailable.
-Do not deliberately fail production jobs to test routing.
-
-The unapproved-writer policy has no retired-observer exception. Its protected
-sync watches `canonical_mutation_iam.tf` as an approved-principal input; the
-observer has no canonical write permissions.
+WDPA's bounded watch retains Monitoring coverage. Do not suppress failures solely
+by creator, branch or trigger. Match a real failure's incident, transport receipt
+and Slack message; report delivery unverified without that evidence. Never fail
+production deliberately to test routing. The retired observer has no writer exception.
 
 ## Deployment verification
 
-Use a reviewed PR, merge to `main`, and the protected cron alert policy sync.
-Review its saved plan: only the five alert policies and the explicitly allowlisted
-Monitoring transport resources may change. Ingestion jobs, Scheduler
-configuration, canonical bucket permissions and dataset objects must not.
-The workflow changes take effect on subsequent executions; existing executions
-do not gain the marker retroactively.
+Use a reviewed PR and protected cron policy sync; inspect its saved allowlist plan.
+Compare deployed filters/channels with actual scheduled, synchronous and detached
+execution logs. Only the exact trusted marked synchronous failure may be excluded;
+missing metadata stays alertable. Waiting-command failures must fail GitHub;
+persistent templates must lack the supervision marker. Local tests do not prove
+live delivery/suppression. Existing executions gain no marker retroactively.
 
-Before declaring live routing verified:
+Healthy events and recovery evidence are batched by the three-hour safety probe.
+Failures of native monitored completions retain immediate coverage; GITHUB_TOKEN
+follow-ups are also discovered by polling. Safety failures self-report without a
+`workflow_run` subscription. See [incident admission, signed recovery and uncertain
+delivery](slack-incidents.md) for the single authoritative lifecycle contract.
+Local routing tests do not establish live audit-payload or Slack delivery behavior.
 
-1. Inspect the deployed policy filters and notification channels. Confirm the
-   configured Terraform account matches the creator of a synchronous canary.
-2. Read terminal `/Jobs.RunJob` audit entries from a scheduled execution, a
-   synchronous workflow execution, and a detached WDPA execution. Verify the
-   actual response fields above. Replay the deployed filter against those logs:
-   only the trusted marked synchronous failure should be excluded. A filter
-   matching no historical failures is not proof of correctness.
-3. Confirm a synchronous command's failure fails its GitHub step. Check that
-   scheduled executions have no supervision marker in their execution template.
-4. For an actual unattended failure, confirm its Monitoring incident, transport
-   receipt and matching Slack notification. Record delivery as unverified if no
-   matching evidence exists. Delivery evidence does not prove supervision
-   suppression.
-5. Verify a write by the retired observer matches the unapproved-writer policy;
-   it has no object-specific exception.
-6. Check the first scheduled maintenance and automatic follow-up failures route
-   through `unattended-workflow-alert.yml`. That privileged workflow checks out
-   only `main`, reads event JSON as data, and never downloads source-run artifacts.
+## Scheduled freshness and capacity
 
-Healthy upstream events allocate no notification worker. Recovery evidence is
-batched by the hourly safety probe and replayed through a direct authenticated
-request to the incident worker. Pending executions use the completion workflow. Watermark-only progress and unchanged owner-blocked Slack sends do not
-request follow-ups. Native safety completion failures alert independently of any
-follow-up; no polling or fixed parent-completion deadline remains. Failures of
-all monitored crons and deployments retain immediate coverage, with the existing
-24-hour replay for missed events. The hourly cadence stays in place until
-cadence-aware data freshness and Scheduler pause checks can compensate for a
-reduction. CI includes reusable dataset publication, catalog refresh and
-deployment jobs. For a failed main-push CI run, the alert worker verifies the
-workflow identity and exact current run attempt, then checks its actual jobs.
-Publication failures and failed deployment jobs after passing `ci-ready` are
-announced; ordinary PR and validation-only
-failures stay in GitHub. In incident mode, a completion job that successfully
-attests a signed `failed` outcome for its exact WDPA execution is a second report
-of the worker failure already owned by Monitoring; it creates no second Slack
-parent. Its GitHub check stays failed. Failed attestation, missing or invalid
-receipts, unknown outcomes and other observer failures still alert, with the title
-**WDPA execution verification** and an action identifying the verification and
-receipt-signing steps. Explicit read-only reconciliation failures also remain
-visible in Slack. A scheduled catalog input
-probe stays in Actions when same-attempt job evidence proves the publisher was
-skipped and no other job failed. Actual catalog deployment failures still alert.
-Every subscribed source
-workflow is checked against its authoritative API identity; completion events
-superseded by a newer attempt become no-ops. Repository announcements are
-selected from every commit in the complete main-push range, using existing CI
-detection, before allocating their worker. Dataset publication refreshes catalog data without
-redeploying the catalog viewer service.
+Every three-hour safety probe reads generation-pinned release indexes and each
+known ingestion Scheduler job. Daily assets need a successful release or meaningful
+unchanged-source check-in within two days; monthly assets within 62 days (twice the
+maximum calendar-month interval). Missing-source/decision skips do not reset data
+freshness. An old publication with a recent confirmed unchanged-source skip is
+healthy. Metadata-only index rewrites cannot reset the check-in date. The weekly
+bucket audit uses the same freshness rule.
 
-Local tests exercise routing decisions, real workflow shell failure propagation,
-marker placement, policy boundaries and protected-sync coverage. They do not
-verify Google Cloud's audit payloads or Slack delivery; record those separately.
+A Scheduler state other than `ENABLED` for at least 72 hours since
+`userUpdateTime` fails health unless `APPROVED_PAUSES` in
+`scripts/operational_safety_check.py` contains a reviewed owner, reason and future
+UTC `until`. Deployment rollout holds do not authorize Scheduler pauses. Missing
+jobs and failed reads fail visibly. Pauses suppress the associated absence checks
+only through that expiry. The paused internal dataset-usage collector is checked
+even though it has no catalog release index.
+
+Provision `google_project_iam_custom_role.operational_safety_reader` and its
+publisher binding through the protected monitoring sync **before enabling these
+checks**. It grants only `cloudscheduler.jobs.get`; the safety job retains its
+existing service account and protected environment. The sync target/allowlist must
+include both resources. No local production apply is permitted.
+
+The cadence change reduces scheduled safety runs from 24 to 8/day and removes
+24 skipped safety notification runs/day. At the baseline 148.5 runner-minutes for
+69 safety runs, safety alone projects from 51.7 to 17.2 runner-minutes/day before
+the additional small health reads. Healthy idle workers remain zero; incident
+batches and completion checks add demand-dependent work. These are projections,
+not measured post-deployment savings. Poll-only failures add <=3 h detection
+latency, within the freshness bounds; three consecutive reconciliation demands
+escalate by the third probe. Unchanged uncertain Slack claims escalate after 24 h.
+
+Read-only Monitoring evidence (2026-10-06 through 2026-11-05) bounded the highest
+occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:
+
+| Job | Samples | CPU peak upper bound | Memory peak upper bound | Proposed CPU / memory |
+| --- | ---: | ---: | ---: | --- |
+| EAMLIS | 28 | 2.60 vCPU | 0.96 GiB | 6 / 4 GiB |
+| MPAtlas | 40 | 2.32 vCPU | 3.36 GiB | 6 / 8 GiB |
+| Sea ice | 35 | 0.92 vCPU | 0.16 GiB | 2 / 512 MiB |
+
+All proposed limits exceed twice those observed bounds. The EAMLIS/MPAtlas CPU
+increase is required by that headroom rule; it is not a CPU-cost saving.
+[Cloud Run job limits](https://docs.cloud.google.com/run/docs/configuring/jobs/cpu)
+require at least 4 GiB for 6 vCPU. The samples cannot bound unobserved spikes or
+future source growth; compare new execution peaks after protected deployment.
+These are Terraform-only changes; no job, Scheduler, IAM or dataset was mutated
+while gathering this evidence.
 
 ## Monitoring configuration
 
-Prefer an existing Cloud Monitoring Slack notification channel. Include its
-resource name in the local review plan with `cron_alert_notification_channels`;
-the protected `cron-alert-policy-sync.yml` applies reviewed changes after merge.
-Alternatively, Terraform can create a channel from `cron_alert_slack_channel_name`
-and sensitive `cron_alert_slack_auth_token`, which can enter Terraform state.
-
-The alert-policy deployer needs both `logging.notificationRules.create` and
-`logging.notificationRules.delete`: updating a log-based policy replaces its
-internal notification rule. Repair missing permissions through the existing
-protected bootstrap and policy-sync workflows before declaring routing deployed.
+Use an existing `cron_alert_notification_channels` resource or reviewed Terraform
+channel inputs `cron_alert_slack_channel_name` / `cron_alert_slack_auth_token`
+(the latter may enter state). Protected cron policy sync owns changes. Its
+bootstrap requires both `logging.notificationRules.create` and `.delete` because
+policy updates replace the internal notification rule; provision before syncing.
 
 ## Dataset and repository notifications
 
-The approved publisher sends a new-dataset upload summary only when the canonical
-`latest/` object did not exist before publication; it derives this from the plan's
-`destination_generation`. `dataset_alerts.py upload-summary` posts only with
-`--new-dataset`; existing-asset refreshes print a local skip message.
-Announcements remain operational notifications, not commit gates, as specified
-in [AGENTS.md](../AGENTS.md#non-negotiable-rules).
+`dataset_alerts.py upload-summary --new-dataset` announces a new canonical latest
+object according to the reviewed plan's `destination_generation`; refreshes skip
+it. Announcements are operational notifications, never commit gates.
+Schema snapshots under `_catalog/schema-snapshots/` advance only after compatible
+or waived publication. Deltas log diagnostics; consumer advisories use the reviewed
+[breaking-change contract](../.github/dataset-plans/README.md#consumer-impact).
+The advisory runs only for PRs containing immutable dataset plans and independently
+checks plan, PR snapshot and schema; body edits remain covered.
 
-Canonical vector/table publication validates schema compatibility before writes.
-Schema snapshots live under `_catalog/schema-snapshots/`; the approved publisher
-advances them after compatible or waived publication. A schema delta emits a
-structured Cloud Logging diagnostic. Schema-change Slack monitoring stays quiet;
-consumer-impacting changes use the reviewed `breaking_changes` plan contract in
-[dataset plans](../.github/dataset-plans/README.md#consumer-impact).
-
-Repository functionality notices use fenced commit messages under the
-[repo-alert workflow](../.claude/skills/repo-alert-commit-messages/SKILL.md).
-GitHub webhook notifications use the `SHARED_DATASETS_SLACK_WEBHOOK_URL` Actions
-secret. Runtime FYI notifications use the Secret Manager secret
-`shared-datasets-slack-webhook-url` by default. To set or rotate it, supply the
-webhook bytes through a local file:
-
-```bash
-gcloud secrets versions add shared-datasets-slack-webhook-url \
-  --project=shared-datasets-1 \
-  --data-file=/path/to/webhook-url.txt
-```
-
-This webhook configuration is separate from the bot settings and delivery
-reconciliation owned by [Slack incidents](slack-incidents.md).
-
-Dataset breaking-change advisories run only on PRs changing
-`.github/dataset-plans/**`, including body edits while such a plan is present.
-Every valid publish/delete requires an immutable plan; code and documentation PRs
-without one allocate no advisory routing runner. The advisory still independently
-validates the plan, PR snapshot and proposed schema before sending anything.
+[Repository notices](../.claude/skills/repo-alert-commit-messages/SKILL.md) use
+fenced commit messages. GitHub webhooks use Actions secret
+`SHARED_DATASETS_SLACK_WEBHOOK_URL`; runtime FYIs use Secret Manager
+`shared-datasets-slack-webhook-url`. Rotate through `gcloud secrets versions add`
+with project `shared-datasets-1` and `--data-file` pointing to a protected local
+file, never token bytes in arguments. Bot configuration/reconciliation belongs to
+[Slack incidents](slack-incidents.md).

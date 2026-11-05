@@ -2,6 +2,7 @@
 
 import io
 import json
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -82,7 +83,7 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     subscriptions = workflow_triggers(workflow)["workflow_run"]["workflows"]
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
-        if "schedule" in workflow_triggers(candidate):
+        if "schedule" in workflow_triggers(candidate) and path.name != "operational-safety-check.yml":
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
@@ -337,7 +338,7 @@ def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypat
     from scripts import deployment_revision as deployments
     from scripts.slack_incident_api import Slack
 
-    run = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    run = event(name="CI", event="push", run_attempt=1, head_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())["workflow_run"]
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
     run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
@@ -409,7 +410,7 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     from scripts.slack_incident_api import Slack
 
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
-    original = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    original = event(name="CI", event="push", run_attempt=1, head_sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip())["workflow_run"]
     original.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     recovered = {**original, "id": 456, "head_sha": "b" * 40, "conclusion": "success"}
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",

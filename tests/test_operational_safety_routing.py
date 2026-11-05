@@ -19,13 +19,14 @@ WORKFLOWS = ROOT / ".github/workflows"
 SAFETY = "operational-safety-check.yml"
 
 
-def test_one_hourly_entrypoint_and_native_safety_failure_coverage():
+def test_three_hour_entrypoint_and_direct_safety_failure_coverage():
     files = (SAFETY, "catalog-web-deploy.yml", "deployment-verification.yml")
     schedules = {name: workflow_triggers(load_workflow(WORKFLOWS / name)).get("schedule") for name in files}
-    assert schedules == {SAFETY: [{"cron": "17 * * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
+    assert schedules == {SAFETY: [{"cron": "17 */3 * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
-    assert set(WORKFLOW_NAMES[SAFETY]) <= set(subscriptions)
+    assert not (set(WORKFLOW_NAMES[SAFETY]) & set(subscriptions))
+    assert "Report safety failure directly" in workflow_steps_by_name(load_workflow(WORKFLOWS / SAFETY), "safety")
     for filename in files[1:]:
         assert set(WORKFLOW_NAMES[filename]) <= set(subscriptions)
     assert SAFETY in alerts.MONITORED_WORKFLOWS
@@ -108,7 +109,7 @@ def test_catalog_probe_only_does_not_masquerade_as_a_publisher_failure(event):
     assert not alerts.catalog_probe_only(run, jobs)
 
 
-@pytest.mark.parametrize("filename", [SAFETY, "catalog-web-deploy.yml"])
+@pytest.mark.parametrize("filename", [SAFETY, "catalog-web-deploy.yml", "catalog-viewer-deploy.yml", "unattended-workflow-alert.yml"])
 def test_automatic_dispatch_failures_remain_unattended(filename):
     event = {"repository": {"full_name": alerts.REPOSITORY}, "workflow_run": {
         "id": 123, "name": WORKFLOW_NAMES[filename][0], "event": "workflow_dispatch", "status": "completed",

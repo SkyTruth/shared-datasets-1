@@ -106,20 +106,21 @@ def validate_observation(value):
     return value
 
 
-def job_targets(root=ROOT):
-    """Derive complete registered job paths from the checked-in caller graph.
+def job_targets(root=ROOT, *, revision=None, workflow=None):
+    """Derive registered paths from a source revision, never execute its code.
 
     Resolving leaf names alone would conflate IAM bootstrap and sync or different
     ingestion targets. Unregistered jobs retain their own exact job scope.
     """
     # Preserve the exact historical mutating job scope for signed receipt recovery.
     # The retired workflow must not be loaded from today's caller graph.
+    require(revision is None or deployments.SHA.fullmatch(revision), "invalid source workflow revision")
     targets = {("wdpa-monthly-build.yml", "build"): "wdpa-monthly-build"}
     reverse = {workflow: target for target, workflow in deployments.TARGET_WORKFLOWS.items()}
 
     def walk(filename, prefix="", inherited=None, inputs=None, source=None):
         source = source or filename
-        document = yaml.safe_load((root / ".github/workflows" / filename).read_text())
+        document = yaml.safe_load(workflow_source(root, filename, revision) if revision else (root / ".github/workflows" / filename).read_text())
         for key, job in document["jobs"].items():
             name = job.get("name", key)
             for input_name, value in (inputs or {}).items():
@@ -142,6 +143,9 @@ def job_targets(root=ROOT):
             elif inherited and (filename, key) not in READ_ONLY_JOBS:
                 targets[(source, path)] = inherited
 
+    if workflow is not None:
+        walk(workflow, inherited=reverse.get(workflow))
+        return targets
     walk("ci.yml")
     for filename, target in reverse.items():
         if filename not in RETIRED_WORKFLOWS:
@@ -149,6 +153,12 @@ def job_targets(root=ROOT):
     for filename in set(deployments.TERRAFORM_WORKFLOWS.values()):
         walk(filename)
     return targets
+
+
+@cache
+def workflow_source(root, filename, revision):
+    require(re.fullmatch(r"[a-z0-9-]+\.yml", filename), "invalid source workflow path")
+    return subprocess.check_output(["git", "show", revision + ":.github/workflows/" + filename], cwd=root, text=True)
 
 
 def registered_name(name):
@@ -254,13 +264,15 @@ def observer_failure_proofs(api, failures):
     return proofs
 
 
-def source_observations(api, event, targets):
+def source_observations(api, event, targets=None):
     run = event["workflow_run"]
     if not alerts.verify_source_event(api, run):
         return []
     if run["conclusion"] not in alerts.FAILED_CONCLUSIONS | {"success"}:
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
+    if targets is None:
+        targets = job_targets(revision=run["head_sha"], workflow=alerts.WORKFLOW_PATHS[run["name"]])
     if alerts.catalog_probe_only(run, jobs):
         return []  # Neither a deployment failure nor evidence of recovery.
     if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
@@ -349,8 +361,8 @@ def same_migrated_episode(original, current):
             and all(new["posts"].get(key) == post for key, post in old["posts"].items() if post["state"] == "delivered"))
 
 
-def replay_observations(api, targets, since, *, now=None, completed_until=None):
-    """Hourly observation catches bounded queue loss without another scheduler.
+def replay_observations(api, since, *, now=None, completed_until=None):
+    """Periodic observation catches bounded queue loss without another scheduler.
 
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
@@ -364,7 +376,7 @@ def replay_observations(api, targets, since, *, now=None, completed_until=None):
     for run in runs:
         if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
                 and run.get("head_branch") == "main" and run.get("head_repository", {}).get("full_name") == REPOSITORY):
-            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}, targets))
+            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}))
     return [item for item in observations if start <= instant(item["time"]) <= (completed_until or now)]
 
 
@@ -377,10 +389,10 @@ def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: N
     start, end = map(instant, match.groups())
     require(timedelta(0) < end - start <= timedelta(days=7) and end <= (now or datetime.now(timezone.utc)),
             "replay requires a closed past window of at most seven days")
-    observations, targets = [], job_targets()
+    observations = []
     while start < end:
         stop = min(start + timedelta(days=1), end)
-        observations.extend(replay_observations(ledger.api, targets, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
+        observations.extend(replay_observations(ledger.api, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
         start = stop
     return prepare(ledger, identity, observations, on_saved=on_saved)
 
@@ -1131,7 +1143,6 @@ def main():
             else:
                 records = reconcile(ledger, identity, inputs["incident_id"], inputs["operation"], inputs["delivery_result"], inputs.get("message_ts", ""))
         else:
-            targets = job_targets()
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")
             activated = instant(since)
             if run["event"] == "workflow_dispatch":
@@ -1141,20 +1152,20 @@ def main():
                 require(inputs["incident_id"] == "operational-batch" and not inputs.get("message_ts") and producer,
                         "batch requires an exact safety attempt, without delivery acknowledgement")
                 validate_safety_dispatch(api, {"inputs": {"safety_run_id": producer[1], "safety_run_attempt": producer[2]}}, workflow=WORKFLOW)
-                observations = replay_observations(api, targets, since)
+                observations = replay_observations(api, since)
                 source = None
             else:
                 source = event["workflow_run"]
-                observations = source_observations(api, event, targets)
+                observations = source_observations(api, event)
             if (source and source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
                 # An idle input probe has no incident evidence. The
-                # safety probe still owns hourly replay and unrelated pending work.
+                # safety probe still owns periodic replay and unrelated pending work.
                 print("Prepared 0 incident transitions; scheduled catalog probe has no incident evidence.")
                 return
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if source and alerts.WORKFLOW_PATHS[source["name"]] == "deployment-verification.yml":
-                observations.extend(replay_observations(api, targets, since))
+                observations.extend(replay_observations(api, since))
             ledger.verification_cache = VerificationCache.restore(api, run, identity)
             records = prepare(ledger, identity, observations, on_saved=retain)
             ledger.verification_cache.save(args.work_dir)
