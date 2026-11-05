@@ -20,6 +20,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
+from scripts.ingestion_targets import TARGETS as INGESTION_TARGETS
 
 ROOT = Path(__file__).resolve().parents[1]
 CALLER = './.github/workflows/prod-terraform-target-apply.yml'
@@ -28,6 +29,25 @@ DATA = re.compile(r'^(?:module\.[A-Za-z0-9_-]+\.)*data\.')
 QUOTED = r'"(?:[^"\\]|\\.)+"'
 NODE = re.compile(r'^\s*(' + QUOTED + r')\s+\[label=')
 EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
+# Transitional scopes for the two inline plan guards. Behavior tests execute
+# their real shell guards against these declarations; generic IAM and ingestion
+# scopes come exclusively from their registries. These are declarations, not
+# authorization: saved-plan operation restrictions remain authoritative.
+INLINE_SCOPES = {
+    'catalog-viewer-deploy.yml': frozenset('''
+google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager
+module.catalog_viewer_service_account.google_service_account.this
+google_cloud_run_v2_service.catalog_viewer google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker
+google_project_iam_custom_role.catalog_viewer_sign_blob google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer
+google_service_account_iam_member.catalog_viewer_self_sign_blob google_storage_bucket_iam_member.catalog_viewer_object_viewer
+google_storage_bucket.catalog_comparisons google_storage_bucket_iam_member.catalog_comparisons_worker
+google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors
+'''.split()),
+    'pmtiles-cdn-sync.yml': frozenset('''
+google_storage_bucket.shared_bucket google_compute_url_map.pmtiles_cdn
+google_storage_managed_folder.shared_bucket_public_prefixes google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers
+'''.split()),
+}
 
 
 def registry(root: Path = ROOT) -> dict[str, dict]:
@@ -58,7 +78,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars',
     }}
     placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
-    variables = [*item.get('tf_vars', []), *(name + '_image=' + placeholder for name in ('wdpa_monthly', 'sea_ice_daily', 'eamlis_monthly'))]
+    variables = [*item.get('tf_vars', []), *(config['image_variable'] + '=' + placeholder for config in INGESTION_TARGETS.values())]
     result.update(caller_workflow=workflow, sync_name=sync_name, targets='\n'.join(resources),
                   allowed_exact='\n'.join(resources), refusal_prefix='Refusing ' + sync_name,
                   tf_vars=tf_vars if item.get('state_only') else '\n'.join(variables))

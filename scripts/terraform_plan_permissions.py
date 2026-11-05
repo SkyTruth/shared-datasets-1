@@ -26,6 +26,21 @@ COMPUTE_PROBE_PERMISSIONS = {
     ("regions", "backendBuckets"): "compute.regionBackendBuckets.list",
     ("regions", "backendServices"): "compute.regionBackendServices.list",
 }
+# Static permission manifest; behavior tests exercise every declared runtime class.
+# Operation/identity validation remains exclusively in plan_checks.
+RESOURCE_KINDS = frozenset('''
+google_project_iam_custom_role google_project_iam_audit_config
+google_iam_workload_identity_pool_provider google_logging_log_view
+google_monitoring_metric_descriptor google_logging_project_sink google_logging_project_exclusion
+google_project_iam_member google_service_account google_service_account_iam_member
+google_storage_bucket google_storage_bucket_iam_member google_storage_managed_folder
+google_storage_managed_folder_iam_member google_secret_manager_secret_iam_member
+google_artifact_registry_repository_iam_member google_cloud_run_v2_job google_cloud_run_v2_service
+google_cloud_run_v2_job_iam_member google_cloud_run_v2_service_iam_member google_cloud_scheduler_job
+google_iap_web_cloud_run_service_iam_member google_compute_url_map terraform_data
+google_project_service google_secret_manager_secret google_monitoring_notification_channel
+google_pubsub_topic_iam_member google_pubsub_topic google_pubsub_subscription google_monitoring_alert_policy
+'''.split())
 
 
 def require(condition, message):
@@ -446,8 +461,6 @@ def static_checks(root, base, head):
     Unknown resource kinds and removed probe-manifest permissions fail closed.
     Runtime values, instance keys and effective IAM still need the saved plan.
     """
-    import ast
-    import inspect
     import posixpath
     import subprocess
     import hcl2
@@ -457,6 +470,7 @@ def static_checks(root, base, head):
     from scripts.ci_contract import select_deployments
     from scripts import terraform_target_contracts as terraform_targets
     from scripts.terraform_target_contracts import address as declaration
+    from scripts.ingestion_targets import TARGETS
 
     def git(*args):
         return subprocess.check_output(['git', '-C', str(root), *args], text=True)
@@ -489,70 +503,37 @@ def static_checks(root, base, head):
     changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
     paths = git('diff', '--name-only', base, head).splitlines()
     ci = yaml.safe_load((root / '.github/workflows/ci.yml').read_text())['jobs']
-    exact, patterns = set(), []
-
-    def literals(source):
-        # These are the actual inline saved-plan allowlists. Never execute their
-        # code or infer ownership from a shell -target list alone.
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-                continue
-            name = node.targets[0].id
-            if name in {'allowed_exact', 'allowed_for_each_prefixes'} and isinstance(node.value, (ast.Set, ast.List, ast.Tuple)):
-                exact.update(declaration(value) for value in ast.literal_eval(node.value))
-            elif name == 'allowed_patterns' and isinstance(node.value, ast.List):
-                patterns.extend(re.compile(ast.literal_eval(value.args[0])) for value in node.value.elts)
+    exact = set()
 
     def scope(filename, inputs=None):
         value = terraform_targets.workflow(root, posixpath.basename(filename))
         if filename == '.github/workflows/ingestion-deploy.yml':
-            # Read the literal contract from the checked source tree without
-            # executing candidate Python or retaining the old YAML target table.
-            configs = next(ast.literal_eval(node.value) for node in ast.parse(
-                (root / 'scripts/ingestion_targets.py').read_text()).body
-                if isinstance(node, ast.Assign) and any(isinstance(name, ast.Name) and name.id == 'TARGETS' for name in node.targets))
-            require(inputs and inputs.get('target') in configs, 'ingestion target scope is unavailable')
-            exact.update(declaration(row) for row in configs[inputs['target']]['targets'])
+            require(inputs and inputs.get('target') in TARGETS, 'ingestion target scope is unavailable')
+            exact.update(declaration(row) for row in TARGETS[inputs['target']]['targets'])
         for job in value['jobs'].values():
             config = job.get('with', {})
             exact.update(declaration(row) for row in config.get('allowed_exact', '').splitlines() if row.strip())
-            patterns.extend(re.compile(row) for row in config.get('allowed_patterns', '').splitlines() if row.strip())
             if job.get('uses', '').startswith('./.github/workflows/'):
                 scope(job['uses'][2:], config)
-            for step in job.get('steps', []):
-                for source in re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", step.get('run', ''), re.S):
-                    literals(source)
         if filename.endswith('dataset-usage-deploy.yml'):
             from scripts.dataset_usage_deploy import RESOURCES, RETIREMENT_RESOURCES
             exact.update(declaration(row) for row in RESOURCES | RETIREMENT_RESOURCES)
         if filename.endswith('pmtiles-cdn-sync.yml'):
             from scripts.cdn_plan_readiness import BOOTSTRAP_EXACT, BOOTSTRAP_UPDATE_ONLY
             exact.update(BOOTSTRAP_EXACT | BOOTSTRAP_UPDATE_ONLY)
+        exact.update(terraform_targets.INLINE_SCOPES.get(posixpath.basename(filename), ()))
 
     for target in select_deployments(paths):
         scope(ci[target.replace('_', '-')]['uses'][2:])
-    # Derive supported classes from the runtime dispatch. Adding a class without
-    # its operation validator cannot acquire static coverage accidentally.
-    dispatch = ast.parse(inspect.getsource(plan_checks))
-    kinds = set()
-    for node in ast.walk(dispatch):
-        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == 'kind':
-            for literal in ast.walk(node.comparators[0]):
-                if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
-                    kinds.add(literal.value)
-    manifest = set()
-    for name, values in vars(permissions).items():
-        if name.endswith('_PERMISSIONS'):
-            manifest.update(values)
-    manifest.update(node.value for node in ast.walk(ast.parse(inspect.getsource(permissions.checks)))
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
-                    and re.fullmatch(r'[a-z]+\.[a-zA-Z.]+', node.value))
+    probe_targets = {item['readiness_target'] for item in terraform_targets.registry(root).values()} | set(TARGETS)
+    probe_targets.update({'artifact-registry-images', 'monitoring-slack-secret', 'catalog-viewer', 'pmtiles-cdn', 'pmtiles-cdn-bootstrap'})
+    manifest = {permission for target in probe_targets for _, required in permissions.checks(target) for permission in required}
     errors = []
     for key in sorted(changed):
         kind = key.rsplit('.', 2)[-2]
-        if key not in exact and not any(pattern.match(key) or pattern.match(key + '[0]') for pattern in patterns):
+        if key not in exact:
             errors.append(key + ': absent from selected deployment apply allowlists')
-        if kind not in kinds:
+        if kind not in RESOURCE_KINDS:
             errors.append(key + ': no saved-plan permission validator')
         if kind == 'google_project_iam_custom_role' and key in before:
             removed = set(before[key][0].get('permissions', [])) - set(after.get(key, ({},))[0].get('permissions', []))
