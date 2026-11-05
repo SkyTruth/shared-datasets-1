@@ -266,7 +266,9 @@ class CatalogClient:
 @pytest.fixture
 def probe_inputs(tmp_path, monkeypatch):
     api, client = OperationalAPI(), CatalogClient()
-    monkeypatch.setattr(safety.subprocess, "check_output", lambda *_args, **_kwargs: GH_VERSION)
+    check_output = safety.subprocess.check_output
+    monkeypatch.setattr(safety.subprocess, "check_output", lambda command, *args, **kwargs:
+                        GH_VERSION if command == ["gh", "--version"] else check_output(command, *args, **kwargs))
     monkeypatch.setattr(VerificationCache, "restore", lambda _api, run, identity, **_kwargs: VerificationCache(run, identity, gh_version=GH_VERSION))
     collect, checks = mock.Mock(), mock.Mock(return_value=[SimpleNamespace(ok=True)])
     monkeypatch.setattr(indexes, "collect", collect)
