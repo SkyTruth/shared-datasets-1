@@ -116,6 +116,7 @@ def dependency_inputs():
                for path in (ROOT / directory).rglob("*.py") if "__pycache__" not in path.parts}
     modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
                for name in sources}
+    modules.update({Path(name).stem: name for name in sources if name.startswith("tests/") and name.count("/") == 1})
     edges = {}
     for name, path in sources.items():
         dependencies = set()
@@ -172,6 +173,8 @@ def dependency_inputs():
         copied.add(f"tests/test_{target.replace('-', '_')}.py")
         images[target] = copied | closure(name for name in sources if matches(name, copied) and not name.startswith("tests/"))
     native = closure(NATIVE_TESTS)
+    native.update({name for name, inputs in edges.items() if name.startswith("tests/")
+                   and inputs & {item for item in native if not item.endswith("/__init__.py")}})
     browser = closure(name for name in sources if name.startswith("tests/browser/"))
     return images, native, browser, sources.keys(), copies
 
@@ -189,7 +192,10 @@ def classify_change(path: str) -> tuple[str, set[str]]:
         } or path.startswith("tests/fixtures/") and path.endswith(".md")):
         return "shared", set(SUITES)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
-        return "metadata", {"geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser"}
+        suites = {"sdk-node22", "sdk-node24", "browser"}
+        if path.startswith("catalog/") or any(matches(path, inputs) for inputs in dependency_inputs()[0].values()):
+            suites.add("geospatial-integration")
+        return "metadata", suites
     if path == "api/typescript/README.md":
         return "component", {"sdk-node22", "sdk-node24", "browser"}
     if path.endswith(".md") or path == "LICENSE":

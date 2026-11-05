@@ -292,10 +292,11 @@ def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypa
 ])
 def test_every_installed_probe_uses_production_limits(target, cpu, memory):
     assert target in BUILD_TARGETS
-    assert resource_limits(target) == ['--cpus', cpu, '--memory', memory]
+    assert resource_limits(target) == ['--cpu-period', '100000', '--cpu-quota', str(int(cpu) * 100000), '--memory', memory]
     for command in commands(target, 'b' * 40, image_id=IMAGE_ID)[1:]:
         if command[:2] == ['docker', 'run']:
-            assert command[command.index('--cpus') + 1] == cpu
+            assert command[command.index('--cpu-period') + 1] == '100000'
+            assert command[command.index('--cpu-quota') + 1] == str(int(cpu) * 100000)
             assert command[command.index('--memory') + 1] == memory
 
 

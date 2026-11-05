@@ -7,6 +7,7 @@ here instead of after release. CI and isolated agent preflight run this command.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 from functools import lru_cache
 import json
 import os
@@ -121,13 +122,16 @@ def resource_limits(target):
         if match is None:
             raise ValueError(f"{target}: production {key} limit must be a literal")
         values[key] = match[1]
-    return ["--cpus", values["cpu"], "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
+    # CFS quotas preserve the configured cap even on a smaller CI host. Docker
+    # rejects --cpus above daemon capacity before the container can start.
+    return ["--cpu-period", "100000", "--cpu-quota", str(int(Decimal(values["cpu"]) * 100000)),
+            "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
 
 
 FIXTURE_BUILD = r'''import datetime as dt, json, pathlib
 from scripts import release_feature_model as model
-work = pathlib.Path("/tmp/installed-fixture")
-work.mkdir()
+work = pathlib.Path("/tmp/shared-datasets-1/_scratch/installed-fixture")
+work.mkdir(parents=True)
 day = dt.date(2026, 5, 2)
 if target == "mpatlas-monthly":
     from ingestion.mpatlas_monthly import run as job
