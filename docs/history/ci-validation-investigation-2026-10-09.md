@@ -1,5 +1,7 @@
 # Concurrent PR validation investigation, October 9, 2026
 
+> Historical evidence. Current behavior is documented in [CI preflight](../ci-preflight.md).
+
 The strongest waste evidence is premature final validation and changing a
 validating checkout, with five simultaneous local drivers on one small Docker
 VM. Hosted image failures are an external boundary; available evidence cannot

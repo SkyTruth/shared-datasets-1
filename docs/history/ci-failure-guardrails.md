@@ -1,5 +1,7 @@
 # Audit failure families and their guardrails
 
+> Historical evidence. Current behavior is documented in [CI preflight](../ci-preflight.md).
+
 The baseline retains 1,683 distinct workflow runs and 1,688 run
 attempts from the original window. It contains 77 failed attempts and three
 cancelled attempts, with 81 unsuccessful job observations across those 80

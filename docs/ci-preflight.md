@@ -1,442 +1,165 @@
 # Complete validation before pushing
 
-## Workflow display names
+## Required boundary
 
-Actions display names use `Domain / Purpose` to group related workflows
-alphabetically. Keep workflow filenames, job names, required check contexts and
-Terraform `sync_name` labels stable; deployment records use these identities.
-`scripts/workflow_identity.py` records current labels followed by explicit
-historical aliases. Update that registry, `workflow_run` subscriptions, worker
-filters and operator documentation together when renaming a workflow. Historical
-aliases preserve reruns and incident replay; they do not bypass verification of
-the actual workflow path, ID, repository or run attempt.
+Finish the [publication decision inventory](publication-readiness.md) before
+expensive dataset validation. For code-only publication changes, use complete
+synthetic batches. Both local preflight and hosted selection first run
+`scripts/publication_runtime_check.py` without production credentials.
 
-The SDK package README retains its released workflow label until a versioned
-SDK release updates that packaged file. The current display name is
-`SDK / Publish TypeScript`; the old `Publish TypeScript SDK` name remains a
-historical alias. Renaming Actions alone must not change published package bytes.
-
-Three workflows retain their existing names: `Bucket hygiene audit`,
-`Catalog drift guard` and `Dataset breaking change alert`. Their exact labels
-appear in the GCP read-only OIDC provider's condition in
-`terraform/envs/prod/github_readonly_iam.tf`. Before renaming those labels, add a
-constrained protected IAM deployment path, approve and apply an overlapping
-old/new-name condition, and verify that policy is live. A display-name-only
-change would otherwise break their authentication. Follow
-the [protected Terraform skill](../.claude/skills/protected-terraform-apply/SKILL.md).
-
-## Validation boundary
-
-Before full preflight for dataset publication work, finish the complete
-[publication decision inventory](publication-readiness.md) and its focused
-runtime checks. Code-only changes use complete synthetic batches instead of
-downloading live datasets. Local preflight runs the bounded, credential-free
-`scripts/publication_runtime_check.py` before Docker builds. The existing
-`geospatial-changes` hosted job runs the same probe before validation fanout;
-no additional workflow or scheduled run is required. This probe verifies the
-shared complete-batch/persistence/allocation boundary, not real-source readiness.
-
-For concurrent work, follow [agent integration](agent-integration.md). Finish
-known overlapping prerequisites and any required main synchronization before
-committing the final head and starting this command.
-
-From a clean checkout with full Git history, run:
+Follow [agent integration](agent-integration.md): resolve prerequisites and
+shared-file changes, synchronize main when required, commit, then freeze the
+clean checkout and exact base/head before full preflight:
 
 ```bash
 uv run python scripts/ci_preflight.py --base <current-main-sha> --head <branch-head-sha>
 ```
 
-Preflight creates a disposable clone under the standard shared-datasets temp
-root, constructs the prospective merge, and runs the same suite commands as CI.
-It does not change the source checkout or index. A merge conflict, shallow
-history, missing comparison, missing required tool, failed test, empty test
-collection, or unexpected skip fails validation. Resolve a missing base before
-retrying; selecting all suites does not make history-dependent checks optional.
+The driver creates an isolated prospective merge under the
+[standard temporary root](standards/local-temp-workspaces.md). It never edits
+the source checkout or index. Conflicts, shallow history, missing tools, failed
+checks, empty collection and unexpected relevant skips fail validation. Missing
+comparison history selects all suites but does not waive history-dependent checks.
+Revalidate after changes to code, base, toolchain or validation contract. Local
+hooks and evidence supplement GitHub checks; they grant no release authority.
 
-Full local preflight takes a nonblocking kernel lock at
-`/tmp/shared-datasets-1/coordination/preflight-<uid>.lock` before creating a clone
-or building images. This host/user scope intentionally spans worktrees, Docker
-contexts and different `TMPDIR`/`SHARED_DATASETS_WORKDIR` settings; it is a
-coordination-path exception to the normal temporary-root override. A busy slot
-exits unsuccessfully and names the owner. It never waits, retries, reuses results,
-or produces passing evidence. Process exit, cancellation or a crash releases the
-lock. Retained PID/revision text is diagnostic only; never delete the lock file
-or infer live ownership from its contents. After a crash, the recovery owner
-checks for surviving Docker builds/containers before starting another full run.
-The lock coordinates cooperating local entrypoints on Unix hosts; it does not
-control other users, remote hosts, direct Docker commands, or old checkouts that
-predate this change.
+One nonblocking kernel lock at
+`/tmp/shared-datasets-1/coordination/preflight-<uid>.lock` admits a full local
+driver across worktrees and temporary roots. A busy slot fails and identifies its
+owner. Do not wait automatically, delete the lock, or edit a validating checkout.
+The kernel releases it on process exit; after a crash, inspect surviving owned
+Docker work before restarting. Focused checks do not take this slot.
 
-Within that single owner, local preflight runs at most two selected suites at a
-time, starting production-image validation first when selected. Each suite keeps
-its existing isolated runtime and evidence directory. The host image checker
-uses a separate source copy that preserves tracked symlinks, keeping its generated
-caches out of the checkout copied into other suites. A failure waits for started
-work to finish before releasing the slot and cannot produce passing preflight
-evidence. Suite selection and final evidence checks remain unchanged.
+## Runtime and evidence
 
-Docker must be running. Preflight copies its clean checkout into disposable
-containers and copies suite evidence back; host file sharing, credentials and
-the Docker socket are never mounted. All six container suites, including the full
-geospatial fixture corpus, run on the Docker server's native Linux architecture
-(AMD64 or ARM64), using the same pinned tool versions and commands as CI.
-Preflight rejects a validation image whose actual platform differs from that
-native runtime. It installs no emulator or system handler and records each
-suite's actual architecture, Docker version and immutable image ID in
-`runtime.json`. The required hosted geospatial suite runs the full corpus on
-AMD64. A local ARM fixture pass does not cover every AMD64-specific code path;
-the actual production-image checks and the hosted suite retain that coverage.
-Preflight installs its pinned Python, uv, Node 22/24,
-Terraform, gitleaks and actionlint binaries inside a Linux container. Native
-fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
-are not forwarded. Downloads and Terraform provider initialization require
-network access. The validation images prepare the locked Python dependency cache
-in a Docker layer keyed by pyproject.toml, uv.lock, the image recipe and its
-pinned runtime. Fresh lint, Python and native containers install from that image
-cache into their own environments; native CI uses the same cache. Locked sync,
-interpreter verification and every suite still run. This caches dependencies,
-not validation evidence. Browser downloads keep their disposable cache, and
-production-image checks keep their isolated host environment.
-Tool versions are owned by the dependency-free
-`scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
-CI setup and image pins are checked against that contract.
+Docker must be running. The driver runs at most two isolated suites at a time,
+starting production images first. Container suites run on the Docker server's
+native Linux AMD64 or ARM64 architecture. Images must match that architecture;
+no emulation is installed. Hosted native fixtures and all production-image
+checks retain AMD64 coverage. Tool pins and installers are owned by
+`scripts/ci_toolchain.py`, `scripts/ci_install_tools.py` and `.github/docker/`.
 
-The production-image suite uses the host Docker client and an isolated host
-environment with the same pinned Python. Host checks need only the standard
-library; application dependencies are installed inside the tested images. Local
-preflight uses an isolated uv environment without installing project dependencies.
-Its process-owned
-HOME, Docker, XDG and gcloud configuration directories contain no caller ADC or
-registry authentication. Only explicit tool paths, locale/temp settings, proxy/CA
-settings and the resolved Docker connection are retained; GitHub/cloud credentials,
-event identity and SSH agents are excluded. Unix and TCP connections are supported;
-required daemon TLS files are copied separately and removed after the suite.
-Unsupported authentication transport fails before validation. The host process
-retains normal filesystem and Docker API capabilities; environment isolation is
-an operational credential boundary, not a sandbox for malicious code. It builds and
-tests the selected actual Linux AMD64 recipes on every host without mounting the
-Docker socket into a validation container. `select_production_images` derives
-that selection from the existing verified comparison, without a second persisted
-selection manifest. Known component edits build their consuming images;
-unknown inputs and shared policy/toolchain changes retain all seven recipes.
-Docker inputs include common ingestion code, WDPA's sea-ice smoke dependency,
-and the viewer's shared HTTP and preview runtime. Required deployment images
-are always included. Viewer runtime edits do not redeploy the usage collector;
-shared Terraform resources and explicit usage/catalog inputs still select it.
-Local preflight always executes the selected suites. Hosted main CI can reuse
-the limited, independently verified PR evidence described below.
+Containers receive copies of the clean source and return evidence; host
+credentials, configuration and the Docker socket are never mounted. Production
+image checks use a separate source copy and the host Docker client, with empty
+HOME/Docker/XDG/gcloud configuration. Only explicit executable paths,
+locale/temporary settings, proxy/CA settings and resolved Unix/TCP Docker
+transport survive. Necessary daemon TLS files are copied separately and removed
+afterwards. SSH/agent transport is unsupported. Host processes retain normal
+filesystem and Docker access; configuration isolation is not a malicious-code
+sandbox. Downloads and read-only Terraform initialization need network access.
 
-GitHub CI retains exactly the selected deployable images with their config and
-rootfs hashes. The runner, `ci-ready` and authenticated deployment consumer
-independently require that exact set; missing or extra images fail. WDPA-only
-validation runs its installed probes and retains the WDPA image for the same
-exact-image deployment handoff as the other ingestions.
-The suite exercises the deployment loader on the actual CI Docker daemon before
-admitting each retained image. Deployment consumes these tested bytes without
-rebuilding.
+Locked dependency sync, interpreter checks and actual executable version probes
+remain mandatory. Per-suite `CI=true`, pinned Python, ARM OpenSSL portability and
+browser reporter settings are recorded by the runner. Browser Git capture is
+disabled because it can make a complete checkout shallow. Worker crashes and
+browser failures remain failures; there are no test retries.
 
-The committed `.github/ingestion-rollout-holds.json` lists scheduled job
-targets whose automatic production deployment is held. The plan reads the
-list from its exact tested tree. Held jobs still run selected validation and
-retain tested images. Their automatic deploy jobs and the canaries inside those
-jobs are skipped. Update the list through review. To stage a later rollout,
-use the existing protected per-job deployment workflow with the approved main
-revision, successful CI attempt and unexpired exact image. Clearing a hold
-alone leaves deployment selection unchanged for that comparison.
+`plan.json` binds base, original head, tested revision/tree, selected suites,
+deployments and contract digest. Each suite records commands, exits, logs,
+actual tools and source attempt. `runtime.json` records platforms and image IDs.
+`preflight.json` exists only after complete verification and source rechecks.
+Successful local preflight removes only its own verified image TARs, retaining
+manifests/hashes/logs. Failed runs retain available evidence and archives.
 
-Hosted native ingestion and dataset-usage image builds restore per-recipe GitHub
-Actions build caches. Catalog-viewer and monitoring-slack use the same Buildx
-`--load` path without remote cache import or export: their small Python dependency
-installs avoid the demonstrated long cache-read stalls. Local BuildKit reuse is
-still available within the job.
-GitHub's branch restrictions isolate PR cache writes from main; PRs can restore
-main's cache. BuildKit invalidates layers when recipe inputs change. Every freshly
-selected image is built, checked by immutable identity, exported, hashed and loaded again.
-Caches never substitute for validation evidence or deployment artifacts. Cache
-export errors are optional acceleration failures; image or validation failures
-still fail the suite. Local preflight retains its existing isolated Docker cache behavior.
+## Selection and PR deployment checks
 
-The seven production recipes pin their Python base tags to reviewed multi-platform
-index digests. This prevents an upstream tag move from silently invalidating the
-dependency layers during unrelated changes. It does not speed up an existing
-cache hit or eliminate registry reads. `.github/dependabot.yml` checks those
-recipes weekly for Python digest and patch updates within Python 3.12, grouping
-compatible updates into reviewable PRs. Go and uv updates are outside this entry.
-Base updates still rebuild affected layers and pass the selected CI suites,
-exact-image handoff and existing deployment approvals; there is no automatic
-merge. WDPA uses the same tested-image deployment path.
+`scripts/ci_contract.py` owns selection. Unknown/shared inputs select all suites;
+component inputs select their consumers. `lint` and `tests` are always present.
+Documentation-only changes run whitespace, secret scanning, locked sync,
+catalog documentation consistency and site generation. Catalog inputs,
+templates, asset docs and fixtures keep their consumer checks. The packaged
+TypeScript README runs both Node release-policy checks.
 
-After all selected suites, final evidence verification and source checks pass,
-full local preflight removes only its own verified image archives. Manifests,
-hashes, command logs and results remain; `runtime.json` records
-`production_image_archives_retained: false`. Failures before that point retain
-any archives already created. GitHub's `run-suite` entrypoint does not perform
-this local cleanup, so hosted deployment artifacts and retention are unchanged.
-The general Linux image includes pinned GDAL headers so the locked Rasterio
-dependency can build on ARM. Browser fixture dependencies have an explicit
-locked `browser` group. Tool setup retains `GODEBUG=asyncpreemptoff=1`; this runtime
-setting does not suppress validation errors.
-Native ARM containers set `OPENSSL_armcap=0`, selecting OpenSSL's portable CPU
-implementation because older Apple Linux VMs advertise unsupported extensions
-([OpenSSL CPU documentation](https://docs.openssl.org/master/man3/OPENSSL_armcap/),
-[upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
-The locked wheel, algorithms and test corpus remain unchanged; this setting is
-included in the recorded runtime evidence.
-Every local suite explicitly runs with `CI=true`. uv selects the pinned Python
-version, and each locked sync is followed by a check of the executing interpreter;
-its actual version is retained in the command log and a mismatch fails validation.
-Browser validation also uses a
-process-owned synthetic GitHub PR event so CI-only reporter behavior is exercised
-without forwarding tokens, real run IDs or caller event data. Playwright Git
-commit/diff capture is disabled: its CI diff collector otherwise fetches the base
-with `--depth=1` and makes a full checkout shallow. The plan owns revision evidence,
-and the full-history invariant is still checked after browser execution.
-Native lint and Node execution also avoid observed UV and subprocess faults under
-AMD64 emulation. Both Node versions execute the same SDK tests and package-byte checks
-as hosted CI; a failed suite remains a failure and is never automatically retried.
-Terraform retains read-only initialization. Linux ARM and AMD64 provider package
-hashes cover the same pinned version and are verified against the reviewed archive
-checksums before inclusion in the locks.
-The lint suite also runs `scripts/terraform_target_contracts.py` with pinned
-Terraform against a disposable source copy and an empty local backend. It reuses
-only lock-verified provider binaries, excludes caller credentials and does not
-read production state. The actual dependency graph must keep every narrow IAM
-target within its exact workflow mutation scope and the prerequisite identities
-in `terraform/iam-plan-prerequisites.json`. Existing ordered bootstrap jobs remain
-valid prerequisites; that policy does not add any resource to an apply allowlist.
-New managed ancestors fail before pushing, including references inside disabled
-dynamic blocks. Retained evidence includes the graph, each target closure and
-negative controls from failed main revision `ffe2dd53`: the telemetry bucket
-dependency must be rejected with collection both disabled and enabled. The usage
-owner provisions its private raw bucket with collection disabled before a later
-reviewed activation may enable shared-bucket logging.
-Browser validation removes its process-owned uv download cache after installing
-the locked fixture environment, reducing Chromium's peak disk use without
-removing installed dependencies or changing test coverage.
-The managed Ubuntu runner and local preflight image supply browser system
-libraries and fonts. The shared suite installs the lockfile-pinned Chromium
-without reinstalling OS packages. Missing libraries or browser launch/rendering
-failures still fail the complete browser suite; there is no automatic OS-install
-fallback.
+Every selected deployment consuming a tested image forces `production-images`
+and its required image target. IaC-only changes build those targets rather than
+all recipes. Traced Docker/probe inputs can require additional images; shared or
+unknown inputs retain all recipes. Narrow automation exceptions are guarded by
+reverse-import and Docker-input tests. Selection never grants mutation authority.
 
-The required `lint` and `tests` jobs stay present for every change.
-Documentation-only changes run whitespace validation (`git diff --check`),
-full-history secret scanning, locked dependency sync, catalog documentation
-consistency and the local catalog site build, without Terraform validation or
-pytest. The credential-free catalog checks share the `tests` job and its single
-dependency sync; the generated site is retained with that suite's evidence.
-Mixed, metadata, executable and unknown changes retain the existing lint,
-workflow syntax, admission, guardrail, catalog, identity and Python checks.
-The catalog and identity checks run before pytest; findings fail the suite.
-It adds native, SDK, image and browser suites according to component dependencies.
-Both selectors use `classify_change` in `scripts/ci_contract.py`: one path's tier
-and additional suites, with no separate policy file or persisted tier state.
+Non-documentation PRs run workflow syntax, Terraform formatting, credential-free
+`init -backend=false`/`validate` for prod and preview, and the real Terraform
+dependency-closure checker. That checker uses a disposable local backend,
+lock-verified providers, exact workflow allowlists and
+`terraform/iam-plan-prerequisites.json`, including historical negative controls.
+It reads no production state. Python policy tests also evaluate provider-free
+Terraform console fixtures. Offline release contracts check declared permissions,
+saved-plan probes, image pushes and signed receipt boundaries before mutation.
+Live IAM, production-state plans and canaries still require protected execution.
 
-Python policy tests parse the checked-in HCL and use the pinned Terraform
-console to evaluate public-folder grants and route-specific CORS settings in
-temporary, provider-free modules. They do not initialize providers, read remote
-state, or use cloud credentials. The `tests` tool evidence includes Terraform;
-the hosted job installs it alongside gitleaks.
+The Python suite runs the complete collection with two workers and no worker
+replacement; only named native fixtures may skip there. Native validation runs
+the complete selected corpus with no skips. SDKs execute Node 22 and 24 tests,
+release policy and packed-consumer checks. Browser validation keeps its
+no-skips/no-retries report gate. See the shared command builder for exact checks
+rather than duplicating command lists here.
 
-| Tier | Additional validation | Deployment selection |
-| --- | --- | --- |
-| Documentation | None beyond the mandatory suites above | None |
-| Metadata | Existing consumer suites | Explicit release dependencies |
-| Component | Existing component/consumer suites | Explicit release dependencies |
-| Infrastructure | Terraform checks in mandatory lint; shared contracts remain broad | Explicit protected infrastructure dependencies |
-| Shared or unknown | All suites | Explicit release dependencies only |
+## Tested images and hosted gate
 
-Markdown files use the documentation tier, including workflow and Terraform
-READMEs. The packaged TypeScript SDK README runs both SDK release-policy checks.
-Catalog inputs, templates, asset metadata and test fixtures retain their
-consumer validation. Non-Markdown tools under guidance directories remain unknown.
-Each `NARROW_PATHS` entry retains its consumer proof. The Slack incident worker,
-notification-verification reuse, operational safety discovery, workflow-failure
-routing, repository announcements and their exact Python
-test modules select only `lint` and `tests`, including the full Python and
-security checks above. Tests named for SDK and WDPA incident recovery exercise
-mocked histories, not SDK/native fixtures. Import-consumer checks and a Docker
-input check over the seven executed production recipes guard the exceptions.
-The separate feature-preview service recipe is built by its own preview workflow;
-it is not validated by the production-images suite. Automation-only plans select
-no images or deployments. Mixed changes union their
-requirements. Workflow/shared-contract changes and unavailable comparisons select
-all suites. Runtime-only deployments reuse installed IAM. Terraform changes and explicit
-IAM workflow/input changes select the existing narrow syncs. Deployment graph
-edges wait for IAM only when those syncs are selected; a selected failed sync
-still blocks its consumers. The catalog, usage and monitoring deploy workflows
-use that same selection signal for their embedded IAM bootstraps. Explicit
-manual infrastructure dispatches retain bootstrap checks.
-Every deployment consuming a tested image forces the production-image suite and
-its required target, including deployments selected only by Terraform changes.
-IaC changes build those required targets rather than every production recipe.
-Tiers never grant mutation authority; tested-artifact, approval,
-permission and terminal-verification gates remain unchanged.
-The standard Python run permits only the six named native fixtures to skip
-and runs the complete collection in two worker processes. Worker crashes fail
-validation without replacement or retry. Subtest labels must be serializable,
-and clock mocks must stay local to the tested module. Native tests remain serial.
-Native validation requires every selected test and every required fixture to pass.
-Browser validation preserves its existing no-skips/no-retries report check.
+Selected production recipes are built and exercised by immutable image identity,
+then exported, hashed and loaded again through the deployment loader. Exact
+config/rootfs hashes bind retained bytes. Layer caches never substitute for
+validation evidence. Native/usage images use per-recipe Actions caches; the
+small viewer/monitoring images avoid the demonstrated long remote-cache stalls.
+Base digest updates remain reviewed dependency changes. Completed cache/handoff
+experiments are in [history](history/); their diagnostic jobs are retired.
 
-Each run prints its retained evidence directory. `plan.json` identifies base,
-original head, tested merge revision/tree and validation-contract digest. Each
-suite records actual tool versions, commands, exits, logs and results;
-`preflight.json` exists only after all selected suites succeed. SDK evidence
-includes the exact tested tarball and its hash. Evidence cannot be reused after
-code, base, toolchain or validation-contract changes: rerun against the current
-base and head before every subsequent push.
+Every hosted suite uploads `ci-result-<suite>-attempt<N>` diagnostics and a compact
+`ci-gate-result-<suite>-attempt<N>` containing only `result.json`. Image TARs are
+separate `ci-image-<target>-attempt<N>` artifacts at compression level 1. The
+image result keeps the selected manifest and logs; its compact receipt requires
+every selected image upload plus diagnostics to succeed. Artifacts last 14 days.
+SDK results retain their exact tested package and hash.
 
-GitHub's always-evaluated `ci-ready` job independently validates every selected
-suite and both SDK matrix entries for its tested revision. Cancelled, missing,
-failed and unexpectedly skipped jobs cannot satisfy it. Local evidence is not
-an approval artifact. Reviews, protected environments and trusted event
-provenance remain GitHub-only authorization boundaries.
+`ci-ready` always evaluates. It downloads compact results and independently
+checks every selected suite, both Node entries, exact revision/tree/contract,
+toolchains and API-proven producing jobs. Missing, failed, cancelled or
+unexpectedly skipped work fails the gate. Its evidence names the original plan
+and suite artifacts. Selective reruns may use passing jobs from earlier attempts
+of the same run only with exact source identity and successful job proof; a
+newer failure cannot reuse an older success.
 
-Main may reuse browser and native validation, and the entire production-image
-suite when every selected recipe is one of MPAtlas, EAMLIS, catalog viewer or
-dataset usage. WDPA and sea ice embed the executor revision; monitoring Slack
-retains its existing infrastructure delivery path. Any selection containing an
-ineligible recipe rebuilds the whole selected image set. Lint, history/security
-and policy tests, SDK validation and the main `ci-ready` gate always run fresh.
+Consumers distinguish the triggering attempt from the execution that produced
+the gate. Gate evidence must be created inside that successful execution's
+window and verified in its declared attempt. Plan/results cannot be newer than
+the gate. A newly executed gate with missing evidence cannot reuse an older gate.
+Image consumers verify API ZIP digests, exact manifests, bounded TARs,
+config/rootfs hashes, loaded images and registry digests; missing evidence fails
+without rebuilding. The loader emits phase timings, not authorization.
 
-`scripts/ci_reuse.py` requires a merged same-repository PR, its final head and
-latest successful CI attempt, and the exact same base, tested tree, changed
-paths, selected suites and toolchain contract. The PR merge parents must match
-that base/head. Contract files must be unchanged from the trusted base, so a PR
-cannot authorize its own weakened verifier merely by matching main's tree.
-Provider workflow/repository identities, successful producing jobs, gate execution
-windows and artifact ZIP digests are checked independently. Recursive reuse is
-not allowed. Missing, expired or insufficiently retained sources run fresh work;
-malformed selected proof fails instead of falling back to a new pass.
+PR-to-main cross-run reuse was removed after observing 0/56 production-image,
+14/56 native and 12/53 browser hits. It never shortened the dominant image
+critical path and required a second provenance/retention policy. Main executes
+selected suites afresh; same-run selective rerun proof remains.
 
-The main suite writes a small result with an explicit `reused_from` reference.
-It skips dependency setup, validation/builds and image uploads. Main's gate
-revalidates the original PR evidence and records `reused_suites`; it does not
-rename original manifests, tags or tested SHAs. A deployment first verifies its
-ordinary main authorization and wrapper, then independently verifies the recorded
-PR producer and loads its original exact bytes. A later PR rerun cannot revoke
-an already accepted main artifact; the recorded successful producer and all byte
-checks remain mandatory. Main remains the executor and publishing authority.
+A newer PR run cancels the whole obsolete PR graph. Main-push and manual runs
+have unique concurrency groups and retain their evidence. Protected deployments
+keep non-cancelling state locks. The complete CI workflow runs on every PR with
+no workflow-level path filters; retain required checks through any ruleset
+migration. `.github/ingestion-rollout-holds.json` still suppresses only automatic
+ingestion deployment: validation and image retention continue. Clearing a hold
+alone does not select a new deployment.
 
-Reusable PR proof/results and four image archives are retained for 30 days.
-Adoption requires every source dependency to remain available until at least
-15 days after the exact main producer job started. That exceeds the existing
-14-day result retention plus the maximum 60-minute producer timeout, including
-selective reruns. Old PRs or shorter actual provider retention fall back to fresh
-validation. Main artifacts keep their 14-day retention. This uses extra artifact
-storage to avoid computation; it does not move validation to another runner.
+## Workflow names and focused checks
 
-CI cancellation belongs to the whole PR workflow, so a newer PR run cancels the
-obsolete selection, suites and gate together. Push-to-main and manual runs use
-separate groups per run and are never cancelled by this PR policy; deployment
-consumers retain their tested-image and SDK evidence. Selective reruns still
-require the existing exact-attempt provenance and compatibility checks.
+Actions labels use `Domain / Purpose`; filenames/job names remain stable for
+provenance. `scripts/workflow_identity.py` retains historical display-name aliases.
+The packaged SDK README keeps its released label until a versioned SDK release.
+`Bucket hygiene audit`, `Catalog drift guard` and `Dataset breaking change alert`
+labels are also bound in the read-only OIDC provider: renaming needs a reviewed
+protected IAM change first. The actionlint adapter independently validates
+`concurrency.queue` before omitting that unsupported scalar from parser input.
 
-Existing `lint`, `tests` and `geospatial-changes` requirements remain available
-during migration. Add `ci-ready` while retaining them, verify positive and
-negative behavior, then remove redundant requirements. The complete CI workflow
-remains active on every PR; it has no workflow-level path filters. SDK and browser
-validation are consolidated into this workflow, preserving Node 22/24 coverage.
-
-GitHub artifacts include their producing run attempt. Selective validation
-reruns may reuse a prior passing suite only when the Actions API proves its
-exact CI workflow, source revision and successful producing job, and its
-base/tree/toolchain contract matches. The latest result for each suite wins;
-a newer failed result cannot reuse an older success. `ci-ready-evidence` names
-the exact selected plan and suite artifacts for consumers of tested bytes.
-
-Deployment consumers distinguish the triggering CI attempt from the attempt
-that actually executed `ci-ready`. A downstream-only rerun can retain that
-successful execution while Actions reports it under a newer attempt. Consumers
-select the single unexpired gate-evidence artifact created within the effective
-gate's start/completion window and verify the same execution in its declared
-producing attempt. Plan and suite references cannot be newer than that gate.
-A newly executed gate with missing evidence fails; it cannot reuse an older gate.
-
-Each suite first uploads its `ci-result-<suite>-attempt<N>` artifact,
-then uploads `ci-gate-result-<suite>-attempt<N>` containing only `result.json`.
-Selected deployment images are retained separately as
-`ci-image-<target>-attempt<N>` artifacts, each containing exactly one
-`<target>.docker.tar` with compression level 1. Its result artifact retains
-the exact selected-image manifest, result and diagnostic logs, excluding TARs.
-For fresh production-image results, the compact upload requires every selected
-image upload and the diagnostic upload to succeed; a missing selected file fails
-retention. A reused result requires its verified wrapper upload instead.
-Unselected and reused image uploads are skipped.
-Other suites retain their existing complete result bundles. The compact upload
-fails if its result file is missing. `ci-ready` downloads only compact results,
-preserving its revision, tree, contract, toolchain and producing-job checks.
-Its `suite_artifacts` evidence names each suite's result artifact. Image
-deployment consumers verify the small result and complete manifest, then download
-only the selected target artifact from that same producing attempt. Both ZIPs
-must match their GitHub API SHA-256 digests; TAR, config, platform, rootfs-layer,
-loaded-image and registry-image verification remain required. Missing, ambiguous,
-expired or incompatible artifacts fail without rebuilding or falling back.
-SDK consumers retain their existing package-byte verification;
-diagnostic logs and deployment bundles remain available for 14 days.
-
-The loader prints `TESTED_IMAGE_HANDOFF` JSON phase timings for source
-authorization, result verification, image download, ZIP verification/extraction,
-TAR/rootfs verification, Docker loading and loaded-config verification. These
-logs do not grant deployment authority or replace signed terminal evidence.
-
-Same-repository PRs changing the image loader, bundle verifier or benchmark script
-run a read-only hosted handoff benchmark. It retains a full-bundle compression-zero
-baseline and MPAtlas-only artifacts at compression levels zero and one, all
-from the same successful image producer. A separate Ubuntu runner measures two
-trials per variant in forward/reverse order after a separately recorded warm-up,
-preserving image checks and recording cache state, actual artifact IDs, Docker
-versions and phase timings. Level one uses the normal retained deployment image;
-only the full baseline and level-zero image require additional uploads.
-The original baseline loader is read from revision `7bcded0`. Main-only production
-authorization is excluded from this PR diagnostic; no production environment,
-GCP authentication, image push or deployment runs in the benchmark job. Its
-`image-handoff-benchmark-attempt<N>` artifact contains the measurements. Other
-changes and main runs do not select this extra benchmark.
-
-A selective benchmark rerun retains the successful plan and image producers.
-It resolves their attempts independently from artifact creation times within
-the effective jobs' execution windows, then verifies the same successful
-executions in those original attempts. Every trial reads the original image
-attempt; a new failed producer or missing upload cannot fall back to older bytes.
-
-The pinned actionlint version predates GitHub's `concurrency.queue` field.
-`scripts/check_workflow_syntax.py` independently requires `queue: max` together
-with explicit `cancel-in-progress: false`, then omits only that validated scalar
-line in disposable parser input. All remaining syntax errors fail normally;
-production workflow files and concurrency behavior are unchanged.
-
-Each protected deployment signs and verifies a synthetic receipt in its own run
-before creating a deployment record or mutating production. The pinned official
-verifier checks the exact bytes, main revision, distinct caller and signer
-identities and producing run. An unsigned fixture or a locally passing test
-cannot replace this live check. See [deployment contracts](deployment-contracts.md)
-for the claim and outcome signing requirements.
-
-## Focused local checks
-
-For quick feedback during editing, the default Python suite uses local fixtures
-and mocked GCS, Slack, and source downloads:
+During editing, use the locked uv environment and affected tests:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run pytest
-UV_CACHE_DIR=.uv-cache uv run ruff check .
+uv run pytest -q <affected-test-files>
+uv run ruff check .
+uv run python scripts/check_workflow_syntax.py
 ```
 
-The locked dev group includes GeoPandas and Rasterio for tiny generated FGB/COG
-consumer fixtures; exact-byte Python SDK fetching does not require them.
-Native tests need GDAL CLIs, PMTiles, and the Tippecanoe decoder. Enable the GDAL
-fixtures explicitly for a focused local run:
-
-```bash
-RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
-  tests/test_raster_standards.py tests/test_wdpa_monthly.py \
-  tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py
-```
-
-For standalone Terraform formatting/validation, use the pinned version in
-`scripts/ci_toolchain.py`, run `terraform fmt -check -recursive terraform/`, and
-initialize prod and preview with `init -backend=false -input=false` before
-`validate`. Older Terraform versions reject the optional-variable syntax.
-Focused checks supplement the required complete preflight above.
+Native fixture runs additionally require pinned GDAL, Tippecanoe and PMTiles and
+`RUN_GDAL_INTEGRATION_TESTS=1`. For standalone Terraform checks, use the pinned
+version, `terraform fmt -check -recursive terraform/`, then initialize each
+environment with `-backend=false -input=false -lockfile=readonly` and validate.
+Focused checks do not replace full clean-checkout preflight before pushing.

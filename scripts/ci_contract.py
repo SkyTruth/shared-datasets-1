@@ -7,7 +7,6 @@ not permission to publish or deploy.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import hashlib
 import json
 from pathlib import Path
@@ -56,7 +55,7 @@ CONTRACT_FILES = (
     "scripts/check_workflow_syntax.py",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "scripts/check_identity_resolutions.py",
-    "scripts/ci_source_proof.py", "scripts/ci_reuse.py",
+    "scripts/ci_source_proof.py",
     "scripts/sdk_release_authorization.py", "scripts/dataset_mutation_authorization.py",
     "scripts/reviewed_dataset_plan.py", "scripts/github_api_read.py",
     "scripts/deployment_revision.py", "scripts/workflow_identity.py",
@@ -451,7 +450,6 @@ def verify_results(
     plan: dict, results: list[dict], jobs: dict | None = None, *,
     source_proofs: dict[int, set[str]] | None = None,
     run_id: str | None = None, run_attempt: int | None = None,
-    reuse_verifier: Callable[[dict], object] | None = None,
 ) -> dict[str, dict]:
     if plan.get("schema_version") != 1 or not plan.get("suites"):
         raise ValueError("invalid validation plan")
@@ -499,10 +497,8 @@ def verify_results(
         if result.get("tools") != expected_tools(suite):
             raise ValueError(f"{suite} used an unexpected toolchain")
         if "reused_from" in result:
-            if source_proofs is None or reuse_verifier is None:
-                raise ValueError(f"{suite} reuse has no independently verified source")
-            reuse_verifier(result)
-        elif suite == "production-images":
+            raise ValueError("cross-run validation reuse is not supported")
+        if suite == "production-images":
             try:
                 images = validate_manifest(result.get("production_images"), plan["tested_sha"])
             except ImageError as exc:
