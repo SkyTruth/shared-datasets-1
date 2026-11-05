@@ -32,7 +32,7 @@ def plan(suites=SUITES):
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
         "tested_sha": "c" * 40, "tree": "d" * 40,
-        "contract_digest": "e" * 64, "suites": list(suites),
+        "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": list(BUILD_TARGETS) if "production-images" in suites else [],
     }
 
 
@@ -45,6 +45,7 @@ def results_for(validation):
     for result in results:
         if result["suite"] == "production-images":
             result["production_images"] = production_images(validation["tested_sha"])
+            result["production_images"]["images"] = {target: image for target, image in result["production_images"]["images"].items() if target in validation["production_image_targets"]}
     return results
 
 
@@ -376,6 +377,15 @@ def fixture_repo(tmp_path):
     return root, run
 
 
+def emit_plan(root, base, work):
+    output, github_output = work / "plan.json", work / "github-output"
+    result = subprocess.run([preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan", "--base", base,
+        "--output", str(output), "--github-output", str(github_output)], cwd=root,
+        env={key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    return json.loads(output.read_text()), dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+
+
 def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     source, git = fixture_repo(tmp_path)
     holds = source / preflight.INGESTION_ROLLOUT_HOLDS
@@ -392,13 +402,7 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     runtime_head = git("rev-parse", "HEAD")
     holds.write_text("{}\n")  # The plan reads the committed tree.
 
-    output, github_output = tmp_path / "plan.json", tmp_path / "github-output"
-    subprocess.run([
-        preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan",
-        "--base", base, "--output", str(output), "--github-output", str(github_output),
-    ], cwd=source, check=True)
-    plan = json.loads(output.read_text())
-    emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    plan, emitted = emit_plan(source, base, tmp_path)
     assert plan["deployments"] == []
     assert {emitted[target] for target in INGESTION_DEPLOYMENTS} == {"false"}
     assert {"lint", "tests", "production-images", "geospatial-integration"} <= set(plan["suites"])
@@ -432,15 +436,7 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
         target.write_text("automation fixture\n")
     git("add", ".")
     git("commit", "-m", "automation")
-    output, github_output = tmp_path / "plan.json", tmp_path / "github-output"
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}
-    completed = subprocess.run([
-        preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan",
-        "--base", base, "--output", str(output), "--github-output", str(github_output),
-    ], cwd=source, env=environment, capture_output=True, text=True, check=False)
-    assert completed.returncode == 0, completed.stderr
-    validation = json.loads(output.read_text())
-    emitted = dict(line.split("=", 1) for line in github_output.read_text().splitlines())
+    validation, emitted = emit_plan(source, base, tmp_path)
     assert validation["suites"] == ["lint", "tests"]
     assert validation["deployments"] == []
     assert json.loads(emitted["production-image-targets"]) == []

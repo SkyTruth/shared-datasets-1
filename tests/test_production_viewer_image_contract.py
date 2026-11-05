@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from scripts.production_image_contracts import FIXTURE_BUILD, INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, cached_build, commands, main, resolve_image, resource_limits, verify_viewer_image
+from scripts.production_image_contracts import INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, cached_build, commands, main, resolve_image, resource_limits, verify_viewer_image
 from scripts.tested_image_bundle import BUILD_TARGETS, ROOT
 
 IMAGE_ID = 'sha256:' + 'a' * 64
@@ -293,7 +293,11 @@ def test_failed_selected_installed_probe_cannot_emit_manifest(tmp_path, monkeypa
 def test_every_installed_probe_uses_production_limits(target, cpu, memory):
     assert target in BUILD_TARGETS
     assert resource_limits(target) == ['--cpu-period', '100000', '--cpu-quota', str(int(cpu) * 100000), '--memory', memory]
-    for command in commands(target, 'b' * 40, image_id=IMAGE_ID)[1:]:
+    selected = commands(target, 'b' * 40, image_id=IMAGE_ID)
+    if target in {'sea-ice-daily', 'wdpa-monthly'}:
+        synthetic = next(command for command in selected if 'scripts/local_ingestion_smoke.py' in command or (ROOT / 'scripts/local_ingestion_smoke.py').read_text() in command)
+        assert ('--sea-ice-only' in synthetic) is (target == 'sea-ice-daily')
+    for command in selected[1:]:
         if command[:2] == ['docker', 'run']:
             assert command[command.index('--cpu-period') + 1] == '100000'
             assert command[command.index('--cpu-quota') + 1] == str(int(cpu) * 100000)
@@ -310,4 +314,20 @@ def test_installed_fixture_builds_reuse_native_test_inputs(target):
     else:
         assert [row['properties'] for row in fixture['geojson']['features']] == [
             problem('P1', OBJECTID=7), problem('P2', OBJECTID=9), area('AREA2', OBJECTID=11)]
-    assert any(FIXTURE_BUILD in command[-1] for command in commands(target, 'b' * 40)[1:])
+    assert any((ROOT / 'scripts/installed_ingestion_fixture.py').read_text() in command for command in commands(target, 'b' * 40)[1:])
+
+
+def test_wdpa_fixture_carries_translation_fields_through_its_real_cli_input(tmp_path, monkeypatch):
+    from scripts import local_ingestion_smoke as smoke
+    from ingestion.wdpa_monthly import translations
+    def build(command, **kwargs):
+        assert command[1] == "scripts/local_wdpa_sample.py" and "--discover-only" not in command
+        features = json.loads((tmp_path / "source.geojson").read_text())["features"]
+        assert {row["properties"]["MARINE"] for row in features} == {"0", "1"}
+        assert all(set(translations.FIELDS) <= row["properties"].keys() for row in features)
+        output = tmp_path / "build"
+        output.mkdir()
+        (output / "benchmark.json").write_text(json.dumps(dict(state="succeeded", contracts_verified=True,
+            assets={slug: {"rows": 1} for slug in ("wdpa-marine", "wdpa-terrestrial")})))
+    monkeypatch.setattr(smoke.subprocess, "run", build)
+    assert smoke.wdpa_build(tmp_path)["state"] == "succeeded"

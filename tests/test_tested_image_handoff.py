@@ -128,7 +128,7 @@ def handoff(tmp_path, monkeypatch):
         files["images/" + images[target]["archive"]] = raw
     manifest = {"schema_version": 1, "tested_sha": SHA, "images": images}
     identity = {"schema_version": 1, "base": "b" * 40, "head": SHA, "tested_sha": SHA, "tree": "tree", "contract_digest": "contract"}
-    plan = {**identity, "suites": ["production-images"], "changed_paths": ["scripts/ci_contract.py"], "selection_reason": "classified",
+    plan = {**identity, "suites": ["production-images"], "production_image_targets": list(bundle.BUILD_TARGETS), "changed_paths": ["scripts/ci_contract.py"], "selection_reason": "classified",
             "source": {"run_id": "123", "run_attempt": 1}}
     evidence = {**plan, "source": {"run_id": "123", "run_attempt": 2}, "status": "success", "plan_artifact": "ci-validation-plan-attempt1",
                 "suite_artifacts": {"production-images": "ci-result-production-images-attempt1"}}
@@ -429,7 +429,8 @@ def test_real_packing_function_produces_consumer_accepted_manifest_and_bytes(tmp
     bundle.verify_archive(tmp_path / actual["archive"], actual)
 
 
-@pytest.mark.parametrize("paths,target", [(None, "sea-ice-daily"), (["ingestion/eamlis_monthly/run.py"], "eamlis-monthly"), (["ingestion/wdpa_monthly/run.py"], None)])
+@pytest.mark.parametrize("paths,target", [(None, "sea-ice-daily"), (["ingestion/eamlis_monthly/run.py"], "eamlis-monthly"), (["ingestion/wdpa_monthly/run.py"], None),
+    ("mpatlas", "mpatlas-monthly"), ("eamlis", "eamlis-monthly"), ("wdpa", "wdpa-monthly"), ("sea_ice", "sea-ice-daily")])
 def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(handoff, monkeypatch, paths, target):
     from threading import RLock
     from scripts import ci_preflight
@@ -437,16 +438,19 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
     output = handoff["root"] / "producer"
     with zipfile.ZipFile(io.BytesIO(handoff["payloads"][1])) as archive:
         plan = json.loads(archive.read("plan.json"))
-    plan["changed_paths"] = paths
+    released = (paths,) if isinstance(paths, str) else ()
+    paths = [ci_preflight.INGESTION_ROLLOUT_HOLDS] if released else paths
+    selection = ci_preflight.resolve_selection(paths, released_holds=released)
+    plan.update(selection, changed_paths=paths)
     with zipfile.ZipFile(io.BytesIO(handoff["payloads"][0])) as archive:
         evidence = json.loads(archive.read("evidence.json"))
-    evidence["changed_paths"] = paths
+    evidence.update(selection, changed_paths=paths)
     handoff["payloads"][0] = zipped({"evidence.json": evidence})
     handoff["payloads"][1] = zipped({"plan.json": plan})
     for index in (0, 1):
         payload = handoff["payloads"][index]
         handoff["artifacts"][index].update(size_in_bytes=len(payload), digest="sha256:" + hashlib.sha256(payload).hexdigest())
-    expected = set(ci_preflight.select_production_images(paths))
+    expected = set(plan["production_image_targets"])
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     monkeypatch.setattr(ci_preflight, "validate_checkout", lambda *_: None)

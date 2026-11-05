@@ -2,7 +2,6 @@ import ast
 import json
 import re
 import subprocess
-import sys
 from graphlib import TopologicalSorter
 from pathlib import Path
 
@@ -216,7 +215,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
 
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
-    commands = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
+    commands = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head", **ci_preflight.resolve_selection(None)}, ROOT)]
     from scripts.tested_image_bundle import BUILD_TARGETS
     assert [args[args.index("--target") + 1] for args in commands] == list(BUILD_TARGETS)
     for args, target in zip(commands, BUILD_TARGETS, strict=True):
@@ -346,7 +345,7 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
      {"mpatlas", "ingestion_iam", "artifact_registry_iam", "cron_alert_policy"}),
 ])
 def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skipped(tmp_path, monkeypatch, paths, expected):
-    from test_ci_preflight import fixture_repo
+    from test_ci_preflight import fixture_repo, emit_plan
 
     jobs = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
     root, git = fixture_repo(tmp_path)
@@ -357,13 +356,8 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
         destination.write_text("changed fixture\n")
     git("add", ".")
     git("commit", "--allow-empty", "-m", "selected changes")
-    monkeypatch.chdir(root)
-    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base,
-                                     "--output", str(tmp_path / "plan.json"),
-                                     "--github-output", str(tmp_path / "outputs")])
-    assert ci_preflight.main() == 0
-    assert set(json.loads((tmp_path / "plan.json").read_text())["deployments"]) == expected
-    outputs = dict(line.split("=", 1) for line in (tmp_path / "outputs").read_text().splitlines())
+    plan, outputs = emit_plan(root, base, tmp_path)
+    assert set(plan["deployments"]) == expected
     values = {
         "github.event_name": "push", "github.ref": "refs/heads/main",
         **{f"needs.geospatial-changes.outputs.{key}": value for key, value in outputs.items()},
@@ -377,26 +371,35 @@ def test_plan_outputs_drive_only_selected_callers_with_optional_ancestors_skippe
         assert condition_result(jobs[target.replace("_", "-")], values) is (target in expected)
 
 
-def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, monkeypatch):
-    from test_ci_preflight import fixture_repo
+@pytest.mark.parametrize("target,selection", [(None, "eamlis"), ("mpatlas-monthly", "mpatlas"), ("eamlis-monthly", "eamlis"), ("wdpa-monthly", "wdpa"), ("sea-ice-daily", "sea_ice")])
+def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, monkeypatch, target, selection):
+    from test_ci_preflight import fixture_repo, emit_plan
 
     root, git = fixture_repo(tmp_path)
+    if target:
+        holds = root / ci_preflight.INGESTION_ROLLOUT_HOLDS
+        entry = dict(owner="jonaraphael", reason="review", expires_at="2099-01-01T00:00:00Z")
+        holds.write_text(json.dumps({selection: entry}))
+        git("add", ".")
+        git("commit", "-m", "hold")
     base = git("rev-parse", "HEAD")
-    source = root / "ingestion/eamlis_monthly/run.py"
-    source.parent.mkdir(parents=True)
-    source.write_text("changed fixture\n")
+    if target:
+        holds.write_text("{}\n")
+    else:
+        source = root / "ingestion/eamlis_monthly/run.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("changed fixture\n")
+        target = "eamlis-monthly"
     git("add", ".")
-    git("commit", "-m", "EAMLIS change")
-    monkeypatch.chdir(root)
-    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base,
-                                     "--output", str(tmp_path / "plan.json"),
-                                     "--github-output", str(tmp_path / "outputs")])
-    assert ci_preflight.main() == 0
-    plan = json.loads((tmp_path / "plan.json").read_text())
-    outputs = dict(line.split("=", 1) for line in (tmp_path / "outputs").read_text().splitlines())
-    assert json.loads(outputs["production-image-targets"]) == ["eamlis-monthly"]
+    git("commit", "-m", "release")
+    plan, outputs = emit_plan(root, base, tmp_path)
+    assert plan["deployments"] == [selection] and outputs[selection] == "true"
+    assert "production-images" in plan["suites"] and "geospatial-integration" in plan["suites"]
+    assert json.loads(outputs["production-image-targets"]) == plan["production_image_targets"] == [target]
+    from test_ci_preflight import results_for, jobs_for
+    ci_preflight.verify_results(plan, results_for(plan), jobs_for(plan))
     command = suite_commands("production-images", root, plan, tmp_path)[0][0]
-    assert command[command.index("--target"):] == ["--target", "eamlis-monthly", "--output", str(tmp_path / "eamlis-monthly")]
+    assert command[command.index("--target"):] == ["--target", target, "--output", str(tmp_path / target)]
 
 
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
@@ -452,3 +455,24 @@ def test_nested_terraform_bootstrap_selects_only_its_registered_automatic_consum
         'artifact_registry_iam', 'preview_terraform_iam', 'scratch_cleanup_iam',
         'cron_alert_policy', 'ingestion_iam', 'dataset_usage',
     }
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_plan_rejects_an_iam_prerequisite_without_its_declaration(tmp_path, monkeypatch, declared):
+    from scripts import ci_contract as contract
+    prod = tmp_path / "terraform/envs/prod"
+    prod.mkdir(parents=True)
+    (prod / "iam.tf").write_text('resource "google_project_iam_custom_role" "reader" {}' if declared else '')
+    (tmp_path / "terraform/iam-plan-prerequisites.json").write_text(json.dumps({"jobs": {"sync/prepare": ["google_project_iam_custom_role.reader"]}}))
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github/terraform-targets.json").write_text(json.dumps({"schema_version": 1, "targets": {}}))
+    monkeypatch.setattr(contract, "ROOT", tmp_path)
+    contract.deployment_paths.cache_clear()
+    try:
+        if declared:
+            contract.deployment_paths()
+        else:
+            with pytest.raises(ValueError, match="IAM prerequisite has no Terraform declaration"):
+                contract.deployment_paths()
+    finally:
+        contract.deployment_paths.cache_clear()

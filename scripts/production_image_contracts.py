@@ -128,37 +128,6 @@ def resource_limits(target):
             "--memory", values["memory"].replace("Gi", "g").replace("Mi", "m")]
 
 
-FIXTURE_BUILD = r'''import datetime as dt, json, pathlib
-from scripts import release_feature_model as model
-work = pathlib.Path("/tmp/shared-datasets-1/_scratch/installed-fixture")
-work.mkdir(parents=True)
-day = dt.date(2026, 5, 2)
-if target == "mpatlas-monthly":
-    from ingestion.mpatlas_monthly import run as job
-    source = work / "source.geojson"
-    source.write_text(json.dumps(fixture))
-    enriched, records, _ = job.prepare_metadata(source, work, day)
-    output = job.build_outputs(enriched, records, work, day)
-else:
-    from ingestion.eamlis_monthly import run as job, identity, identity_state
-    source = work / "source.geojson"
-    source.write_text(json.dumps(fixture["geojson"]))
-    state = fixture["source"]
-    state["stats"] = job.SourceStats(**state["stats"])
-    state["fields"] = tuple(state["fields"])
-    ledger = identity.Ledger.genesis().reserve(identity.classify_release(
-        row["properties"] for row in fixture["geojson"]["features"]))
-    output = job.build_asset_output(source=job.SourceState(**state),
-        extract=job.SourceExtract(source, 3, 0), workdir=work, release_date=day,
-        identity_reservation=identity_state.Reservation(ledger, {"path": "fixture"}, 1, None))
-assert output.row_count == 3
-validation = model.validate_sidecar_records(model.read_metadata_sidecar(output.metadata),
-    expected_asset_slug=job.ASSET.slug, expected_release=day.isoformat())
-assert validation.valid and validation.feature_count == 3
-assert output.pmtiles.read_bytes()[:7] == b"PMTiles"
-'''
-
-
 def commands(target, executor, *, image_id=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
@@ -174,14 +143,17 @@ def commands(target, executor, *, image_id=None):
                 run + ["--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()]]
     run += [tested_image, "python"]
     checks = [run + ["-c", INTERPRETER_PROBE], run + ["-c", NATIVE_VERSION_PROBE]]
+    if target == "wdpa-monthly":
+        checks.append(run + ["scripts/wdpa_input_memory_probe.py", "--help"])
+    # Source lives in linted modules; execution uses installed code, never a source mount.
     if target in {"eamlis-monthly", "mpatlas-monthly"}:
-        fixture = (ROOT / f"tests/fixtures/production_images/{target}.json").read_text()
-        checks.append(run + ["-c", f"target={target!r}\nfixture=__import__('json').loads({fixture!r})\n" + FIXTURE_BUILD])
-    elif target == "wdpa-monthly":
-        checks += [run + ["scripts/wdpa_input_memory_probe.py", "--help"],
-                   run + ["scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
+        checks.append(run + ["-c", (ROOT / "scripts/installed_ingestion_fixture.py").read_text(), target,
+            (ROOT / f"tests/fixtures/production_images/{target}.json").read_text()])
     else:
-        checks.append(run + ["-c", f"import ingestion.{target.replace('-', '_')}.run"])
+        smoke = ["scripts/local_ingestion_smoke.py"] if target == "wdpa-monthly" else ["-c", (ROOT / "scripts/local_ingestion_smoke.py").read_text()]
+        checks.append(run + [*smoke,
+            "--workdir", "/tmp/shared-datasets-1/_scratch/installed-fixture",
+            *(["--sea-ice-only"] if target == "sea-ice-daily" else [])])
     return [build, *checks]
 
 
