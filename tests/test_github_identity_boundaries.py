@@ -94,6 +94,11 @@ def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
     scope = registry['targets']['GitHub workflow identity sync']
     assert scope['block_deletes'] is False  # Existing IAM members replace when their principal changes.
     assert 'google_service_account_iam_binding.github_actions_terraform_wif' in scope['resources']
+    identities = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]['github_job_permissions']
+    for identity in identities:
+        for kind, name in [('google_service_account', 'github_job'), ('google_project_iam_custom_role', 'github_job'),
+                           ('google_project_iam_member', 'github_job'), ('google_service_account_iam_member', 'github_job_wif')]:
+            assert f'{kind}.{name}["{identity}"]' in scope['resources']
     assert 'artifact-registry-iam' in workflow('ci.yml')['jobs']['preview-terraform-iam']['needs']
     from scripts.terraform_plan_allowlist import blocked_changes
     def row(address):
