@@ -24,7 +24,9 @@
         "google_project_service.monitoring_slack_pubsub",
         "google_project_iam_custom_role.monitoring_alert_policy_manager",
         "google_project_iam_member.github_actions_monitoring_alert_policy_manager",
-        "google_project_iam_custom_role.monitoring_incident_reader"
+        "google_project_iam_custom_role.monitoring_incident_reader",
+        "google_project_iam_custom_role.operational_safety_reader",
+        "google_project_iam_member.operational_safety_reader"
       ],
       "block_deletes": true,
       "post_apply_wait_seconds": 30
