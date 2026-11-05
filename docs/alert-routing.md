@@ -318,3 +318,9 @@ gcloud secrets versions add shared-datasets-slack-webhook-url \
 
 This webhook configuration is separate from the bot settings and delivery
 reconciliation owned by [Slack incidents](slack-incidents.md).
+
+Dataset breaking-change advisories run only on PRs changing
+`.github/dataset-plans/**`, including body edits while such a plan is present.
+Every valid publish/delete requires an immutable plan; code and documentation PRs
+without one allocate no advisory routing runner. The advisory still independently
+validates the plan, PR snapshot and proposed schema before sending anything.
