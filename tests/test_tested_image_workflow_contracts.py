@@ -31,8 +31,7 @@ def deployment_steps(target):
             if 'run' in step:
                 step['run'] = step['run'].replace('$WORKFLOW_FILE', config['workflow']).replace('$TARGET', target)
         return steps
-    return next(list(expanded_steps(ROOT, job)) for job in value["jobs"].values()
-                if any("tested_image_authorization.py" in step.get("run", "") for step in job.get("steps", [])))
+    return [step for name in ('prepare', 'deploy') for step in expanded_steps(ROOT, value['jobs'][name])]
 
 
 def image_contract(steps, target):

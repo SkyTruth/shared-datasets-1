@@ -341,7 +341,7 @@ def test_usage_deployment_is_protected_and_uses_tested_images_without_schedule_r
     job = workflow['jobs']['deploy']
     assert job['environment'] == 'shared-datasets-production'
     assert job['concurrency'] == {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
-    shell = '\n'.join(step.get('run', '') for step in job['steps'])
+    shell = '\n'.join(step.get('run', '') for step in workflow['jobs']['prepare']['steps'] + job['steps'])
     assert 'tested_image_authorization.py' in shell
     assert 'docker build ' not in shell
     assert 'scheduler jobs resume' not in shell

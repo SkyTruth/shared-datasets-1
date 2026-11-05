@@ -105,7 +105,7 @@ def assert_protected_terraform_sync(
         {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
-    guard = steps["Validate main ref"]["run"]
+    guard = job['steps'][0]["run"]
     testcase.assertIn('"${GITHUB_REF}" != "refs/heads/main"', guard)
     testcase.assertIn(f".github/workflows/{workflow_path.name}@refs/heads/main", guard)
     testcase.assertIn(".github/workflows/ci.yml@refs/heads/main", guard)
@@ -302,7 +302,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             for step in workflow["jobs"]["sync"]["steps"]
             if "name" in step
         ]
-        verify_run = steps["Verify catalog CDN routes"]["run"]
+        verify_run = workflow_steps_by_name(workflow, 'verify')["Verify catalog CDN routes"]["run"]
         enforce_run = steps["Enforce PMTiles resource-change allowlist"]["run"]
         bootstrap_targets = {
             "google_storage_bucket.shared_bucket",
@@ -322,7 +322,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             step_names.index("Terraform plan"),
         )
         self.assertLess(
-            step_names.index("Wait for PMTiles managed-folder IAM propagation"),
+            step_names.index("Verify PMTiles managed-folder dependencies"),
             step_names.index("Terraform plan"),
         )
         self.assertEqual(terraform_targets(bootstrap_plan), bootstrap_targets)
@@ -339,7 +339,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             "terraform_retry.sh\" -chdir=terraform/envs/prod apply -input=false",
             steps["Terraform apply PMTiles managed-folder IAM bootstrap"]["run"],
         )
-        self.assertEqual(steps["Wait for PMTiles managed-folder IAM propagation"]["run"], "sleep 30")
+        self.assertFalse(any('sleep 30' in step.get('run', '') for step in workflow['jobs']['sync']['steps']))
 
         self.assertEqual(
             python_literal_string_set(enforce_run, "allowed_for_each_prefixes"),
@@ -354,7 +354,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn('"delete" in actions', enforce_run)
 
         self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])
-        self.assertIn('--path="/_catalog/*"', steps["Invalidate catalog CDN cache"]["run"])
+        self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
         self.assertIn(
             'check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"',
             verify_run,

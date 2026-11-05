@@ -151,82 +151,32 @@ jobs:
         echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
     - name: Smoke-test native tools in image
+      env:
+        RASTER_TOOLS: ${{ fromJSON(steps.target.outputs.config).synthetic_smoke }}
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
       run: |
         set -euo pipefail
         docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c \
           'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version && command -v tippecanoe-decode'
-        if [[ "$TARGET" == sea-ice-daily ]]; then
+        if [[ "$RASTER_TOOLS" == true ]]; then
           docker run --platform linux/amd64 --rm "$IMAGE_TAG" sh -c 'gdal_calc.py --help && gdal_polygonize.py --help'
         fi
     - name: Smoke-test job import closure in image
+      env:
+        IMPORT_PROBE: ${{ fromJSON(steps.target.outputs.config).import_probe }}
       if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true'
       run: |
         set -euo pipefail
         module="${TARGET//-/_}"
         docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c \
           "import ingestion.${module}.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset"
-        if [[ "$TARGET" == wdpa-monthly ]]; then
-          docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c \
-            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.automatic; import scripts.feature_metadata_localization, scripts.translation_local_io'
-        fi
+        docker run --platform linux/amd64 --rm "$IMAGE_TAG" python -c "$IMPORT_PROBE"
     - name: Smoke-test synthetic sea-ice build path in image
-      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && inputs.target == 'sea-ice-daily'
+      if: steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' && fromJSON(steps.target.outputs.config).synthetic_smoke
       run: |
-        set -euo pipefail
-
-        docker run --platform linux/amd64 --rm -i "$IMAGE_TAG" python - <<'PY'
-        import datetime as dt
-        import tempfile
-        from pathlib import Path
-
-        from ingestion.sea_ice_daily import run as sea_ice
-
-        tmp = Path(tempfile.mkdtemp(prefix="ims-synthetic-"))
-        source_tif = tmp / "source.tif"
-        sea_ice.run_command([
-            "gdal_create",
-            "-of",
-            "GTiff",
-            "-outsize",
-            "4",
-            "4",
-            "-bands",
-            "1",
-            "-burn",
-            "3",
-            "-ot",
-            "Byte",
-            "-a_srs",
-            "EPSG:3857",
-            "-a_ullr",
-            "-100000",
-            "100000",
-            "100000",
-            "-100000",
-            str(source_tif),
-        ])
-        outputs = sea_ice.build_outputs(
-            source_tif=source_tif,
-            source_date=dt.date(2026, 4, 28),
-            workdir=tmp,
-            baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(
-                contract_id="generated-2026-v1",
-            ),
-        )
-        assert outputs.row_count > 0
-        assert outputs.fgb.exists()
-        assert outputs.pmtiles.exists()
-        assert outputs.metadata.exists()
-        assert outputs.schema.exists()
-        print({
-            "row_count": outputs.row_count,
-            "fgb_size": outputs.fgb.stat().st_size,
-            "pmtiles_size": outputs.pmtiles.stat().st_size,
-            "metadata_size": outputs.metadata.stat().st_size,
-            "schema_size": outputs.schema.stat().st_size,
-        })
-        PY
+        docker run --platform linux/amd64 --rm \
+          --mount "type=bind,src=$GITHUB_WORKSPACE/scripts/local_ingestion_smoke.py,dst=/app/scripts/local_ingestion_smoke.py,readonly" \
+          "$IMAGE_TAG" python scripts/local_ingestion_smoke.py --sea-ice-only --workdir /tmp/ims-synthetic
     - name: Push tested image and verify registry config
       env:
         TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
@@ -301,6 +251,8 @@ jobs:
       run: terraform -chdir=terraform/envs/prod init -input=false
       if: steps.window.outputs.ready == 'true'
     - name: Terraform plan
+      env:
+        IMAGE_CONFIG_VARIABLE: ${{ fromJSON(needs.prepare.outputs.config).image_config_variable }}
       run: |
         set -euo pipefail
         args=(-input=false -out="$RUNNER_TEMP/ingestion.tfplan")
@@ -308,7 +260,7 @@ jobs:
         while IFS= read -r variable; do args+=("-var=$variable=unused-by-$TARGET-deploy"); done < <(python -c 'from scripts.ingestion_targets import TARGETS; print("\n".join(t["image_variable"] for t in TARGETS.values()))')
         image_variable="$(python -c 'import json,os; print(json.loads(os.environ["TARGET_CONFIG"])["image_variable"])')"
         args+=("-var=$image_variable=$IMAGE")
-        if [[ "$TARGET" == wdpa-monthly ]]; then args+=("-var=wdpa_monthly_image_config_digest=$TESTED_IMAGE_CONFIG"); fi
+        if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("-var=$IMAGE_CONFIG_VARIABLE=$TESTED_IMAGE_CONFIG"); fi
         bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan "${args[@]}"
       if: steps.window.outputs.ready == 'true'
     - name: Export Terraform plan JSON
@@ -316,10 +268,12 @@ jobs:
         terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/ingestion.tfplan" > "$RUNNER_TEMP/ingestion.tfplan.json"
       if: steps.window.outputs.ready == 'true'
     - name: Enforce ingestion resource-change allowlist
+      env:
+        IMAGE_CONFIG_VARIABLE: ${{ fromJSON(needs.prepare.outputs.config).image_config_variable }}
       run: |
         args=("$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes "--job-image-target=$TARGET"
           "--expected-image=$IMAGE" "--refusal-prefix=Refusing $TARGET deploy")
-        if [[ "$TARGET" == wdpa-monthly ]]; then args+=("--expected-config=$TESTED_IMAGE_CONFIG"); fi
+        if [[ -n "$IMAGE_CONFIG_VARIABLE" ]]; then args+=("--expected-config=$TESTED_IMAGE_CONFIG"); fi
         python scripts/terraform_plan_allowlist.py "${args[@]}"
       if: steps.window.outputs.ready == 'true'
     - name: Verify complete saved-plan mutation permissions
@@ -426,6 +380,8 @@ jobs:
           exit 1
         fi
     - name: Execute ingestion canary
+      env:
+        CANARY_RUN_URL: ${{ fromJSON(needs.prepare.outputs.config).canary_run_url }}
       run: |
         set -euo pipefail
         if [[ -n "$CANARY_RUN_DATE" && ! "$CANARY_RUN_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -434,7 +390,7 @@ jobs:
         fi
         args=("$TARGET" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --async --format='value(metadata.name)')
         execution_env=""
-        if [[ "$TARGET" != wdpa-monthly ]]; then
+        if [[ "$CANARY_RUN_URL" == true ]]; then
           execution_env="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
         fi
         if [[ -n "$CANARY_RUN_DATE" ]]; then execution_env="${execution_env:+$execution_env,}RUN_DATE=$CANARY_RUN_DATE"; fi
@@ -443,11 +399,12 @@ jobs:
         if [[ -z "$execution" ]]; then echo 'Canary returned no execution identity.' >&2; exit 1; fi
         echo "CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
     - name: Watch ingestion canary
+      env:
+        CANARY_ATTEMPTS: ${{ fromJSON(needs.prepare.outputs.config).canary_attempts }}
+        CANARY_TIMEOUT_PHASE: ${{ fromJSON(needs.prepare.outputs.config).canary_timeout_phase }}
       run: |
         set -euo pipefail
-        attempts=125
-        if [[ "$TARGET" == wdpa-monthly ]]; then attempts=20; fi
-        for ((attempt=0; attempt<attempts; attempt++)); do
+        for ((attempt=0; attempt<CANARY_ATTEMPTS; attempt++)); do
           phase="$(gcloud run jobs executions describe "$CANARY_EXECUTION" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
             --format=json | python -c 'import json,os,sys; from scripts.deployment_revision import terminal_execution; print(terminal_execution(json.load(sys.stdin), os.environ["IMAGE"]))')"
           case "$phase" in
@@ -458,27 +415,27 @@ jobs:
           esac
           sleep 30
         done
-        if [[ "$TARGET" == wdpa-monthly ]]; then
+        if [[ "$CANARY_TIMEOUT_PHASE" == verification_pending ]]; then
           echo 'DEPLOYMENT_PHASE=verification_pending' >> "$GITHUB_ENV"
         else
           echo 'Short-job canary did not reach terminal success within 62.5 minutes.' >&2
           exit 1
         fi
     - name: Validate latest release contract
-      if: inputs.target != 'wdpa-monthly'
+      if: fromJSON(needs.prepare.outputs.config).validate_release
       run: uv run --no-sync python scripts/ingestion_verification.py
     - name: Run asset bucket hygiene audit
-      if: inputs.target != 'wdpa-monthly'
+      if: fromJSON(needs.prepare.outputs.config).validate_release
       run: |
         uv run --no-sync python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
           --bucket "$BUCKET" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
         uv run --no-sync python scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"
     - name: Resume sea-ice-daily scheduler
-      if: inputs.target == 'sea-ice-daily' && inputs.resume_scheduler
+      if: fromJSON(needs.prepare.outputs.config).resume_scheduler && inputs.resume_scheduler
       run: |
         set -euo pipefail
 
-        uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily --require-published
+        uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET" --require-published
         gcloud scheduler jobs resume "$TARGET" \
           --location="${REGION}" \
           --project="${GOOGLE_CLOUD_PROJECT}"

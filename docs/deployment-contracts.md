@@ -28,7 +28,9 @@ its immutable digest. Missing, expired or mismatched evidence fails closed.
 The four ingestion wrappers call `ingestion-deploy.yml` without inherited
 secrets. `scripts/ingestion_targets.py` owns the versioned target contract shared
 by execution, CI selection, Terraform allowlists, release checks and recovery:
-workflow names, image variables, closed resource scopes, gates and asset metadata.
+workflow names, image/config variables, resource scopes, canary limits and terminal
+phases, release validation, scheduler resume, smoke probes and asset metadata.
+Registry defaults are resolved before its GitHub output/environment transport.
 Recovery resolves image variables before checking out an older executor.
 WDPA code deployment is independent of the month: its scheduled worker builds
 the current month, validates both realms and a compatibility sample, and
@@ -42,7 +44,7 @@ together. Other targets can prepare images or verify canaries concurrently.
 The shared ingestion IAM prerequisite runs once before dependents, with secret
 authority bootstrap and live permission checks before runtime binding plans.
 
-Every ingestion runner checks out `github.workflow_sha`, then invokes the
+Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
 `deployment-bootstrap` composite. It authorizes the candidate before checkout,
 restores the receipt policy and both target registries from that immutable workflow SHA,
 and verifies the tested checkout before authentication. The Terraform service
@@ -50,10 +52,20 @@ account and `shared-datasets-production` environment remain unchanged. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.
 
-Dataset-usage also runs digest verification and its canary outside the state
-queue, carrying the exact signed claim and image into a separate job. Its
-workflow queue serializes the full target rollout. Catalog-viewer has no
-separate canary wait; its ready-revision read remains beside saved-plan apply.
+Dataset-usage and viewer prepare and push tested images before entering the
+state queue, then recheck replay admission after acquiring it. Their target
+queues cover the entire rollout. Dataset-usage carries the signed claim and
+prepared image into its separate canary job; viewer checks its ready revision
+beside apply. CDN invalidation and route polling follow signed apply in a separate
+verification job that records failures even when apply failed. Viewer/CDN use
+bounded operational permission probes instead of unconditional IAM sleeps.
+These specialized apply scopes and acceptance checks retain their own executors.
+
+The installed sea-ice smoke mounts `scripts/local_ingestion_smoke.py` read-only
+and invokes `--sea-ice-only`; local profiling calls the same synthetic build.
+The SDK retains its eligibility-aware npm publisher bootstrap, and catalog web
+retains dataset-mutation/release-index source authorization. Those contracts
+differ from the tested-main deployment bootstrap.
 
 Immediately before each apply, `deployment_permissions.py --target <target>
 --plan-json <plan.json>` checks every changed resource's actual action and
