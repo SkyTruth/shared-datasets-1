@@ -96,9 +96,13 @@ def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
     assert 'google_service_account_iam_binding.github_actions_terraform_wif' in scope['resources']
     identities = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]['github_job_permissions']
     for identity in identities:
+        owner = registry['targets']['PR plan identity provisioning'] if identity == 'recovery' else scope
         for kind, name in [('google_service_account', 'github_job'), ('google_project_iam_custom_role', 'github_job'),
                            ('google_project_iam_member', 'github_job'), ('google_service_account_iam_member', 'github_job_wif')]:
-            assert f'{kind}.{name}["{identity}"]' in scope['resources']
+            resource = f'{kind}.{name}["{identity}"]'
+            assert resource in owner['resources']
+            if identity == 'recovery':
+                assert resource not in scope['resources']
     assert 'artifact-registry-iam' in workflow('ci.yml')['jobs']['preview-terraform-iam']['needs']
     from scripts.terraform_plan_allowlist import blocked_changes
     def row(address):
@@ -189,7 +193,8 @@ def test_observer_permissions_and_grants_are_read_only_and_runtime_has_no_iam_ad
     values = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]
     values['github_workflow_identities'] = policy()
     permissions = evaluate(values, 'local.github_job_permissions', variables={'github_repository': REPO})
-    for identity in ('observer', 'recovery', 'heartbeat', 'reconciler'):
+    assert set(permissions['recovery']) == set(permissions['observer']) | {'secretmanager.secrets.getIamPolicy'}
+    for identity in ('observer', 'heartbeat', 'reconciler'):
         assert all(permission.rsplit('.', 1)[1] in {'get', 'list'} for permission in permissions[identity])
     assert not any('setIamPolicy' in permission or 'secretmanager.versions.' in permission for row in permissions.values() for permission in row)
     assert {'run.jobs.run', 'run.executions.cancel', 'cloudscheduler.jobs.enable', 'compute.urlMaps.invalidateCache'} <= set(permissions['runtime'])
