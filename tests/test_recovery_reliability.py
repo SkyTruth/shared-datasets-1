@@ -177,8 +177,10 @@ def test_recovery_identity_health_uses_signed_manual_provisioning_and_latest_aut
     record = {'id': 42, 'environment': 'production-' + target}
     run = {'id': 90, 'run_attempt': 2}
     api = Mock()
-    api.pages.side_effect = lambda path, **_: ([] if state == 'missing' else [record]) if '/deployments?' in path else [run] if '/runs?' in path else [
+    api.pages.side_effect = lambda path, **_: ([] if state == 'missing' else [record]) if '/deployments?' in path else [
         {'steps': [{'name': 'Authenticate read-only recovery', 'conclusion': 'failure' if state == 'auth_failed' else 'success'}]}]
+    # One page is enough for the latest completed run; paginating would fetch every historical run.
+    api.get.side_effect = lambda path: {'workflow_runs': [run, {'id': 1, 'run_attempt': 1}]} if '/runs?' in path else {}
     status = {'state': 'success' if state in {'applied', 'auth_failed', 'untrusted'} else 'failure',
               'description': 'applied' if state in {'applied', 'auth_failed', 'untrusted'} else state}
     with patch.object(deployment, 'verify_record', return_value={'target': target}), \
@@ -192,6 +194,7 @@ def test_recovery_identity_health_uses_signed_manual_provisioning_and_latest_aut
             assert findings == []
             assert all('recovery' in finding.lower() for finding in findings)
     api.post.assert_not_called()
+    assert not any('/runs?' in call.args[0] for call in api.pages.call_args_list)
 
 
 def test_heartbeat_doc_matches_delivered_reader_failure_contract():

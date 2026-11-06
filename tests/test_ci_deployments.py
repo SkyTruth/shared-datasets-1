@@ -397,8 +397,11 @@ def condition_result(job, values, *, cancelled=False):
                 ancestors.add(parent)
                 pending.append(parent)
     results = {values.get(f'needs.{parent}.result', 'success') for parent in ancestors}
+    direct = jobs[caller].get('needs', [])
+    direct_results = {values.get(f'needs.{parent}.result', 'success') for parent in ([direct] if isinstance(direct, str) else direct)}
     selected = caller not in DELIVERY_FILTERS or values.get('needs.dataset-mutation-selection.outputs.' + DELIVERY_FILTERS[caller]) == 'true'
-    return bool(not cancelled and not results & {'failure', 'cancelled'}
+    # failure() sees every ancestor; contains(needs.*.result, 'cancelled') sees direct needs.
+    return bool(not cancelled and 'failure' not in results and 'cancelled' not in direct_results
                 and values['needs.ci-ready.result'] == 'success' and delivery[caller] and selected)
 
 
@@ -423,12 +426,12 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     for event, ref in [('push', 'refs/heads/main'), ('push', 'refs/heads/topic'),
                        ('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main')]:
         for selected in (True, False):
-            for result in ('success', 'failure', 'skipped'):
+            for result in ('success', 'failure', 'skipped', 'cancelled'):
                 with subtests.test(event=event, selected=selected, result=result):
                     case = values | {'github.event_name': event, 'github.ref': ref,
                                      **{f'needs.geospatial-changes.outputs.{parent.replace("-", "_")}': str(selected).lower() for parent in optional},
                                      **{f'needs.{parent}.result': result for parent in optional}}
-                    assert condition_result(job, case) is (event == 'push' and ref == 'refs/heads/main' and (not optional or result != 'failure'))
+                    assert condition_result(job, case) is (event == 'push' and ref == 'refs/heads/main' and (not optional or result not in {'failure', 'cancelled'}))
     assert condition_result(job, values, cancelled=True) is False
     for dependency in set(needs) - {'geospatial-changes'}:
         for result in ('failure', 'cancelled'):

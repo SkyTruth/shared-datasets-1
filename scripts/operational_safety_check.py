@@ -282,7 +282,7 @@ def recovery_identity(api):
     statuses = deployments.verified_statuses(api, REPOSITORY, record)
     require(statuses and (statuses[0].get("state"), statuses[0].get("description")) == ("success", "applied"),
             "Recovery identity provisioning has no signed successful apply")
-    runs = api.pages(f"{API_ROOT}/actions/workflows/deployment-recovery.yml/runs?branch=main&status=completed&per_page=1", field="workflow_runs")
+    runs = api.get(f"{API_ROOT}/actions/workflows/deployment-recovery.yml/runs?branch=main&status=completed&per_page=1")["workflow_runs"][:1]
     if runs and alerts.verify_source_event(api, runs[0]):
         require(not any(step.get("name") == "Authenticate read-only recovery" and step.get("conclusion") == "failure"
             for job in api.pages(f"{API_ROOT}/actions/runs/{runs[0]['id']}/attempts/{runs[0]['run_attempt']}/jobs?per_page=100", field="jobs")

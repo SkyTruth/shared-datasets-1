@@ -36,24 +36,28 @@ def test_every_selected_prerequisite_runs_or_has_failed_or_cancelled_ancestry():
     # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#failure
     for name in graph:
         caller = name.replace('_', '-')
-        assert jobs[caller]['if'] == "${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + " }}"
+        assert jobs[caller]['if'] == "${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + " }}"
         assert set(graph[name]) == {parent.replace('-', '_') for parent in jobs[caller]['needs'] if parent.replace('-', '_') in graph}
     for width in range(len(order) + 1):
         for subset in combinations(order, width):
             selected = set(subset)
-            for failed in (None, *selected):
+            for stopped, outcome in ((None, None), *((name, result) for name in selected for result in ('failure', 'cancelled'))):
                 delivery = json.loads(json.dumps(ci.delivery_outputs({'deployments': list(selected), 'suites': []}, 'push', 'refs/heads/main')))
-                outcomes, failed_ancestry = {}, {}
+                outcomes, failed_ancestry, cancelled_ancestry = {}, {}, {}
                 for name in order:
+                    # failure() is transitive; contains(needs.*.result, 'cancelled') sees direct needs only,
+                    # which suffices because every caller lists its transitive prerequisites.
                     failed_ancestry[name] = any(outcomes[parent] == 'failure' or failed_ancestry[parent] for parent in graph[name])
-                    admitted = delivery[name.replace('_', '-')] and not failed_ancestry[name]
-                    outcomes[name] = 'failure' if admitted and name == failed else 'success' if admitted else 'skipped'
-                    assert admitted == (name in selected and not failed_ancestry[name])
+                    cancelled_ancestry[name] = any(outcomes[parent] == 'cancelled' or cancelled_ancestry[parent] for parent in graph[name])
+                    direct_cancelled = any(outcomes[parent] == 'cancelled' for parent in graph[name])
+                    assert direct_cancelled == cancelled_ancestry[name]
+                    admitted = delivery[name.replace('_', '-')] and not failed_ancestry[name] and not direct_cancelled
+                    outcomes[name] = outcome if admitted and name == stopped else 'success' if admitted else 'skipped'
                     if name in selected and outcomes[name] == 'skipped':
-                        assert failed_ancestry[name]
+                        assert failed_ancestry[name] or cancelled_ancestry[name]
 
 
-@pytest.mark.parametrize('defect', ['producer-event', 'producer-ref', 'producer-success', 'failure', 'cancelled', 'lookup', 'needs'])
+@pytest.mark.parametrize('defect', ['producer-event', 'producer-ref', 'producer-success', 'failure', 'cancelled', 'cancelled-needs', 'lookup', 'needs'])
 def test_delivery_write_tokens_require_exact_main_output_and_caller_guards(tmp_path, defect):
     document = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
     directory = tmp_path / '.github/workflows'
@@ -69,7 +73,8 @@ def test_delivery_write_tokens_require_exact_main_output_and_caller_guards(tmp_p
     elif defect == 'needs':
         jobs['mpatlas']['needs'] = ['geospatial-changes']
     else:
-        clause = {'failure': '!failure() && ', 'cancelled': '!cancelled() && ', 'lookup': '.mpatlas'}[defect]
+        clause = {'failure': '!failure() && ', 'cancelled': '!cancelled() && ', 'cancelled-needs': "!contains(needs.*.result, 'cancelled') && ",
+                  'lookup': '.mpatlas'}[defect]
         jobs['mpatlas']['if'] = jobs['mpatlas']['if'].replace(clause, '.wdpa' if defect == 'lookup' else '')
     path.write_text(yaml.safe_dump(document))
     assert any('PR-capable validation' in error for error in receipts.permissions(tmp_path))

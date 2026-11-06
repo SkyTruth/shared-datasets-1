@@ -337,7 +337,7 @@ jobs:
 
   typescript-sdk:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').typescript-sdk }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').typescript-sdk }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -356,7 +356,7 @@ jobs:
 
   dataset-mutation-selection:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-mutation-selection }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-mutation-selection }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -392,7 +392,7 @@ jobs:
 
   refresh-reviewed-catalog:
     needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').refresh-reviewed-catalog && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').refresh-reviewed-catalog && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -411,7 +411,7 @@ jobs:
 
   announce-repo-functionality:
     needs: [ci-ready, dataset-mutation-selection]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/repo-functionality-alert.yml
@@ -423,7 +423,7 @@ jobs:
   publish-reviewed-dataset:
     name: "Publish PR #${{ matrix.pr_number }}"
     needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset && needs.dataset-mutation-selection.outputs.has_mutations == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset && needs.dataset-mutation-selection.outputs.has_mutations == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -444,7 +444,7 @@ jobs:
 
   ingestion-iam:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').ingestion-iam }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').ingestion-iam }}
     permissions: &terraform-permissions
       contents: read
       actions: read
@@ -460,7 +460,7 @@ jobs:
 
   mpatlas:
     needs: &ingestion-prerequisites [ci-ready, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').mpatlas }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').mpatlas }}
     permissions: &deployment-permissions
       contents: read
       actions: read
@@ -474,7 +474,7 @@ jobs:
 
   eamlis:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').eamlis }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').eamlis }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/eamlis-monthly-deploy.yml
     with: *deployment-source
@@ -482,7 +482,7 @@ jobs:
 
   wdpa:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').wdpa }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').wdpa }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/wdpa-monthly-deploy.yml
     with: *deployment-source
@@ -490,7 +490,7 @@ jobs:
 
   sea-ice:
     needs: *ingestion-prerequisites
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').sea-ice }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').sea-ice }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/sea-ice-daily-deploy.yml
     with: *deployment-source
@@ -498,7 +498,7 @@ jobs:
 
   pmtiles-cdn:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').pmtiles-cdn }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').pmtiles-cdn }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/pmtiles-cdn-sync.yml
     with: *deployment-source
@@ -507,7 +507,7 @@ jobs:
   dataset-usage:
     # Settle bucket CORS before the logging-only deployment plans the same bucket.
     needs: [ci-ready, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-usage }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-usage }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
     with: &deployment-source-with-iam
@@ -519,7 +519,7 @@ jobs:
 
   catalog-viewer:
     needs: [ci-ready, artifact-registry-iam]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/catalog-viewer-deploy.yml
     with: *deployment-source-with-iam
@@ -527,28 +527,28 @@ jobs:
 
   artifact-registry-iam:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').artifact-registry-iam }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').artifact-registry-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/artifact-registry-iam-sync.yml
     with: *deployment-source
 
   preview-terraform-iam:
     needs: [ci-ready, artifact-registry-iam]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').preview-terraform-iam }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').preview-terraform-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/preview-terraform-iam-sync.yml
     with: *deployment-source
 
   scratch-cleanup-iam:
     needs: ci-ready
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').scratch-cleanup-iam }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').scratch-cleanup-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/scratch-cleanup-iam-sync.yml
     with: *deployment-source
 
   cron-alert-policy:
     needs: [ci-ready, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').cron-alert-policy }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').cron-alert-policy }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/cron-alert-policy-sync.yml
     with: *deployment-source-with-iam
@@ -556,7 +556,7 @@ jobs:
 
   identity-decision-reconcile:
     needs: [ci-ready, cron-alert-policy]
-    if: ${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}').identity-decision-reconcile }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').identity-decision-reconcile }}
     permissions:
       contents: read
       actions: read

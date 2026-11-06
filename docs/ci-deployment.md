@@ -83,9 +83,12 @@ Only successful main-push CI exposes delivery outputs. Every post-gate caller us
 `needs` retains all registered ordering edges. [GitHub
 documents](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#failure) that
 `failure()` includes failed ancestors. Explicit status functions override implicit `success()`, so skipped
-unselected prerequisites permit selected work; failed/cancelled ancestry blocks it. Uniform conditions make a
-selected Terraform prerequisite's unexplained skip unreachable: it runs, or an ancestor failed or the workflow
-was cancelled. The graph contract tests this invariant over every selection subset. Publication discovery
+unselected prerequisites permit selected work; a failed ancestor blocks it. `cancelled()` only reports a cancelled
+workflow, so callers also reject a cancelled direct prerequisite (for example a timed-out job) with
+`!contains(needs.*.result, 'cancelled')`; every caller lists its transitive prerequisites in `needs`, so direct needs
+suffice. Any failed ancestor blocks every post-gate caller, including `identity-decision-reconcile`. Uniform conditions
+make a selected Terraform prerequisite's unexplained skip unreachable: it runs, or an ancestor failed or was
+cancelled, or the workflow was cancelled. The graph contract tests this invariant over every selection subset. Publication discovery
 still owns immutable mutation authority.
 
 ## Acceptance and identities

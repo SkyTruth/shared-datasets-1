@@ -37,7 +37,7 @@ DELIVERY_FILTERS = {'refresh-reviewed-catalog': 'has_catalog_changes',
 
 def delivery_condition(caller):
     selection = (" && needs.dataset-mutation-selection.outputs." + DELIVERY_FILTERS[caller] + " == 'true'") if caller in DELIVERY_FILTERS else ''
-    return "${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + selection + " }}"
+    return "${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + selection + " }}"
 
 
 def delivery_outputs(plan, event, ref):

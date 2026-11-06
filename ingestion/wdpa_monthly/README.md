@@ -122,7 +122,7 @@ for rollout order and verification.
 
 ## Limits
 
-Terraform configures 4 CPU / 8 GiB, `43200s` (12 hours), zero retries and a 100 GiB ephemeral
+Terraform configures 4 CPU / 8 GiB, `46800s` (13 hours), zero retries and a 100 GiB ephemeral
 DISK at `/work`. `TMPDIR=/work/tmp` and
 `SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` keep native/SQLite scratch there.
 Cloud executions reject a missing or memory-backed mount before downloads.
