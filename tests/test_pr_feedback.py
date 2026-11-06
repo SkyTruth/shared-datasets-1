@@ -18,6 +18,8 @@ def test_review_refresh_targets_only_latest_exact_head_acceptance_and_its_depend
     assert triggers['pull_request_target']['types'] == ['ready_for_review']
     assert triggers['workflow_run'] == {'workflows': ['CI / Validate and deliver'], 'types': ['completed']}
     job = workflow['jobs']['refresh']
+    assert job['timeout-minutes'] == 5
+    assert not {'environment', 'secrets', 'permissions'} & job.keys()
     assert len(job['steps']) == 1 and job['steps'][0]['uses'] == 'actions/github-script@v7'
     script = job['steps'][0]['with']['script']
     harness = r'''
@@ -26,7 +28,7 @@ const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 const script = new AsyncFunction('github', 'context', JSON.parse(process.argv[1]));
 (async () => {
   for (const failure of [null, 'draft', 'fork', 'closed', 'base', 'missing', 'stale', 'dismissed', 'changes',
-                         'foreign-review', 'moved-run', 'running', 'success', 'no-run', 'push', 'older-approval', 'different-pr', 'repeat-completion']) {
+                         'foreign-review', 'moved-run', 'running', 'success', 'no-run', 'push', 'older-approval', 'different-pr', 'repeat-completion', 'old-completion', 'old-review']) {
     const repo = {owner:'SkyTruth', repo:'shared-datasets-1'};
     const pr = {number:27, state: failure === 'closed' ? 'closed':'open', draft:failure === 'draft',
       head:{sha:'b'.repeat(40), repo:{full_name:failure === 'fork' ? 'other/fork':'SkyTruth/shared-datasets-1'}},
@@ -53,12 +55,16 @@ const script = new AsyncFunction('github', 'context', JSON.parse(process.argv[1]
       return [{id:11,name:'tests',conclusion:'failure'}, {id:12,name:'ci-ready',conclusion:'failure'},
         {id:13,name:'owner-acceptance',started_at:'2026-11-05T00:01:00Z',conclusion:failure === 'success' ? 'success':'failure'}];
     }};
-    const payload = failure === 'repeat-completion' ? {workflow_run:{event:'pull_request',pull_requests:[{number:27}]}} : failure === 'push' ? {workflow_run:{event:'push',pull_requests:[{number:27}]}} : {pull_request:pr};
+    const completion = {event:'pull_request', head_sha:pr.head.sha, pull_requests:[{number:27}]};
+    const payload = failure === 'repeat-completion' ? {workflow_run:completion} :
+      failure === 'old-completion' ? {workflow_run:{...completion,head_sha:'a'.repeat(40)}} :
+      failure === 'old-review' ? {pull_request:pr,review:{commit_id:'a'.repeat(40)}} :
+      failure === 'push' ? {workflow_run:{...completion,event:'push'}} : {pull_request:pr};
     await script(github,{repo,payload});
     assert.deepEqual(calls, failure === null ? [{...repo,job_id:13}]:[],failure);
     if (failure === null) {
       calls.length = 0;
-      await script(github,{repo,payload:{workflow_run:{event:'pull_request',pull_requests:[{number:27}]}}});
+      await script(github,{repo,payload:{workflow_run:completion}});
       assert.deepEqual(calls,[{...repo,job_id:13}]); // approval arrived before CI completed
     }
   }

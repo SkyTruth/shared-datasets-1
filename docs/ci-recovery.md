@@ -60,6 +60,9 @@ read grant. Recovery has no state writes, Secret Manager version access or
 deployment authority.
 Unsupported metadata reads fail closed and require reviewed recovery. Receipt
 verification requires pinned `gh`; a version failure identifies the installer.
+Historical WDPA records without the original image configuration digest fail closed
+before recovery authentication. A reviewed ordinary rollout must establish a new
+signed record with that digest; never guess it or rewrite historical evidence.
 
 ## Failure classification
 

@@ -28,6 +28,8 @@ jobs:
             const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
             if (pr.state !== 'open' || pr.draft || pr.base.ref !== 'main' ||
                 pr.head.repo?.full_name !== `${repo.owner}/${repo.repo}`) return;
+            if ((event.workflow_run && event.workflow_run.head_sha !== pr.head.sha) ||
+                (event.review && event.review.commit_id !== pr.head.sha)) return;
             const reviews = await github.paginate(github.rest.pulls.listReviews, {...repo, pull_number: number});
             const decisive = reviews.filter(r => r.user?.login === 'jonaraphael' &&
               ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state))

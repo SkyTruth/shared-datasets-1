@@ -11,7 +11,7 @@ from scripts.ci_contract import delivery_condition
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATION = {
-    'geospatial-changes', 'lint', 'tests', 'geospatial-integration',
+    'geospatial-changes', 'lint', 'tests', 'tests-control-plane', 'geospatial-integration',
     'production-images', 'sdk-validation', 'browser', 'ci-ready',
 }
 

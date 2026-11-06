@@ -204,7 +204,7 @@ def test_ci_covers_any_real_post_validation_deployment_failure():
 
 @pytest.mark.parametrize("name", [
     "geospatial-changes", "lint", "tests", "geospatial-integration", "production-images",
-    "sdk-validation (Node 22)", "sdk-validation (Node 24)", "browser", "ci-ready",
+    "sdk-validation (Node 22)", "sdk-validation (Node 24)", "browser", "ci-ready", "tests-control-plane",
 ])
 def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attempt(name):
     failed_validation = {"name": name, "status": "completed", "conclusion": "failure"}
