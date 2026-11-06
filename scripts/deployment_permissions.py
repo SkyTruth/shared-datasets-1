@@ -44,7 +44,7 @@ SECRET_PERMISSIONS = checks("translation-bootstrap")[0][1]
 
 def read_json(req, *, timeout):
     """Bounded retries for idempotent Google reads, including permission POSTs."""
-    if req.get_method() not in {"GET", "HEAD"} and not req.full_url.endswith((":testIamPermissions", ":troubleshoot")):
+    if req.get_method() not in {"GET", "HEAD"} and not req.full_url.endswith((":testIamPermissions", "/testIamPermissions", ":troubleshoot")):
         raise ValueError("Deployment read retries cannot execute a mutation")
     for attempt in range(3):
         try:

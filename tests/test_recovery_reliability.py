@@ -246,3 +246,12 @@ def test_wdpa_claim_requires_original_tested_config_before_record_creation(tmp_p
         with pytest.raises((TypeError, ValueError), match='digest|str'):
             deployment.start(args, api)
     api.post.assert_not_called()
+
+
+@pytest.mark.parametrize('suffix', [':testIamPermissions', '/testIamPermissions'])
+def test_shared_deployment_reader_accepts_both_google_permission_probe_routes(suffix):
+    request = permissions.urllib.request.Request('https://compute.googleapis.com/compute/v1/projects/p/global/urlMaps/map' + suffix,
+        data=b'{"permissions": []}', method='POST')
+    with patch.object(permissions.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"permissions": []}')) as transport:
+        assert permissions.read_json(request, timeout=30) == {'permissions': []}
+    transport.assert_called_once()

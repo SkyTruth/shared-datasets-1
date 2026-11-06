@@ -211,7 +211,7 @@ def test_real_reconcile_step_runs_trusted_policy_with_separate_executor_data(tmp
                        ' def post(self,*args): return {"id":2}\n'
                        'scope["GitHub"]=API\n'
                        'scope["recovery_record"]=lambda *args: (claim,claim["payload"])\n'
-                       'scope["post_status"]=lambda api,repo,record,status: pathlib.Path(os.environ["RESULT"]).write_text(json.dumps(status))\n'
+                       'scope["post_status"]=lambda api,repo,record,phase,url="": pathlib.Path(os.environ["RESULT"]).write_text(json.dumps({"phase":phase,"url":url}))\n'
                        f'def sdk(record,payload,root):\n assert root == pathlib.Path({str(original)!r})\n'
                        'scope["reconcile_sdk"]=sdk\n'
                        'sys.argv=[str(script),*args]; module["main"]()\n')
@@ -231,7 +231,9 @@ def test_real_reconcile_step_runs_trusted_policy_with_separate_executor_data(tmp
                    'HARNESS': str(harness), 'PYTHON_BIN': sys.executable, 'VIRTUAL_ENV': str(tmp_path / '.venv-mismatch')}
     result = subprocess.run(['bash', '-euo', 'pipefail', '-c', wrapper + step], cwd=workspace, env=environment, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / 'result').read_text()) == ('applied' if kind == 'terraform' else 'verified')
+    outcome = json.loads((tmp_path / 'result').read_text())
+    assert outcome['phase'] == ('applied' if kind == 'terraform' else 'verified')
+    assert outcome['url'] == ('https://console.cloud.google.com/run/jobs/executions/details/us-central1/execution?project=shared-datasets-1' if kind == 'ingestion' else '')
 
 
 def test_schedule_runbook_uses_protected_control_for_every_registered_publisher():
