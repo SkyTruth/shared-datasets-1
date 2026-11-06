@@ -239,8 +239,6 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, resolved_head, raw=True)
         paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
-        # An absent comparison selects all, but individual history-dependent
-        # commands still fail when their required base cannot be resolved.
         resolved_base = base
         paths = None
     holds = ingestion_rollout_holds(root, tested_sha)
@@ -317,6 +315,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
         add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", "--target", "all")
+    elif suite == "tests-control-plane":
+        add("uv", "sync", "--locked", "--all-groups")
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
         add("uv", "sync", "--locked", "--all-groups")
@@ -333,8 +333,6 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
         add("uv", "run", "--no-sync", "python", ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py", "--local-only", "--format", "markdown", "--fail-on-findings")
         add("uv", "run", "--no-sync", "python", "scripts/check_identity_resolutions.py", "--offline")
-        add("terraform", "-chdir=terraform/envs/prod", "init", "-backend=false", "-input=false", "-lockfile=readonly")
-        add("uv", "run", "--no-sync", "pytest", "-n", "4", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
         add("node", "scripts/release-policy.mjs", "changes", base, head, cwd=package)
@@ -360,7 +358,6 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "sync", "--locked", "--all-groups", "--extra", "wdpa-native")
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
-        # Host checks use only the standard library; image dependencies stay in Docker.
         targets = planned_images(plan)
         if "image_target" in plan:
             if plan["image_target"] not in targets:
@@ -373,6 +370,11 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
                 "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target))
     else:
         raise ValueError(f"unknown suite: {suite}")
+    if suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
+        files = [str(path.relative_to(root)) for path in sorted(set((root / "tests").rglob("test_*.py")) | set((root / "tests").rglob("*_test.py")))
+                 if ("ci_" in path.name or "deployment" in path.name) == (suite == "tests-control-plane")]
+        add("terraform", "-chdir=terraform/envs/prod", "init", "-backend=false", "-input=false", "-lockfile=readonly")
+        add("uv", "run", "--no-sync", "pytest", *files, "-n", "4", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     return commands
 
 
@@ -415,8 +417,6 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
     if os.environ.get("GITHUB_RUN_ID"):
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
     environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
-    # This exact process-owned path is bind-mounted across differing host and
-    # container UIDs. The setting also applies to Git invoked by SDK policy.
     environment.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root)})
     environment["SHARED_DATASETS_WORKDIR"] = str(output / "work")
     node_bin = environment.get("CI_NODE24_BIN" if suite == "sdk-node24" else "CI_NODE22_BIN")
@@ -480,7 +480,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
                         raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
             finally:
                 cancelled.set()
-        if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths"), root=root):
+        if suite == "geospatial-integration" or suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}

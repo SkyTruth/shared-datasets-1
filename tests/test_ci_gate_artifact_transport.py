@@ -53,8 +53,9 @@ def package_upload(step, runner, suite, attempt, directory):
     return name, archive
 
 
-@pytest.fixture
-def transport(tmp_path):
+@pytest.fixture(scope="module")
+def source_plan(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp("transport-source")
     workflow = load_workflow(WORKFLOW)
     source, git = fixture_repo(tmp_path)
     base = git("rev-parse", "HEAD")
@@ -65,6 +66,12 @@ def transport(tmp_path):
     plan = preflight.make_plan(source, base, "HEAD")
     assert plan["suites"] == list(SUITES)
     plan["source"] = {"run_id": "123", "run_attempt": 1}
+    return workflow, source, plan
+
+
+@pytest.fixture
+def transport(tmp_path, source_plan):
+    workflow, source, plan = source_plan
     runner, archives, downloaded = [tmp_path / name for name in ("runner", "archives", "downloaded")]
     archives.mkdir()
     downloaded.mkdir()
@@ -135,7 +142,7 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
     plan_path, jobs_path, evidence = [tmp_path / name for name in ("plan.json", "jobs.json", "evidence.json")]
     plan_path.write_text(json.dumps(plan))
     jobs = {job: {"result": "success"} for job in (
-        "geospatial-changes", "lint", "tests", "geospatial-integration", "production-images", "sdk-validation", "browser",
+        "geospatial-changes", "lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "sdk-validation", "browser",
     )}
     if defect == "image-retention-failure":
         jobs["production-images"]["result"] = "failure"
@@ -226,3 +233,9 @@ def test_compact_result_loader_still_rejects_invalid_or_unproven_producers(trans
     outcome, evidence, _ = invoke_verifier(transport, tmp_path, monkeypatch, defect=defect)
     assert outcome == 1
     assert not evidence.exists()
+
+
+def test_transport_reuses_immutable_source_but_keeps_artifact_copies_private(source_plan, transport):
+    _workflow, source, plan = source_plan
+    assert transport['source'] is source and transport['plan'] is plan
+    assert not transport['downloaded'].is_relative_to(source)

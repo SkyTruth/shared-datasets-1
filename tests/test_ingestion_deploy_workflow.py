@@ -191,7 +191,13 @@ def test_target_resolution_and_exact_plan_arguments(tmp_path, target):
     (tmp_path / 'scripts/terraform_retry.sh').write_text('python -c \'import json,sys; print(json.dumps(sys.argv[1:]))\' "$@"\n')
     image = 'registry/job@sha256:' + 'a' * 64
     result = run_shell(tmp_path, shared_step('apply', 'Terraform plan')['run'], target=target,
-                       extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': image, 'TESTED_IMAGE_CONFIG': 'sha256:' + 'b' * 64})
+                       prefix='''uv() { test "$1" = sync; }
+terraform() {
+  test "$1" = -chdir=terraform/envs/prod && test "$2" = show && test "$3" = -json
+  echo '{"resource_changes":[]}'
+}
+''', extra={'GITHUB_WORKSPACE': str(tmp_path), 'IMAGE': image, 'TESTED_IMAGE_CONFIG': 'sha256:' + 'b' * 64})
+    assert json.loads((tmp_path / 'ingestion.tfplan.json').read_text()) == {'resource_changes': []}
     assert result.returncode == 0, result.stderr
     args = json.loads(result.stdout)
     assert {a.removeprefix('-target=') for a in args if a.startswith('-target=')} == set(subprocess.check_output([sys.executable, 'scripts/dataset_usage_deploy.py', '--targets'], text=True).splitlines() if config['plan_guard'] == 'usage' else config['targets'])
@@ -310,7 +316,7 @@ def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollo
     locked_runs = '\n'.join(s.get('run', '') for s in jobs['apply']['steps'])
     assert 'jobs execute' not in locked_runs and 'jobs executions describe' not in locked_runs
     names = [s.get('name') for s in jobs['apply']['steps']]
-    order = ['Terraform plan', 'Export Terraform plan JSON', 'Enforce ingestion resource-change allowlist', 'Verify complete saved-plan mutation permissions',
+    order = ['Terraform plan', 'Enforce ingestion resource-change allowlist', 'Verify complete saved-plan mutation permissions',
              'Claim tested deployment revision', 'Attest serialized deployment claim before mutation', 'Terraform apply']
     assert [names.index(n) for n in order] == sorted(names.index(n) for n in order)
     assert "steps.claim-receipt.outcome == 'success'" in shared_step('apply', 'Terraform apply')['if']
@@ -429,7 +435,7 @@ def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
     assert resume['if'] == "env.AFTER_VERIFY != '' && inputs.resume_scheduler"
     from scripts import ingestion_targets
     assert target_table()['sea-ice-daily']['after_verify'] == 'resume_published_scheduler'
-    assert resume['run'] == 'uv run --no-sync python scripts/ingestion_targets.py after-verify'
+    assert resume['run'] == 'uv run --frozen --no-dev python scripts/ingestion_targets.py after-verify'
     for published in (True, False):
         def run(args, **kwargs):
             if not published:

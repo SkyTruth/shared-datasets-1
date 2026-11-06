@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def repository(tmp_path):
     for directory in (".github", "catalog", "terraform", "docs/wdpa-processing-evidence", "scripts", "ingestion"):
-        shutil.copytree(ROOT / directory, tmp_path / directory, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(ROOT / directory, tmp_path / directory, ignore=shutil.ignore_patterns("__pycache__", ".terraform"))
     return tmp_path
 
 
@@ -79,3 +79,15 @@ def test_monthly_deployment_does_not_require_historical_acceptance(repository):
     (repository / "catalog/wdpa-processing-acceptance.json").unlink()
     result = run_release_cli(repository, target="wdpa")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_fixture_omits_initialized_provider_binaries(tmp_path, monkeypatch):
+    source = tmp_path / 'initialized-checkout'
+    for directory in ('.github', 'catalog', 'terraform', 'docs/wdpa-processing-evidence', 'scripts', 'ingestion'):
+        (source / directory).mkdir(parents=True)
+    provider = source / 'terraform/envs/prod/.terraform/providers/google'
+    provider.parent.mkdir(parents=True)
+    provider.write_bytes(b'provider-binary-not-consumed-by-release-validation')
+    monkeypatch.setitem(globals(), 'ROOT', source)
+    root = repository.__wrapped__(tmp_path / 'fixture')
+    assert not any(root.rglob('.terraform'))

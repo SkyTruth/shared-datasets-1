@@ -302,14 +302,18 @@ class ReleaseContractTests(unittest.TestCase):
                 path.write_text(yaml.safe_dump(value))
                 self.assertTrue(contracts.deployment_contract(self.root, "wdpa"))
 
-    def test_shared_action_declares_unconditional_exact_checkouts_and_restore(self):
+    def test_shared_action_keeps_exact_checkout_and_restore_for_different_executors(self):
         source = ROOT / ".github/actions/deployment-bootstrap/action.yml"
         steps = yaml.safe_load(source.read_text())["runs"]["steps"]
         checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
         self.assertEqual(checkout["with"], {"ref": "${{ inputs.executor-sha }}", "fetch-depth": 0, "persist-credentials": False})
         restore = next(step for step in steps if "TRUSTED_WORKFLOW_SHA" in step.get("env", {}))
         self.assertEqual(restore["env"]["TRUSTED_WORKFLOW_SHA"], "${{ github.workflow_sha }}")
-        self.assertTrue(all("if" not in step and not step.get("continue-on-error") for step in steps))
+        conditional = {'Snapshot trusted verifier import closure', 'Check out repository',
+                       'Restore immutable receipt verifier after candidate checkout', 'Verify tested main revision'}
+        for step in steps:
+            self.assertFalse(step.get('continue-on-error'))
+            self.assertEqual(step.get('if'), 'inputs.executor-sha != github.workflow_sha' if step['name'] in conditional else None)
 
     def test_each_wrapper_must_resolve_its_registered_target_and_exact_source(self):
         for target, slug in contracts.DEPLOYS.items():

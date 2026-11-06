@@ -26,6 +26,7 @@ WORKFLOW_NAMES = {
     'ingestion-schedule-control.yml': ('Ingestion / Schedule control', 'Ingestion schedule control'),
     'mpatlas-monthly-deploy.yml': ('Ingestion / MPAtlas monthly deploy', 'MPAtlas monthly deploy'),
     'operational-safety-check.yml': ('Operations / Safety check',),
+    'owner-acceptance-refresh.yml': ('CI / Refresh owner acceptance',),
     'pmtiles-cdn-sync.yml': ('Catalog / PMTiles CDN sync', 'PMTiles CDN sync'),
     'preview-terraform-iam-sync.yml': ('Infrastructure / Preview Terraform IAM sync', 'Preview Terraform IAM sync'),
     'pr-terraform-plan.yml': ('Infrastructure / Read-only PR plan',),

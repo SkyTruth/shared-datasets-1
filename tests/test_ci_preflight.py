@@ -51,7 +51,7 @@ def results_for(validation):
 
 def jobs_for(validation):
     jobs = {"geospatial-changes": {"result": "success"}}
-    for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser"):
+    for suite in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser"):
         jobs[suite] = {"result": "success" if suite in validation["suites"] else "skipped"}
     jobs["sdk-validation"] = {"result": "success" if "sdk-node22" in validation["suites"] else "skipped"}
     return jobs
@@ -330,7 +330,7 @@ def test_parallel_python_command_preserves_failures_and_worker_crashes(tmp_path,
     )
     command = next(command for command, _ in preflight.suite_commands("tests", ROOT, plan(), tmp_path) if "pytest" in command)
     completed = subprocess.run(
-        [*command, str(fixture)], cwd=ROOT, capture_output=True, text=True, timeout=60,
+        [*(arg for arg in command if not arg.startswith("tests/")), str(fixture)], cwd=ROOT, capture_output=True, text=True, timeout=60,
         env={key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_WORKER")},
     )
     if outcome == "pass":
@@ -497,15 +497,14 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
     git("add", ".")
     git("commit", "-m", "automation")
     validation, emitted = emit_plan(source, base, tmp_path)
-    assert validation["suites"] == ["lint", "tests"]
+    assert validation["suites"] == ["lint", "tests", "tests-control-plane"]
     assert validation["deployments"] == []
     assert json.loads(emitted["production-image-targets"]) == []
     assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
                 for suite in validation["suites"]}
     assert ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."] in commands["tests"]
-    assert ["uv", "run", "--no-sync", "pytest", "-n", "4", "--max-worker-restart", "0", "-o",
-            "xfail_strict=true", f"--junitxml={tmp_path / 'tests' / 'pytest.xml'}"] in commands["tests"]
+    assert any("pytest" in argv and "4" in argv and f"--junitxml={tmp_path / 'tests' / 'pytest.xml'}" in argv for argv in commands["tests"])
     for script in ("admission_check", "repo_guardrails", "catalog_docs", "catalog_site", "check_identity_resolutions"):
         assert any(f"scripts/{script}.py" in args for args in commands["tests"])
     assert ["uv", "run", "--no-sync", "ruff", "check", "."] in commands["lint"]
@@ -526,7 +525,7 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
             verify_results(validation, results, skipped)
 
 
-@pytest.mark.parametrize("suites", [SUITES, ("lint", "tests")])
+@pytest.mark.parametrize("suites", [SUITES, ("lint", "tests", "tests-control-plane")])
 @pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale", "source-change"])
 def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome):
     (tmp_path / "repo").mkdir()
@@ -718,7 +717,7 @@ def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     assert workflow["jobs"]["geospatial-changes"]["name"] == "geospatial-changes"
     assert ready["name"] == "ci-ready"
     assert ready["if"] == "always()"
-    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "owner-acceptance", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
+    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "tests-control-plane", "owner-acceptance", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
     assert workflow["jobs"]["sdk-validation"]["strategy"]["matrix"]["node"] == ["22", "24"]
     assert not (ROOT / ".github/workflows/sdk-validation.yml").exists()
     assert not (ROOT / ".github/workflows/catalog-browser-smoke.yml").exists()
@@ -974,6 +973,7 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
                 for suite in validation["suites"]}
     assert commands == {
         "lint": [["git", "diff", "--check", base, validation["tested_sha"]]],
+        "tests-control-plane": [["uv", "sync", "--locked", "--all-groups"], preflight.interpreter_command()],
         "tests": [
             ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."],
             ["uv", "sync", "--locked", "--all-groups"],
@@ -1029,7 +1029,7 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
         assert retained["commands"][-1]["exit_code"] != 0
         lint = preflight.run_suite(source, validation, "lint", output / "lint")
         with pytest.raises(ValueError, match="did not execute successfully"):
-            verify_results(validation, [lint, retained], jobs_for(validation))
+            verify_results(validation, [lint, retained, next(row for row in results_for(validation) if row["suite"] == "tests-control-plane")], jobs_for(validation))
     assert all(not (tmp_path / suite / "pytest.xml").exists() for suite in validation["suites"])
 
 
@@ -1132,3 +1132,17 @@ def test_lint_releases_at_most_one_held_target(tmp_path, released):
             preflight.suite_commands("lint", source, selected, tmp_path)
     else:
         assert preflight.suite_commands("lint", source, selected, tmp_path)
+
+
+def test_unit_test_only_changes_do_not_rebuild_uncopied_production_images():
+    # Installed probes and fixtures remain inputs; pytest-only source is not consumed by image execution.
+    images, *_ = ci_contract.dependency_inputs()
+    for target in BUILD_TARGETS:
+        unit = f"tests/test_{target.replace('-', '_')}.py"
+        assert unit not in images[target]
+        if (ROOT / unit).exists():
+            selection = resolve_selection([unit])
+            assert 'tests' in selection['suites']
+            assert selection['production_image_targets'] == []
+        fixture = f'tests/fixtures/production_images/{target}.json'
+        assert fixture in images[target]

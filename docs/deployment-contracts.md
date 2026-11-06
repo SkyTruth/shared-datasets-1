@@ -53,10 +53,10 @@ HTTP permission reads retry transport/timeouts/5xx three times (5/10-second dela
 4xx/malformed responses fail immediately. WDPA's saved-plan guard reads Terraform's CPU/memory/timeout.
 
 Ingestion, narrow Terraform, viewer and CDN runners check out `github.workflow_sha`, then invoke the
-`deployment-bootstrap` composite. It authorizes the candidate before checkout,
-snapshots the restored entrypoints’ local import closure from that immutable SHA,
-then restores it, package initializers, receipt/auth actions and target registry. It
-verifies the tested checkout before authentication. The protected environment
+`deployment-bootstrap` composite. It verifies owner acceptance, immutable main context and tested CI authority before authentication.
+When the executor differs from the trusted workflow SHA, it snapshots the restored entrypoints’ local import closure,
+checks out the exact executor and restores trusted code, package initializers, receipt/auth actions and the target registry.
+An exact HEAD assertion follows that checkout. Equal SHAs retain the already verified trusted checkout directly. The protected environment
 remains required; Terraform and verification reads use separate identities. Jobs
 retain environment deployment records: [GitHub's documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
 does not explicitly confirm OIDC environment claims with `deployment: false`.

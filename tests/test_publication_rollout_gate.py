@@ -98,7 +98,7 @@ class PublicationDeploymentTests(unittest.TestCase):
             # attempt still verifies actual installed state before building.
             self.assertEqual(step["if"], "steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'")
             self.assertNotIn("continue-on-error", step)
-            self.assertEqual(step["run"].strip(), 'uv run --no-sync python scripts/publication_rollout_gate.py --job "$TARGET"')
+            self.assertEqual(step["run"].strip(), 'uv run --frozen --no-dev python scripts/publication_rollout_gate.py --job "$TARGET"')
             self.assertLess(names.index("Authenticate to Google Cloud"), names.index(gate_name))
             self.assertLess(names.index(gate_name), names.index("Load exact tested image"))
             self.assertEqual(workflow["jobs"]["apply"]["needs"], "prepare")
