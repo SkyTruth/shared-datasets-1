@@ -64,7 +64,9 @@ Cleanups must be exact and reviewable.
   intermediates, but those directories must still live under the standard root
   when practical.
 - Agents must not delete stale files or directories from prior tasks without
-  explicit action-time confirmation.
+  explicit action-time confirmation. A request to tidy or prune worktrees is that
+  confirmation for the directories left behind by the stale worktree
+  registrations it prunes, under the checks in the `tidy-local-development` skill.
 - Before deleting stale work, report the exact paths, approximate size, age, and
   reason each path is safe to remove.
 - Never run broad cleanup against `${TMPDIR}`, `/tmp`, the repository root, or

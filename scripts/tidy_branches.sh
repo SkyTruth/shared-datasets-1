@@ -4,10 +4,14 @@ set -euo pipefail
 
 usage() {
   cat <<'HELP'
-Usage: bash scripts/tidy_branches.sh [--apply] [--remote NAME] [--keep BRANCH] [--https]
+Usage: bash scripts/tidy_branches.sh [--apply] [--remote NAME] [--keep BRANCH]
+       [--contained-in BRANCH] [--https]
 
 Preview cleanup by default; --apply deletes verified merged PR branches.
---keep is repeatable. --https uses gh-authenticated HTTPS without changing Git config.
+--keep is repeatable. --contained-in (repeatable) also deletes local-only branches
+without a worktree whose commits are outside the default branch and inside that
+pushed branch, such as worker branches merged into an unmerged integration branch;
+the named branch is kept. --https uses gh-authenticated HTTPS without changing Git config.
 Requires Git, authenticated GitHub CLI (gh), and jq; supports github.com remotes.
 Set GIT_BIN to select a working Git executable. Reports and recovery bundles go under
 ${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/.
@@ -20,13 +24,18 @@ apply=false
 https=false
 remote=origin
 kept=(main)
+containers=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) apply=true; shift ;;
     --https) https=true; shift ;;
-    --remote|--keep)
+    --remote|--keep|--contained-in)
       [[ $# -ge 2 && -n "$2" ]] || die "$1 requires a value"
-      if [[ "$1" == --remote ]]; then remote=$2; else kept+=("$2"); fi
+      case "$1" in
+        --remote) remote=$2 ;;
+        --keep) kept+=("$2") ;;
+        *) containers+=("$2"); kept+=("$2") ;;
+      esac
       shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -84,6 +93,14 @@ github_snapshot "$report/before"
 branch_sha() { jq -r --arg b "$2" '.[] | select(.name == $b) | .commit.sha' "$1"; }
 is_open() { grep -Fxq -- "$2" "$1"; }
 is_protected() { jq -e --arg b "$2" 'any(.[]; .name == $b and .protected)' "$1" >/dev/null; }
+# A containing branch must be pushed: its remote tip preserves the deleted branches' commits.
+container_shas=()
+for container in ${containers[@]+"${containers[@]}"}; do
+  sha=$(branch_sha "$report/before-branches.json" "$container")
+  [[ -n "$sha" && $(g rev-parse -q --verify "refs/remotes/$remote/$container") == "$sha" ]] ||
+    die "--contained-in requires a fetched $remote branch: $container"
+  container_shas+=("$sha")
+done
 
 # Read NUL-delimited worktree records so spaces and newlines in paths remain intact.
 # Returns a reason to keep the branch, and the sole clean worktree path if present.
@@ -158,6 +175,18 @@ while IFS= read -r branch; do
       break
     fi
   done < "$report/pr-candidates.tsv"
+  # Commits outside the default branch keep a new branch at main from matching any container.
+  if [[ -z "$proof" && -n "$local_sha" && -z "$remote_sha" && -z "$wt_path" ]] &&
+    ! g merge-base --is-ancestor "$local_sha" "$base"; then
+    i=0
+    for container in ${containers[@]+"${containers[@]}"}; do
+      if g merge-base --is-ancestor "$local_sha" "${container_shas[$i]}"; then
+        proof="in:$container"$'\t'"${container_shas[$i]}"$'\t'-
+        break
+      fi
+      i=$((i + 1))
+    done
+  fi
   if [[ -z "$proof" ]]; then
     printf '%s\tno verified merged PR at this tip\n' "$branch" >> "$report/keep.tsv"
     continue
@@ -189,6 +218,10 @@ while IFS=$'\t' read -r branch local_sha remote_sha pr head merge; do
   worktree_state "$branch"
   [[ -z "$wt_reason" ]] || die "$branch: $wt_reason"
   [[ $(g symbolic-ref -q HEAD || test "$?" -eq 1) != "refs/heads/$branch" ]] || die "now current: $branch"
+  if [[ "$pr" == in:* ]]; then
+    [[ -z "$wt_path" ]] || die "now checked out: $branch"
+    [[ $(branch_sha "$report/recheck-branches.json" "${pr#in:}") == "$head" ]] || die "containing branch changed: ${pr#in:}"
+  fi
   actual=$(g for-each-ref --format='%(refname) %(objectname)' refs/heads |
     awk -v ref="refs/heads/$branch" '$1 == ref {print $2}')
   [[ "${actual:--}" == "$local_sha" ]] || die "local branch changed: $branch"
