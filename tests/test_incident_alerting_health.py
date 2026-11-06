@@ -20,7 +20,7 @@ def test_alerting_configuration_is_reported_and_deduplicated(tmp_path, monkeypat
     monkeypatch.setattr('scripts.catalog_drift_guard.get_client', lambda: None)
     api = OperationalAPI()
     monkeypatch.setattr(safety, "GitHub", lambda: api)
-    monkeypatch.setattr(safety, "context", lambda *_: api.current)
+    monkeypatch.setattr(safety.alerts, "context", lambda *_a, **_k: api.current)
     monkeypatch.setattr(safety, "policy_warnings", lambda _: ([], []))
     monkeypatch.setattr(safety, "audit_freshness", lambda *_a, **_k: [])
     monkeypatch.setenv("SAFETY_PROBE_OUTCOME", "failure")

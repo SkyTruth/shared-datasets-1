@@ -23,7 +23,7 @@ def test_setup_outages_deduplicate_changes_and_daily_reminders_without_probe_dep
     monkeypatch.setattr(safety, 'freshness', lambda *_args, **_kwargs: [])
     api = OperationalAPI()
     monkeypatch.setattr(safety, 'GitHub', lambda: api)
-    monkeypatch.setattr(safety, 'context', lambda *_: api.current)
+    monkeypatch.setattr(safety.alerts, 'context', lambda *_a, **_k: api.current)
     monkeypatch.setattr(safety, 'audit_freshness', lambda *_a, **_k: [])
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], []))
     monkeypatch.setenv('SAFETY_PROBE_OUTCOME', 'skipped')

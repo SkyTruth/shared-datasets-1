@@ -31,7 +31,7 @@ IDENTITY = ("schema_version", "base", "head", "tested_sha", "tree", "contract_di
 
 def admit_source(api, repository, run_id, attempt, sha, event):
     """npm must see this top-level workflow for automatic and recovery releases."""
-    from scripts.operational_safety_check import context
+    from scripts.workflow_failure_alert import context
     current = context(api, workflow=".github/workflows/publish-typescript-sdk.yml")
     require(os.environ.get("GITHUB_EVENT_NAME") == current["event"] == "workflow_dispatch", "SDK publishing requires dispatch")
     source = verify_ci(api, repository, sha, run_id, attempt)
