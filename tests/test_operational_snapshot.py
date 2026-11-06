@@ -12,6 +12,10 @@ from test_operational_safety_check import receipt_workspace  # noqa: F401 - auto
 from test_slack_incidents import IDENTITY
 
 
+def test_probe_transport_has_no_mutation_method():
+    assert not hasattr(safety.GitHub(), "post")
+
+
 def test_catalog_change_during_comparison_requests_refresh(probe_inputs):  # noqa: F811
     api, client, directory, _collect, checks = probe_inputs
     def update(*_args, **_kwargs):
