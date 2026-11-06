@@ -159,7 +159,8 @@ def test_schedule_admission_uses_registry_in_bare_interpreter(job, action):
 
 @pytest.mark.parametrize("age,matching,hold,count", [(73, False, None, 1), (72, False, None, 0),
     (73, True, None, 0), (73, False, 1, 0), (73, False, -1, 1)])
-def test_signed_selected_deployment_lag_bounds_age_and_active_holds(tmp_path, monkeypatch, age, matching, hold, count):
+@pytest.mark.parametrize('phase,state', [('started', 'in_progress'), ('deferred', 'pending')])
+def test_signed_selected_deployment_lag_bounds_age_and_active_holds(tmp_path, monkeypatch, age, matching, hold, count, phase, state):
     from scripts import deployment_revision as deployments
     from test_deployment_revision import DeploymentProvenanceTests, ReplayTests, CURRENT, IMAGE
     fixtures = DeploymentProvenanceTests()
@@ -177,8 +178,8 @@ def test_signed_selected_deployment_lag_bounds_age_and_active_holds(tmp_path, mo
         if "/deployments?" in path:
             return [record]
         if "/statuses?" in path:
-            # Failure and in-progress starts remain selected accepted attempts.
-            return [{"description": "started", "state": "in_progress"}]
+            # Deferrals still report image lag although resume ignores them.
+            return [{"description": phase, "state": state}]
         return [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
     api.pages.side_effect = pages
     monkeypatch.setattr(deployments, "verify_receipt", mock.Mock())

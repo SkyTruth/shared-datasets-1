@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from scripts import deployment_revision as deployment
-from terraform_helpers import load_terraform, resources
+from terraform_helpers import evaluate, load_terraform, resources, terraform_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,9 +48,105 @@ def test_recovery_grants_reuse_readonly_roles_and_only_the_exact_default_state()
     assert policy['recovery'] == ['deployment-recovery.yml']
     assert all('deployment-recovery.yml' not in workflows for identity, workflows in policy.items() if identity != 'recovery')
     assert 'deployment-recovery.yml' not in policy['terraform']
-    registry = json.loads((ROOT / '.github/terraform-targets.json').read_text())
-    assert {'google_project_iam_member.recovery_reader', 'google_storage_bucket_iam_member.recovery_state_reader',
-            'google_project_iam_custom_role.pr_plan_reader', 'google_project_iam_custom_role.pr_plan_state_reader'} <= set(registry['targets']['GitHub workflow identity sync']['resources'])
+
+
+def test_unproven_planning_and_recovery_roles_are_manual_only():
+    from scripts import terraform_target_contracts as contracts
+    registry = contracts.registry()
+    manual = registry['PR plan identity provisioning']
+    protected = {'google_project_iam_member.recovery_reader', 'google_storage_bucket_iam_member.recovery_state_reader',
+                 'google_project_iam_custom_role.pr_plan_reader', 'google_project_iam_custom_role.pr_plan_state_reader',
+                 *(f'{kind}.github_job["recovery"]' for kind in (
+                     'google_service_account', 'google_project_iam_custom_role', 'google_project_iam_member')),
+                 'google_service_account_iam_member.github_job_wif["recovery"]'}
+    automatic = {row['workflow'] for row in contracts.registry(section='deployments').values()}
+    assert manual['workflow'] not in automatic
+    assert protected <= set(manual['resources'])
+    for name, scope in registry.items():
+        if scope['workflow'] in automatic:
+            assert not protected & set(scope['resources']), name
+
+
+def test_every_recovery_refresh_dependency_has_read_authority(tmp_path):
+    from scripts import terraform_target_contracts as contracts
+
+    providers = Path(os.environ.get('TF_DATA_DIR', ROOT / 'terraform/envs/prod/.terraform')) / 'providers'
+    prod = contracts.prepare(ROOT, tmp_path, providers)
+    graph = contracts.parse_graph(contracts.graph(prod, terraform_executable(), contracts.isolated_environment(tmp_path), tmp_path))
+    # Provider refresh contracts, including IAM policy reads distinct from
+    # resource metadata. Unknown resource kinds require an explicit decision.
+    reads = dict(line.split(':') for line in '''
+google_artifact_registry_repository:artifactregistry.repositories.get
+google_artifact_registry_repository_iam_member:artifactregistry.repositories.getIamPolicy
+google_cloud_run_v2_job:run.jobs.get
+google_cloud_run_v2_job_iam_member:run.jobs.getIamPolicy
+google_cloud_run_v2_service:run.services.get
+google_cloud_run_v2_service_iam_member:run.services.getIamPolicy
+google_cloud_scheduler_job:cloudscheduler.jobs.get
+google_compute_backend_bucket:compute.backendBuckets.get
+google_compute_backend_service:compute.backendServices.get
+google_compute_global_address:compute.globalAddresses.get
+google_compute_global_forwarding_rule:compute.globalForwardingRules.get
+google_compute_managed_ssl_certificate:compute.sslCertificates.get
+google_compute_region_network_endpoint_group:compute.regionNetworkEndpointGroups.get
+google_compute_target_http_proxy:compute.targetHttpProxies.get
+google_compute_target_https_proxy:compute.targetHttpsProxies.get
+google_compute_url_map:compute.urlMaps.get
+google_iam_deny_policy:iam.denypolicies.get
+google_iam_workload_identity_pool:iam.workloadIdentityPools.get,iam.workloadIdentityPools.getAttestationRules
+google_iam_workload_identity_pool_provider:iam.workloadIdentityPoolProviders.get
+google_iap_web_cloud_run_service_iam_member:iap.webServices.getIamPolicy
+google_logging_metric:logging.logMetrics.get
+google_logging_project_exclusion:logging.exclusions.get
+google_logging_project_sink:logging.sinks.get
+google_monitoring_alert_policy:monitoring.alertPolicies.get
+google_monitoring_notification_channel:monitoring.notificationChannels.get
+google_project:resourcemanager.projects.get
+google_project_iam_audit_config:resourcemanager.projects.getIamPolicy
+google_project_iam_custom_role:iam.roles.get
+google_project_iam_member:resourcemanager.projects.getIamPolicy
+google_project_service:serviceusage.services.get
+google_pubsub_subscription:pubsub.subscriptions.get
+google_pubsub_topic:pubsub.topics.get
+google_pubsub_topic_iam_member:pubsub.topics.getIamPolicy
+google_secret_manager_secret:secretmanager.secrets.get
+google_secret_manager_secret_iam_member:secretmanager.secrets.getIamPolicy
+google_service_account:iam.serviceAccounts.get
+google_service_account_iam_binding:iam.serviceAccounts.getIamPolicy
+google_service_account_iam_member:iam.serviceAccounts.getIamPolicy
+google_storage_bucket:storage.buckets.get
+google_storage_bucket_iam_member:storage.buckets.getIamPolicy
+google_storage_managed_folder:storage.managedFolders.get
+google_storage_managed_folder_iam_member:storage.managedFolders.getIamPolicy
+terraform_data:
+'''.strip().splitlines())
+    rows = {f'{kind}.{name}': body for path in (ROOT / 'terraform/envs/prod').glob('*.tf')
+            for kind, name, body in resources(load_terraform(path))}
+    identity = load_terraform(ROOT / 'terraform/envs/prod/github_job_identities.tf')['locals'][0]
+    granted = set(evaluate({key: identity[key] for key in ('observer_permissions', 'github_job_permissions')},
+                           'local.github_job_permissions.recovery'))
+    granted.update(rows['google_project_iam_custom_role.pr_plan_reader']['permissions'])
+    assert 'secretmanager.versions.access' not in granted
+    scopes = {name: scope['resources'] for name, scope in contracts.registry().items()}
+    scopes.update({name: row['targets'] for name, row in deployment.INGESTION_CONFIGS.items() if row['targets']})
+    # The usage reconciler resolves its runtime scope dynamically instead of
+    # declaring static ingestion targets.
+    usage = contracts.registry(section='plan_scopes')['dataset-usage-deploy.yml']['runtime']
+    scopes['dataset-usage'] = usage.get('exact', []) + usage.get('instances', [])
+    retired = {r for rows in json.loads((ROOT / 'terraform/iam-plan-prerequisites.json').read_text())['retired_targets'].values() for r in rows}
+    for name, targets in scopes.items():
+        roots = {contracts.address(r) for r in targets}
+        assert roots - graph.keys() <= retired
+        # An empty state-only scope refreshes the full configuration.
+        ancestors = contracts.closure(graph, roots & graph.keys()) if targets else graph
+        required = {permission for node in ancestors for permission in reads[node.split('.')[-2]].split(',') if permission}
+        assert not required - granted, (name, sorted(required - granted))
+    automatic = {row['workflow'] for row in contracts.registry(section='deployments').values()}
+    unproven = {'google_project_iam_custom_role.pr_plan_reader', 'google_project_iam_custom_role.pr_plan_state_reader'}
+    for name, scope in contracts.registry().items():
+        if scope['workflow'] in automatic:
+            roots = {contracts.address(r) for r in scope['resources']} & graph.keys()
+            assert not unproven & contracts.closure(graph, roots).keys(), name
 
 
 def test_refresh_uses_original_config_trusted_retry_and_a_lock_free_refreshed_plan(tmp_path):

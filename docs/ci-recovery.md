@@ -46,9 +46,15 @@ original alert reconciled as distinct milestones.
 inspect the original Terraform configuration or SDK bytes; executor scripts
 never replace recovery policy. Infrastructure plans use dedicated recovery credentials,
 refresh live resources with `-lock=false` and never apply or write state.
-The protected **GitHub workflow identity sync** must first install the recovery identity's
-read-only planning metadata role and exact default-state read/workspace-list
-grant. Only `deployment-recovery.yml` can assume this identity. State may contain the
+After the automatic **GitHub workflow identity sync** establishes the production
+WIF provider, manually run protected `terraform-state-read-iam-sync.yml` from the
+exact successful main-push CI source triple: **PR plan identity IAM bootstrap**
+precedes **PR plan identity provisioning**. That manual scope installs the PR
+planning roles and the recovery identity, metadata/IAM-policy reads (including
+Secret Manager policy refresh), and exact default-state read/workspace-list grant.
+Recovery is unavailable until this provisioning succeeds; merge alone does not
+activate it. Unverified custom-role permissions stay out of automatic scopes.
+Only `deployment-recovery.yml` can assume this identity. State may contain the
 Terraform-managed Monitoring Slack channel auth token; observers retain no state
 read grant. Recovery has no state writes, Secret Manager version access or
 deployment authority.

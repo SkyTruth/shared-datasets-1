@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_target_contracts import registry, production_image_limits
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
 
+HOST_PROBE_FILES = dict(usage_probe="scripts/dataset_usage_cold_start.py",
+    fixture_script="scripts/installed_ingestion_fixture.py", smoke="scripts/local_ingestion_smoke.py")
+
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
 script = pathlib.Path(shutil.which("gdal_calc.py"))
@@ -157,9 +160,7 @@ def commands(target, executor, *, image_id=None, limits=None):
     fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
     if any("{fixture}" in args for rows in checks.values() for args in rows):
         values["fixture"] = fixture.read_text()
-    files = dict(usage_probe=ROOT / "scripts/dataset_usage_cold_start.py",
-        fixture_script=ROOT / "scripts/installed_ingestion_fixture.py", smoke=ROOT / "scripts/local_ingestion_smoke.py")
-    values.update({key: path.read_text() for key, path in files.items()
+    values.update({key: (ROOT / path).read_text() for key, path in HOST_PROBE_FILES.items()
                    if any("{" + key + "}" in args for rows in checks.values() for args in rows)})
     return [build, *[({"container": run, "host": []}[mode]) + [arg.format_map(values) for arg in args]
                     for mode, rows in checks.items() for args in rows]]

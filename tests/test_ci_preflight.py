@@ -158,6 +158,27 @@ def test_image_selection_follows_component_and_installed_probe_inputs(paths, exp
     assert resolve_selection(paths)["production_image_targets"] == resolve_selection(list(reversed(paths)))["production_image_targets"]
 
 
+@pytest.mark.parametrize('path,target', [
+    ('scripts/local_ingestion_smoke.py', 'sea-ice-daily'),
+    ('scripts/dataset_usage_cold_start.py', 'dataset-usage'),
+    ('scripts/installed_ingestion_fixture.py', 'eamlis-monthly'),
+    ('scripts/installed_ingestion_fixture.py', 'mpatlas-monthly'),
+])
+def test_host_read_probe_selects_its_production_image(path, target):
+    assert target in resolve_selection([path])['production_image_targets']
+
+
+def test_every_registered_host_read_probe_is_an_image_input():
+    from scripts.production_image_contracts import HOST_PROBE_FILES
+    from scripts.terraform_target_contracts import registry
+
+    images, *_ = ci_contract.dependency_inputs()
+    for target, checks in registry(section='image_checks').items():
+        for key, path in HOST_PROBE_FILES.items():
+            if '{' + key + '}' in json.dumps(checks):
+                assert path in images[target], (target, key, path)
+
+
 @pytest.mark.parametrize("path", [
     source
     for line in (ROOT / "services/catalog_viewer/Dockerfile").read_text().splitlines()

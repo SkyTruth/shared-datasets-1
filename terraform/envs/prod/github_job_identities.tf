@@ -12,7 +12,7 @@ locals {
     "run.operations.get", "run.services.get", "secretmanager.secrets.get", "monitoring.alerts.get", "monitoring.timeSeries.list",
   ]
   github_job_permissions = {
-    recovery   = local.observer_permissions
+    recovery   = concat(local.observer_permissions, ["secretmanager.secrets.getIamPolicy"])
     observer   = local.observer_permissions
     heartbeat  = local.observer_permissions
     reconciler = ["run.services.get", "monitoring.alerts.get"]
@@ -69,7 +69,8 @@ resource "google_storage_bucket_iam_member" "github_job_reader" {
   }
 }
 
-# Only the dedicated recovery leaf may read potentially secret-bearing state.
+# Installed by manual protected PR plan identity provisioning. Only the
+# dedicated recovery leaf may read potentially secret-bearing state.
 resource "google_project_iam_member" "recovery_reader" {
   project = var.project_id
   role    = google_project_iam_custom_role.pr_plan_reader.name

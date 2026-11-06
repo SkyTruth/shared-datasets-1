@@ -18,6 +18,7 @@ from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
 from scripts.ingestion_targets import DEPLOY_TARGETS, TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
+from scripts.production_image_contracts import HOST_PROBE_FILES
 from scripts.terraform_target_contracts import registry, resource_index, scope_inputs
 from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest, dependency_graph, dependency_closure, repository_files
 
@@ -128,8 +129,8 @@ def dependency_inputs(revision=None, root=None):
                 copied.add(source + "/" if directory else source)
         copies[target] = set(copied)
         copied.update({f"tests/fixtures/production_images/{target}.json", f"tests/test_{target.replace('-', '_')}.py"})
-        if "{fixture_script}" in json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot.get(".github/terraform-targets.json", b"{}")).get("image_checks", {})).get(target, {})):
-            copied.add("scripts/installed_ingestion_fixture.py")
+        checks = json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot.get(".github/terraform-targets.json", b"{}")).get("image_checks", {})).get(target, {}))
+        copied.update(path for key, path in HOST_PROBE_FILES.items() if "{" + key + "}" in checks)
         images[target] = copied
     native = closure(NATIVE_TESTS)
     native.update({name for name, inputs in edges.items() if name.startswith("tests/")

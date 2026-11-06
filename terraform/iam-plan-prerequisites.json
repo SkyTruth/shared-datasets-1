@@ -130,7 +130,8 @@
     ],
     "terraform-state-read-iam-sync.yml/pr-plan-authority": [],
     "terraform-state-read-iam-sync.yml/pr-plan-identity": [
-      "google_project_service.required"
+      "google_project_service.required",
+      "google_iam_workload_identity_pool.github"
     ]
   }
 }
