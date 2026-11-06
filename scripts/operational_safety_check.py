@@ -16,8 +16,6 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-REPOSITORY = "SkyTruth/shared-datasets-1"
-API_ROOT = f"repos/{REPOSITORY}"
 WORKFLOW = ".github/workflows/operational-safety-check.yml"
 JOB = "Check for operational work"
 HEALTH_SCOPE = "health:operational-safety-check"
@@ -27,6 +25,8 @@ from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
 from scripts.dataset_mutation_authorization import GitHub
 from scripts import workflow_failure_alert as alerts
+from scripts.workflow_failure_alert import API_ROOT, REPOSITORY, source_inventory
+from scripts.catalog_refresh_check import catalog_changed
 
 ROOT = Path(__file__).resolve().parents[1]
 with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
@@ -37,41 +37,10 @@ CRON_ASSETS = {job: tuple(slug for slug in CATALOG if slug == config["asset_slug
 FRESHNESS_DAYS = {"daily": 2, "monthly": 45}
 UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already published",
                      "latest available source already published"}
-PROBE_STEP = "Check operational work"
-UPLOAD_STEP = "Retain operational safety snapshot"
-SCHEMA = "shared-datasets-operational-snapshot-v2"
 
 
-class SnapshotWrite(RuntimeError):
+class ReconciliationWrite(RuntimeError):
     """Reconciliation requires the signed worker."""
-
-
-class Snapshot:
-    """Cache catalog proof and receipts; reread live incidents."""
-    def __init__(self, data):
-        require(isinstance(data, dict) and set(data) == {"schema", "producer", "policy", "identity", "inventory_sha256", "entries"}
-                and data["schema"] == SCHEMA, "invalid snapshot document")
-        require(isinstance(data["producer"], dict) and native.execution(data["producer"]) == data["producer"], "invalid snapshot producer")
-        native.validate_context(data["policy"], data["identity"], since=True)
-        require(data["producer"]["head_sha"] == data["policy"]["head_sha"], "snapshot policy differs from producer")
-        require(isinstance(data["inventory_sha256"], str) and native.SHA.fullmatch(data["inventory_sha256"]), "invalid inventory fingerprint")
-        self.cache = native.VerificationCache(data["producer"], data["identity"],
-            gh_version=data["policy"]["gh_version"], entries=data["entries"])
-        self.data = copy.deepcopy(data)
-
-    @classmethod
-    def restore(cls, api, run, policy, identity, inventory):
-        native.validate_context(policy, identity, since=True)
-        require(native.execution(run)["head_sha"] == policy["head_sha"], "policy differs from execution")
-        retained = native.retained_payload(api, run, workflow_path=WORKFLOW, job_name=JOB,
-            required_steps=(PROBE_STEP, UPLOAD_STEP), events=("schedule", "workflow_dispatch"), name_prefix="safety-snapshot")
-        if retained:
-            producer, data = retained
-            snapshot = cls(data)
-            require(snapshot.data["producer"] == native.execution(producer), "snapshot artifact producer mismatch")
-            return snapshot if (data["policy"] == policy and data["identity"] == identity
-                                and data["inventory_sha256"] == native.digest(inventory)) else None
-        return None
 
 
 def utc(value):
@@ -83,22 +52,8 @@ def require(value, message):
         raise RuntimeError("OPERATIONAL_SAFETY: " + message)
 
 
-def context(api, environment=os.environ, *, workflow=WORKFLOW, events=("schedule", "workflow_dispatch")):
-    require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
-            and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + workflow + "@refs/heads/main",
-            "require exact trusted main workflow")
-    identifier, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
-    run = api.get(f"{API_ROOT}/actions/runs/{identifier}/attempts/{attempt}")
-    require(run.get("id") == identifier and run.get("run_attempt") == attempt
-            and run["event"] in events
-            and run["path"] == workflow, "invalid execution provenance")
-    definition = api.get(f"{API_ROOT}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
-    alerts.source_identity(api, run, workflow, definition)
-    return run
-
-
 def validate_safety_dispatch(api, event, environment=os.environ, *, workflow=".github/workflows/catalog-web-deploy.yml"):
-    current = context(api, environment, workflow=workflow)
+    current = alerts.context(api, environment, workflow=workflow)
     require(current["event"] == "workflow_dispatch", "refresh admission requires dispatch")
     inputs = event.get("inputs", {})
     values = [str(inputs.get(key, "")) for key in ("safety_run_id", "safety_run_attempt")]
@@ -108,7 +63,6 @@ def validate_safety_dispatch(api, event, environment=os.environ, *, workflow=".g
     definition = api.get(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
     alerts.source_identity(api, producer, WORKFLOW, definition)
     require(producer.get("id") == identifier and producer.get("run_attempt") == attempt
-            and producer["path"] == WORKFLOW
             and (producer["head_sha"] == current["head_sha"] or api.get(
                 f"{API_ROOT}/compare/{producer['head_sha']}...{current['head_sha']}").get("status") == "ahead")
             and producer.get("event") in {"schedule", "workflow_dispatch"},
@@ -121,18 +75,12 @@ def validate_safety_dispatch(api, event, environment=os.environ, *, workflow=".g
     probes = [step for step in found[0].get("steps", []) if step.get("name") == "Check operational work"]
     require(len(probes) == 1 and probes[0].get("status") == "completed" and probes[0].get("conclusion") == "success",
             "safety discovery did not succeed")
-    # Workers independently verify inputs and authority.
 
 
 def catalog_inventory(client):
     from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
-    result = {}
-    for row in client.list_blobs(catalog.DEFAULT_BUCKET, prefix=indexes.PREFIX):
-        relative = row.name.removeprefix(indexes.PREFIX)
-        require(row.name.startswith(indexes.PREFIX) and re.fullmatch(r"[a-z0-9][a-z0-9-]*\.json", relative)
-                and row.name not in result and re.fullmatch(r"[1-9][0-9]*", str(row.generation))
-                and type(row.size) is int and 0 < row.size <= indexes.MAX_INDEX_BYTES, "invalid release-index metadata")
-        result[row.name] = str(row.generation)
+    # Collection validates index names, generations, sizes and payloads once.
+    result = {row.name: str(row.generation) for row in client.list_blobs(catalog.DEFAULT_BUCKET, prefix=indexes.PREFIX)}
     for name in (catalog.REMOTE_CSV_OBJECT, catalog.REMOTE_WEB_CATALOG_OBJECT):
         blob = client.bucket(catalog.DEFAULT_BUCKET).blob(name)
         blob.reload()  # Missing objects and failed reads remain failures.
@@ -141,27 +89,7 @@ def catalog_inventory(client):
     return result
 
 
-def source_inventory(api, run, since, *, now=None):
-    now = now or datetime.now(timezone.utc)
-    start = max(native.timestamp(since), now - timedelta(hours=24))
-    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
-                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
-    rows = api.pages(f"{API_ROOT}/actions/runs?{query}", field="workflow_runs")
-    return [item for item in rows if (run is None or item.get("id") != run["id"])
-                and item.get("name") in alerts.WORKFLOW_PATHS and item.get("head_branch") == "main"
-                and item.get("head_repository", {}).get("full_name") == REPOSITORY], start, now
-
-
-def catalog_changed(client, directory):
-    from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
-    destination = directory / "release-indexes"
-    indexes.collect(client, catalog.DEFAULT_BUCKET, destination)
-    return any(not check.ok for check in catalog.run_checks(catalog.parse_args([
-        "--bucket", catalog.DEFAULT_BUCKET, "--release-index-dir", str(destination.resolve()), "--latest-from-release-index",
-    ])))
-
-
-def dry_reconciliation(api, run, identity, source_runs, start, end, directory, cache):
+def dry_reconciliation(api, run, identity, source_runs, start, end, directory):
     from scripts import slack_incidents as incidents
 
     claims = []
@@ -178,25 +106,21 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory, c
                              "terminal_validation": existing["terminal_validation"]} == existing:
                 # Watermarks alone need no wake-up; the next worker retains them.
                 return {"payload": {"state": state}}
-            raise SnapshotWrite("normal reconciliation must persist this transition")
+            raise ReconciliationWrite("normal reconciliation must persist this transition")
 
-    ledger = DryLedger(api, run, directory, verification_cache=cache)
+    ledger = DryLedger(api, run, directory)
     states = ledger.load()
     ledger.load = lambda: copy.deepcopy(states)
     safety_scopes = {"workflow:" + WORKFLOW.rsplit("/", 1)[-1],
                      incidents.scope_for_job(JOB, {}, WORKFLOW.rsplit("/", 1)[-1])[0]}
     safety_open = any(scope in safety_scopes and state["incident"]["resolution"] is None for scope, state in states.items())
-    observations = []
-    for source in source_runs:
-        if source.get("status") != "completed":
-            continue
-        if source.get("path") == WORKFLOW and source.get("conclusion") == "success" and not safety_open:
-            continue
-        observations.extend(incidents.source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": source}))
-    observations = [item for item in observations if start <= incidents.instant(item["time"]) <= end]
+    observations = [item for source in source_runs if source.get("status") == "completed"
+        and (source.get("path") != WORKFLOW or source.get("conclusion") != "success" or safety_open)
+        for item in incidents.source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": source})
+        if start <= incidents.instant(item["time"]) <= end]
     try:
         settled = not incidents.prepare(ledger, identity, observations)
-    except SnapshotWrite:
+    except ReconciliationWrite:
         settled = False
     return settled, claims
 
@@ -217,8 +141,7 @@ def verification_due(api, sources, pending, *, now):
             "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
-    checked = utc(latest["created_at"])
-    return now - checked >= timedelta(hours=3) or any(utc(status["created_at"]) > checked for status in statuses)
+    return now - utc(latest["created_at"]) >= timedelta(hours=3) or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
 
 
 def reconciliation_stalled(api, run):
@@ -286,23 +209,11 @@ def probe(api, run, identity, since, client, directory):
     since = since if identity else (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     all_sources, start, end = source_inventory(api, run, since) if identity or pending else ([], None, None)
     generations = catalog_inventory(client)
-    policy = {"head_sha": run["head_sha"], "gh_version": subprocess.check_output(["gh", "--version"], text=True), "since": since} if identity else None
-    snapshot = Snapshot.restore(api, run, policy, identity, generations) if identity and not pending else None
-    changed = False if snapshot else catalog_changed(client, directory)
-    cache = (snapshot.cache if snapshot else native.VerificationCache.restore(api, run, identity, gh_version=policy["gh_version"])) if identity else None
-    settled, claims = dry_reconciliation(api, run, identity, all_sources, start, end, directory, cache) if identity else (True, [])
+    changed = catalog_changed(client, directory)
+    settled, claims = dry_reconciliation(api, run, identity, all_sources, start, end, directory) if identity else (True, [])
     (directory / "claims.json").write_text(json.dumps(claims))
-    # Reject catalog changes during comparison.
-    stable_catalog = catalog_inventory(client) == generations
-    retain = identity is not None and not pending and not claims and settled and not changed and stable_catalog
-    if retain:
-        data = Snapshot({"schema": SCHEMA, "producer": native.execution(run), "policy": policy, "identity": identity,
-                         "inventory_sha256": native.digest(generations), "entries": cache.used}).data
-        raw = native.canonical(data)
-        require(len(raw) <= native.MAX_BYTES, "snapshot exceeds size limit")
-        (directory / native.MEMBER).write_bytes(raw)
-    return {"catalog": changed or not stable_catalog, "reconcile": not settled,
-            "verify": bool(pending) and verification_due(api, all_sources, pending, now=end), "snapshot": retain}
+    return {"catalog": changed or catalog_inventory(client) != generations, "reconcile": not settled,
+            "verify": bool(pending) and verification_due(api, all_sources, pending, now=end)}
 
 
 def policy_warnings(now):
@@ -352,13 +263,10 @@ def audit_freshness(api, *, now):
     """Require successful weekly audits within nine days."""
     problems = []
     for filename in ("bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"):
-        definition = api.get(f"{API_ROOT}/actions/workflows/{filename}")
-        require(definition.get("path") == ".github/workflows/" + filename, "weekly audit workflow identity changed")
         query = urlencode({"branch": "main", "status": "success", "per_page": 100,
                            "created": ">=" + (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")})
         runs = api.pages(f"{API_ROOT}/actions/workflows/{filename}/runs?{query}", field="workflow_runs")
-        if not any(run.get("path") == definition["path"] and run.get("workflow_id") == definition["id"]
-                   and run.get("status") == "completed" and run.get("conclusion") == "success"
+        if not any(run.get("path") == ".github/workflows/" + filename and run.get("conclusion") == "success"
                    and alerts.verify_source_event(api, run)
                    and timedelta(0) <= now - utc(run["updated_at"]) < timedelta(days=9)
                    for run in runs):
@@ -431,41 +339,35 @@ def main():
     require(args.work_dir is not None, "require a working directory")
     args.work_dir.mkdir(parents=True, exist_ok=True)
     api = GitHub()
-    run = context(api)
+    run = alerts.context(api, workflow=WORKFLOW)
     if args.health:
         now = datetime.now(timezone.utc)
         def scheduler(job):
             return json.loads(subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", job,
                 "--location=us-central1", "--project=shared-datasets-1", "--format=json"], text=True))
-        warnings = []
         configuration = incident_problems()
-        problems = list(configuration)
+        warnings, problems = [], list(configuration)
         probe_outcome = os.environ.get("SAFETY_PROBE_OUTCOME", "success")
         def dataset_freshness():
             from scripts import catalog_drift_guard as catalog
             return freshness(catalog.get_client(), now=now, scheduler=scheduler)
 
         def reconciliation_problems():
-            if probe_outcome != "success":
-                return []
-            findings = []
-            result = json.loads((args.work_dir / "result.json").read_text())
-            if result["reconcile"] and reconciliation_stalled(api, run):
-                findings.append("reconcile=true for >=3 consecutive safety probes; inspect the batch worker")
-            for claim in (json.loads((args.work_dir / "claims.json").read_text()) if not configuration else []):
-                if now - native.timestamp(claim["since"]) >= timedelta(hours=24):
-                    findings.append(f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required")
-            return findings
+            stalled = json.loads((args.work_dir / "result.json").read_text())["reconcile"] and reconciliation_stalled(api, run)
+            return (["reconcile=true for >=3 consecutive safety probes; inspect the batch worker"] if stalled else []) + [
+                f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required"
+                for claim in (json.loads((args.work_dir / "claims.json").read_text()) if not configuration else [])
+                if now - native.timestamp(claim["since"]) >= timedelta(hours=24)]
 
         readers = [
             ("policy_warnings", lambda: policy_warnings(now)),
             ("audit_freshness", lambda: ([], audit_freshness(api, now=now))),
             ("deployed_image_lag", lambda: ([], deployed_image_lag(api, now=now))),
             ("freshness", lambda: ([], dataset_freshness())),
-            ("reconciliation", lambda: ([], reconciliation_problems())),
         ]
         if probe_outcome == "success":
-            readers.append(("heartbeat_series", lambda: (heartbeat_series(now), [])))
+            readers += [("reconciliation", lambda: ([], reconciliation_problems())),
+                        ("heartbeat_series", lambda: (heartbeat_series(now), []))]
         for name, reader in readers:
             try:
                 reader_warnings, reader_problems = reader()
@@ -483,10 +385,9 @@ def main():
                 "--payload-type=json", "--severity=INFO", "--project=shared-datasets-1"])
         return
     from scripts import catalog_drift_guard as catalog, slack_incidents as incidents
-    client = catalog.get_client()
     identity = None if incident_problems() else incidents.Slack(os.environ["SHARED_DATASETS_SLACK_BOT_TOKEN"],
                                os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")).identity()
-    result = probe(api, run, identity, os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", ""), client, args.work_dir)
+    result = probe(api, run, identity, os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", ""), catalog.get_client(), args.work_dir)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
         stream.writelines(f"{key}={str(value).lower()}\n" for key, value in result.items())
     (args.work_dir / "result.json").write_text(json.dumps(result))

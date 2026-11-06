@@ -44,7 +44,6 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert "Install pinned durable receipt verifier" in steps
-    assert steps["Retain operational safety snapshot"]["with"]["retention-days"] == 1
     assert steps["Retain safety health report"]["with"]["retention-days"] == 3
     assert not any("attest" in step.get("uses", "") for step in job["steps"])
 

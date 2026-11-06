@@ -15,13 +15,9 @@ import test_deployment_revision as deployment_fixtures
 from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
 from scripts import deployment_emission as emissions, deployment_revision as deployments
 from scripts import operational_safety_check as safety
-from scripts import operational_safety_check as snapshots
 from scripts import slack_incidents as incidents, slack_notify
-from scripts.incident_verification_cache import VerificationCache
 from scripts.workflow_identity import WORKFLOW_NAMES
 from test_deployment_emission import run as emitter_run, verified
-from test_incident_verification_cache import GH_VERSION
-from test_operational_snapshot import capture
 from test_slack_incidents import IDENTITY, signed_record
 
 PREFIX = "repos/" + safety.REPOSITORY
@@ -143,7 +139,7 @@ def signed_transport(api):
 
 
 def dry(api, tmp_path, sources=()):
-    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path, None)[0]
+    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path)[0]
 
 
 def test_inventory_retains_missed_final_events_and_source_attempt_changes():
@@ -270,28 +266,18 @@ class CatalogClient:
 @pytest.fixture
 def probe_inputs(tmp_path, monkeypatch):
     api, client = OperationalAPI(), CatalogClient()
-    check_output = safety.subprocess.check_output
-    monkeypatch.setattr(safety.subprocess, "check_output", lambda command, *args, **kwargs:
-                        GH_VERSION if command == ["gh", "--version"] else check_output(command, *args, **kwargs))
-    monkeypatch.setattr(VerificationCache, "restore", lambda _api, run, identity, **_kwargs: VerificationCache(run, identity, gh_version=GH_VERSION))
     collect, checks = mock.Mock(), mock.Mock(return_value=[SimpleNamespace(ok=True)])
     monkeypatch.setattr(indexes, "collect", collect)
     monkeypatch.setattr(catalog, "run_checks", checks)
-    monkeypatch.setattr(snapshots.Snapshot, "restore", mock.Mock(return_value=None))
     return api, client, tmp_path, collect, checks
 
 
-def test_unchanged_catalog_snapshot_still_traverses_live_incidents_and_reuses_verified_receipts(probe_inputs, monkeypatch):
+def test_unchanged_catalog_still_traverses_live_incidents(probe_inputs):
     api, client, directory, collect, checks = probe_inputs
-    inventory = safety.catalog_inventory(client)
-    cache = VerificationCache(api.current, IDENTITY, gh_version=GH_VERSION)
-    snapshot = capture(api.current, {"head_sha": api.head, "gh_version": GH_VERSION, "since": stamp(START)},
-                                       IDENTITY, inventory, cache)
-    monkeypatch.setattr(safety.Snapshot, "restore", lambda *_: snapshot)
     assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory) == {
-        "catalog": False, "reconcile": False, "verify": False, "snapshot": True}
-    collect.assert_not_called()
-    checks.assert_not_called()
+        "catalog": False, "reconcile": False, "verify": False}
+    collect.assert_called_once()
+    checks.assert_called_once()
     assert any("environment=slack-incidents" in path for _method, path in api.calls)
     missed = api.source(101)
     api.add_source(missed)
@@ -309,7 +295,7 @@ def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_
                          100: [{"state": "success", "description": "verified"}]})
     checks.return_value = [SimpleNamespace(ok=False)]
     result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result == {"catalog": True, "reconcile": False, "verify": True, "snapshot": False}
+    assert result == {"catalog": True, "reconcile": False, "verify": True}
     collect.assert_called_once()
     checks.assert_called_once()
     assert api.posts == []
@@ -332,7 +318,7 @@ def test_probe_main_requires_bot_identity_only_when_incidents_configured(tmp_pat
     bot = mock.Mock()
     bot.identity.return_value = IDENTITY
     monkeypatch.setattr(incidents, "Slack", lambda *_: bot)
-    result = {"catalog": False, "reconcile": True, "verify": True, "snapshot": False}
+    result = {"catalog": False, "reconcile": True, "verify": True}
     probe = mock.Mock(return_value=result)
     monkeypatch.setattr(safety, "probe", probe)
     monkeypatch.setattr(safety.sys, "argv", [safety.__file__, "--work-dir", str(tmp_path)])
@@ -343,17 +329,7 @@ def test_probe_main_requires_bot_identity_only_when_incidents_configured(tmp_pat
         bot.identity.assert_not_called()
     probe.assert_called_once_with(api, api.current, IDENTITY if enabled == "true" else None, stamp(START), client, tmp_path)
     assert json.loads((tmp_path / "result.json").read_text()) == result
-    assert (tmp_path / "outputs").read_text().splitlines() == ["catalog=false", "reconcile=true", "verify=true", "snapshot=false"]
-
-
-def test_catalog_change_during_comparison_cannot_receive_an_idle_snapshot(probe_inputs):
-    api, client, directory, _collect, checks = probe_inputs
-    def update(*_args, **_kwargs):
-        client.objects[catalog.REMOTE_WEB_CATALOG_OBJECT] = "4"
-        return [SimpleNamespace(ok=True)]
-    checks.side_effect = update
-    result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result["catalog"] is True and result["snapshot"] is False
+    assert (tmp_path / "outputs").read_text().splitlines() == ["catalog=false", "reconcile=true", "verify=true"]
 
 
 @pytest.mark.parametrize("failure", ["sources", "catalog-list", "catalog-object"])
@@ -412,7 +388,7 @@ def test_catalog_admission_rejects_forged_context_or_producer(dispatch_context, 
         job["steps"][0]["conclusion"] = "skipped"
     else:
         event["inputs"]["safety_run_id"] = "../200"
-    with pytest.raises((RuntimeError, ValueError), match="OPERATIONAL_SAFETY|comparison commit unavailable|trusted main source|unknown unattended"):
+    with pytest.raises((RuntimeError, ValueError), match="OPERATIONAL_SAFETY|comparison commit unavailable|trusted main|unknown unattended"):
         safety.validate_safety_dispatch(api, event, environment, workflow=api.current["path"])
     assert api.posts == []
 
@@ -448,7 +424,6 @@ def test_batch_cli_authenticates_exact_inflight_probe_without_parent_wait(tmp_pa
     slack = mock.Mock()
     slack.identity.return_value = IDENTITY
     monkeypatch.setattr(incidents, "Slack", lambda *_: slack)
-    monkeypatch.setattr(VerificationCache, "restore", lambda *_: VerificationCache(api.current, IDENTITY, gh_version=GH_VERSION))
     monkeypatch.setattr(safety.sys, "argv", ["slack_incidents.py", "prepare", "--work-dir", str(tmp_path)])
     if defect:
         with pytest.raises((RuntimeError, incidents.IncidentError)):
@@ -456,8 +431,6 @@ def test_batch_cli_authenticates_exact_inflight_probe_without_parent_wait(tmp_pa
     else:
         incidents.main()
         assert json.loads((tmp_path / "prepared.json").read_bytes()) == []
-        assert json.loads((tmp_path / "cache.json").read_bytes())["producer"]["id"] == 300
-        assert "verification_cache=true" in (tmp_path / "outputs").read_text()
     assert api.posts == []
     slack.post.assert_not_called()
     slack.update.assert_not_called()
@@ -495,7 +468,7 @@ def test_reconciliation_escalates_on_third_consecutive_probe_only(count, previou
 
 
 @pytest.mark.parametrize('age', [1, 25])
-def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_age(probe_inputs, monkeypatch, age):
+def test_uncertain_claim_waits_for_owner_and_health_cli_bounds_its_age(probe_inputs, monkeypatch, age):
     api, client, directory, _, _ = probe_inputs
     state = acked_job_state(api)
     state['incident'].update(posts={'parent':{'state':'claimed','ts':None}}, permalink='', parent_view_sha256=None)
@@ -503,7 +476,7 @@ def test_uncertain_claim_never_receives_idle_snapshot_and_health_cli_bounds_its_
     api.records[0]['created_at'] = stamp(NOW - timedelta(hours=age))
     with signed_transport(api):
         result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result == {'catalog':False, 'reconcile':False, 'verify':False, 'snapshot':False}
+    assert result == {'catalog':False, 'reconcile':False, 'verify':False}
     assert json.loads((directory/'claims.json').read_bytes()) == [{'incident':state['incident']['id'], 'since':api.records[0]['created_at']}]
     (directory/'result.json').write_text(json.dumps(result))
     for k,v in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
@@ -695,44 +668,10 @@ def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
     assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 
 
-@pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload'])
-def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(defect):
-    import hashlib
-    import io
-    import zipfile
-    from scripts.incident_verification_cache import canonical, CacheError
-    api = OperationalAPI()
-    producer = api.source(101, 'operational-safety-check.yml')
-    api.add_source(producer)
-    job = api.jobs[101][0]
-    job.update(name=safety.JOB, started_at=producer['created_at'], completed_at=producer['updated_at'],
-               steps=[{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'failure' if defect == 'upload' else 'success'}])
-    report = {'problems': ['paused'], 'warnings': [], 'notified_at': NOW.isoformat()}
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, 'w') as stream:
-        stream.writestr('cache.json', canonical(report))
-    raw = archive.getvalue()
-    artifact = {'id': 9, 'name': 'safety-health-101-1', 'expired': False, 'size_in_bytes': len(raw),
-                'created_at': producer['updated_at'], 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(),
-                'workflow_run': {'id': 101, 'head_sha': api.head, 'head_branch': 'main'}}
-    if defect == 'digest':
-        artifact['digest'] = 'sha256:' + '0' * 64
-    if defect == 'attempt':
-        api.runs[101] = {**producer, 'run_attempt': 2}
-    pages = api.pages
-    api.pages = lambda path, field=None: [artifact] if '/artifacts?' in path else pages(path, field=field)
-    api.archive = lambda *_: raw
-    if defect:
-        with pytest.raises((RuntimeError, CacheError)):
-            safety.previous_health(api, api.current)
-    else:
-        assert safety.previous_health(api, api.current) == report
-
-
 def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result_files(tmp_path, monkeypatch):
     api = OperationalAPI()
     monkeypatch.setattr(safety, 'GitHub', lambda: api)
-    monkeypatch.setattr(safety, 'context', lambda *_: api.current)
+    monkeypatch.setattr(safety.alerts, 'context', lambda *_a, **_k: api.current)
     monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], []))
     monkeypatch.setattr(catalog, 'get_client', lambda: None)
     monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
@@ -751,20 +690,3 @@ def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result
         assert previous['problems'] == ['Operational discovery failure; inspect Check operational work']
         assert slack_notify.notify.call_count == sends
     safety.subprocess.check_call.assert_not_called()  # No false success heartbeat.
-
-
-def test_settled_probe_reuses_signature_verification_after_real_snapshot_serialization(probe_inputs, monkeypatch):
-    api, client, directory, collect, checks = probe_inputs
-    api.install_state(acked_job_state(api))
-    with signed_transport(api) as crypto:
-        assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)['snapshot']
-        assert crypto.call_count == 1
-    retained = safety.Snapshot(json.loads((directory / 'cache.json').read_bytes()))
-    assert len(retained.cache.entries) == 1
-    monkeypatch.setattr(safety.Snapshot, 'restore', lambda *_: retained)
-    with mock.patch.object(emissions, 'verified_output', side_effect=AssertionError('unchanged receipt reverified')):
-        result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result == {'catalog': False, 'reconcile': False, 'verify': False, 'snapshot': True}
-    assert retained.cache.hits == 1 and retained.cache.misses == 0
-    assert collect.call_count == checks.call_count == 1
-    assert api.posts == []

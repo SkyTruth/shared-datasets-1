@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 import os
 import re
 from pathlib import Path
@@ -15,8 +17,11 @@ from scripts.slack_notify import build_slack_payload
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_WORKFLOWS
+from scripts import deployment_revision as deployments
+from scripts.incident_verification_cache import timestamp
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
+API_ROOT = f"repos/{REPOSITORY}"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
 PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed feature-ID reset",
                     "Detect reviewed PR mutation plans", "Build and publish catalog web",
@@ -109,6 +114,31 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
                 f"<https://github.com/{REPOSITORY}/actions/runs/{run['id']}|Open workflow run>",
         "status": "error",
     }
+
+
+def context(api, environment=os.environ, *, workflow, events=("schedule", "workflow_dispatch")):
+    deployments.require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
+            and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + workflow + "@refs/heads/main",
+            "require exact trusted main workflow")
+    identifier, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
+    run = api.get(f"{API_ROOT}/actions/runs/{identifier}/attempts/{attempt}")
+    deployments.require(run.get("id") == identifier and run.get("run_attempt") == attempt
+            and run["event"] in events
+            and run["path"] == workflow, "invalid execution provenance")
+    definition = api.get(f"{API_ROOT}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
+    source_identity(api, run, workflow, definition)
+    return run
+
+
+def source_inventory(api, run, since, *, now=None):
+    now = now or datetime.now(timezone.utc)
+    start = max(timestamp(since), now - timedelta(hours=24))
+    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
+                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    rows = api.pages(f"{API_ROOT}/actions/runs?{query}", field="workflow_runs")
+    return [item for item in rows if (run is None or item.get("id") != run["id"])
+                and item.get("name") in WORKFLOW_PATHS and item.get("head_branch") == "main"
+                and item.get("head_repository", {}).get("full_name") == REPOSITORY], start, now
 
 
 def source_identity(api: GitHub, run: dict, path: str, workflow: dict) -> None:

@@ -381,40 +381,16 @@ def workflow_run(
 
 
 def validate_envelope(envelope: Any) -> None:
-    fields = {
-        "outcome",
-        "authorization_version",
-        "repository",
-        "pr_number",
-        "head_sha",
-        "merge_sha",
-        "plan_path",
-        "plan_blob_sha",
-        "normalized_plan_sha256",
-        "document",
-        "acceptance",
-        "trusted_executor_sha",
-        "source_run",
-        "proposal_key",
-        "execution_contract_sha256",
-    }
     require(isinstance(envelope, dict), "authorization must be an object")
     require(
         envelope.get("outcome") in {"mutation", "no_mutation"},
         "invalid authorization outcome",
     )
-    if envelope["outcome"] == "no_mutation":
-        fields = {
-            "outcome",
-            "authorization_version",
-            "repository",
-            "pr_number",
-            "head_sha",
-            "merge_sha",
-            "trusted_executor_sha",
-            "source_run",
-        }
-    plans.require_fields(envelope, fields, label="authorization envelope")
+    fields = {"outcome", "authorization_version", "repository", "pr_number",
+              "head_sha", "merge_sha", "trusted_executor_sha", "source_run"}
+    if envelope["outcome"] == "mutation":
+        fields |= {"plan_path", "plan_blob_sha", "normalized_plan_sha256", "document",
+                   "acceptance", "proposal_key", "execution_contract_sha256"}
     require(
         set(envelope) == fields
         and type(envelope["authorization_version"]) is int
@@ -473,8 +449,7 @@ def validate_envelope(envelope: Any) -> None:
         "plan digest mismatch",
     )
     require(envelope["plan_path"] == plans.document_path(document), "plan path mismatch")
-    for key in ("head_sha", "merge_sha", "plan_blob_sha", "trusted_executor_sha"):
-        sha(envelope[key])
+    sha(envelope["plan_blob_sha"])
     require(
         all(envelope[k] == v for k, v in identity_digests(envelope).items()),
         "execution identity digest mismatch",

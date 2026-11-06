@@ -35,7 +35,7 @@ from unittest.mock import Mock
 sys.path.insert(0, os.getcwd())
 from scripts import operational_safety_check as s, catalog_drift_guard as c, deployment_revision as d, slack_incidents as i
 s.GitHub = Mock(return_value=Mock())
-s.context = Mock(return_value={"head_sha":"a"*40})
+s.alerts.context = Mock(return_value={"head_sha":"a"*40})
 c.get_client = Mock(return_value=object())
 s.catalog_inventory = Mock(return_value={})
 s.catalog_changed = Mock(return_value=True)
@@ -46,7 +46,7 @@ s.main()
 assert s.catalog_changed.call_count == 1
 assert s.source_inventory.call_count == 0
 i.Slack.assert_not_called()
-assert json.loads((Path(sys.argv[-1]) / "result.json").read_text()) == {"catalog":True,"verify":False,"reconcile":False,"snapshot":False}
+assert json.loads((Path(sys.argv[-1]) / "result.json").read_text()) == {"catalog":True,"verify":False,"reconcile":False}
 '''
     result = subprocess.run([hosted_python, "-I", "-c", code, "--work-dir", str(tmp_path)], cwd=safety.ROOT,
         env={**os.environ, "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED": enabled,
@@ -59,7 +59,7 @@ assert json.loads((Path(sys.argv[-1]) / "result.json").read_text()) == {"catalog
 def health_cli(tmp_path, monkeypatch):
     api = OperationalAPI()
     monkeypatch.setattr(safety, "GitHub", lambda: api)
-    monkeypatch.setattr(safety, "context", lambda *_: api.current)
+    monkeypatch.setattr(safety.alerts, "context", lambda *_a, **_k: api.current)
     monkeypatch.setattr(safety, "policy_warnings", lambda _: ([], []))
     monkeypatch.setattr(safety, "audit_freshness", lambda *_a, **_k: [])
     monkeypatch.setattr(safety, "deployed_image_lag", lambda *_a, **_k: [], raising=False)
@@ -206,19 +206,10 @@ def test_disabled_incidents_still_wake_pending_execution_observer(tmp_path, monk
     monkeypatch.setattr(safety, "catalog_changed", lambda *_: False)
     monkeypatch.setattr(safety, "verification_due", mock.Mock(return_value=True))
     result = safety.probe(api, api.current, None, "", object(), tmp_path)
-    assert result == {"catalog": False, "verify": True, "reconcile": False, "snapshot": False}
+    assert result == {"catalog": False, "verify": True, "reconcile": False}
     assert source.call_args.args[2].endswith("Z")
     safety.verification_due.assert_called_once_with(api, [], [99], now=NOW)
     assert api.posts == []
-
-
-def test_snapshot_writer_rejects_oversized_serialized_proof(probe_inputs, monkeypatch):  # noqa: F811
-    api, client, directory, _, _ = probe_inputs
-    from test_slack_incidents import IDENTITY
-    monkeypatch.setattr(safety.native, "MAX_BYTES", 1)
-    with pytest.raises(RuntimeError, match="snapshot exceeds size limit"):
-        safety.probe(api, api.current, IDENTITY, stamp(NOW - timedelta(hours=24)), client, directory)
-    assert not (directory / "cache.json").exists()
 
 
 def test_mpatlas_resume_uses_generation_bound_published_baseline():

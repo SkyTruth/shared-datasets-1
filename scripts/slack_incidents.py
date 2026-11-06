@@ -26,7 +26,6 @@ from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import install_deployment_verifier as verifier
-from scripts.incident_verification_cache import VerificationCache
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
@@ -371,8 +370,7 @@ def replay_observations(api, since, *, now=None, completed_until=None):
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
     """
-    from scripts.operational_safety_check import source_inventory
-    runs, start, end = source_inventory(api, None, since, now=now or datetime.now(timezone.utc))
+    runs, start, end = alerts.source_inventory(api, None, since, now=now or datetime.now(timezone.utc))
     observations = [item for run in runs if run.get("status") == "completed"
                     for item in source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run})]
     return [item for item in observations if start <= instant(item["time"]) <= (completed_until or end)]
@@ -796,19 +794,17 @@ class GitHub(deployments.GitHub):
 
 
 def worker_context(api, environment=os.environ):
-    from scripts.operational_safety_check import context
     try:
-        return context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
+        return alerts.context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
     except (RuntimeError, ValueError) as error:
         raise IncidentError("invalid incident worker provenance") from error
 
 
 
 class Ledger:
-    def __init__(self, api, run, directory, *, verification_cache=None):
+    def __init__(self, api, run, directory):
         self.api, self.run, self.directory = api, run, directory
         self.verified_statements = []
-        self.verification_cache = verification_cache
 
     def verify(self, record):
         payload = record_payload(record)
@@ -826,13 +822,8 @@ class Ledger:
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        def verify(api):
-            emissions.verify(api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
-                             verified_statements=self.verified_statements)
-        if self.verification_cache is None:
-            verify(self.api)
-        else:
-            self.verification_cache.verify(self.api, record, statuses, payload["state"]["identity"], verify)
+        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
+                         verified_statements=self.verified_statements)
         return migrate_verified_state(payload["state"], payload["schema"])
 
     def load(self):
@@ -1139,11 +1130,7 @@ def main():
             observations = [item for item in observations if instant(item["time"]) >= activated]
             if source and alerts.WORKFLOW_PATHS[source["name"]] == "deployment-verification.yml":
                 observations.extend(replay_observations(api, since))
-            ledger.verification_cache = VerificationCache.restore(api, run, identity)
             records = prepare(ledger, identity, observations, on_saved=retain)
-            ledger.verification_cache.save(args.work_dir)
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                stream.write("verification_cache=true\n")
         plan_path.write_text(json.dumps(records, sort_keys=True) + "\n")
         print(f"Prepared {len(records)} incident transition(s); routine healthy runs remain quiet.")
     else:

@@ -226,11 +226,6 @@ def changed_catalog_slugs(base_text: str | None, head_text: str | None) -> set[s
     return {slug for slug in slugs if base.get(slug) != head.get(slug)}
 
 
-def changed_asset_doc_slugs(changes: Sequence[ChangedFile]) -> set[str]:
-    return {match[1] for change in changes for path in (change.path, change.old_path)
-            if (match := ASSET_DOC_RE.fullmatch(path or ""))}
-
-
 def check_catalog_csv_source(changes: Sequence[ChangedFile], *, base: str, head: str, repo_root: Path) -> list[str]:
     if not any(change.path == CATALOG_PATH or change.old_path == CATALOG_PATH for change in changes):
         return []
@@ -238,7 +233,8 @@ def check_catalog_csv_source(changes: Sequence[ChangedFile], *, base: str, head:
         git_show(base, CATALOG_PATH, repo_root=repo_root),
         git_show(head, CATALOG_PATH, repo_root=repo_root),
     )
-    doc_slugs = changed_asset_doc_slugs(changes)
+    doc_slugs = {match[1] for change in changes for path in (change.path, change.old_path)
+                 if (match := ASSET_DOC_RE.fullmatch(path or ""))}
     if not catalog_slugs:
         return [
             f"{CATALOG_PATH} changed without row-level asset metadata changes; update docs/assets/*.md and regenerate instead."
@@ -298,10 +294,6 @@ def check_approved_formats(*, base: str, head: str, repo_root: Path, labels: set
     ]
 
 
-def changed_paths(changes: Sequence[ChangedFile]) -> set[str]:
-    return {path for change in changes for path in (change.path, change.old_path) if path}
-
-
 def file_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -318,7 +310,7 @@ def check_second_iac_framework(
     if has_label(labels, "iac_framework"):
         return []
     matches: list[str] = []
-    for path in sorted(changed_paths(changes)):
+    for path in sorted({path for change in changes for path in (change.path, change.old_path) if path}):
         if SECOND_IAC_PATH_RE.search(path):
             matches.append(path)
             continue
@@ -337,12 +329,6 @@ def check_second_iac_framework(
     ]
 
 
-def production_ingestion_jobs(repo_root: Path) -> list[str]:
-    return [path.name for path in sorted((repo_root / "ingestion").iterdir())
-            if path.name not in INGESTION_JOB_EXCLUDES and path.is_dir()
-            and (path / "run.py").exists() and (path / "README.md").exists()]
-
-
 def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for run_path in sorted((repo_root / "ingestion").rglob("*.py")):
@@ -358,7 +344,10 @@ def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
 
 def check_ingestion_skip_tests(repo_root: Path) -> list[str]:
     errors: list[str] = []
-    for job in production_ingestion_jobs(repo_root):
+    for path in sorted((repo_root / "ingestion").iterdir()):
+        if path.name in INGESTION_JOB_EXCLUDES or not path.is_dir() or not (path / "run.py").exists() or not (path / "README.md").exists():
+            continue
+        job = path.name
         if job in NON_PUBLISHING_JOBS:
             # This observational worker publishes health/report snapshots every
             # day and cannot follow unchanged dataset-release skip semantics.
@@ -374,16 +363,12 @@ def check_ingestion_skip_tests(repo_root: Path) -> list[str]:
     return errors
 
 
-def tracked_files(repo_root: Path) -> list[str]:
+def check_secrets(repo_root: Path) -> list[str]:
+    errors: list[str] = []
     result = run_git(["ls-files"], repo_root=repo_root)
     if result.returncode != 0:
         raise GuardrailError(f"git ls-files failed: {result.stderr.strip()}")
-    return [line for line in result.stdout.splitlines() if line]
-
-
-def check_secrets(repo_root: Path) -> list[str]:
-    errors: list[str] = []
-    for path in tracked_files(repo_root):
+    for path in filter(None, result.stdout.splitlines()):
         if SECRET_FILE_RE.search(path) and not SECRET_FILE_ALLOW_RE.search(path):
             errors.append(f"{path}: tracked credential-like file is not allowed")
             continue
@@ -411,14 +396,10 @@ def check_terraform_static(repo_root: Path) -> list[str]:
     return errors
 
 
-def terraform_apply_guidance_paths(repo_root: Path) -> list[Path]:
-    return sorted({path for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS
-                   for path in repo_root.glob(pattern) if path.is_file()})
-
-
 def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
     errors: list[str] = []
-    for path in terraform_apply_guidance_paths(repo_root):
+    for path in sorted({path for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS
+                        for path in repo_root.glob(pattern) if path.is_file()}):
         text = file_text(path)
         if not text:
             continue

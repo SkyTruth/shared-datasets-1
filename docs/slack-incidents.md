@@ -92,21 +92,18 @@ parents/replies/claims; clear old acknowledgements/fingerprints. Before incompat
 writers pause admission, drain without cancelling sends, merge and resume within
 24 hours. Activation changes do not drain workers; longer gaps need reviewed replay.
 
-## Incremental verification
+## Verification
 
-The safety probe retains catalog generations and the same native receipt cache
-used by notification workers. Every probe traverses live source runs/jobs,
-incident records/statuses and recovery evidence; there is no second persisted
-API transcript or idle-reconciliation bypass. Unchanged catalog generations skip
-catalog rebuilding, while unchanged receipts reuse exact verified signature inputs.
-Snapshots require authenticated successful same-main producers and identical
-policy/Slack identity. Pending executions/claims cannot create them. Artifacts bind
-exact producer, successful job/upload, creation interval, archive digest and sole
-bounded member; export only receipts checked in that invocation. Terminal
-fingerprints cover complete status history and verifier. Missing proof invokes
-full verification; malformed evidence/failed reads fail visibly.
-Caches grant no authority; final signing/reconciliation use fresh checks. Only
-repository/workflow identities cache within an invocation. GET transport/5xx and
+Every safety probe compares the catalog and traverses live source runs/jobs,
+incident records/statuses and recovery evidence. Notification workers and probes
+verify ledger signatures in each invocation; there is no persisted verification
+transcript or catalog snapshot. This repeats read and verification work instead
+of maintaining a second persisted state model. Batch signature statements and
+repository/workflow identities are reused only within an invocation. Terminal
+fingerprints still cover complete status history and verifier. Malformed evidence
+and failed reads fail visibly. Health reminder artifacts bind the exact producer,
+successful upload, creation interval, archive digest and sole bounded member.
+GET transport/5xx and
 recognized attestation 503 failures retry at most three times after 5 then 15 seconds
 with identical bytes/signer. Authentication, authorization, rate limits and invalid
 proofs fail immediately; this mechanism never retries writes or uncertain sends.

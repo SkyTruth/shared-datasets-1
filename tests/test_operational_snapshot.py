@@ -1,209 +1,93 @@
-"""Settled safety artifacts retain only catalog proof and native receipt verification."""
-from __future__ import annotations
-
-import copy
-import hashlib
-import io
+"""Catalog generation snapshots and authenticated health-report artifacts."""
+from datetime import timedelta
 import json
-from unittest import mock
-import zipfile
+from types import SimpleNamespace
 
 import pytest
 
-from scripts import deployment_emission as emissions
-from scripts import incident_verification_cache as native
-from scripts import operational_safety_check as snapshots
-from test_incident_verification_cache import GH_VERSION, NativeArtifacts, PREFIX, unavailable
-from test_deployment_emission import verified
-from test_slack_incidents import IDENTITY, SHA
-
-POLICY = {"head_sha": SHA, "gh_version": GH_VERSION, "since": "2026-10-01T00:00:00Z"}
-INVENTORY = {"asset.json": "1", "catalog.csv": "2"}
+from scripts import operational_safety_check as safety, catalog_drift_guard as catalog
+from test_operational_safety_check import NOW, START, OperationalAPI, acked_job_state, signed_transport, stamp
+from test_operational_safety_check import probe_inputs  # noqa: F401 - pytest fixture
+from test_operational_safety_check import receipt_workspace  # noqa: F401 - autouse fixture
+from test_slack_incidents import IDENTITY
 
 
-def capture(run, policy, identity, inventory, cache):
-    return snapshots.Snapshot({"schema": snapshots.SCHEMA, "producer": native.execution(run), "policy": policy,
-        "identity": identity, "inventory_sha256": native.digest(inventory), "entries": cache.used})
+def test_catalog_change_during_comparison_requests_refresh(probe_inputs):  # noqa: F811
+    api, client, directory, _collect, checks = probe_inputs
+    def update(*_args, **_kwargs):
+        client.objects[catalog.REMOTE_WEB_CATALOG_OBJECT] = "4"
+        return [SimpleNamespace(ok=True)]
+    checks.side_effect = update
+    result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert result["catalog"] is True
 
 
-def write_snapshot(directory, snapshot):
-    path = directory / native.MEMBER
-    path.write_bytes(native.canonical(snapshot.data))
-    return path
 
-
-class SafetyArtifacts(NativeArtifacts):
-    def __init__(self):
-        super().__init__()
-        self.producer.update(path=snapshots.WORKFLOW, workflow_id=13, event="schedule")
-        self.current.update(path=snapshots.WORKFLOW, workflow_id=13, event="schedule")
-        self.workflow.update(id=13, path=snapshots.WORKFLOW)
-        self.job["name"] = snapshots.JOB
-        self.job["steps"] = [{"name": name, "status": "completed", "conclusion": "success"}
-                             for name in (snapshots.PROBE_STEP, snapshots.UPLOAD_STEP)]
-        self.artifact["name"] = 'safety-snapshot-200-1'
-
-    def get(self, path):
-        if path.endswith('/actions/workflows/unattended-workflow-alert.yml'):
-            self.reads.append(path)
-            return {'id': 12, 'path': '.github/workflows/unattended-workflow-alert.yml'}
-        return super().get(path)
-
-
-@pytest.fixture
-def retained(tmp_path, monkeypatch):
-    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
-    api = SafetyArtifacts()
-    cache = native.VerificationCache(api.producer, IDENTITY, gh_version=GH_VERSION)
-    def verify(view):
-        emissions.verify(view, native.REPOSITORY, api.record, api.statuses[0],
-                         original_signer=native.WORKFLOW, batch=True, verified_statements=[])
-    receipt = emissions.receipt(native.REPOSITORY, api.record, api.statuses[0])
-    with mock.patch.object(emissions, 'verified_output', return_value=json.dumps(
-            verified(receipt, emitter=api.emitter, signer=native.WORKFLOW))) as crypto:
-        cache.verify(api, api.record, api.statuses, IDENTITY, verify)
-    assert crypto.call_count == 1
-    snapshot = capture(api.producer, POLICY, IDENTITY, INVENTORY, cache)
-    api.retain(write_snapshot(tmp_path, snapshot))
-    api.reads.clear()
-    return api, snapshot
-
-
-def restore(api, **changes):
-    values = {"run": api.current, "policy": POLICY, "identity": IDENTITY, "inventory": INVENTORY}
-    return snapshots.Snapshot.restore(api, **{**values, **changes})
-
-
-def test_native_roundtrip_reuses_verified_receipt_only_after_fresh_provenance_reads(retained):
-    api, _ = retained
-    snapshot = restore(api)
-    api.reads.clear()
-    assert snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
-    assert sorted(api.reads) == sorted([PREFIX, PREFIX + '/actions/runs/11/attempts/1',
-                                       PREFIX + '/actions/workflows/unattended-workflow-alert.yml'])
-    assert api.archive_reads == [api.artifact['id']]
-    assert 'requests' not in snapshot.data  # No second persisted API-response transcript.
-
-
-@pytest.mark.parametrize('change', ['record', 'status', 'emitter', 'repository'])
-def test_changed_live_evidence_requires_original_signature_verification(retained, change):
-    api, _ = retained
-    snapshot = restore(api)
-    target = {'record': api.record, 'status': api.statuses[0], 'emitter': api.emitter, 'repository': api.repo}[change]
-    target['changed'] = True
-    with pytest.raises(RuntimeError, match='original attestation unavailable'):
-        snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
-
-
-def test_failed_live_read_cannot_be_hidden_by_saved_verification(retained):
-    api, _ = retained
-    snapshot = restore(api)
-    api.read_error = RuntimeError('live emitter unavailable')
-    with pytest.raises(RuntimeError, match='live emitter unavailable'):
-        snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
-
-
-@pytest.mark.parametrize("change", ["code", "verifier", "activation", "identity", "catalog"])
-def test_changed_context_requires_a_full_catalog_comparison(retained, change):
-    api, _ = retained
-    policy, identity, inventory, run = copy.deepcopy(POLICY), copy.deepcopy(IDENTITY), dict(INVENTORY), dict(api.current)
-    if change == "code":
-        policy["head_sha"] = run["head_sha"] = "b" * 40
-        api.candidates = []
-    elif change == "verifier":
-        policy["gh_version"] += "different build"
-    elif change == "activation":
-        policy["since"] = "2026-10-02T00:00:00Z"
-    elif change == "identity":
-        identity["channel"] = "C987654321"
+@pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload', 'metadata-size', 'archive-size',
+    'member-size', 'member', 'extra-member', 'noncanonical', 'producer', 'sha', 'branch', 'created-before', 'created-after'])
+def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(defect, monkeypatch):
+    import hashlib
+    import io
+    import zipfile
+    from scripts.incident_verification_cache import canonical, ArtifactError
+    api = OperationalAPI()
+    producer = api.source(101, 'operational-safety-check.yml')
+    api.add_source(producer)
+    job = api.jobs[101][0]
+    job.update(name=safety.JOB, started_at=producer['created_at'], completed_at=producer['updated_at'],
+               steps=[{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'failure' if defect == 'upload' else 'success'}])
+    report = {'problems': ['paused'], 'warnings': [], 'notified_at': NOW.isoformat()}
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as stream:
+        stream.writestr('cache.json', canonical(report))
+    raw = archive.getvalue()
+    artifact = {'id': 9, 'name': 'safety-health-101-1', 'expired': False, 'size_in_bytes': len(raw),
+                'created_at': producer['updated_at'], 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(),
+                'workflow_run': {'id': 101, 'head_sha': api.head, 'head_branch': 'main'}}
+    if defect == 'digest':
+        artifact['digest'] = 'sha256:' + '0' * 64
+    if defect == 'attempt':
+        api.runs[101] = {**producer, 'run_attempt': 2}
+    if defect == 'metadata-size':
+        artifact['size_in_bytes'] = safety.native.MAX_BYTES + 1
+    if defect == 'archive-size':
+        monkeypatch.setattr(safety.native, 'MAX_BYTES', len(raw) - 1)
+        artifact['size_in_bytes'] = 1
+    if defect in {'member-size', 'member', 'extra-member', 'noncanonical'}:
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as stream:
+            stream.writestr('../cache.json' if defect == 'member' else 'cache.json',
+                b'x' * 4096 if defect == 'member-size' else json.dumps(report).encode() if defect == 'noncanonical' else canonical(report))
+            if defect == 'extra-member':
+                stream.writestr('extra', b'{}')
+        raw = archive.getvalue()
+        artifact.update(size_in_bytes=len(raw), digest='sha256:' + hashlib.sha256(raw).hexdigest())
+        if defect == 'member-size':
+            monkeypatch.setattr(safety.native, 'MAX_BYTES', 2048)
+    if defect in {'producer', 'sha', 'branch'}:
+        key, value = {'producer': ('id', 999), 'sha': ('head_sha', 'b' * 40), 'branch': ('head_branch', 'feature')}[defect]
+        artifact['workflow_run'][key] = value
+    if defect in {'created-before', 'created-after'}:
+        artifact['created_at'] = stamp(NOW - timedelta(days=1) if defect == 'created-before' else NOW)
+    pages = api.pages
+    api.pages = lambda path, field=None: [artifact] if '/artifacts?' in path else pages(path, field=field)
+    api.archive = lambda *_: raw
+    if defect:
+        with pytest.raises((RuntimeError, ArtifactError)):
+            safety.previous_health(api, api.current)
     else:
-        inventory['catalog.csv'] = '3'
-    assert restore(api, run=run, policy=policy, identity=identity, inventory=inventory) is None
+        assert safety.previous_health(api, api.current) == report
 
 
-@pytest.mark.parametrize("reason", ["missing", "expired", "expiry-time"])
-def test_missing_or_expired_retention_requires_full_verification(retained, reason):
-    api, _ = retained
-    if reason == "missing":
-        api.missing = True
-    elif reason == "expired":
-        api.artifact["expired"] = True
-    else:
-        api.artifact["expires_at"] = "2020-01-01T00:00:00Z"
-    assert restore(api) is None
-    assert api.archive_reads == []
 
-
-@pytest.mark.parametrize("change", ["digest", "producer", "job-attempt", "job-skipped", "probe-skipped", "upload-skipped", "member", "extra-member", "schema", "entries", "foreign-path"])
-def test_selected_proof_requires_exact_native_producer_and_bounded_verified_entries(retained, tmp_path, change):
-    api, snapshot = retained
-    data = copy.deepcopy(snapshot.data)
-    if change == "digest":
-        api.raw += b"tampered"
-    elif change == "job-attempt":
-        api.job["run_attempt"] += 1
-    elif change == "job-skipped":
-        api.job["conclusion"] = "skipped"
-    elif change in {"probe-skipped", "upload-skipped"}:
-        name = snapshots.PROBE_STEP if change == "probe-skipped" else snapshots.UPLOAD_STEP
-        next(step for step in api.job["steps"] if step["name"] == name)["conclusion"] = "skipped"
-    elif change in {"member", "extra-member"}:
-        members = {"../cache.json": native.canonical(data)} if change == "member" else {native.MEMBER: native.canonical(data), "extra": b"{}"}
-        api.retain(write_snapshot(tmp_path, snapshot), members=members)
-    else:
-        if change == "producer":
-            data["producer"]["run_attempt"] += 1
-        elif change == "schema":
-            data["schema"] = "unrecognized"
-        elif change == "entries":
-            data['entries'] = {'invalid': {}}
-        else:
-            reads = next(iter(data['entries'].values()))
-            reads['repos/SkyTruth/other'] = reads.pop(PREFIX)
-        api.retain(write_snapshot(tmp_path, snapshot), members={native.MEMBER: native.canonical(data)})
-    with pytest.raises((RuntimeError, native.CacheError)):
-        restore(api)
-
-
-@pytest.mark.parametrize("change", ["metadata", "archive", "member"])
-def test_archive_limits_apply_before_restore(retained, monkeypatch, change):
-    api, _ = retained
-    limit = 4096
-    monkeypatch.setattr(native, "MAX_BYTES", limit)
-    if change == "metadata":
-        api.artifact["size_in_bytes"] = limit + 1
-    elif change == "archive":
-        api.raw = b"x" * (limit + 1)
-        api.artifact.update(size_in_bytes=1, digest="sha256:" + hashlib.sha256(api.raw).hexdigest())
-    else:
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(native.MEMBER, b"x" * (limit + 1))
-        api.raw = output.getvalue()
-        api.artifact.update(size_in_bytes=len(api.raw), digest="sha256:" + hashlib.sha256(api.raw).hexdigest())
-    with pytest.raises(native.CacheError):
-        restore(api)
-
-
-def test_only_checked_receipts_can_be_renewed_and_revision_cannot_change(retained, tmp_path):
-    api, _ = retained
-    snapshot = restore(api)
-    assert snapshot.cache.verify(api, api.record, api.statuses, IDENTITY, unavailable)
-    newer = {**api.current, 'id': 400}
-    renewed = capture(newer, POLICY, IDENTITY, INVENTORY, snapshot.cache)
-    assert json.loads(write_snapshot(tmp_path, renewed).read_bytes())['entries'] == snapshot.cache.used
-    with pytest.raises(RuntimeError, match='policy differs'):
-        capture({**newer, 'head_sha': 'b' * 40}, POLICY, IDENTITY, INVENTORY, snapshot.cache)
-
-
-def test_probe_transport_has_no_mutation_method():
-    assert not hasattr(snapshots.GitHub(), "post")
-
-
-def test_snapshot_producer_accepts_manual_safety_but_rejects_push(retained):
-    api, _ = retained
-    api.producer['event'] = 'workflow_dispatch'
-    assert restore(api)
-    api.producer['event'] = 'push'
-    with pytest.raises(native.CacheError, match='untrusted'):
-        restore(api)
+def test_each_probe_verifies_signed_ledger_and_compares_catalog(probe_inputs):  # noqa: F811
+    api, client, directory, collect, checks = probe_inputs
+    api.install_state(acked_job_state(api))
+    with signed_transport(api) as crypto:
+        for _ in range(2):
+            assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory) == {
+                'catalog': False, 'reconcile': False, 'verify': False}
+        assert crypto.call_count == 2
+    assert collect.call_count == checks.call_count == 2
+    assert not (directory / 'cache.json').exists()
+    assert api.posts == []

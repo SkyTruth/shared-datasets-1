@@ -399,7 +399,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             )
 
     def test_normalize_delete_plan_rejects_scratch_target(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved canonical mutation prefixes"):
             reviewed_dataset_plan.normalize_delete_plan(
                 {
                     "asset_slug": "example-asset",
@@ -415,7 +415,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             )
 
     def test_normalize_delete_plan_rejects_nested_gcloud_temp_prefix(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved canonical mutation prefixes"):
             reviewed_dataset_plan.normalize_delete_plan(
                 {
                     "asset_slug": "cleanup",

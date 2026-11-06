@@ -284,7 +284,7 @@ class RepoGuardrailsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "README.md").write_text("-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5)
-            with mock.patch.object(repo_guardrails, "tracked_files", return_value=["README.md"]):
+            with mock.patch.object(repo_guardrails, "run_git", return_value=subprocess.CompletedProcess([], 0, "README.md\n", "")):
                 errors = repo_guardrails.check_secrets(root)
 
         self.assertIn("private key", errors[0])

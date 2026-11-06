@@ -140,9 +140,7 @@ fi'''
          "uses": NOTIFICATION_ATTEST, "with": {"subject-path": "${{ runner.temp }}/slack-incidents/outcomes/*.json", "create-storage-record": False}},
         {"if": "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}",
          "env": {"GH_TOKEN": environment["GH_TOKEN"]}, "run": command.format("verify")},
-        {"if": "${{ success() && steps.prepare.outputs.verification_cache == 'true' }}", "uses": "actions/upload-artifact@v4",
-         "with": {"name": "notification-verification-${{ github.run_id }}-${{ github.run_attempt }}",
-                  "path": "${{ runner.temp }}/slack-incidents/cache.json", "if-no-files-found": "error", "retention-days": 1}},
+
     ]
     actual = [{key: value.strip() if key == "run" else value for key, value in step.items() if key != "name"}
               for step in steps[1:]]
