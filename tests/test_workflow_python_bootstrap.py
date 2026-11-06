@@ -114,28 +114,38 @@ def isolated_python(tmp_path_factory):
     return interpreter
 
 
+def workflow_environment_cases():
+    groups = {}
+    for row in workflow_cases():
+        for flags, kind, source in row.values[0]:
+            groups.setdefault(flags, []).append((kind, source))
+    return [pytest.param(flags, probes, id=str(flags)) for flags, probes in groups.items()]
+
+
 PROBE = '''
-import ast, runpy, sys
+import ast, json, runpy, sys
 from pathlib import Path
-root, kind, source = sys.argv[1:]
+root, probes = sys.argv[1:]
 sys.path[:0] = [root, str(Path(root) / "api/python/src")]
-if kind == "script":
-    sys.argv = [source]
-    runpy.run_path(str(Path(root) / source), run_name="workflow_import_probe")
-else:
-    # Resolve imports in inline programs without running cloud calls or writes.
-    imports = [node for node in ast.walk(ast.parse(source)) if isinstance(node, (ast.Import, ast.ImportFrom))]
-    for node in imports:
-        exec(compile(ast.Module(body=[node], type_ignores=[]), "workflow-inline", "exec"))
+for kind, source in json.loads(probes):
+    try:
+        if kind == "script":
+            sys.argv = [source]
+            runpy.run_path(str(Path(root) / source), run_name="workflow_import_probe")
+        else:
+            imports = [node for node in ast.walk(ast.parse(source)) if isinstance(node, (ast.Import, ast.ImportFrom))]
+            for node in imports:
+                exec(compile(ast.Module(body=[node], type_ignores=[]), "workflow-inline", "exec"))
+    except Exception as error:
+        raise RuntimeError(source) from error
 '''
 
 
-@pytest.mark.parametrize("probes", list(workflow_cases()))
-def test_every_workflow_python_step_imports_in_its_declared_environment(isolated_python, probes):
-    for flags, kind, source in probes:
-        result = subprocess.run([str(isolated_python(flags)), "-I", "-c", PROBE, str(ROOT), kind, source],
-                                cwd=ROOT, capture_output=True, text=True)
-        assert result.returncode == 0, f"{source}\n{result.stderr}"
+@pytest.mark.parametrize("flags,probes", workflow_environment_cases())
+def test_every_workflow_python_step_imports_in_its_declared_environment(isolated_python, flags, probes):
+    result = subprocess.run([str(isolated_python(flags)), "-I", "-c", PROBE, str(ROOT), json.dumps(probes)],
+                            cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_every_production_image_command_executes_in_empty_hosted_interpreter(isolated_python, tmp_path):
@@ -280,4 +290,34 @@ def test_bootstrap_handles_cold_cache_and_exported_virtualenv(tmp_path, tmp_path
 def test_workflow_imports_keep_every_unique_program_environment_without_duplicate_probes():
     probes = [probe for row in workflow_cases() for probe in row.values[0]]
     assert len(probes) == len(set(probes))
-    assert {None, (), ('--no-dev',), ('--all-groups',), ('--only-group', 'ci-plan')} <= {p[0] for p in probes}
+    assert {None, (), ('--no-dev',), ('--only-group', 'ci-plan')} <= {p[0] for p in probes}
+
+
+def test_batched_imports_reach_late_failures_without_ambient_site_packages(isolated_python):
+    probes = [('inline', 'import json'), ('inline', 'import yaml')]
+    result = subprocess.run([str(isolated_python(None)), '-I', '-c', PROBE, str(ROOT), json.dumps(probes)],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "No module named 'yaml'" in result.stderr
+    assert 'RuntimeError: import yaml' in result.stderr
+
+
+def test_production_policy_paths_use_real_yaml_and_hcl_parsers_without_pytest_shims(isolated_python):
+    from scripts.terraform_target_contracts import resource_index, workflow
+    program = '''
+import json, sys, yaml, hcl2
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from scripts.terraform_target_contracts import resource_index, workflow
+assert yaml.safe_load.__module__ == 'yaml'
+assert hcl2.loads.__module__.startswith('hcl2')
+assert 'pytest' not in sys.modules and 'conftest' not in sys.modules
+root = Path(sys.argv[1])
+print(json.dumps([sorted(workflow(root, 'ci.yml')['jobs']),
+                  {name: sorted(rows) for name, rows in resource_index(root).items()}]))
+'''
+    result = subprocess.run([str(isolated_python(('--only-group', 'ci-plan'))), '-I', '-c', program, str(ROOT)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [sorted(workflow(ROOT, 'ci.yml')['jobs']),
+                                        {name: sorted(rows) for name, rows in resource_index(ROOT).items()}]

@@ -34,3 +34,22 @@ def test_terraform_bootstrap_declares_caller_inputs_and_ignores_conflicting_ambi
         env={**os.environ, 'GITHUB_ENV': str(tmp_path / 'env'), 'SYNC_NAME': 'foreign', 'CALLER_WORKFLOW': 'foreign.yml', **resolve['env']})
     assert result.returncode == 0, result.stderr
     assert 'google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer' in (tmp_path / 'env').read_text()
+
+
+def test_same_revision_avoids_second_checkout_but_other_executors_restore_before_credentials():
+    import yaml
+    action = yaml.safe_load((ROOT / '.github/actions/deployment-bootstrap/action.yml').read_text())
+    steps = action['runs']['steps']
+    guards = {step['name']: step for step in steps}
+    assert 'if' not in guards['Verify owner acceptance before candidate checkout']
+    assert 'if' not in guards['Install pinned durable receipt verifier']
+    assert 'if' not in guards['Verify executor before candidate checkout']
+    assert '--bootstrap' in guards['Verify executor before candidate checkout']['run']
+    skipped = ['Snapshot trusted verifier import closure', 'Check out repository',
+               'Restore immutable receipt verifier after candidate checkout', 'Verify tested main revision']
+    for name in skipped:
+        assert guards[name]['if'] == 'inputs.executor-sha != github.workflow_sha'
+    assert [step['name'] for step in steps if step['name'] in skipped] == skipped
+    assert all(not step.get('uses', '').startswith('google-github-actions/') for step in steps)
+    assert guards['Check out repository']['with']['ref'] == '${{ inputs.executor-sha }}'
+    assert guards['Check out repository']['with']['persist-credentials'] is False

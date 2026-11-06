@@ -114,7 +114,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  tests:
+  tests: &python-tests
     needs: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -125,9 +125,11 @@ jobs:
           binaries: gitleaks terraform
       - *validation-plan
       - name: Run selected secret, guardrail and Python checks
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "$GITHUB_JOB" --output "$RUNNER_TEMP/ci-results/$GITHUB_JOB"
       - *retained-validation-results
       - *compact-gate-result
+
+  tests-control-plane: *python-tests
 
   owner-acceptance:
     needs: geospatial-changes
@@ -304,7 +306,7 @@ jobs:
     name: ci-ready
     permissions: *validation-permissions
     if: always()
-    needs: [geospatial-changes, lint, tests, owner-acceptance, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
+    needs: [geospatial-changes, lint, tests, tests-control-plane, owner-acceptance, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:

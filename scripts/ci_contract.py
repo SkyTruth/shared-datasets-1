@@ -24,13 +24,13 @@ from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError
 
 
 SUITES = (
-    "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
+    "lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
 DEPLOYMENTS = tuple(registry(section="deployments"))
 INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CONFIGS.values())
 DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
-ALWAYS = {"lint", "tests"}
+ALWAYS = {"lint", "tests", "tests-control-plane"}
 
 
 def delivery_outputs(plan, event, ref):
@@ -128,7 +128,7 @@ def dependency_inputs(revision=None, root=None):
                 directory = (root / source).is_dir() if snapshot is None else any(name.startswith(source + "/") for name in snapshot)
                 copied.add(source + "/" if directory else source)
         copies[target] = set(copied)
-        copied.update({f"tests/fixtures/production_images/{target}.json", f"tests/test_{target.replace('-', '_')}.py"})
+        copied.add(f"tests/fixtures/production_images/{target}.json")
         checks = json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot.get(".github/terraform-targets.json", b"{}")).get("image_checks", {})).get(target, {}))
         copied.update(path for key, path in HOST_PROBE_FILES.items() if "{" + key + "}" in checks)
         images[target] = copied
@@ -414,7 +414,7 @@ def verify_results(
             if not targets or set(images) != expected_images:
                 raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
-        expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}
+        expected = {suite: suite for suite in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser")}
         for suite, job in expected.items():
             required = "success" if suite in selected else "skipped"
             if jobs.get(job, {}).get("result") != required:
@@ -432,7 +432,7 @@ def expected_tools(suite: str) -> dict[str, str]:
         raise ValueError(f"unknown suite: {suite}")
     return {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]} | {
         "lint": {key: TOOLCHAIN[key] for key in ("terraform", "actionlint", "shellcheck")},
-        "tests": {"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"], "terraform": TOOLCHAIN["terraform"]},
+        **dict.fromkeys(("tests", "tests-control-plane"), {"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"], "terraform": TOOLCHAIN["terraform"]}),
         "sdk-node22": {"node": TOOLCHAIN["node22"]}, "sdk-node24": {"node": TOOLCHAIN["node24"]},
         "browser": {"node": TOOLCHAIN["node22"]},
         "geospatial-integration": {"gdal": "3.6.2", "tippecanoe": "2.52.0", "pmtiles": "1.30.1"},
