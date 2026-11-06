@@ -239,8 +239,6 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, resolved_head, raw=True)
         paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
-        # An absent comparison selects all, but individual history-dependent
-        # commands still fail when their required base cannot be resolved.
         resolved_base = base
         paths = None
     holds = ingestion_rollout_holds(root, tested_sha)
@@ -365,6 +363,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             if plan["image_target"] not in targets:
                 raise ValueError("image target was not selected by the validation plan")
             targets = [plan["image_target"]]
+        if not targets:
+            raise ValueError("production image suite selected without image targets")
         for target in targets:
             add(sys.executable, "-I", "scripts/production_image_contracts.py",
                 "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target))

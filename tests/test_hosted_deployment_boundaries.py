@@ -130,7 +130,7 @@ def test_hosted_wdpa_allowlist_executes_with_only_its_locked_declared_dependenci
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text())
     assert any(item.startswith('python-hcl2') for item in project['dependency-groups']['ci-plan'])
     steps = workflow['jobs']['apply']['steps']
-    sync = next(i for i, item in enumerate(steps) if item.get('run') == 'uv sync --locked --only-group ci-plan')
+    sync = next(i for i, item in enumerate(steps) if 'uv sync --locked --only-group ci-plan' in item.get('run', '').splitlines()[-1:])
     assert sync < next(i for i, item in enumerate(steps) if item.get('uses') == './.github/actions/deployment-auth')
     image, config = 'image@sha256:' + 'a' * 64, 'sha256:' + 'b' * 64
     task = {'timeout': '43200s', 'volumes': [{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}],

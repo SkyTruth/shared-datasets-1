@@ -414,9 +414,8 @@ def verify_results(
             if not targets or set(images) != expected_images:
                 raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
-        expected = {suite: suite for suite in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser")}
-        for suite, job in expected.items():
-            required = "success" if suite in selected else "skipped"
+        for job in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser"):
+            required = "success" if job in selected else "skipped"
             if jobs.get(job, {}).get("result") != required:
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
         sdk_required = "success" if "sdk-node22" in selected else "skipped"
