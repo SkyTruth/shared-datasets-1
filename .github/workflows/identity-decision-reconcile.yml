@@ -1,5 +1,4 @@
 name: Alerts / Identity decision reconciliation
-
 on:
   workflow_call:
     inputs:
@@ -26,18 +25,15 @@ on:
         description: Exact source CI attempt
         required: true
         type: string
-
 permissions:
   contents: read
   actions: read
   pull-requests: read
   id-token: write
-
 concurrency:
   group: identity-decision-reconciliation
   queue: max
   cancel-in-progress: false
-
 jobs:
   reconcile:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'jonaraphael')
@@ -76,7 +72,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          service_account: shared-datasets-reconciler@shared-datasets-1.iam.gserviceaccount.com
       - name: Record accepted decisions and reconcile original notification threads
         env:
           GH_TOKEN: ${{ github.token }}

@@ -269,21 +269,22 @@ class RepoGuardrailsTests(unittest.TestCase):
             self.assertIn("new_publisher", errors[0])
 
     def test_usage_workflow_requires_its_saved_plan_resource_guard(self):
-        source = repo_guardrails.REPO_ROOT/".github/workflows/dataset-usage-deploy.yml"
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = root/".github/workflows/dataset-usage-deploy.yml"
-            path.parent.mkdir(parents=True)
-            path.write_text(source.read_text())
-            self.assertEqual(repo_guardrails.check_workflow_boundaries(root), [])
-            path.write_text(source.read_text().replace("scripts/dataset_usage_deploy.py --plan-json", "scripts/dataset_usage_deploy.py --targets"))
-            self.assertTrue(any("missing resource-change allowlist" in error for error in repo_guardrails.check_workflow_boundaries(root)))
+        from scripts import release_contracts as contracts
+        load = contracts.workflow
+        shared = load(repo_guardrails.REPO_ROOT, 'ingestion-deploy.yml')
+        def workflow(root, name):
+            return shared if name == 'ingestion-deploy.yml' else load(root, name)
+        with mock.patch.object(contracts, 'workflow', side_effect=workflow):
+            self.assertEqual(contracts.deployment_contract(repo_guardrails.REPO_ROOT, 'dataset-usage'), [])
+            guard = next(s for s in shared['jobs']['apply']['steps'] if 'scripts/dataset_usage_deploy.py --plan-json' in s.get('run', ''))
+            guard['run'] = guard['run'].replace('--plan-json', '--targets')
+            self.assertTrue(any('telemetry saved-plan guard' in error for error in contracts.deployment_contract(repo_guardrails.REPO_ROOT, 'dataset-usage')))
 
     def test_secret_scanner_flags_tracked_private_key_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "README.md").write_text("-" * 5 + "BEGIN PRIVATE KEY" + "-" * 5)
-            with mock.patch.object(repo_guardrails, "tracked_files", return_value=["README.md"]):
+            with mock.patch.object(repo_guardrails, "run_git", return_value=subprocess.CompletedProcess([], 0, "README.md\n", "")):
                 errors = repo_guardrails.check_secrets(root)
 
         self.assertIn("private key", errors[0])
@@ -505,7 +506,7 @@ class RepoGuardrailsTests(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
 
-    def test_workflow_boundaries_accept_feature_preview_dropdown_dispatch(self):
+    def test_workflow_boundaries_reject_feature_preview_dropdown_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             workflows = root / ".github/workflows"
@@ -535,7 +536,7 @@ class RepoGuardrailsTests(unittest.TestCase):
 
             errors = repo_guardrails.check_workflow_boundaries(root)
 
-        self.assertEqual(errors, [])
+        self.assertTrue(any("must validate refs/heads/main" in error for error in errors))
 
     def test_workflow_boundaries_keep_dropdown_exception_preview_only(self):
         with tempfile.TemporaryDirectory() as tmp:

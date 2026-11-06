@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import unittest
@@ -24,6 +25,12 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_current_reviewed_contracts_pass_without_live_credentials(self):
         self.assertEqual(contracts.check(self.root, {"wdpa", "eamlis", "sea-ice", "wdpa-processing"}), [])
+
+    def test_release_barriers_do_not_depend_on_step_display_names(self):
+        for filename in ("ingestion-deploy.yml", "pmtiles-cdn-sync.yml"):
+            path = self.root / ".github/workflows" / filename
+            path.write_text(re.sub(r"(?m)^(\s*)- name: .*", r"\1- name: Renamed step", path.read_text()))
+        self.assertEqual(contracts.check(self.root, set(contracts.DEPLOYS)), [])
 
     def test_missing_retained_evidence_or_resource_approval_blocks_merge(self):
         path = self.root / "catalog/wdpa-processing-acceptance.json"
@@ -69,13 +76,37 @@ class ReleaseContractTests(unittest.TestCase):
 
     def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
         path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
-        text = path.read_text().replace("      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: true", "      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: false")
-        path.write_text(text)
+        value = yaml.safe_load(path.read_text())
+        value[True]['workflow_call']['inputs']['source_run_id']['required'] = False
+        path.write_text(yaml.safe_dump(value))
         caller = self.root / ".github/workflows/cron-alert-policy-sync.yml"
         caller.write_text(caller.read_text().replace("  workflow_call:\n", "  push:\n    branches: [main]\n  workflow_call:\n", 1))
         errors = contracts.iam_contract(self.root)
         self.assertTrue(any("must require source_run_id" in item for item in errors))
         self.assertTrue(any("ci-ready" in item for item in errors))
+
+    def test_terraform_queue_and_propagation_cannot_bypass_signed_admission(self):
+        path = self.root / '.github/workflows/prod-terraform-target-apply.yml'
+        original = path.read_text()
+        mutations = {
+            'preparation under queue': lambda jobs: jobs['prepare'].update(concurrency=jobs['sync']['concurrency']),
+            'disconnected preparation': lambda jobs: jobs['sync'].update(needs=[]),
+            'bypass preparation': lambda jobs: jobs['sync'].update({'if': 'always()'}),
+            'unprotected apply': lambda jobs: jobs['sync'].pop('environment'),
+            'cancelling state queue': lambda jobs: jobs['sync']['concurrency'].update({'cancel-in-progress': True}),
+            'wait under queue': lambda jobs: jobs['propagation'].update(concurrency=jobs['sync']['concurrency']),
+            'privileged wait': lambda jobs: jobs['propagation'].update(environment='shared-datasets-production'),
+            'wait writer': lambda jobs: jobs['propagation'].update(permissions={'deployments': 'write'}),
+            'unsigned wait': lambda jobs: jobs['propagation'].update({'if': 'always()'}),
+            'unbound apply output': lambda jobs: jobs['sync']['outputs'].update(applied='true'),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = yaml.safe_load(original)
+                mutate(value['jobs'])
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('Terraform' in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
 
     def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
         for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):
@@ -106,7 +137,7 @@ class ReleaseContractTests(unittest.TestCase):
     def test_removed_disabled_late_or_foreign_plan_role_guard_is_not_ready(self):
         path = self.root / '.github/workflows/pmtiles-cdn-sync.yml'
         original = path.read_text()
-        for mutation in ('removed', 'disabled', 'late', 'foreign-plan', 'missing-target', 'foreign-export'):
+        for mutation in ('removed', 'disabled', 'late', 'foreign-plan', 'missing-target', 'foreign-export', 're-export'):
             with self.subTest(mutation=mutation):
                 value = yaml.safe_load(original)
                 steps = value['jobs']['sync']['steps']
@@ -118,6 +149,9 @@ class ReleaseContractTests(unittest.TestCase):
                 elif mutation == 'late':
                     steps.remove(guard)
                     steps.append(guard)
+                elif mutation == 're-export':
+                    exported = next(step for step in steps if 'show -json' in step.get('run', ''))
+                    steps.insert(steps.index(guard) + 1, exported.copy())
                 elif mutation == 'foreign-plan':
                     guard['run'] = guard['run'].replace('pmtiles-managed-folder-bootstrap', 'unrelated')
                 elif mutation == 'foreign-export':
@@ -172,10 +206,32 @@ class ReleaseContractTests(unittest.TestCase):
                 self.assertTrue(any("saved-plan permission probe" in error for error in contracts.check(self.root, {"iam"})))
                 path.write_text(original)
 
+    def test_nested_saved_plan_probe_must_fail_the_job_when_permission_is_missing(self):
+        path = self.root / '.github/workflows/ingestion-deploy.yml'
+        value = yaml.safe_load(path.read_text())
+        steps = value['jobs']['apply']['steps']
+        index = next(index for index, step in enumerate(steps)
+                     if 'deployment_permissions.py' in step.get('run', '') and '--plan-json' in step['run'])
+        nested = [steps[index]]
+        for depth in range(3):
+            action = self.root / f'.github/actions/plan-probe-{depth}/action.yml'
+            action.parent.mkdir()
+            action.write_text(yaml.safe_dump({'runs': {'using': 'composite', 'steps': nested}}))
+            nested = [{'uses': f'./.github/actions/plan-probe-{depth}'}]
+        steps[index] = nested[0]
+        path.write_text(yaml.safe_dump(value))
+        self.assertEqual(contracts.saved_plan_permission_contract(self.root), [])
+        for field in ({'continue-on-error': True}, {'if': False}):
+            with self.subTest(field=field):
+                steps[index] = {**nested[0], **field}
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('saved-plan permission probe' in item
+                                    for item in contracts.saved_plan_permission_contract(self.root)))
+
     def test_probe_of_another_plan_cannot_satisfy_monthly_apply(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
         original = path.read_text()
-        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/wdpa-monthly.tfplan.json"', '--plan-json "$RUNNER_TEMP/other-plan.json"'))
+        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/ingestion.tfplan.json"', '--plan-json "$RUNNER_TEMP/other-plan.json"'))
         self.assertTrue(any("Terraform apply" in error for error in contracts.saved_plan_permission_contract(self.root)))
 
     def test_disabled_probe_and_removed_cdn_post_apply_authority_fail(self):
@@ -224,15 +280,53 @@ class ReleaseContractTests(unittest.TestCase):
                     self.assertTrue(any("operational image permission probe" in error for error in contracts.check(self.root, {"iam"})))
             path.write_text(original)
 
-    def test_shallow_mutable_checkout_rejected(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
-        path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor_sha }}", "ref: main"))
-        self.assertTrue(any("complete history" in item for item in contracts.deployment_contract(self.root, "wdpa")))
+    def test_trusted_bootstrap_bindings_and_checkout_cannot_be_disabled(self):
+        path = self.root / ".github/workflows/ingestion-deploy.yml"
+        original = yaml.safe_load(path.read_text())
+        for mutation in ("checkout", "removed", "disabled", "candidate-sha", "late"):
+            with self.subTest(mutation=mutation):
+                value = json.loads(json.dumps(original))
+                steps = value["jobs"]["prepare"]["steps"]
+                bootstrap = next(step for step in steps if step.get("uses") == contracts.receipts.BOOTSTRAP)
+                if mutation == "checkout":
+                    steps[0]["with"]["ref"] = "${{ inputs.executor_sha }}"
+                elif mutation == "removed":
+                    steps.remove(bootstrap)
+                elif mutation == "disabled":
+                    bootstrap["if"] = False
+                elif mutation == "late":
+                    steps.remove(bootstrap)
+                    steps.append(bootstrap)
+                else:
+                    bootstrap["with"]["executor-sha"] = "main"
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(contracts.deployment_contract(self.root, "wdpa"))
 
-    def test_candidate_cannot_replace_the_trusted_bootstrap(self):
-        path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
-        path.write_text(path.read_text().replace("ref: ${{ github.workflow_sha }}", "ref: ${{ inputs.executor_sha }}"))
-        self.assertTrue(any("trusted main workflow" in item for item in contracts.deployment_contract(self.root, "wdpa")))
+    def test_shared_action_keeps_exact_checkout_and_restore_for_different_executors(self):
+        source = ROOT / ".github/actions/deployment-bootstrap/action.yml"
+        steps = yaml.safe_load(source.read_text())["runs"]["steps"]
+        checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+        self.assertEqual(checkout["with"], {"ref": "${{ inputs.executor-sha }}", "fetch-depth": 0, "persist-credentials": False})
+        restore = next(step for step in steps if "TRUSTED_WORKFLOW_SHA" in step.get("env", {}))
+        self.assertEqual(restore["env"]["TRUSTED_WORKFLOW_SHA"], "${{ github.workflow_sha }}")
+        conditional = {'Snapshot trusted verifier import closure', 'Check out repository',
+                       'Restore immutable receipt verifier after candidate checkout', 'Verify tested main revision'}
+        for step in steps:
+            self.assertFalse(step.get('continue-on-error'))
+            self.assertEqual(step.get('if'), 'inputs.executor-sha != github.workflow_sha' if step['name'] in conditional else None)
+
+    def test_each_wrapper_must_resolve_its_registered_target_and_exact_source(self):
+        for target, slug in contracts.DEPLOYS.items():
+            path = self.root / ".github/workflows" / (slug + "-deploy.yml")
+            original = path.read_text()
+            for key, value in (("uses", "./.github/workflows/arbitrary.yml"), ("target", "other-target"), ("executor_sha", "main")):
+                with self.subTest(target=target, key=key):
+                    caller = yaml.safe_load(original)
+                    job = caller["jobs"]["deploy"]
+                    (job if key == "uses" else job["with"])[key] = value
+                    path.write_text(yaml.safe_dump(caller))
+                    self.assertTrue(contracts.deployment_contract(self.root, target))
+            path.write_text(original)
 
     def test_scheduler_retains_bundle_without_manual_overrides(self):
         path = self.root / "terraform/envs/prod/wdpa_monthly.tf"

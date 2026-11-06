@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from scripts import terraform_plan_allowlist
-from workflow_helpers import load_workflow, terraform_targets, workflow_steps_by_name
+from test_ingestion_deploy_workflow import shared_step, target_table
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,14 +37,9 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             ("replace", 1, "delete/create module."),
             ("delete", 1, "delete module."),
         )
-        for target, image_variable in (
-            ("eamlis-monthly", "EAMLIS_MONTHLY_IMAGE"),
-            ("sea-ice-daily", "SEA_ICE_DAILY_IMAGE"),
-            ("mpatlas-monthly", "MPATLAS_MONTHLY_IMAGE"),
-        ):
-            workflow = load_workflow(REPO_ROOT / f".github/workflows/{target}-deploy.yml")
-            steps = workflow_steps_by_name(workflow, "deploy")
-            script = steps[f"Enforce {target} resource-change allowlist"]["run"]
+        for target in ("eamlis-monthly", "sea-ice-daily", "mpatlas-monthly"):
+            config = target_table()[target]
+            script = shared_step("apply", "Enforce ingestion resource-change allowlist")["run"]
             target_cases = cases + (("allowed-image-create", 0, ""),) if target == "mpatlas-monthly" else cases
             for fixture, exit_code, message in target_cases:
                 with self.subTest(target=target, fixture=fixture), tempfile.TemporaryDirectory() as tmp:
@@ -62,14 +57,15 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
                     if target == "mpatlas-monthly":
                         if fixture == "allowed-image-create":
                             plan["resource_changes"][0]["change"].update(actions=["create"], before=None)
-                        for address in sorted(terraform_targets(steps["Terraform plan"]["run"]) - {terraform_plan_allowlist.JOB_IMAGE_TARGETS[target]}):
+                        for address in sorted(set(config["targets"]) - {terraform_plan_allowlist.JOB_IMAGE_TARGETS[target]}):
                             actions = ["update"] if address.startswith("google_iam_deny_policy.") else ["create"]
                             plan["resource_changes"].append({"address": address, "change": {"actions": actions}})
-                    (directory / f"{target}.tfplan.json").write_text(json.dumps(plan))
+                    (directory / "ingestion.tfplan.json").write_text(json.dumps(plan))
                     result = subprocess.run(
                         ["bash", "-c", script], cwd=REPO_ROOT, capture_output=True, text=True,
                         env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
-                             "RUNNER_TEMP": str(directory), image_variable: EXPECTED_IMAGE.replace("eamlis-monthly", target)},
+                             "RUNNER_TEMP": str(directory), "IMAGE": EXPECTED_IMAGE.replace("eamlis-monthly", target),
+                             "TARGET": target, "TARGET_CONFIG": json.dumps(config)},
                     )
                     self.assertEqual(result.returncode, exit_code, result.stdout + result.stderr)
                     self.assertEqual(result.stderr, "")
@@ -94,8 +90,7 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
 
     def test_mpatlas_image_scope_cannot_be_weakened_by_cli_arguments(self):
-        workflow = load_workflow(REPO_ROOT / ".github/workflows/mpatlas-monthly-deploy.yml")
-        scope = terraform_targets(workflow_steps_by_name(workflow, "deploy")["Terraform plan"]["run"])
+        scope = set(target_table()["mpatlas-monthly"]["targets"])
         valid = ["--job-image-target", "mpatlas-monthly", "--expected-image", EXPECTED_IMAGE, "--block-deletes"]
         for args in (
             valid[:-1],
@@ -108,8 +103,7 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
 
     def test_mpatlas_image_scope_refuses_companion_deletes_and_replacements(self):
-        workflow = load_workflow(REPO_ROOT / ".github/workflows/mpatlas-monthly-deploy.yml")
-        companions = terraform_targets(workflow_steps_by_name(workflow, "deploy")["Terraform plan"]["run"])
+        companions = set(target_table()["mpatlas-monthly"]["targets"])
         companions.remove(terraform_plan_allowlist.JOB_IMAGE_TARGETS["mpatlas-monthly"])
         for address in sorted(companions):
             for actions in (["delete"], ["delete", "create"], ["create", "delete"]):

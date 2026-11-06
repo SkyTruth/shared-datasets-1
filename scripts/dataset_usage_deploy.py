@@ -13,6 +13,7 @@ from ingestion.dataset_usage.model import Classifier
 from ingestion.dataset_usage.run import activation_valid, cost_evidence_valid
 from scripts.catalog_csv import read_catalog_rows_text
 from scripts import deployment_revision
+from scripts.terraform_target_contracts import plan_scope
 
 READER_FILES = (
     'services/catalog_viewer/usage.py',
@@ -41,14 +42,7 @@ def verify_reader_ready(root, api, repository):
         if deployed != (root / relative).read_bytes():
             raise ValueError('Deploy the current compatible catalog reader before the usage writer')
 
-RETIREMENT_RESOURCES = {
-    'google_storage_bucket_iam_member.dataset_usage_probe_reader',
-    'google_logging_project_sink.dataset_usage',
-    'google_logging_project_exclusion.dataset_usage_duplicate',
-    'google_storage_bucket_iam_member.dataset_usage_sink_writer',
-    'google_project_iam_member.dataset_usage_health',
-    'google_project_iam_custom_role.dataset_usage_health',
-}
+RETIREMENT_RESOURCES, _ = plan_scope('dataset-usage-deploy.yml', 'retirement')
 
 # Application reporting is retired. Remove these exact deployed writer grants
 # through the protected deployment, then remove this temporary deletion scope.
@@ -72,26 +66,7 @@ def retirement_ready(root, payload):
         return False
     return True
 
-RESOURCES = {
-    'google_storage_bucket.dataset_usage_raw', 'google_storage_bucket.dataset_usage_state',
-    'google_logging_project_sink.dataset_usage',
-    'google_logging_project_exclusion.dataset_usage_duplicate',
-    'module.dataset_usage_service_account.google_service_account.this',
-    'module.dataset_usage_scheduler_service_account.google_service_account.this',
-    'module.dataset_usage_job.google_cloud_run_v2_job.this',
-    'module.dataset_usage_scheduler.google_cloud_scheduler_job.this',
-    'google_cloud_run_v2_job_iam_member.dataset_usage_scheduler_invoker',
-    'google_project_iam_custom_role.dataset_usage_health',
-    'google_project_iam_custom_role.dataset_usage_bucket_health',
-    'google_project_iam_member.dataset_usage_health',
-    'google_service_account_iam_member.dataset_usage_deployer_act_as',
-    'google_service_account_iam_member.dataset_usage_scheduler_deployer_act_as',
-    'google_project_iam_audit_config.storage_data_write',
-    'google_storage_bucket.shared_bucket',
-    *('google_storage_bucket_iam_member.dataset_usage_' + name for name in (
-        'sink_writer', 'storage_logger', 'raw_reader', 'state_writer', 'viewer',
-        'probe_reader', 'native_probe_reader', 'configuration_reader', 'raw_configuration_reader')),
-}
+RESOURCES, _ = plan_scope('dataset-usage-deploy.yml', 'runtime')
 
 
 def validate_rollout(root):

@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.slack_notify import notify
 
@@ -38,17 +37,9 @@ class StageFailure(RuntimeError):
         self.output = output
 
 
-def run_command(command: list[str], *, runner: Runner = subprocess.run) -> subprocess.CompletedProcess[str]:
-    return runner(command, capture_output=True, text=True)
-
-
 def ensure_success(stage: str, result: subprocess.CompletedProcess[str], command: list[str]) -> None:
     if result.returncode != 0:
         raise StageFailure(stage, command, result.returncode, (result.stdout or "") + (result.stderr or ""))
-
-
-def tail_text(text: str, *, lines: int = 20) -> str:
-    return "\n".join(text.strip().splitlines()[-lines:])
 
 
 def resolve_terraform_binary(candidate: str | None) -> str:
@@ -75,17 +66,9 @@ def resolve_terraform_binary(candidate: str | None) -> str:
 
 
 def current_cloud_run_image(job_name: str, *, runner: Runner = subprocess.run) -> str:
-    command = [
-        "gcloud",
-        "run",
-        "jobs",
-        "describe",
-        job_name,
-        "--region=us-central1",
-        f"--project={PROJECT_ID}",
-        "--format=value(spec.template.spec.template.spec.containers[0].image)",
-    ]
-    result = run_command(command, runner=runner)
+    command = ["gcloud", "run", "jobs", "describe", job_name, "--region=us-central1", f"--project={PROJECT_ID}",
+               "--format=value(spec.template.spec.template.spec.containers[0].image)"]
+    result = runner(command, capture_output=True, text=True)
     ensure_success(f"read {job_name} image", result, command)
     image = result.stdout.strip()
     if not image:
@@ -117,68 +100,23 @@ def default_vars(existing: dict[str, str], *, runner: Runner = subprocess.run) -
     return values
 
 
-def var_flags(values: Mapping[str, str]) -> list[str]:
-    flags: list[str] = []
-    for key, value in values.items():
-        flags.extend(["-var", f"{key}={value}"])
-    return flags
-
-
-def plan_command(terraform_bin: str, plan_file: Path, values: Mapping[str, str]) -> list[str]:
-    return [
-        terraform_bin,
-        f"-chdir={PROD_DIR}",
-        "plan",
-        "-input=false",
-        f"-out={plan_file}",
-        *var_flags(values),
-    ]
-
-
-def apply_command(terraform_bin: str, plan_file: Path) -> list[str]:
-    return [terraform_bin, f"-chdir={PROD_DIR}", "apply", "-input=false", str(plan_file)]
-
-
-def show_command(terraform_bin: str, plan_file: Path) -> list[str]:
-    return [terraform_bin, f"-chdir={PROD_DIR}", "show", "-json", str(plan_file)]
-
-
 def resource_change_summary(plan: Mapping[str, Any]) -> list[str]:
-    summary = []
-    for change in plan.get("resource_changes", []):
-        actions = change.get("change", {}).get("actions", [])
-        if actions in ([], ["no-op"], ["read"]):
-            continue
-        summary.append(f"{'/'.join(actions)} {change.get('address')}")
-    return summary
+    return [f"{'/'.join(actions)} {change.get('address')}" for change in plan.get("resource_changes", [])
+            if (actions := change.get("change", {}).get("actions", [])) not in ([], ["no-op"], ["read"])]
 
 
 def has_destructive_changes(plan: Mapping[str, Any]) -> bool:
-    return any(
-        "delete" in change.get("change", {}).get("actions", [])
-        for change in plan.get("resource_changes", [])
-    )
+    return any("delete" in change.get("change", {}).get("actions", [])
+               for change in plan.get("resource_changes", []))
 
 
 def read_command_value(stage: str, command: list[str], *, runner: Runner) -> str:
-    result = run_command(command, runner=runner)
+    result = runner(command, capture_output=True, text=True)
     ensure_success(stage, result, command)
     value = result.stdout.strip()
     if not value:
         raise StageFailure(stage, command, 1, "command returned an empty value")
     return value
-
-
-def operator_identity(*, runner: Runner) -> str:
-    return read_command_value(
-        "read active gcloud operator",
-        ["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
-        runner=runner,
-    )
-
-
-def git_sha(*, runner: Runner) -> str:
-    return read_command_value("read Git SHA", ["git", "rev-parse", "HEAD"], runner=runner)
 
 
 def terraform_version(terraform_bin: str, *, runner: Runner) -> str:
@@ -189,35 +127,16 @@ def terraform_version(terraform_bin: str, *, runner: Runner) -> str:
         raise StageFailure("read Terraform version", [terraform_bin, "version", "-json"], 1, raw) from exc
 
 
-def plan_sha256(plan_file: Path) -> str:
-    return hashlib.sha256(plan_file.read_bytes()).hexdigest()
-
-
 def write_audit_event(payload: Mapping[str, Any], *, runner: Runner) -> None:
-    command = [
-        "gcloud",
-        "logging",
-        "write",
-        AUDIT_LOG_NAME,
-        json.dumps(dict(payload), sort_keys=True, separators=(",", ":")),
-        "--payload-type=json",
-        f"--project={PROJECT_ID}",
-        "--severity=NOTICE",
-    ]
-    result = run_command(command, runner=runner)
+    command = ["gcloud", "logging", "write", AUDIT_LOG_NAME,
+               json.dumps(dict(payload), sort_keys=True, separators=(",", ":")),
+               "--payload-type=json", f"--project={PROJECT_ID}", "--severity=NOTICE"]
+    result = runner(command, capture_output=True, text=True)
     ensure_success("write break-glass audit event", result, command)
 
 
-def send_summary(
-    *,
-    title: str,
-    status: str,
-    operator: str,
-    reason: str,
-    plan_hash: str,
-    actions: Sequence[str],
-    dry_run: bool,
-) -> None:
+def send_summary(*, title: str, status: str, operator: str, reason: str, plan_hash: str,
+                 actions: Sequence[str], dry_run: bool) -> None:
     notify(
         title=title,
         body=(
@@ -238,21 +157,16 @@ def send_failure_summary(exc: StageFailure, *, dry_run: bool) -> None:
             f"*Stage:* `{exc.stage}`\n"
             f"*Exit code:* `{exc.returncode}`\n"
             f"*Command:* `{' '.join(exc.command)}`\n"
-            f"*Output tail:*\n```{tail_text(exc.output)}```"
+            f"*Output tail:*\n```{chr(10).join(exc.output.strip().splitlines()[-20:])}```"
         ),
         status="error",
         dry_run=dry_run,
     )
 
 
-def run_apply(
-    argv: Sequence[str],
-    *,
-    runner: Runner = subprocess.run,
-    binary_resolver: Callable[[str | None], str] = resolve_terraform_binary,
-    input_fn: Callable[[str], str] = input,
-    stdin_isatty: Callable[[], bool] = sys.stdin.isatty,
-) -> int:
+def run_apply(argv: Sequence[str], *, runner: Runner = subprocess.run,
+              binary_resolver: Callable[[str | None], str] = resolve_terraform_binary,
+              input_fn: Callable[[str], str] = input, stdin_isatty: Callable[[], bool] = sys.stdin.isatty) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--break-glass", action="store_true", help="Acknowledge this is an approved emergency.")
     parser.add_argument("--reason", required=True, help="Human-readable emergency rationale for the audit record.")
@@ -277,8 +191,9 @@ def run_apply(
             plan_file = Path(temp_dir) / "prod.tfplan"
             previous_umask = os.umask(0o077)
             try:
-                plan = plan_command(terraform_bin, plan_file, values)
-                plan_result = run_command(plan, runner=runner)
+                plan = [terraform_bin, f"-chdir={PROD_DIR}", "plan", "-input=false", f"-out={plan_file}",
+                        *(flag for key, value in values.items() for flag in ("-var", f"{key}={value}"))]
+                plan_result = runner(plan, capture_output=True, text=True)
                 ensure_success("plan", plan_result, plan)
             finally:
                 os.umask(previous_umask)
@@ -286,8 +201,8 @@ def run_apply(
                 raise StageFailure("plan", plan, 1, "Terraform did not create the saved plan file")
             os.chmod(plan_file, 0o600)
 
-            show = show_command(terraform_bin, plan_file)
-            show_result = run_command(show, runner=runner)
+            show = [terraform_bin, f"-chdir={PROD_DIR}", "show", "-json", str(plan_file)]
+            show_result = runner(show, capture_output=True, text=True)
             ensure_success("show plan JSON", show_result, show)
             try:
                 plan_json = json.loads(show_result.stdout)
@@ -302,15 +217,16 @@ def run_apply(
                     "plan contains delete or replace actions; pass --allow-destroy after reviewing them",
                 )
 
-            plan_hash = plan_sha256(plan_file)
-            operator = operator_identity(runner=runner)
-            revision = git_sha(runner=runner)
+            plan_hash = hashlib.sha256(plan_file.read_bytes()).hexdigest()
+            operator = read_command_value("read active gcloud operator",
+                ["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"], runner=runner)
+            revision = read_command_value("read Git SHA", ["git", "rev-parse", "HEAD"], runner=runner)
             version = terraform_version(terraform_bin, runner=runner)
             print("\n".join(actions) or "No resource changes.")
             confirmation = f"apply {PROJECT_ID} {plan_hash}"
             if input_fn(f"Type {confirmation!r} to apply this exact plan: ").strip() != confirmation:
                 raise StageFailure("operator confirmation", plan, 2, "confirmation did not match")
-            if plan_sha256(plan_file) != plan_hash:
+            if hashlib.sha256(plan_file.read_bytes()).hexdigest() != plan_hash:
                 raise StageFailure("plan integrity", plan, 2, "saved plan changed after confirmation")
 
             audit_base = {
@@ -322,8 +238,8 @@ def run_apply(
                 "resource_actions": actions,
             }
             write_audit_event({**audit_base, "event": "apply_started"}, runner=runner)
-            apply = apply_command(terraform_bin, plan_file)
-            apply_result = run_command(apply, runner=runner)
+            apply = [terraform_bin, f"-chdir={PROD_DIR}", "apply", "-input=false", str(plan_file)]
+            apply_result = runner(apply, capture_output=True, text=True)
             ensure_success("apply", apply_result, apply)
             write_audit_event({**audit_base, "event": "apply_succeeded"}, runner=runner)
             send_summary(

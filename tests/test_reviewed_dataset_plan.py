@@ -3,6 +3,10 @@ from __future__ import annotations
 import contextlib
 import io
 import tempfile
+import subprocess
+import sys
+
+import pytest
 import unittest
 from pathlib import Path
 
@@ -395,7 +399,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             )
 
     def test_normalize_delete_plan_rejects_scratch_target(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved canonical mutation prefixes"):
             reviewed_dataset_plan.normalize_delete_plan(
                 {
                     "asset_slug": "example-asset",
@@ -411,7 +415,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             )
 
     def test_normalize_delete_plan_rejects_nested_gcloud_temp_prefix(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved canonical mutation prefixes"):
             reviewed_dataset_plan.normalize_delete_plan(
                 {
                     "asset_slug": "cleanup",
@@ -490,35 +494,23 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         ):
             reviewed_dataset_plan.normalize_document(doc)
 
-    def test_prepare_cli_creates_identical_file_and_fence_without_overwriting_tampering(
-        self,
-    ):
+    def test_prepare_cli_creates_identical_file_and_fence_without_overwriting_tampering(self):
         from test_dataset_mutation_authorization import document
-        from scripts import reviewed_dataset_plan as p
-
+        p = reviewed_dataset_plan
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             payload = root / "publish.json"
             payload.write_bytes(p.canonical_bytes(document()["publish"]))
+            command = ["prepare", "--publish", str(payload), "--repo-root", str(root)]
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                self.assertEqual(
-                    p.main(
-                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
-                    ),
-                    0,
-                )
+                self.assertEqual(p.main(command), 0)
             path = root / p.document_path(document())
             self.assertEqual(path.read_bytes(), p.canonical_bytes(document()))
             p.check_rendered_body(stdout.getvalue(), document())
             path.write_text("tampered")
             with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(
-                    p.main(
-                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
-                    ),
-                    2,
-                )
+                self.assertEqual(p.main(command), 2)
 
     def test_producer_rejects_dot_proposals_and_escaping_symlink_before_mkdir(self):
         from test_dataset_mutation_authorization import document
@@ -560,3 +552,29 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("defect", [None, "generation", "digest", "modified", "deleted"])
+def test_offline_plan_cli_checks_committed_bytes_and_immutability(tmp_path, defect):
+    from test_ci_preflight import fixture_repo
+    from test_dataset_mutation_authorization import document
+    p = reviewed_dataset_plan
+    root, git = fixture_repo(tmp_path)
+    path = p.write_document(document(), repo_root=root)
+    if defect in {"modified", "deleted"}:
+        git("add", ".")
+        git("commit", "-m", "old immutable plan")
+    base = git("rev-parse", "HEAD")
+    if defect == "generation":
+        broken = document()
+        broken["publish"]["promotions"][0]["source_generation"] = "0"
+        path.write_bytes(p.canonical_bytes(broken))
+    elif defect in {"digest", "modified"}:
+        path.write_bytes(path.read_bytes() + b" ")
+    elif defect == "deleted":
+        path.unlink()
+    git("add", ".")
+    git("commit", "-m", "candidate plan")
+    result = subprocess.run([sys.executable, str(Path(p.__file__)), "check-diff", "--base", base, "--head", "HEAD"],
+                            cwd=root, capture_output=True, text=True)
+    assert result.returncode == (2 if defect else 0), result.stderr

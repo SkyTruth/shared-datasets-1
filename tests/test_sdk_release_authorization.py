@@ -11,9 +11,19 @@ import pytest
 
 from scripts import sdk_release_authorization as release
 from scripts.deployment_revision import DeploymentError
+from scripts.workflow_identity import WORKFLOW_NAMES
 
 SHA = 'a' * 40
 REPO = 'SkyTruth/shared-datasets-1'
+
+
+@pytest.fixture(autouse=True)
+def publisher_caller(monkeypatch):
+    for key, value in {'GITHUB_EVENT_NAME':'workflow_dispatch', 'GITHUB_REF':'refs/heads/main',
+                       'GITHUB_REPOSITORY': REPO,
+                       'GITHUB_WORKFLOW_REF': REPO+'/.github/workflows/publish-typescript-sdk.yml@refs/heads/main',
+                       'GITHUB_RUN_ID':'900', 'GITHUB_RUN_ATTEMPT':'1'}.items():
+        monkeypatch.setenv(key, value)
 
 
 def archive(files):
@@ -191,15 +201,19 @@ def test_candidate_must_match_recorded_test_result_even_with_consistent_new_hash
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
 
 
-def admission_fixture(*, ready='success', conclusion='failure', current_attempt=1, name='CI'):
+def admission_fixture(*, ready='success', sdk='success', conclusion='failure', name='CI'):
     repository = {'id': 9, 'full_name': REPO}
     workflow = {'id': 7, 'path': '.github/workflows/ci.yml'}
     run = {'id': 123, 'run_attempt': 1, 'workflow_id': 7, 'path': workflow['path'], 'name': name,
            'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'status': 'completed', 'conclusion': conclusion,
            'repository': repository, 'head_repository': repository}
     api = Mock()
-    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else workflow if endpoint.endswith('/workflows/ci.yml') else run if '/attempts/' in endpoint else {**run, 'run_attempt': current_attempt}
+    publisher = {'id': 8, 'path': '.github/workflows/publish-typescript-sdk.yml'}
+    current = {**run, 'id': 900, 'workflow_id': 8, 'event': 'workflow_dispatch', 'path': publisher['path']}
+    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else publisher if endpoint.endswith('/workflows/publish-typescript-sdk.yml') else workflow if endpoint.endswith('/workflows/ci.yml') else current if '/runs/900/' in endpoint else run
     api.pages.return_value = [] if ready is None else [{'name': 'ci-ready', 'status': 'completed', 'conclusion': ready}]
+    if sdk is not None:
+        api.pages.return_value.append({'name': 'sdk-validation (Node 24)', 'status': 'completed', 'conclusion': sdk})
     event = {'workflow_run': dict(run), 'repository': repository}
     return api, event
 
@@ -207,29 +221,52 @@ def admission_fixture(*, ready='success', conclusion='failure', current_attempt=
 @pytest.mark.parametrize('ready', ['failure', 'cancelled', 'skipped', None])
 def test_verified_validation_failure_does_not_authorize_or_fail_an_sdk_release(ready):
     api, event = admission_fixture(ready=ready)
-    assert not release.admit_source(api, REPO, 123, 1, SHA, event)
+    with pytest.raises(DeploymentError, match="ci-ready"):
+        release.admit_source(api, REPO, 123, 1, SHA, event)
     api.pages.assert_called_once()
     api.archive.assert_not_called()
 
 
-@pytest.mark.parametrize('name', release.WORKFLOW_NAMES['ci.yml'])
+@pytest.mark.parametrize('name', WORKFLOW_NAMES['ci.yml'])
 def test_failed_post_validation_deployment_keeps_tested_sdk_eligible(name):
     api, event = admission_fixture(name=name)
     assert release.admit_source(api, REPO, 123, 1, SHA, event)
 
 
-@pytest.mark.parametrize('conclusion,current_attempt', [('cancelled', 1), ('success', 2)])
-def test_cancelled_or_verified_obsolete_ci_completion_is_an_sdk_noop(conclusion, current_attempt):
-    api, event = admission_fixture(conclusion=conclusion, current_attempt=current_attempt)
+@pytest.mark.parametrize('sdk', [None, 'skipped', 'failure', 'cancelled'])
+def test_unselected_or_failed_sdk_suite_stops_before_candidate_bootstrap(sdk):
+    api, event = admission_fixture(sdk=sdk)
     assert not release.admit_source(api, REPO, 123, 1, SHA, event)
-    api.pages.assert_called_once()
+    api.archive.assert_not_called()
 
 
-@pytest.mark.parametrize('name', release.WORKFLOW_NAMES['ci.yml'])
-@pytest.mark.parametrize('change', ['name', 'head_sha', 'workflow_id', 'path', 'event', 'repository', 'run_attempt'])
-def test_sdk_admission_rejects_forged_event_identity_even_when_validation_failed(change, name):
-    api, event = admission_fixture(ready='failure', name=name)
-    event['workflow_run'][change] = {'id': 100, 'full_name': 'evil/fork'} if change == 'repository' else 'forged'
+@pytest.mark.parametrize('key', ['GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_WORKFLOW_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'])
+def test_sdk_admission_rejects_another_caller_or_attempt(monkeypatch, key):
+    api, event = admission_fixture()
+    monkeypatch.setenv(key, '2' if key == 'GITHUB_RUN_ATTEMPT' else '901' if key == 'GITHUB_RUN_ID' else 'forged')
+    with pytest.raises(RuntimeError):
+        release.admit_source(api, REPO, 123, 1, SHA, event)
+    api.archive.assert_not_called()
+
+
+@pytest.mark.parametrize('caller', ['ci.yml', 'publish-typescript-sdk.yml'])
+def test_sdk_trusted_publisher_identity_is_the_top_level_workflow(monkeypatch, caller):
+    api, event = admission_fixture()
+    monkeypatch.setenv('GITHUB_WORKFLOW_REF', f'{REPO}/.github/workflows/{caller}@refs/heads/main')
+    if caller == 'publish-typescript-sdk.yml':
+        assert release.admit_source(api, REPO, 123, 1, SHA, event)
+    else:
+        with pytest.raises(RuntimeError, match='trusted main workflow'):
+            release.admit_source(api, REPO, 123, 1, SHA, event)
+
+
+@pytest.mark.parametrize('change', ['head_sha', 'workflow_id', 'path', 'event', 'head_branch', 'repository', 'run_attempt'])
+def test_sdk_admission_rejects_forged_source_identity_even_when_validation_failed(change):
+    api, event = admission_fixture(ready='failure')
+    # Change authoritative run data, not an unused workflow_run event hint.
+    event['workflow_run'][change] = {'id':100, 'full_name':'evil/fork'} if change == 'repository' else 'forged'
+    original = api.get.side_effect
+    api.get.side_effect = lambda endpoint: event['workflow_run'] if '/runs/123/attempts/' in endpoint else original(endpoint)
     with pytest.raises(DeploymentError):
         release.admit_source(api, REPO, 123, 1, SHA, event)
 
@@ -246,7 +283,7 @@ def test_sdk_admission_does_not_hide_incomplete_job_enumeration_or_duplicate_gat
 
 
 @pytest.mark.parametrize('admission_only', [False, True])
-def test_verified_failed_ci_completes_candidate_detection_without_release(tmp_path, monkeypatch, admission_only):
+def test_unready_ci_fails_candidate_detection_without_release(tmp_path, monkeypatch, admission_only):
     api, event = admission_fixture(ready='failure')
     event_path = tmp_path / 'event.json'
     event_path.write_text(json.dumps(event))
@@ -260,8 +297,10 @@ def test_verified_failed_ci_completes_candidate_detection_without_release(tmp_pa
     args = ['sdk_release_authorization.py', '--executor-sha', SHA, '--source-run-id', '123', '--source-run-attempt', '1']
     args += ['--admit-source'] if admission_only else ['--output', str(tmp_path / 'package')]
     monkeypatch.setattr(release.sys, 'argv', args)
-    release.main()
-    assert github_output.read_text() == 'source_eligible=false\nrelease_needed=false\n'
+    with pytest.raises(SystemExit) as failed:
+        release.main()
+    assert failed.value.code == 1
+    assert not github_output.exists()
     assert not (tmp_path / 'package').exists()
     strict.assert_not_called()
 

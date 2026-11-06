@@ -7,30 +7,70 @@ not permission to publish or deploy.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from functools import lru_cache, partial
+from fnmatch import fnmatchcase
 import hashlib
+import shlex
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from xml.etree import ElementTree
-
-from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.ci_toolchain import TOOLCHAIN
+from scripts.ingestion_targets import DEPLOY_TARGETS, TARGETS as INGESTION_CONFIGS
 from scripts.catalog_csv import read_catalog_rows_text
-from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
+from scripts.production_image_contracts import HOST_PROBE_FILES
+from scripts.terraform_target_contracts import registry, resource_index, scope_inputs
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest, dependency_graph, dependency_closure, repository_files
 
 
 SUITES = (
-    "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
+    "lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
-DEPLOYMENTS = (
-    "mpatlas", "eamlis", "wdpa", "sea_ice", "ingestion_iam",
-    "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
-    "scratch_cleanup_iam", "cron_alert_policy",
-)
-INGESTION_DEPLOYMENTS = frozenset({"mpatlas", "eamlis", "wdpa", "sea_ice"})
+DEPLOYMENTS = tuple(registry(section="deployments"))
+INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CONFIGS.values())
+DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
-ALWAYS = {"lint", "tests"}
+ALWAYS = {"lint", "tests", "tests-control-plane"}
+DELIVERY_FILTERS = {'refresh-reviewed-catalog': 'has_catalog_changes',
+                    'announce-repo-functionality': 'has_repo_alert', 'publish-reviewed-dataset': 'has_mutations'}
+
+
+def delivery_condition(caller):
+    selection = (" && needs.dataset-mutation-selection.outputs." + DELIVERY_FILTERS[caller] + " == 'true'") if caller in DELIVERY_FILTERS else ''
+    return "${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + selection + " }}"
+
+
+def delivery_outputs(plan, event, ref):
+    """Successful CI emits main-only eligibility; later prerequisite results stay live."""
+    enabled = event == 'push' and ref == 'refs/heads/main'
+    return {**{name.replace('_', '-'): enabled and name in plan['deployments'] for name in DEPLOYMENTS},
+            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'],
+            **dict.fromkeys(('dataset-mutation-selection', 'refresh-reviewed-catalog', 'announce-repo-functionality',
+                             'publish-reviewed-dataset', 'identity-decision-reconcile'), enabled)}
+
+
+def rollout_holds(value, *, historical=False, previous=None, now=None, targets=INGESTION_DEPLOYMENTS) -> tuple[str, ...]:
+    # Old commits used bare target names. Only comparison baselines may read that
+    # persisted format; all new plans require accountable, bounded holds.
+    if historical and isinstance(value, list) and all(isinstance(row, str) for row in value):
+        value = dict.fromkeys(value)
+    if not isinstance(value, dict) or not set(value) <= set(targets):
+        raise ValueError("rollout holds must map scheduled deployment targets to owner, reason and expires_at")
+    if not historical:
+        if previous is not None and len(set(previous) - set(value)) > 1:
+            raise ValueError("release at most one rollout hold per change")
+        owners = {word.removeprefix("@") for line in (Path(__file__).resolve().parents[1] / ".github/CODEOWNERS").read_text().splitlines()
+                  if line.strip() and not line.lstrip().startswith("#") for word in line.split()[1:]}
+        for target, hold in value.items():
+            if (not isinstance(hold, dict) or set(hold) != {"owner", "reason", "expires_at"}
+                    or any(not isinstance(item, str) or not item.strip() for item in hold.values())):
+                raise ValueError(f"{target}: rollout hold requires owner, reason and expires_at")
+            expiry = datetime.fromisoformat(hold["expires_at"].replace("Z", "+00:00"))
+            if expiry.tzinfo is None or hold["owner"] not in owners:
+                raise ValueError(f"{target}: rollout hold requires a timezone and CODEOWNER")
+            if previous is not None and hold != (previous.get(target) if isinstance(previous, dict) else None) and expiry <= (now or datetime.now(timezone.utc)):
+                raise ValueError(f"{target}: changed rollout hold is already expired")
+    return tuple(value)
 NATIVE_TESTS = (
     "tests/test_feature_metadata_localization.py",
     "tests/test_translation_local_io.py",
@@ -41,233 +81,162 @@ NATIVE_TESTS = (
     "tests/test_eamlis_monthly.py",
     "tests/test_mpatlas_monthly.py",
 )
-CONTRACT_FILES = (
-    "ingestion/common/stage_checkpoints.py",
-    "scripts/publication_runtime_check.py", "scripts/publication_readiness.py",
-    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
-    ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
-    "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
-    "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
-    "scripts/check_workflow_syntax.py",
+# Hash complete validator/action modules so new imports and nested composites
+# cannot escape evidence invalidation through an omitted hand-maintained entry.
+# Selection remains derived independently from COPY/import consumers below.
+CONTRACT_FILES = tuple(sorted({
+    path.relative_to(ROOT).as_posix()
+    for pattern in ("scripts/*.py", "ingestion/common/*.py", ".github/actions/**/*.yml", ".github/actions/**/*.py", ".github/docker/*Dockerfile")
+    for path in ROOT.glob(pattern)
+} | {
+    "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
+    ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
+    ".github/workflows/pr-terraform-plan.yml",
+    ".github/terraform-targets.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
-    "scripts/check_identity_resolutions.py",
-    "scripts/ci_source_proof.py", "scripts/ci_reuse.py",
-    "scripts/sdk_release_authorization.py", "scripts/dataset_mutation_authorization.py",
-    "scripts/reviewed_dataset_plan.py", "scripts/github_api_read.py",
-    "scripts/deployment_revision.py", "scripts/workflow_identity.py",
-    ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
-    "scripts/release_contracts.py", "scripts/deployment_permissions.py",
-    "scripts/wdpa_processing_gate.py",
-    "scripts/production_image_contracts.py",
-    "scripts/dataset_usage_cold_start.py",
-    "scripts/terraform_target_contracts.py", "terraform/iam-plan-prerequisites.json",
-    "tests/fixtures/terraform_targets/failed-main.json",
-    "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
-    "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
-    "scripts/dataset_usage_deploy.py",
-    "scripts/scheduled_job_contracts.py",
-    "scripts/cdn_plan_readiness.py",
-    "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
-    "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
-    ".github/actions/deployment-receipt/action.yml",
-)
+    "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
+}))
 
 
-# These ingestion sources are copied into the catalog-viewer image and imported
-# by its HTTP/review reader. Keep validation coverage with the actual Docker COPY
-# boundary, independently of which deployment the changed path selects.
-VIEWER_INGESTION_INPUTS = frozenset({
-    "ingestion/__init__.py", "ingestion/common/__init__.py",
-    "ingestion/common/decision_events.py", "ingestion/common/identity_index.py",
-    "ingestion/common/publication.py", "ingestion/common/runtime.py",
-    "ingestion/common/http.py", "ingestion/wdpa_monthly/__init__.py",
-    "ingestion/wdpa_monthly/identity_review.py",
-})
+@lru_cache(maxsize=4)
+def dependency_inputs(revision=None, root=None):
+    """Generate dependencies from local imports, script calls and Docker COPY.
+
+    Include package initializers, relative imports and literal subprocess paths.
+    Directory COPY declarations remain prefixes, including newly added files.
+    Parsing errors fail selection rather than silently omitting a dependency.
+    """
+    root = root or ROOT
+    snapshot = repository_files(revision, root) if revision is not None else None
+    sources = {path.relative_to(root).as_posix(): path.read_text() for directory in
+               ("scripts", "ingestion", "services", "api/python/src", "tests")
+               for path in (root / directory).rglob("*.py") if "__pycache__" not in path.parts} if snapshot is None else {
+                   name: raw.decode() for name, raw in snapshot.items()
+                   if name.endswith(".py") and name.startswith(("scripts/", "ingestion/", "services/", "api/python/src/", "tests/"))}
+    edges = dependency_graph(sources | dict.fromkeys((path.relative_to(root).as_posix() for path in root.glob("api/**/*.mjs")), ""))
+    closure = partial(dependency_closure, edges)
+
+    images, copies = {}, {}
+    for target, recipe in RECIPES.items():
+        if snapshot is not None and recipe not in snapshot:
+            continue
+        copied = {recipe, ".dockerignore"}
+        recipe_text = (root / recipe).read_text() if snapshot is None else snapshot[recipe].decode()
+        for line in recipe_text.replace("\\\n", " ").splitlines():
+            operation, _, arguments = line.strip().partition(" ")
+            if operation.upper() != "COPY" or arguments.startswith("--from="):
+                continue
+            words = json.loads(arguments) if arguments.startswith("[") else shlex.split(arguments, comments=True)
+            if len(words) < 2 or any(word.startswith("--") or "$" in word for word in words):
+                raise ValueError(f"unsupported COPY inputs in {recipe}: {arguments}")
+            for source in words[:-1]:
+                source = source.removeprefix("./").rstrip("/")
+                source = "" if source == "." else source
+                directory = (root / source).is_dir() if snapshot is None else any(name.startswith(source + "/") for name in snapshot)
+                copied.add(source + "/" if directory else source)
+        copies[target] = set(copied)
+        copied.add(f"tests/fixtures/production_images/{target}.json")
+        checks = json.dumps((registry(root, section="image_checks") if snapshot is None else json.loads(snapshot.get(".github/terraform-targets.json", b"{}")).get("image_checks", {})).get(target, {}))
+        copied.update(path for key, path in HOST_PROBE_FILES.items() if "{" + key + "}" in checks)
+        images[target] = copied
+    native = closure(NATIVE_TESTS)
+    native.update({name for name, inputs in edges.items() if name.startswith("tests/")
+                   and inputs & {item for item in native if not item.endswith("/__init__.py")}})
+    browser = closure(name for name in sources if name.startswith("tests/browser/"))
+    return images, native, browser, sources.keys() | {name for name in snapshot or {} if name.startswith(".github/")}, copies
 
 
-# Additional suites beyond ALWAYS, only after tracing imports (including other
-# scripts), subprocess/workflow callers, Docker COPY sources and generated data.
-# Unproved paths retain production-images; the image selector below narrows
-# only traced component ownership, independently of these suite exceptions.
-# SDK fixtures read checked-in JSON/web contracts; browser fixtures import
-# release_feature_model and execute catalog_site. Those shared producers and all
-# unproved scripts remain broad. Keep this proof with each exception; a new
-# consumer must expand its suites or remove the exception.
-NARROW_PATHS = {
-    # Alert workflows and ordinary Python tests only (including the exact
-    # incident tests below); no native, SDK or browser fixture producer or
-    # installed production-image consumer. The separate preview-service recipe
-    # copies all scripts but is not built by the production-images suite.
-    "scripts/slack_incidents.py": (),
-    "scripts/incident_verification_cache.py": (),
-    "scripts/operational_snapshot.py": (),
-    "scripts/operational_safety_check.py": (),
-    "scripts/workflow_failure_alert.py": (),
-    "scripts/repo_alerts.py": (),
-    # Exact reverse-import test closure of these automation scripts. SDK/WDPA names
-    # describe mocked incident histories, not SDK/native fixture execution.
-    "tests/test_failure_alert_routing.py": (),
-    # Cross-source alert tests use local HTTP/storage fixtures and mocked
-    # deployment provenance; they produce no native, SDK or browser inputs.
-    # Receiver/image edits retain their own production-image coverage.
-    "tests/test_execution_alerts.py": (),
-    "tests/test_repo_alerts.py": (),
-    "tests/test_sdk_incident_recovery.py": (),
-    "tests/test_slack_incident_claim_cli.py": (),
-    "tests/test_slack_incidents.py": (),
-    "tests/test_slack_incidents_incremental.py": (),
-    "tests/test_incident_verification_cache.py": (),
-    "tests/test_operational_snapshot.py": (),
-    "tests/test_operational_safety_check.py": (),
-    "tests/test_operational_safety_routing.py": (),
-    "tests/test_wdpa_incident_recovery.py": (),
-    "tests/test_workflow_identity.py": (),
-    # Only importer: test_catalog_web_publish; CLIs: catalog-web-deploy and
-    # feature-preview-deploy. Publishes an already-built site/catalog; no fixture
-    # generator imports/calls it. Catalog tests retain SDKs/browser and images;
-    # no native consumer. catalog_site/catalog_csv/gcs_asset remain broad.
-    "scripts/catalog_web_publish.py": ("production-images", "sdk-node22", "sdk-node24", "browser"),
-    # Only importer: test_feature_metadata_translation_gap_documents. Offline CLI
-    # produces translation workbooks/CSV/manifest, never API/browser fixtures.
-    # No other import/subprocess/workflow caller; translation test classification
-    # adds native/images.
-    "scripts/feature_metadata_translation_gap_documents.py": ("geospatial-integration", "production-images"),
-    # Only importer: test_wdpa_build_authorization; CLI: wdpa-monthly-deploy.
-    # Verifies approval of retained WDPA builds; no generated SDK/browser inputs
-    # or other subprocess caller. WDPA test classification adds native/images;
-    # image selection stays conservative. Shared authority modules remain broad.
-    "scripts/wdpa_build_authorization.py": ("geospatial-integration", "production-images"),
-}
+def matches(path, inputs):
+    return any((item == "/" or path.startswith(item)) if item.endswith("/") else fnmatchcase(path, item) for item in inputs)
 
 
-def classify_change(path: str) -> tuple[str, set[str]]:
-    """One path's tier and additional suites; deployment authority stays explicit."""
-    if path in CONTRACT_FILES or path.startswith("tests/fixtures/") and path.endswith(".md"):
-        return "shared", set(SUITES)
+def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]]:
+    """Runtime selection follows generated dependencies; unknown paths stay broad."""
+    if (path in {
+            "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
+            ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
+            "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py",
+        } or path.startswith("tests/fixtures/") and path.endswith(".md")):
+        return "component" if path in {"pyproject.toml", "uv.lock"} else "shared", set(SUITES)
+    images, native, browser, sources, _ = inputs or dependency_inputs(root=root)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
-            suites.update({"geospatial-integration", "production-images"})
+        if path.startswith("catalog/") or any(matches(path, copied) for copied in images.values()):
+            suites.add("geospatial-integration")
         return "metadata", suites
+    if path == "api/typescript/README.md":
+        return "component", {"sdk-node22", "sdk-node24", "browser"}
     if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
-    if path.startswith(".github/"):
-        return "shared", set(SUITES)
-    if path in VIEWER_INGESTION_INPUTS:
-        return "component", {"geospatial-integration", "production-images", "browser"}
-    if path.startswith("ingestion/") or path in NATIVE_TESTS:
-        return "component", {"geospatial-integration", "production-images"}
-    if path.startswith("api/"):
-        suites = {"sdk-node22", "sdk-node24", "browser"}
-        if path.startswith("api/python/"):
-            suites.add("production-images")
+    suites = set()
+    if any(matches(path, inputs) for inputs in images.values()):
+        suites.add("production-images")
+    if path in native or path in NATIVE_TESTS or path.startswith("ingestion/") or any(
+            path.startswith(f"tests/test_{target.replace('-', '_')}") for target in INGESTION_CONFIGS):
+        suites.add("geospatial-integration")
+    if path in browser or path.startswith(("services/catalog_viewer/", "api/", "web/", "tests/browser/")):
+        suites.add("browser")
+    if path.startswith(("api/", "web/", "tests/browser/")) or path == "scripts/catalog_web_publish.py":
+        suites.update({"sdk-node22", "sdk-node24", "browser"})
+    if suites or path in sources or path.startswith(("ingestion/", "services/", "api/", "web/", "tests/browser/")):
         return "component", suites
-    if path.startswith("services/catalog_viewer/"):
-        return "component", {"production-images", "browser"}
-    if path.startswith(("web/", "tests/browser/")):
-        return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path in NARROW_PATHS:
-        return "component", set(NARROW_PATHS[path])
-    if path.startswith("scripts/"):
-        return "shared", set(SUITES)
-    if path.startswith("tests/"):
-        if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "mpatlas", "translation")):
-            return "component", {"geospatial-integration", "production-images"}
-        if any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
-            return "component", {"sdk-node22", "sdk-node24", "browser"}
-    if path in {
-        "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_slack.tf",
-        "terraform/envs/prod/monitoring_alert_policy_iam.tf", "terraform/envs/prod/monitoring_variables.tf",
-        "terraform/envs/prod/canonical_mutation_iam.tf",
-        "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-    }:
-        return "infrastructure", {"production-images"}
+    if path.startswith(".github/") and ((root / path).is_file() or path in sources):
+        return "component", suites
     if path.startswith("terraform/") or path in {".gitignore", ".gitleaksignore"}:
-        return "infrastructure", set()
+        return "infrastructure", suites
     return "unknown", set(SUITES)
 
 
-def documentation_only(paths: list[str] | None) -> bool:
-    return paths is not None and all(classify_change(path)[0] == "documentation" for path in paths)
+def documentation_only(paths: list[str] | None, *, root=ROOT) -> bool:
+    return paths is not None and all(classify_change(path, root=root)[0] == "documentation" for path in paths)
 
 
-def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
+def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
+    """Resolve deployments first, then their validation floor, exactly once."""
+    if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
+        raise ValueError("selection requires a changed-path list")
+    root = root or ROOT
+    deployments = select_deployments(paths, root=root, **deployment_inputs)
+    images = {row["image"] for target, row in registry(root, section="deployments").items() if target in deployments and "image" in row}
+    suites, tiers = set(ALWAYS), set()
+    reason = "comparison history unavailable"
     if paths is None:
-        return list(SUITES), "comparison history unavailable"
-    selected, tiers = set(ALWAYS), set()
-    for path in paths:
-        tier, suites = classify_change(path)
-        if tier in {"shared", "unknown"}:
-            return list(SUITES), f"{tier} dependency: {path}"
-        selected.update(suites)
-        tiers.add(tier)
-    return [suite for suite in SUITES if suite in selected], "tiers: " + ", ".join(sorted(tiers))
+        suites.update(SUITES)
+        images.update(BUILD_TARGETS)
+    else:
+        for path in paths:
+            inputs = dependency_inputs(base if base and not (root / path).exists() else None, root)
+            tier, required = classify_change(path, inputs, root=root)
+            if path == ".github/workflows/ci.yml":
+                required = changed_ci_suites(base, root)
+                if "production-images" in required:
+                    images.update(BUILD_TARGETS)
+            suites.update(required)
+            tiers.add(tier)
+            if tier in {"shared", "unknown"}:
+                images.update(BUILD_TARGETS)
+                reason = f"{tier} dependency: {path}"
+            elif tier != "documentation":
+                images.update(target for target, copied in inputs[0].items() if matches(path, copied))
+        if not tiers & {"shared", "unknown"}:
+            reason = "tiers: " + ", ".join(sorted(tiers))
+    suites.discard("production-images")
+    if images:
+        suites.add("production-images")
+    if deployment_inputs.get("released_holds"):
+        suites.add("geospatial-integration")
+    return dict(deployments=deployments, production_image_targets=[target for target in BUILD_TARGETS if target in images],
+                suites=[suite for suite in SUITES if suite in suites], selection_reason=reason)
 
 
-def select_production_images(paths: list[str] | None) -> list[str]:
-    """Derive build coverage from the same verified comparison as suite selection.
-
-    These exceptions follow the narrowed Docker COPY inputs and installed
-    probes. Unknown inputs keep every recipe; deployment needs are a floor,
-    never a replacement for build/test dependencies.
-    """
-    if paths is None:
-        return list(BUILD_TARGETS)
-    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
-        raise ValueError("image selection requires a changed-path list")
-    components = {
-        "mpatlas_monthly": "mpatlas-monthly", "eamlis_monthly": "eamlis-monthly",
-        "sea_ice_daily": "sea-ice-daily", "wdpa_monthly": "wdpa-monthly",
-        "dataset_usage": "dataset-usage",
-    }
-    prefixes = {f"ingestion/{package}/": {target} for package, target in components.items()}
-    prefixes.update({
-        "services/catalog_viewer/": {"catalog-viewer"},
-        "services/feature_preview_service/": {"catalog-viewer"},
-        "services/monitoring_slack/": {"monitoring-slack"},
-        "api/python/src/": {"catalog-viewer"},
-        "tests/test_mpatlas_": {"mpatlas-monthly"},
-        "tests/test_eamlis_": {"eamlis-monthly"},
-        "tests/test_sea_ice_": {"sea-ice-daily"},
-        "tests/test_wdpa_": {"wdpa-monthly"},
-        "tests/test_dataset_usage": {"dataset-usage"},
-        "tests/test_catalog_viewer": {"catalog-viewer"},
-        "tests/test_production_viewer_image_contract": set(BUILD_TARGETS),
-        "tests/test_monitoring_slack": {"monitoring-slack"},
-    })
-    selected = set()
-    for path in paths:
-        if path in CONTRACT_FILES:
-            return list(BUILD_TARGETS)
-        if classify_change(path)[0] == "documentation":
-            continue
-        if path in NARROW_PATHS and "production-images" not in classify_change(path)[1]:
-            continue
-        if path in VIEWER_INGESTION_INPUTS:
-            selected.add("catalog-viewer")
-        if path == "ingestion/__init__.py" or path.startswith("ingestion/common/"):
-            selected.update({"mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "wdpa-monthly"})
-            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
-                selected.add("monitoring-slack")
-        elif path in {"services/__init__.py", "services/http_base.py"}:
-            selected.add("catalog-viewer")
-        elif path == "docs/assets/ims-sea-ice-extent.md":
-            selected.add("sea-ice-daily")
-        else:
-            owners = next((targets for prefix, targets in prefixes.items() if path.startswith(prefix)), None)
-            if owners is None:
-                return list(BUILD_TARGETS)
-            selected.update(owners)
-    # WDPA's installed smoke imports sea ice; both images contain those inputs.
-    if "sea-ice-daily" in selected:
-        selected.add("wdpa-monthly")
-    deployment_images = {
-        "mpatlas": "mpatlas-monthly", "eamlis": "eamlis-monthly", "sea_ice": "sea-ice-daily",
-        "wdpa": "wdpa-monthly", "catalog_viewer": "catalog-viewer", "dataset_usage": "dataset-usage",
-        "cron_alert_policy": "monitoring-slack",
-    }
-    selected.update(deployment_images[target] for target in select_deployments(paths) if target in deployment_images)
-    return [target for target in BUILD_TARGETS if target in selected]
+def planned_images(plan):
+    """Consume the resolved plan; never infer a different matrix from paths."""
+    images = plan["production_image_targets"]
+    if (not isinstance(images, list) or images != [target for target in BUILD_TARGETS if target in images]
+            or bool(images) != ("production-images" in plan["suites"])
+            or not {DEPLOYMENT_IMAGES[target] for target in plan.get("deployments", []) if target in DEPLOYMENT_IMAGES} <= set(images)):
+        raise ValueError("invalid resolved production-image selection")
+    return images
 
 
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
@@ -298,121 +267,81 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
-def select_deployments(
-    paths: list[str] | None,
-    *,
-    catalog_snapshots: tuple[str, str] | None = None,
-    ingestion_holds: tuple[str, ...] = (),
-) -> list[str]:
-    """Explicit release dependencies; unknown changes broaden tests, not mutations."""
-    selected = set()
-    iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
-    ingestion = INGESTION_DEPLOYMENTS
+@lru_cache(maxsize=4)
+def deployment_paths(root=None):
+    """Workflow/action/script closure plus registered Terraform and image inputs."""
+    root = root or ROOT
+    files = {path.relative_to(root).as_posix(): path.read_bytes()
+             for directory in (".github", "scripts", "ingestion", "services", "catalog", "api")
+             for path in (root / directory).rglob("*")
+             if path.is_file() and not set(path.parts) & {"__pycache__", "node_modules", ".venv", ".terraform"}}
+    declarations, scopes, syncs = (registry(root, section=section) for section in ("deployments", "plan_scopes", "targets"))
+    graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
+    # These entrypoints validate an already-selected rollout. Their imported
+    # policy changes invalidate CI evidence, not the resources being delivered.
+    exceptions = registry(root, section="selection_exceptions")
+    for row in exceptions.values():
+        reasons = row.get("deployments", {}).values() if row["kind"] == "include" else [row["reason"]]
+        if (row["kind"] not in {"boundary", "exclude", "include"} or not reasons or any(not reason.strip() for reason in reasons)
+                or set(row.get("deployments", {})) - declarations.keys()):
+            raise ValueError("selection exceptions require a reason, kind and registered deployments")
+    for edges in graphs:
+        for name, row in exceptions.items():
+            if row["kind"] != "include" and not (name.endswith((".yml", ".yaml")) and row.get("deployments")):
+                edges[name] = set()
+    sources = {name for path, rows in resource_index(root).items()
+               if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
+    for job, row in syncs.items():
+        for resource in row['prerequisites']:
+            if not any(resource == name or resource.startswith(name + ".") for name in sources):
+                raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
+    paths = {}
+    for target, row in declarations.items():
+        workflow = row["workflow"]
+        edges = graphs[any(config.get('prepare_monitoring_slack') for config in syncs.values() if config['workflow'] == workflow)]
+        resources = [resource for config in DEPLOY_TARGETS.values() if config["workflow"] == workflow for resource in config["targets"]]
+        resources += [resource for config in syncs.values() if config["workflow"] == workflow for resource in config["resources"]]
+        resources += [resource for scope in scopes.get(workflow, {}).values()
+                      for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
+        inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
+        if resources:
+            inputs.update("terraform/envs/prod/" + name for name in ("main.tf", "production.auto.tfvars", "variables.tf", "versions.tf"))
+        if "image" in row:
+            inputs.update(dependency_inputs(root=root)[4][row["image"]])
+        inputs.add(".github/terraform-targets.json")
+        inputs.difference_update(name for name, item in exceptions.items() if item["kind"] == "exclude")
+        for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
+            paths.setdefault(path, set()).add(target)
+    return paths
+
+
+def changed_ci_suites(base, root):
+    """Diff job definitions; shared scheduling changes invalidate every suite."""
+    import yaml
+    path = ".github/workflows/ci.yml"
+    if base is None:
+        return set(SUITES)
+    before = yaml.safe_load(repository_files(base, root)[path])
+    after = yaml.safe_load((root / path).read_text())
+    if {key: value for key, value in before.items() if key != "jobs"} != {key: value for key, value in after.items() if key != "jobs"}:
+        return set(SUITES)
+    changed = {name for name in before["jobs"].keys() | after["jobs"].keys() if before["jobs"].get(name) != after["jobs"].get(name)}
+    if changed & {"geospatial-changes", "ci-ready"}:
+        return set(SUITES)
+    return (changed & set(SUITES)) | ({"sdk-node22", "sdk-node24"} if "sdk-validation" in changed else set())
+
+
+def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
+    """Unknown paths broaden validation, never mutation authority."""
+    selected = set(released_holds)
     for path in paths or []:
-        if classify_change(path)[0] == "documentation":
+        if classify_change(path, root=root)[0] == "documentation":
             continue
-        if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
-        if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"})
-        if path.startswith("ingestion/common/") or path in {
-            "ingestion/__init__.py",
-            "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
-            "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
-            "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
-        }:
-            selected.update(ingestion)
-            if path in {"ingestion/__init__.py", "ingestion/common/__init__.py", "ingestion/common/decision_events.py"}:
-                selected.add("cron_alert_policy")
-        if path == "scripts/catalog_csv.py":
-            selected.update({"eamlis", "wdpa", "dataset_usage"})
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
-        if path == "scripts/feature_metadata_translation_reuse.py":
-            selected.update({"eamlis", "wdpa"})
-        if path.startswith("catalog/feature-identity-resolutions/"):
-            selected.update({"sea_ice", "wdpa"})
-        if path == "docs/assets/ims-sea-ice-extent.md":
-            selected.add("sea_ice")
-        if path.startswith("ingestion/mpatlas_monthly/") or path.startswith("terraform/envs/prod/mpatlas_monthly") or path == ".github/workflows/mpatlas-monthly-deploy.yml":
-            selected.add("mpatlas")
-        if path.startswith("ingestion/eamlis_monthly/") or path in {
-            ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
-            "catalog/ingestion-quality.json",
-        }:
-            selected.add("eamlis")
-        if path.startswith("ingestion/sea_ice_daily/") or path in {
-            ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
-        }:
-            selected.add("sea_ice")
-        if path.startswith("ingestion/wdpa_monthly/") or path in {
-            ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
-            "catalog/wdpa-processing-acceptance.json",
-        }:
-            selected.add("wdpa")
-        if path.startswith(("api/python/src/", "services/catalog_viewer/", "services/feature_preview_service/")) or path in {
-            "services/__init__.py", "services/http_base.py",
-            ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
-            "terraform/envs/prod/catalog_viewer_variables.tf",
-            "scripts/compare_releases.py", "scripts/release_feature_model.py",
-            "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-            "terraform/envs/prod/pmtiles_cdn.tf", "terraform/envs/prod/pmtiles_cdn_variables.tf",
-            "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
-        }:
-            selected.add("catalog_viewer")
-        if path in {"catalog/dataset-usage.json", "catalog/dataset-usage-activation.json"}:
-            selected.add("catalog_viewer")
-        if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
-            ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
-            "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",
-            "terraform/envs/prod/shared_bucket_public.tf",
-            "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
-        }:
-            selected.add("pmtiles_cdn")
-        if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf", "terraform/envs/prod/wdpa_monthly_build.tf"}:
-            selected.add("ingestion_iam")
-        if path in {"terraform/envs/prod/wdpa_validation_retirement_iam.tf", "terraform/envs/prod/operational_retirement_iam.tf"}:
-            selected.add("scratch_cleanup_iam")
-        for target, filename in {
-            "artifact_registry_iam": "artifact_registry_iam.tf",
-            "preview_terraform_iam": "preview_terraform_iam.tf",
-            "scratch_cleanup_iam": "canonical_mutation_iam.tf",
-        }.items():
-            if path == f"terraform/envs/prod/{filename}" or path == f".github/workflows/{target.replace('_', '-')}-sync.yml":
-                selected.add(target)
-        if path in {
-            ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
-            "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
-            "terraform/envs/prod/monitoring_variables.tf",
-        }:
-            selected.add("cron_alert_policy")
-        if path.startswith("services/monitoring_slack/") or path in {"terraform/envs/prod/monitoring_slack.tf", "scripts/slack_incident_api.py", "scripts/monitoring_slack_prepare.py"}:
-            selected.add("cron_alert_policy")
-        if path == "catalog/categories.yaml":
-            selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
-        if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
-            selected.update(iam)
-        if path == "terraform/envs/prod/main.tf":
-            selected.update({"artifact_registry_iam", "preview_terraform_iam"})
-        if path.startswith("ingestion/dataset_usage/") or path in {
-            ".github/workflows/dataset-usage-deploy.yml", "terraform/envs/prod/dataset_usage.tf", "terraform/envs/prod/shared_bucket_public.tf",
-            "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "scripts/dataset_usage_deploy.py",
-        }:
-            selected.add("dataset_usage")
-    # Runtime deployment reuses installed IAM. Only infrastructure edits select
-    # bootstrap syncs; direct IAM workflow/input rules above stay explicit.
-    if any(path.startswith("terraform/") and classify_change(path)[0] != "documentation" for path in paths or []):
-        # Viewer and usage share bucket/IAM resources, not runtime image inputs.
-        if "catalog_viewer" in selected:
-            selected.add("dataset_usage")
-        if "mpatlas" in selected:
-            selected.add("cron_alert_policy")
-        if selected & ingestion:
-            selected.add("ingestion_iam")
-        if selected & (ingestion | {"catalog_viewer", "dataset_usage", "cron_alert_policy"}):
-            selected.add("artifact_registry_iam")
-    selected.difference_update(ingestion_holds)
-    return [target for target in DEPLOYMENTS if target in selected]
+            continue
+        selected.update(target for pattern, targets in deployment_paths(root).items() if matches(path, {pattern}) for target in targets)
+    return [target for target in registry(root, section="deployments") if target in selected and target not in ingestion_holds]
 
 
 def contract_digest(root: Path) -> str:
@@ -422,26 +351,10 @@ def contract_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-def check_junit(report: Path, *, native: bool) -> None:
-    cases = list(ElementTree.parse(report).iter("testcase"))
-    if not cases:
-        raise ValueError("test collection is empty")
-    allowed_skips = set() if native else set(REQUIRED_TESTS)
-    for case in cases:
-        identity = (case.get("classname"), case.get("name"))
-        if not all(identity):
-            raise ValueError("test result is missing its case identity")
-        if case.find("failure") is not None or case.find("error") is not None:
-            raise ValueError(f"failed test: {'.'.join(identity)}")
-        if case.find("skipped") is not None and identity not in allowed_skips:
-            raise ValueError(f"unexpected skipped test: {'.'.join(identity)}")
-
-
 def verify_results(
     plan: dict, results: list[dict], jobs: dict | None = None, *,
     source_proofs: dict[int, set[str]] | None = None,
     run_id: str | None = None, run_attempt: int | None = None,
-    reuse_verifier: Callable[[dict], object] | None = None,
 ) -> dict[str, dict]:
     if plan.get("schema_version") != 1 or not plan.get("suites"):
         raise ValueError("invalid validation plan")
@@ -452,33 +365,41 @@ def verify_results(
         raise ValueError("core validation suites must always be selected")
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
+    targets = planned_images(plan)
+    matrix = any("image_target" in result for result in results)
+    required_results = set(selected)
+    if matrix and "production-images" in selected:
+        required_results.remove("production-images")
+        required_results.update("production-images-" + target for target in targets)
     by_suite: dict[str, dict] = {}
     seen_attempts = set()
     for result in results:
         suite = result.get("suite")
-        if suite not in selected:
+        key = suite + "-" + result["image_target"] if "image_target" in result and suite == "production-images" else suite
+        if key not in required_results or "image_target" in result and suite != "production-images":
             raise ValueError(f"duplicate or unexpected suite result: {suite}")
         if source_proofs is not None:
             source = result.get("source", {})
             attempt = source.get("run_attempt")
             if source.get("run_id") != run_id or type(attempt) is not int or not 1 <= attempt <= run_attempt:
                 raise ValueError(f"invalid {suite} source attempt")
-            key = (suite, attempt)
-            if key in seen_attempts:
+            source_key = (key, attempt)
+            if source_key in seen_attempts:
                 raise ValueError(f"duplicate {suite} result in attempt {attempt}")
-            seen_attempts.add(key)
+            seen_attempts.add(source_key)
             if any(result.get(field) != plan.get(field) for field in ("base", "head", "tested_sha", "tree", "contract_digest")):
                 raise ValueError(f"stale or mismatched {suite} evidence")
-            if suite in by_suite and by_suite[suite]["source"]["run_attempt"] > attempt:
+            if key in by_suite and by_suite[key]["source"]["run_attempt"] > attempt:
                 continue
-        elif suite in by_suite:
+        elif key in by_suite:
             raise ValueError(f"duplicate or unexpected suite result: {suite}")
-        by_suite[suite] = result
-    if set(by_suite) != set(selected):
-        raise ValueError(f"missing suite results: {sorted(set(selected) - set(by_suite))}")
+        by_suite[key] = result
+    if set(by_suite) != required_results:
+        raise ValueError(f"missing suite results: {sorted(required_results - set(by_suite))}")
     identity = ("base", "head", "tested_sha", "tree", "contract_digest")
-    for suite, result in by_suite.items():
-        if source_proofs is not None and job_name(suite) not in source_proofs.get(result["source"]["run_attempt"], set()):
+    for key, result in by_suite.items():
+        suite = result["suite"]
+        if source_proofs is not None and job_name(key) not in source_proofs.get(result["source"]["run_attempt"], set()):
             raise ValueError(f"{suite} has no successful producing job in its source attempt")
         if result.get("status") != "success" or not result.get("commands"):
             raise ValueError(f"{suite} did not execute successfully")
@@ -489,21 +410,18 @@ def verify_results(
         if result.get("tools") != expected_tools(suite):
             raise ValueError(f"{suite} used an unexpected toolchain")
         if "reused_from" in result:
-            if source_proofs is None or reuse_verifier is None:
-                raise ValueError(f"{suite} reuse has no independently verified source")
-            reuse_verifier(result)
-        elif suite == "production-images":
+            raise ValueError("cross-run validation reuse is not supported")
+        if suite == "production-images":
             try:
                 images = validate_manifest(result.get("production_images"), plan["tested_sha"])
             except ImageError as exc:
                 raise ValueError(f"invalid production-image evidence: {exc}") from exc
-            targets = select_production_images(plan.get("changed_paths"))
-            if not targets or set(images) != set(targets) & IMAGE_TARGETS:
+            expected_images = {result["image_target"]} if matrix else set(targets) & IMAGE_TARGETS
+            if not targets or set(images) != expected_images:
                 raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
-        expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}
-        for suite, job in expected.items():
-            required = "success" if suite in selected else "skipped"
+        for job in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser"):
+            required = "success" if job in selected else "skipped"
             if jobs.get(job, {}).get("result") != required:
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
         sdk_required = "success" if "sdk-node22" in selected else "skipped"
@@ -515,25 +433,16 @@ def verify_results(
 
 
 def expected_tools(suite: str) -> dict[str, str]:
-    tools = {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]}
-    if suite == "lint":
-        tools.update({key: TOOLCHAIN[key] for key in ("terraform", "actionlint")})
-    elif suite == "tests":
-        tools.update({"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"],
-                      "terraform": TOOLCHAIN["terraform"]})
-    elif suite in {"sdk-node22", "sdk-node24", "browser"}:
-        tools["node"] = TOOLCHAIN["node24" if suite == "sdk-node24" else "node22"]
-    elif suite == "geospatial-integration":
-        # Native executable package versions are pinned by the Dockerfile and
-        # checked with real version probes in the native command log.
-        tools["gdal"] = "3.6.2"
-        tools["tippecanoe"] = "2.52.0"
-        tools["pmtiles"] = "1.30.1"
-    elif suite == "production-images":
-        pass  # Docker availability and the actual installed image tools are probed by the command.
-    else:
+    if suite not in SUITES:
         raise ValueError(f"unknown suite: {suite}")
-    return tools
+    return {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]} | {
+        "lint": {key: TOOLCHAIN[key] for key in ("terraform", "actionlint", "shellcheck")},
+        **dict.fromkeys(("tests", "tests-control-plane"), {"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"], "terraform": TOOLCHAIN["terraform"]}),
+        "sdk-node22": {"node": TOOLCHAIN["node22"]}, "sdk-node24": {"node": TOOLCHAIN["node24"]},
+        "browser": {"node": TOOLCHAIN["node22"]},
+        "geospatial-integration": {"gdal": "3.6.2", "tippecanoe": "2.52.0", "pmtiles": "1.30.1"},
+        "production-images": {},  # Installed image tools are probed in the production-image command.
+    }[suite]
 
 
 def write_json(path: Path, value: dict) -> None:

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Verify tested main provenance and serialize per-target deployment attempts.
-
-Run inside the target's existing non-cancelling production job lock. Deployment
-records prevent replay; they never replace approvals, plan allowlists or GCS
-publication transactions.
-"""
+"""Verify tested-main provenance and serialize attempts under the protected target lock."""
 from __future__ import annotations
 
 import argparse
@@ -15,54 +10,27 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts import deployment_emission as emissions
-from scripts.github_api_read import read
+from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub, executor_acceptance
+from scripts.terraform_target_contracts import registry
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image_variables
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
-TARGET_WORKFLOWS = {
-    "monitoring-slack": "cron-alert-policy-sync.yml",
-    "dataset-usage": "dataset-usage-deploy.yml",
-    "wdpa-monthly": "wdpa-monthly-deploy.yml",
-    "wdpa-monthly-build": "wdpa-monthly-build.yml",
-    "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
-    "eamlis-monthly": "eamlis-monthly-deploy.yml",
-    "sea-ice-daily": "sea-ice-daily-deploy.yml",
-    "typescript-sdk": "publish-typescript-sdk.yml",
-    "pmtiles-cdn": "pmtiles-cdn-sync.yml",
-    "catalog-web": "catalog-web-deploy.yml",
-    "catalog-viewer": "catalog-viewer-deploy.yml",
-}
-TERRAFORM_SYNCS = {
-    "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
-    "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
-    "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
-    "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
-    "Artifact Registry writer binding sync": "artifact-registry-iam-sync.yml",
-    "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
-    "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
-    "Preview published dataset reader": "preview-terraform-iam-sync.yml",
-    "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
-    "WDPA validation retirement": "scratch-cleanup-iam-sync.yml",
-    "WDPA validation retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement IAM bootstrap": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement authority grant": "scratch-cleanup-iam-sync.yml",
-    "Operational infrastructure retirement": "scratch-cleanup-iam-sync.yml",
-    "Operational retirement authority revocation": "scratch-cleanup-iam-sync.yml",
-    "Production Terraform state reconciliation": "prod-terraform-state-reconcile.yml",
-    "Production Terraform state read IAM bootstrap": "terraform-state-read-iam-sync.yml",
-    "Monitoring Slack transport resources": "cron-alert-policy-sync.yml",
-    "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
-    "Cron alert policy sync": "cron-alert-policy-sync.yml",
-}
+TARGET_WORKFLOWS = {row['image'] if row['record'] is True else row['record']: filename
+                    for filename, row in registry(section='workflows').items() if row.get('record')}
+TERRAFORM_SYNCS = registry()
 TERRAFORM_WORKFLOWS = {
-    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
-    for name, workflow in TERRAFORM_SYNCS.items()
+    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: target["workflow"]
+    for name, target in TERRAFORM_SYNCS.items()
 }
+INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
+INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
 
 
 class DeploymentError(RuntimeError):
@@ -74,24 +42,33 @@ def require(condition, message):
         raise DeploymentError(message)
 
 
-class GitHub:
-    def get(self, path):
-        return json.loads(read(path))
+EXECUTION_URL = "https://console.cloud.google.com/run/jobs/executions/details/us-central1/{}?project=shared-datasets-1"
 
-    def pages(self, path, field=None):
-        pages = json.loads(read(path, paginate=True))
-        require(isinstance(pages, list) and pages, "missing API pages")
-        if field:
-            count = pages[0].get("total_count")
-            require(type(count) is int and all(p.get("total_count") == count for p in pages), "inconsistent API enumeration")
-            rows = [row for page in pages for row in page[field]]
-            require(len(rows) == count, "incomplete API enumeration")
-            return rows
-        require(all(isinstance(p, list) for p in pages), "invalid API pages")
-        return [row for page in pages for row in page]
 
+def execution_name(url):
+    match = re.fullmatch(re.escape(EXECUTION_URL).replace(r"\{\}", r"([a-z][a-z0-9-]{0,62})"), url)
+    require(match is not None, "deployment lacks its exact canary execution identity")
+    return match[1]
+
+
+class GitHub(ReadOnlyGitHub):
+    require = staticmethod(require)
     def post(self, path, payload):
         return json.loads(subprocess.check_output(["gh", "api", "--method", "POST", path, "--input", "-"], input=json.dumps(payload).encode()))
+
+
+def verify_run(api, repository, run, *, paths, events, repo=None, workflow=None,
+               reason="untrusted deployment execution workflow/event"):
+    """Validate an API run's repository, workflow and main provenance once."""
+    repo = repo if repo is not None else api.get(f"repos/{repository}")
+    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository, "repository identity mismatch")
+    require(run.get("path") in paths and run.get("event") in events and run.get("head_branch") == "main", reason)
+    workflow = workflow if workflow is not None else api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")
+    require(type(workflow.get("id")) is int and workflow["id"] > 0
+            and workflow["id"] == run.get("workflow_id") and workflow.get("path") == run["path"], "workflow identity mismatch")
+    require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"]
+                for key in ("repository", "head_repository")), "execution repository mismatch")
+    return repo
 
 
 def verify_ci(api, repository, executor, run_id, attempt):
@@ -99,15 +76,12 @@ def verify_ci(api, repository, executor, run_id, attempt):
     require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0, "source run and attempt must be positive integers")
     repo = api.get(f"repos/{repository}")
     workflow = api.get(f"repos/{repository}/actions/workflows/ci.yml")
-    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository, "repository identity mismatch")
-    require(type(workflow.get("id")) is int and workflow["id"] > 0 and workflow.get("path") == ".github/workflows/ci.yml", "CI workflow identity mismatch")
     run = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
+    verify_run(api, repository, run, paths={".github/workflows/ci.yml"}, events={"push"}, repo=repo, workflow=workflow,
+               reason="source must be the repository CI workflow on main push")
     require(run.get("id") == run_id and run.get("run_attempt") == attempt, "CI run attempt mismatch")
-    require(run.get("workflow_id") == workflow["id"] and run.get("path") == ".github/workflows/ci.yml", "source must be the repository CI workflow")
-    require(run.get("event") == "push" and run.get("head_branch") == "main", "source must be a main push")
     require(run.get("head_sha") == executor, "executor differs from tested CI revision")
-    require(all(run.get(key, {}).get("full_name") == repository and run.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "source CI repository mismatch")
-    jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "jobs")
+    jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
     ready = [job for job in jobs if job.get("name") == "ci-ready"]
     require(len(ready) == 1 and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success", "ci-ready is missing, ambiguous, cancelled or unsuccessful")
     return run
@@ -130,7 +104,7 @@ def record_payload(record):
 def verify_record_identity(api, repository, record):
     """Check claimed API identity; this alone never proves protected emission."""
     payload = record_payload(record)
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
+    repo = verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])["repository"]
     execution = api.get(f"repos/{repository}/actions/runs/{payload['execution_run_id']}/attempts/{payload['execution_run_attempt']}")
     target_workflow = TERRAFORM_WORKFLOWS.get(payload["target"], TARGET_WORKFLOWS.get(payload["target"]))
     require(target_workflow is not None, "unknown deployment target contract")
@@ -141,12 +115,7 @@ def verify_record_identity(api, repository, record):
     allowed_events = {"push", "workflow_dispatch", "workflow_run"}
     if payload["target"] == "catalog-web" and execution.get("path") == ".github/workflows/catalog-web-deploy.yml" and execution.get("head_sha") == record["sha"]:
         allowed_events.add("schedule")
-    require(execution.get("path") in allowed_callers and execution.get("event") in allowed_events
-            and execution.get("head_branch") == "main", "record originates from an untrusted execution")
-    workflow = api.get(f"repos/{repository}/actions/workflows/{execution['path'].rsplit('/', 1)[-1]}")
-    repo = api.get(f"repos/{repository}")
-    require(workflow.get("id") == execution.get("workflow_id") and workflow.get("path") == execution["path"], "record execution workflow mismatch")
-    require(all(execution.get(key, {}).get("id") == repo.get("id") and execution.get(key, {}).get("full_name") == repository for key in ("repository", "head_repository")), "record execution repository mismatch")
+    verify_run(api, repository, execution, paths=allowed_callers, events=allowed_events, repo=repo)
     if execution["event"] == "push":
         require(execution.get("head_sha") == record["sha"] and payload["execution_run_id"] == payload["ci_run_id"] and payload["execution_run_attempt"] == payload["ci_run_attempt"], "record is not its tested push attempt")
     return payload
@@ -156,12 +125,9 @@ def verify_record(api, repository, record, *, statuses=None):
     payload = verify_record_identity(api, repository, record)
     if statuses is None:
         statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
-    started = [status for status in statuses if status.get("description") == "started"]
+    started = [status for status in statuses if status.get("description") in {"started", "deferred"}]
     require(len(started) == 1, "record lacks an unambiguous protected initial emission")
-    # If claim signing failed, the same protected execution can still sign its
-    # failed/unknown outcome. That proves ownership of the exact record without
-    # implying that the unsigned claim authorized any mutation. The workflow's
-    # signed-claim barrier remains mandatory before every apply.
+    # A signed same-execution failure proves ownership after claim signing failed; mutation still requires a signed claim.
     original = emissions.invocation(repository, payload["execution_run_id"], payload["execution_run_attempt"])
     failure_proofs = [status for status in statuses if status.get("description") in {"failed", "unknown"} and status.get("log_url") == original]
     proof = max(failure_proofs, key=lambda status: status["id"]) if failure_proofs else started[0]
@@ -169,12 +135,39 @@ def verify_record(api, repository, record, *, statuses=None):
     return payload
 
 
+def receipt_signer(api, repository, target, run_id, attempt):
+    """Accept historical wrappers or immutable registered leaves bound to the emitting run graph."""
+    signer = "prod-terraform-target-apply.yml" if target in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS.get(target)
+    require(signer is not None, "receipt target has no trusted signer contract")
+    if target in INGESTION_TARGETS:
+        run = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
+        require(run.get("id") == run_id and run.get("run_attempt") == attempt, "signer execution attempt mismatch")
+        # GitHub may flatten a nested reusable chain or include child references.
+        # Inspect the entire immutable graph; never select an arbitrary leaf.
+        def leaves(references):
+            require(isinstance(references, list), "invalid immutable signer graph")
+            for item in references:
+                require(isinstance(item, dict), "invalid immutable signer reference")
+                yield item
+                yield from leaves(item.get("referenced_workflows", []))
+
+        path = f"{repository}/{INGESTION_SIGNER}@"
+        shared = [item for item in leaves(run.get("referenced_workflows", []))
+                  if str(item.get("path", "")).startswith(path)]
+        if shared:
+            require(SHA.fullmatch(str(run.get("head_sha", ""))) and all(
+                    item.get("path") in {path + run["head_sha"], path + "refs/heads/main"}
+                    and item.get("sha") == run["head_sha"] and item.get("ref") == "refs/heads/main" for item in shared),
+                    "shared signer revision differs from immutable emitting workflow")
+            return INGESTION_SIGNER
+    return ".github/workflows/" + signer
+
+
 def verify_receipt(api, repository, record, status):
     payload = record_payload(record)
-    signer = "prod-terraform-target-apply.yml" if payload["target"] in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS.get(payload["target"])
-    require(signer is not None, "receipt target has no trusted signer contract")
+    signer = receipt_signer(api, repository, payload["target"], payload["execution_run_id"], payload["execution_run_attempt"])
     try:
-        emissions.verify(api, repository, record, status, original_signer=".github/workflows/" + signer)
+        emissions.verify(api, repository, record, status, original_signer=signer)
     except emissions.EmissionError as error:
         raise DeploymentError(str(error)) from error
 
@@ -183,8 +176,9 @@ def status_log():
     return emissions.invocation(os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
 
 
-def post_status(api, repository, record, payload):
-    payload["log_url"] = status_log()
+def post_status(api, repository, record, phase, environment_url=""):
+    payload = {"state": emissions.PHASES[phase], "description": phase, "auto_inactive": False,
+               "environment_url": environment_url, "log_url": status_log()}
     status = api.post(f"repos/{repository}/deployments/{record['id']}/statuses", payload)
     emissions.emit(repository, record, {**payload, **status})
 
@@ -210,51 +204,40 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
-        runtime_targets = {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}
-        accepted = {"verified"} if record_payload(latest)["target"] in runtime_targets else {"applied", "verified"}
-        if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
-            if target == "wdpa-monthly-build":
-                # A new scratch build is an explicit invocation, even at the same
-                # producer revision. Its bytes require separate promotion approval.
-                return "superseded" if superseded else "proceed"
-            prior_artifact = record_payload(latest)["artifact"]
-            if artifact is None or prior_artifact == artifact:
+        if terminal and terminal[0].get("description") == "deferred" and terminal[0].get("state") == "pending":
+            require(artifact is None or record_payload(latest)["artifact"] == artifact,
+                    "same revision now produces different artifact bytes; reconcile before recovery")
+            return "superseded" if superseded else "proceed"
+        accepted = {"verified"} if record_payload(latest)["target"] in INGESTION_TARGETS else {"applied", "verified"}
+        require(terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted,
+                "this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
+        # Scratch builds and newly authorized catalog bytes may repeat the same executor.
+        if target != "wdpa-monthly-build":
+            if artifact is None or record_payload(latest)["artifact"] == artifact:
                 return "superseded" if superseded else "noop"
             require(target == "catalog-web", "same revision now produces different artifact bytes; reconcile before recovery")
-            # Catalog bytes depend on authorized dataset/index mutations as well
-            # as executor code. A distinct current-state bundle is a new refresh.
-            return "superseded" if superseded else "proceed"
-        raise DeploymentError("this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
     return "superseded" if superseded else "proceed"
 
 
 def git_ancestor(older, newer):
-    for revision in (older, newer):
-        result = subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], capture_output=True)
-        require(result.returncode == 0, "comparison commit unavailable; require full checkout history")
     result = subprocess.run(["git", "merge-base", "--is-ancestor", older, newer], capture_output=True)
-    require(result.returncode in (0, 1), "ancestry comparison failed")
+    require(result.returncode in (0, 1), "ancestry comparison failed; require full checkout history")
     return result.returncode == 0
 
 
 def verify_context(args, api):
     repository = os.environ["GITHUB_REPOSITORY"]
-    require(args.workflow in set(TARGET_WORKFLOWS.values()) | set(TERRAFORM_SYNCS.values()), "unknown deployment workflow contract")
+    require(args.workflow in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values(), "unknown deployment workflow contract")
     require(os.environ.get("GITHUB_REF") == "refs/heads/main", "production requires main ref")
     current = api.get(f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
     allowed_path = f".github/workflows/{args.workflow}"
     allowed_callers = {".github/workflows/ci.yml", allowed_path}
     if args.workflow == "catalog-web-deploy.yml":
         allowed_callers.add(".github/workflows/publish-dataset.yml")
-    require(current.get("path") in allowed_callers, "untrusted deployment caller")
     allowed_events = {"push", "workflow_dispatch", "workflow_run"}
     if args.workflow == "catalog-web-deploy.yml" and current.get("path") == allowed_path and current.get("head_sha") == args.executor_sha:
         allowed_events.add("schedule")
-    require(current.get("event") in allowed_events and current.get("head_branch") == "main", "untrusted deployment event")
-    repo = api.get(f"repos/{repository}")
-    workflow = api.get(f"repos/{repository}/actions/workflows/{current['path'].rsplit('/', 1)[-1]}")
-    require(current.get("workflow_id") == workflow.get("id") and workflow.get("path") == current["path"], "deployment workflow identity mismatch")
-    require(all(current.get(key, {}).get("full_name") == repository and current.get(key, {}).get("id") == repo["id"] for key in ("repository", "head_repository")), "deployment repository mismatch")
+    repo = verify_run(api, repository, current, paths=allowed_callers, events=allowed_events)
     if current.get("event") == "push":
         require(current.get("path") == ".github/workflows/ci.yml" and current.get("head_sha") == args.executor_sha,
                 "automatic deployment must execute its current tested main push")
@@ -288,19 +271,14 @@ def check(args, api):
     repository = verify_context(args, api)
     require(TARGET.fullmatch(args.target) and args.target in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS), "invalid deployment target")
     require((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS)[args.target] == args.workflow, "deployment target differs from its workflow contract")
-    environment = f"production-{args.target}"
-    records = api.pages(f"repos/{repository}/deployments?environment={environment}&per_page=100")
-    for record in records:
-        record_payload(record)
-    # The serialized writer keeps revisions monotonic. Only records capable of
-    # blocking replay or satisfying a no-op need expensive API provenance reads.
+    records = api.pages(f"repos/{repository}/deployments?environment=production-{args.target}&per_page=100")
+    decision = replay_decision(records, args.executor_sha, git_ancestor, lambda record: verified_statuses(api, repository, record), artifact=getattr(args, "artifact", None), target=args.target)
+    # Verify provenance of records that can block replay or establish a no-op under the target lock.
     decisive = [record for record in records if record["sha"] == args.executor_sha or not git_ancestor(record["sha"], args.executor_sha)]
     for record in decisive:
         verify_record(api, repository, record)
-    decision = replay_decision(records, args.executor_sha, git_ancestor, lambda record: verified_statuses(api, repository, record), artifact=getattr(args, "artifact", None), target=args.target)
     if decision == "superseded":
-        newer = [record for record in decisive if record["sha"] != args.executor_sha]
-        latest = max(newer, key=lambda record: record["id"])
+        latest = max((record for record in decisive if record["sha"] != args.executor_sha), key=lambda record: record["id"])
         message = f"Deployment skipped: tested revision {args.executor_sha} was superseded by a newer recorded attempt at {latest['sha']}."
         print("::notice::" + message)
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -308,6 +286,8 @@ def check(args, api):
             with Path(summary).open("a") as stream:
                 stream.write(message + " No deployment record or target state was changed.\n")
         return {"proceed": "false", "outcome": "superseded", "superseded_by_sha": latest["sha"]}
+    if getattr(args, "deferred", False) and any(record["sha"] == args.executor_sha for record in decisive):
+        return {"proceed": "false"}  # Keep the first signed deferral and its lag clock.
     if decision == "noop":
         print("A successful deployment of this exact revision already exists.")
         return {"proceed": "false"}
@@ -319,28 +299,31 @@ def start(args, api):
     if decision["proceed"] == "false":
         return decision
     repository = os.environ["GITHUB_REPOSITORY"]
-    environment = f"production-{args.target}"
-    signer = "prod-terraform-target-apply.yml" if args.target in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS[args.target]
+    signer = receipt_signer(api, repository, args.target, int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
     try:
-        emissions.verify_rehearsal(api, repository, ".github/workflows/" + signer)
+        emissions.verify_rehearsal(api, repository, signer)
     except emissions.EmissionError as error:
         raise DeploymentError(str(error)) from error
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", args.artifact), "deployment artifact must be an immutable image digest")
-    targets = []
-    if args.plan_json:
-        plan = json.loads(Path(args.plan_json).read_text())
-        targets = [r["address"] for r in plan.get("resource_changes", []) if r.get("change", {}).get("actions") not in ([], ["no-op"], ["read"])]
+    require(not getattr(args, "deferred", False) or args.target in INGESTION_TARGETS, "only ingestion rollouts can defer")
+    plan = json.loads(Path(args.plan_json).read_text()) if args.plan_json else {}
+    targets = [r["address"] for r in plan.get("resource_changes", [])]
+    config_digest = plan.get("variables", {}).get("wdpa_monthly_image_config_digest", {}).get("value", "")
+    if args.target == "wdpa-monthly" and not getattr(args, "deferred", False):
+        image_variables(args.target, args.artifact, config_digest)
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
     record = api.post(f"repos/{repository}/deployments", {
-        "ref": args.executor_sha, "environment": environment,
+        "ref": args.executor_sha, "environment": f"production-{args.target}",
         "auto_merge": False, "required_contexts": [], "production_environment": True,
         "payload": {"schema": SCHEMA, "target": args.target, "ci_run_id": args.source_run_id, "ci_run_attempt": args.source_run_attempt,
-                    "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
+                    "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                    "image_config_digest": config_digest},
     })
-    post_status(api, repository, record, {"state": "in_progress", "description": "started", "auto_inactive": False, "environment_url": ""})
-    return {"proceed": "true", "deployment_id": str(record["id"])}
+    phase = "deferred" if getattr(args, "deferred", False) else "started"
+    post_status(api, repository, record, phase)
+    return {"proceed": "false"} if getattr(args, "deferred", False) else {"proceed": "true", "deployment_id": str(record["id"])}
 
 
 def finish(args, api):
@@ -348,14 +331,9 @@ def finish(args, api):
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
-    state = {"applied": "success", "verified": "success", "verification_pending": "in_progress", "failed": "failure", "unknown": "error"}[args.phase]
-    environment_url = ""
-    if args.execution:
-        require(TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
-        environment_url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{args.execution}?project=shared-datasets-1"
-    post_status(api, repository, record, {
-        "environment_url": environment_url, "state": state, "description": args.phase, "auto_inactive": False,
-    })
+    require(not args.execution or TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
+    environment_url = EXECUTION_URL.format(args.execution) if args.execution else ""
+    post_status(api, repository, record, args.phase, environment_url)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as stream:
@@ -366,7 +344,9 @@ def finish(args, api):
 
 def pending(api, repository):
     identifiers = []
-    for target in ("wdpa-monthly",):
+    for target, config in INGESTION_CONFIGS.items():
+        if config["canary_mode"] != "deferred":
+            continue
         for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100"):
             record_payload(record)
             statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
@@ -394,25 +374,50 @@ def verification_window(executions, *, paused=False, canary_date="", allow_cance
 
 
 def runtime_window(args):
-    require(args.target in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}, "invalid runtime verification target")
+    require(args.target in INGESTION_TARGETS, "invalid runtime verification target")
     # First installation has no job/execution collection yet. A successful
     # regional inventory proves absence; permission/network errors still fail.
-    if args.target == "mpatlas-monthly":
+    config = INGESTION_CONFIGS[args.target]
+    inspect_executions = config["plan_guard"] != "usage"
+    if config["plan_guard"] == "install":
         jobs = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "list", "--region=us-central1",
-                                                   "--project=shared-datasets-1", "--format=json"]))
+                                                   "--project=shared-datasets-1", "--format=json"], timeout=60))
         require(isinstance(jobs, list), "invalid Cloud Run job inventory")
-        installed = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
-    else:
-        installed = True
-    executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
-                                                    "--region=us-central1", "--project=shared-datasets-1", "--format=json"])) if installed else []
+        inspect_executions = any(job["metadata"]["name"].rsplit("/", 1)[-1] == args.target for job in jobs)
     paused = False
-    if args.target == "wdpa-monthly":
+    if config["paused_gate"]:
         state = subprocess.check_output(["gcloud", "scheduler", "jobs", "describe", args.target, "--location=us-central1",
-                                         "--project=shared-datasets-1", "--format=value(state)"], text=True).strip()
+                                         "--project=shared-datasets-1", "--format=value(state)"], text=True, timeout=60).strip()
         require(state in {"ENABLED", "PAUSED"}, "unknown scheduler state prevents runtime verification")
         paused = state == "PAUSED"
-    ready = verification_window(executions, paused=paused, canary_date=args.canary_run_date, allow_cancel=args.allow_cancel == "true")
+    wait = getattr(args, "wait_seconds", 0)
+    require(wait >= 0, "runtime wait must be nonnegative")
+    deadline = time.monotonic() + wait
+    cancelled = set()
+    while True:
+        executions = json.loads(subprocess.check_output([
+            "gcloud", "run", "jobs", "executions", "list", "--job=" + args.target,
+            "--region=us-central1", "--project=shared-datasets-1", "--format=json",
+        ], timeout=60)) if inspect_executions else []
+        require(isinstance(executions, list), "invalid Cloud Run execution inventory")
+        active = [entry for entry in executions if not entry.get("status", {}).get("completionTime")]
+        # Preparation/application may admit explicit cancellation. Verification
+        # must actually wait for cancellation or scheduled work to drain.
+        ready = verification_window(executions, paused=paused, canary_date=args.canary_run_date,
+                                    allow_cancel=args.allow_cancel == "true" and not wait)
+        if ready or not wait or paused and not args.canary_run_date:
+            break
+        if args.allow_cancel == "true":
+            for entry in active:
+                name = entry["metadata"]["name"]
+                if name not in cancelled:
+                    subprocess.check_call(["gcloud", "run", "jobs", "executions", "cancel", name,
+                                           "--region=us-central1", "--project=shared-datasets-1", "--quiet"], timeout=60)
+                    cancelled.add(name)
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "active execution did not drain within the runtime verification window")
+        print("::notice::Waiting for the active execution before starting a canary.", flush=True)
+        time.sleep(min(30, remaining))
     if not ready:
         print("::notice::Deployment deferred: runtime verification is unavailable while the schedule is paused or an execution is active.")
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
@@ -425,24 +430,20 @@ def observe(args, api):
             f"{repository}/.github/workflows/deployment-verification.yml@refs/heads/main", "untrusted terminal verifier")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") == "wdpa-monthly", "only detached WDPA executions need terminal observation")
+    require(payload.get("target") in INGESTION_TARGETS and INGESTION_CONFIGS[payload["target"]]["canary_mode"] == "deferred",
+            "only detached executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     statuses = verified_statuses(api, repository, record)
     require(statuses and statuses[0].get("description") == "verification_pending", "deployment is not awaiting verification")
-    match = re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/([a-z][a-z0-9-]{0,62})\?project=shared-datasets-1", statuses[0].get("environment_url", ""))
-    require(match is not None, "pending deployment lacks exact canary execution identity")
-    raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "describe", match[1], "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
+    name = execution_name(statuses[0].get("environment_url", ""))
+    raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "describe", name, "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
     phase = terminal_execution(raw, payload["artifact"])
     if phase == "verification_pending":
-        print(f"Execution {match[1]} is pending; terminal verification remains incomplete.")
+        print(f"Execution {name} is pending; terminal verification remains incomplete.")
         return
-    post_status(api, repository, record, {
-        "state": {"verified": "success", "failed": "failure", "unknown": "error"}[phase],
-        "description": phase, "auto_inactive": False, "environment_url": statuses[0]["environment_url"],
-    })
+    post_status(api, repository, record, phase, statuses[0]["environment_url"])
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
-        stream.write(f"Canary `{match[1]}`: **{phase}**; image `{payload['artifact']}`; executor `{record['sha']}`.\n")
+        stream.write(f"Canary `{name}`: **{phase}**; image `{payload['artifact']}`; executor `{record['sha']}`.\n")
     require(phase == "verified", f"terminal canary outcome: {phase}")
 
 
@@ -452,14 +453,12 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"mpatlas-monthly", "wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
-    verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
-    require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
+    require(payload.get("target") in INGESTION_TARGETS | {"typescript-sdk"} | set(TERRAFORM_WORKFLOWS), "recovery requires a reviewed target-specific workflow")
     targets = payload.get("targets")
     if payload["target"] == "typescript-sdk":
         require(re.fullmatch(r"sdk@sha256:[0-9a-f]{64}", payload["artifact"]) and targets == [], "SDK recovery requires its package digest and no Terraform scope")
-        return record, payload
-    require(isinstance(targets, list) and targets and all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "record has no saved-plan scope; use reviewed recovery")
+    else:
+        require(isinstance(targets, list) and targets and all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "record has no saved-plan scope; use reviewed recovery")
     return record, payload
 
 
@@ -492,47 +491,37 @@ def recover(args, api):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             stream.write(f"executor_sha={record['sha']}\ntarget={payload['target']}\nimage={payload['artifact']}\n")
             stream.write("targets=" + json.dumps(payload["targets"]) + "\n")
+            stream.write("image_variables=" + json.dumps(image_variables(payload["target"], payload["artifact"], payload.get("image_config_digest", ""))) + "\n")
             stream.write("kind=" + ("sdk" if payload["target"] == "typescript-sdk" else "terraform" if payload["target"] in TERRAFORM_WORKFLOWS else "ingestion") + "\n")
         return
     sdk = payload["target"] == "typescript-sdk"
-    if sdk:
-        require(args.executor_dir is not None and args.plan_json is None, "SDK reconciliation requires only its original executor directory")
-        root = Path(args.executor_dir).resolve()
-        executor = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    else:
-        require(args.executor_dir is None and args.plan_json is not None, "infrastructure reconciliation requires only its original target plan")
-        executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    require((args.executor_dir is not None) == sdk and (args.plan_json is None) == sdk,
+            "SDK reconciliation requires only its original executor directory; infrastructure requires only its original target plan")
+    executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True,
+        **({"cwd": Path(args.executor_dir).resolve()} if sdk else {})).strip()
     require(executor == record["sha"], "recovery checkout differs from original tested executor")
     for other in api.pages(f"repos/{repository}/deployments?environment={record['environment']}&per_page=100"):
         record_payload(other)
         require(other["id"] == record["id"] or (other["sha"] != record["sha"] and git_ancestor(other["sha"], record["sha"])), "a later attempt prevents reconciliation of this revision")
+    url = ""
     if sdk:
-        reconcile_sdk(record, payload, root)
-        post_status(api, repository, record, {"state": "success", "description": "verified", "auto_inactive": False, "environment_url": ""})
-        print("Registry tarball equals the original tested package; SDK record reconciled without publication.")
-        return
-    plan = json.loads(Path(args.plan_json).read_text())
-    require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
-    if payload["target"] in TERRAFORM_WORKFLOWS:
-        post_status(api, repository, record, {
-            "state": "success", "description": "applied", "auto_inactive": False,
-            "environment_url": "",
-        })
-        print("Original tested Terraform target scope has no changes; record reconciled without mutation.")
-        return
-    raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "describe", payload["target"], "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
-    image = raw.get("spec", {}).get("template", {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image")
-    require(image == payload["artifact"], "live job does not use original tested artifact")
-    executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", f"--job={payload['target']}", "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
-    matching = [entry for entry in executions if entry.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image") == image]
-    require(matching, "no execution of the exact image proves runtime success")
-    latest = max(matching, key=lambda entry: entry.get("metadata", {}).get("creationTimestamp", ""))
-    require(terminal_execution(latest, image) == "verified", "latest exact-image execution is incomplete or failed; fix or use reviewed recovery")
-    post_status(api, repository, record, {
-        "state": "success", "description": "verified", "auto_inactive": False,
-        "environment_url": "",
-    })
-    print("Original image, no-change target plan and terminal success reconciled; no production mutations performed.")
+        reconcile_sdk(record, payload, Path(args.executor_dir).resolve())
+    else:
+        plan = json.loads(Path(args.plan_json).read_text())
+        require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
+        if payload["target"] in INGESTION_TARGETS:
+            raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "describe", payload["target"], "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
+            image = raw.get("spec", {}).get("template", {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image")
+            require(image == payload["artifact"], "live job does not use original tested artifact")
+            executions = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "list", f"--job={payload['target']}", "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
+            matching = [entry for entry in executions if entry.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image") == image]
+            require(matching, "no execution of the exact image proves runtime success")
+            latest = max(matching, key=lambda entry: entry.get("metadata", {}).get("creationTimestamp", ""))
+            require(terminal_execution(latest, image) == "verified", "latest exact-image execution is incomplete or failed; fix or use reviewed recovery")
+            url = EXECUTION_URL.format(latest["metadata"]["name"])
+            execution_name(url)
+    post_status(api, repository, record, "applied" if payload["target"] in TERRAFORM_WORKFLOWS else "verified", url)
+    print("Original tested target and applicable terminal runtime evidence reconciled; no production mutations performed.")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -545,12 +534,14 @@ def main():
         begin.add_argument("--source-run-attempt", required=True, type=int)
         if command == "verify":
             begin.add_argument("--bootstrap", action="store_true")
-        if command in {"check", "start"}:
+        if command != "verify":
             begin.add_argument("--target", required=True)
             begin.add_argument("--artifact", required=command == "start")
         if command == "start":
+            begin.add_argument("--deferred", action="store_true")
             begin.add_argument("--plan-json")
             begin.add_argument("--plan-scope")
+    commands.add_parser("accept").add_argument("--pr-number", type=int)
     end = commands.add_parser("finish")
     end.add_argument("--deployment-id", required=True, type=int)
     end.add_argument("--execution", default="")
@@ -559,7 +550,8 @@ def main():
     window = commands.add_parser("window")
     window.add_argument("--target", required=True)
     window.add_argument("--canary-run-date", default="")
-    window.add_argument("--allow-cancel", default="false")
+    window.add_argument("--allow-cancel", default="false", choices=["true", "false"])
+    window.add_argument("--wait-seconds", type=int, default=0)
     observer = commands.add_parser("observe")
     observer.add_argument("--deployment-id", required=True, type=int)
     for command in ("recovery-inputs", "reconcile"):
@@ -569,25 +561,20 @@ def main():
             recovery.add_argument("--plan-json")
             recovery.add_argument("--executor-dir")
     args = parser.parse_args()
+    api = GitHub()
     try:
-        if args.command == "window":
+        if args.command == "accept":
+            print(json.dumps(executor_acceptance(api, os.environ["GITHUB_REPOSITORY"], os.environ["EXECUTOR_SHA"], args.pr_number)))
+        elif args.command == "window":
             runtime_window(args)
-        elif args.command in {"recovery-inputs", "reconcile"}:
-            recover(args, GitHub())
         elif args.command == "pending":
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                stream.write("records=" + json.dumps(pending(GitHub(), os.environ["GITHUB_REPOSITORY"])) + "\n")
-        elif args.command == "observe":
-            observe(args, GitHub())
-        elif args.command == "verify":
-            verify_context(args, GitHub())
-        elif args.command in {"check", "start"}:
-            outputs = start(args, GitHub()) if args.command == "start" else check(args, GitHub())
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                for key, value in outputs.items():
-                    stream.write(f"{key}={value}\n")
+            outputs = {"records": json.dumps(pending(api, os.environ["GITHUB_REPOSITORY"]))}
         else:
-            finish(args, GitHub())
+            outputs = {"recovery-inputs": recover, "reconcile": recover,
+                       "observe": observe, "verify": verify_context, "check": check, "start": start, "finish": finish}[args.command](args, api)
+        if args.command in {"pending", "check", "start"}:
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
+                stream.writelines(f"{key}={value}\n" for key, value in outputs.items())
     except DeploymentError as exc:
         parser.exit(1, f"DEPLOYMENT_NOT_READY: {exc}\n")
 

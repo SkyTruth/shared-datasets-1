@@ -338,14 +338,20 @@ def test_real_provider_plan_preserves_defaults_and_computed_creation_fields():
 
 def test_usage_deployment_is_protected_and_uses_tested_images_without_schedule_resumption():
     workflow = load_workflow(ROOT/'.github/workflows/dataset-usage-deploy.yml')
-    job = workflow['jobs']['deploy']
-    assert job['environment'] == 'shared-datasets-production'
+    assert workflow['jobs']['deploy']['uses'] == './.github/workflows/ingestion-deploy.yml'
+    assert workflow['jobs']['deploy']['with']['target'] == 'dataset-usage'
+    from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+    executor = load_workflow(ROOT/'.github/workflows/ingestion-deploy.yml')
+    job = executor['jobs']['apply']
+    assert all(j['environment'] == 'shared-datasets-production' for j in executor['jobs'].values())
     assert job['concurrency'] == {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
-    shell = '\n'.join(step.get('run', '') for step in job['steps'])
+    shell = '\n'.join(step.get('run', '') for step in executor['jobs']['prepare']['steps'] + job['steps'])
     assert 'tested_image_authorization.py' in shell
     assert 'docker build ' not in shell
-    assert 'scheduler jobs resume' not in shell
+    assert TARGETS['dataset-usage']['plan_guard'] == 'usage'
+    assert not TARGETS['dataset-usage']['asset_root']
+    assert not TARGETS['dataset-usage']['after_verify']
     assert 'dataset_usage_deploy.py --plan-json' in shell
-    assert '--plan-json "$RUNNER_TEMP/dataset-usage.tfplan.json"' in shell
+    assert '--plan-json "$RUNNER_TEMP/ingestion.tfplan.json"' in shell
     assert 'deployment_revision.py start' in shell
     assert 'shared_bucket' not in workflow['jobs']['bootstrap']['with']['allowed_exact']

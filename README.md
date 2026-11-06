@@ -99,10 +99,11 @@ acting and use its linked references for detailed contracts.
 | Delete canonical objects | [Reviewed deletion runbook](.claude/skills/publish-shared-dataset/references/reviewed-deletion.md) |
 | Controlled canonical publishing | [Immutable plan and approval contract](.github/dataset-plans/README.md) |
 | Generate catalog and asset docs | [Catalog commands](scripts/README.md#dataset-operations) and [asset metadata workflow](.claude/skills/publish-shared-dataset/references/artifacts-and-metadata.md#asset-docs-and-catalog) |
-| Add a cron or ingestion job | [Job structure](ingestion/README.md) and [deployment workflow](.claude/skills/deploy-scheduled-ingestion/SKILL.md) |
-| Change infrastructure / production Terraform | [Protected Terraform workflow](.claude/skills/protected-terraform-apply/SKILL.md) |
+| Change or add an ingestion deploy target | [Ingestion deployment procedure](docs/ci-deployment.md) |
+| Change infrastructure / Terraform or IAM target | [Target-change procedure](docs/terraform-reconciliation.md#change-a-terraform-or-iam-target) |
 | Configure cron failure Slack alerts | [Alert routing](docs/alert-routing.md) |
-| Configure incident recovery and reconcile delivery | [Slack incident lifecycle](docs/slack-incidents.md) |
+| Recover a failed deployment or incident | [CI/deployment recovery](docs/ci-recovery.md) |
+| Configure Slack incident transport | [Slack incident lifecycle](docs/slack-incidents.md#configure-and-reconcile) |
 | Send lightweight dataset notifications | [Dataset notification policy and configuration](docs/alert-routing.md#dataset-and-repository-notifications) |
 | Deploy or load the feature branch preview | [Feature preview workflow](.claude/skills/feature-preview/SKILL.md) |
 | Clean up completed branches | [Branch cleanup](scripts/README.md#branch-cleanup) |

@@ -1,0 +1,7 @@
+{
+  "dataset-usage": {
+    "owner": "jonaraphael",
+    "reason": "Deliberate pre-activation pause: catalog/dataset-usage-activation.json gcs_usage.verified_at is null; native source verification and cost acceptance remain required before activation.",
+    "expires_at": "2026-11-19T23:59:59Z"
+  }
+}

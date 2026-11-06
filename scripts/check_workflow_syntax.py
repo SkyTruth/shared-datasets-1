@@ -8,11 +8,17 @@ actionlint errors remain failures; production concurrency is never rewritten.
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.ci_toolchain import TOOLCHAIN
 
 
 def parser_source(source: str) -> str:
@@ -53,6 +59,13 @@ def parser_source(source: str) -> str:
 
 
 def main() -> int:
+    shellcheck = shutil.which("shellcheck")
+    if shellcheck is None:
+        raise ValueError("required ShellCheck is missing; install scripts/ci_toolchain.py pins")
+    version = subprocess.check_output([shellcheck, "--version"], text=True)
+    if not re.search(r"^version: " + re.escape(TOOLCHAIN["shellcheck"]) + r"$", version, re.M):
+        raise ValueError("ShellCheck version differs from the pinned CI toolchain")
+    print(f"ShellCheck {TOOLCHAIN['shellcheck']}: {shellcheck}", flush=True)
     root = Path.cwd()
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", Path(tempfile.gettempdir()) / "shared-datasets-1")) / "_scratch/workflow-syntax"
     work_root.mkdir(parents=True, exist_ok=True)
@@ -64,7 +77,7 @@ def main() -> int:
             files.append(str(target))
         if not files:
             raise ValueError("no workflow files found")
-        return subprocess.run(["actionlint", "-shellcheck=", "-pyflakes=", *files], cwd=root, check=False).returncode
+        return subprocess.run(["actionlint", f"-shellcheck={shellcheck}", "-pyflakes=", *files], cwd=root, check=False).returncode
 
 
 if __name__ == "__main__":

@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import re
+import json
 
 import yaml
+from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
 
 ACTION = "./.github/actions/deployment-receipt"
+BOOTSTRAP = "./.github/actions/deployment-bootstrap"
 WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "pmtiles-cdn-sync.yml",
+    "ingestion-deploy.yml",
+    "prod-terraform-target-apply.yml", *(config["workflow"] for config in TARGETS.values()),
+    "pmtiles-cdn-sync.yml",
     "catalog-viewer-deploy.yml", "catalog-web-deploy.yml", "publish-typescript-sdk.yml",
     "deployment-verification.yml", "deployment-recovery.yml",
 )
@@ -19,6 +23,35 @@ NOTIFICATION_PERMISSIONS = {
     "attestations": "write", "id-token": "write",
 }
 NOTIFICATION_ATTEST = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
+
+
+def expanded_steps(root, job, ancestry=()):
+    """Inspect nested local composites through the same input transport as Actions.
+
+    Receipt signing remains atomic. Parent gates and tolerated failures cannot
+    turn a disabled or failing child into successful authorization evidence.
+    """
+    for step in job.get("steps", []):
+        path = step.get("uses", "")
+        if not path.startswith("./.github/actions/") or path == ACTION:
+            yield step
+            continue
+        action_path = (root / path / "action.yml").resolve()
+        if not action_path.is_relative_to((root / ".github/actions").resolve()) or action_path in ancestry:
+            raise ValueError("Invalid or cyclic local composite: " + path)
+        action = yaml.safe_load(action_path.read_text())
+        encoded = json.dumps(action["runs"]["steps"])
+        values = {key: item.get("default", "") for key, item in action.get("inputs", {}).items()}
+        for key, value in (values | step.get("with", {})).items():
+            encoded = encoded.replace("${{ inputs." + key + " }}", json.dumps(value if isinstance(value, str) else json.dumps(value))[1:-1])
+        for child in expanded_steps(root, {"steps": json.loads(encoded)}, (*ancestry, action_path)):
+            if "if" in step:
+                terms = [str(item).removeprefix("${{").removesuffix("}}").strip()
+                         for item in (step["if"], child.get("if", "true"))]
+                child["if"] = False if not enabled(step) or not enabled(child) else "${{ (" + ") && (".join(terms) + ") }}"
+            if step.get("continue-on-error"):
+                child["continue-on-error"] = True
+            yield child
 
 
 def top_level_conjuncts(expression):
@@ -83,90 +116,36 @@ if [[ "${GITHUB_REF}" != "refs/heads/main" ||
 fi'''
     if not steps or set(steps[0]) != {"name", "run"} or re.sub(r"\s+", " ", steps[0]["run"].strip()) != re.sub(r"\s+", " ", guard):
         return False
-    runs = {
-        "uv sync --locked --no-dev": None,
-        "python scripts/install_deployment_verifier.py": None,
-        'uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"': "prepare",
-        'uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"': "deliver",
-        'uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"': None,
-    }
-    actions = {
-        "actions/checkout@v4": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False},
-        "actions/setup-python@v5": {"python-version": "3.12.12"},
-        "astral-sh/setup-uv@v6": {"version": "0.11.8", "enable-cache": False},
-    }
     environment = {
         "GH_TOKEN": "${{ github.token }}",
         "SHARED_DATASETS_SLACK_BOT_TOKEN": "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}",
         "SHARED_DATASETS_SLACK_CHANNEL_ID": "${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}",
         "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": "${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}",
     }
-    command_environments = {
-        "prepare": environment,
-        "deliver": {key: value for key, value in environment.items() if not key.endswith("_SINCE")},
-        "verify": {"GH_TOKEN": environment["GH_TOKEN"]},
-    }
-    if [step.get("uses") for step in steps[1:4]] != list(actions):
-        return False
-    seen_runs, seen_actions, signers, cache_uploads = [], [], {}, []
-    for step in steps[1:]:
-        if not enabled(step) or set(step) - {"name", "id", "if", "uses", "with", "run", "env"}:
-            return False
-        if any(environment.get(key) != value for key, value in step.get("env", {}).items()):
-            return False
-        if "run" in step:
-            run = step["run"].strip()
-            if "uses" in step or run not in runs or step.get("id") != runs[run]:
-                return False
-            phase = next((name for name in command_environments if f"slack_incidents.py {name} " in run), None)
-            if step.get("env", {}) != command_environments.get(phase, {}):
-                return False
-            if phase not in {"deliver", "verify"} and "if" in step:
-                return False
-            seen_runs.append(run)
-        elif step.get("uses") == NOTIFICATION_ATTEST:
-            identifier = step.get("id")
-            if identifier not in {"attest-claims", "attest-outcomes"} or identifier in signers:
-                return False
-            phase = "claims" if identifier == "attest-claims" else "outcomes"
-            if step.get("with") != {"subject-path": "${{ runner.temp }}/slack-incidents/" + phase + "/*.json", "create-storage-record": False}:
-                return False
-            signers[identifier] = step
-        elif step.get("uses") == "actions/upload-artifact@v4":
-            if step != {
-                "name": "Retain verified notification evidence",
-                "if": "${{ success() && steps.prepare.outputs.verification_cache == 'true' }}",
-                "uses": "actions/upload-artifact@v4",
-                "with": {
-                    "name": "notification-verification-${{ github.run_id }}-${{ github.run_attempt }}",
-                    "path": "${{ runner.temp }}/slack-incidents/cache.json",
-                    "if-no-files-found": "error", "retention-days": 1,
-                },
-            }:
-                return False
-            cache_uploads.append(step)
-        else:
-            action = step.get("uses")
-            if action not in actions or step.get("with") != actions[action] or step.get("env") or "if" in step or "id" in step:
-                return False
-            seen_actions.append(action)
-    if (seen_actions != list(actions) or seen_runs != list(runs) or set(signers) != {"attest-claims", "attest-outcomes"}
-            or len(cache_uploads) != 1 or steps[-1] != cache_uploads[0]):
-        return False
-    by_id = {step.get("id"): step for step in steps if step.get("id")}
-    delivery = by_id["deliver"]
-    claims = signers["attest-claims"]
-    outcomes = signers["attest-outcomes"]
-    verify = steps[-2]
-    expected_conditions = (
-        (claims, "${{ always() && steps.prepare.outputs.claims == 'true' }}"),
-        (delivery, "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}"),
-        (outcomes, "${{ always() && steps.deliver.outputs.outcomes == 'true' }}"),
-        (verify, "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}"),
-    )
-    if any(step.get("if") != condition for step, condition in expected_conditions):
-        return False
-    return steps.index(by_id["prepare"]) < steps.index(claims) < steps.index(delivery) < steps.index(outcomes) < len(steps) - 2
+    command = 'uv run --no-sync python scripts/slack_incidents.py {} --work-dir "$RUNNER_TEMP/slack-incidents"'
+    # One ordered declaration replaces parallel command, action, phase, signer
+    # and artifact tables. Names are presentation; every authority field is exact.
+    expected = [
+        {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12.12"}},
+        {"uses": "astral-sh/setup-uv@v6", "with": {"version": "0.11.8", "enable-cache": False}},
+        {"run": "uv sync --locked --no-dev"},
+        {"run": "python scripts/install_deployment_verifier.py"},
+        {"id": "prepare", "env": environment, "run": command.format("prepare")},
+        {"id": "attest-claims", "if": "${{ always() && steps.prepare.outputs.claims == 'true' }}",
+         "uses": NOTIFICATION_ATTEST, "with": {"subject-path": "${{ runner.temp }}/slack-incidents/claims/*.json", "create-storage-record": False}},
+        {"id": "deliver", "if": "${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}",
+         "env": {key: value for key, value in environment.items() if not key.endswith("_SINCE")}, "run": command.format("deliver")},
+        {"id": "attest-outcomes", "if": "${{ always() && steps.deliver.outputs.outcomes == 'true' }}",
+         "uses": NOTIFICATION_ATTEST, "with": {"subject-path": "${{ runner.temp }}/slack-incidents/outcomes/*.json", "create-storage-record": False}},
+        {"if": "${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}",
+         "env": {"GH_TOKEN": environment["GH_TOKEN"]}, "run": command.format("verify")},
+
+    ]
+    actual = [{key: value.strip() if key == "run" else value for key, value in step.items() if key != "name"}
+              for step in steps[1:]]
+    return actual == expected
+
 
 
 def enabled(step):
@@ -175,7 +154,9 @@ def enabled(step):
 
 def command(step, verb):
     run = step.get("run", "").replace("\\\n", " ")
-    return re.search(r"deployment_revision\.py\s+" + verb + r"(?:\s|$)", run) is not None
+    return (re.search(r"deployment_revision\.py\s+" + verb + r"(?:\s|$)", run) is not None
+            or re.search(r"args=\(" + verb + r"\s", run) is not None
+            and 'python scripts/deployment_revision.py "${args[@]}"' in run)
 
 
 def mutations(step):
@@ -190,10 +171,10 @@ def mutations(step):
 
 
 def receipt_link(step, identifier):
-    return step.get("uses") == ACTION and step.get("with", {}).get("mode") == "receipt" and step["with"].get("receipt-path") == "${{ steps." + identifier + ".outputs.receipt_path }}" and enabled(step)
+    return step.get("uses") == ACTION and step.get("with", {}).get("mode") == "receipt" and step["with"].get("receipt-path") == "${{ steps." + identifier + ".outputs.receipt_path }}" and enabled(step) and not step.get("continue-on-error")
 
 
-def sdk_boundary(filename, identifier, job):
+def sdk_boundary(filename, identifier, job, root):
     """Retain the SDK's existing npm OIDC publisher authorization contract."""
     if filename != "publish-typescript-sdk.yml" or identifier != "publish":
         return False
@@ -204,11 +185,13 @@ def sdk_boundary(filename, identifier, job):
     bootstrap = steps[1]
     if not all(item in guard for item in ('if [[ "$GITHUB_REF" != refs/heads/main ]]', "exit 1", "$GITHUB_WORKFLOW_REF", "publish-typescript-sdk.yml@refs/heads/main")) or not str(bootstrap.get("uses", "")).startswith("actions/checkout@") or bootstrap.get("with", {}).get("ref") != "${{ github.workflow_sha }}":
         return False
-    for step in steps[2:]:
-        if str(step.get("uses", "")).startswith("actions/checkout@"):
-            return False  # Candidate code cannot replace the trusted verifier.
-        if "deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml" in step.get("run", "").replace("\\\n", " "):
-            return enabled(step)
+    if any('if' in step or step.get('continue-on-error') for step in steps[:2]):
+        return False
+    for step in expanded_steps(root, {"steps": steps[2:]}):
+        if str(step.get("uses", "")).startswith(("actions/checkout@", "google-github-actions/auth@")) or any(mutations(step)):
+            return False
+        if command(step, "verify") and "--bootstrap" in step.get("run", ""):
+            return enabled(step) and not step.get("continue-on-error") and step.get("env", {}).get("WORKFLOW_FILE") == filename
     return False
 
 
@@ -220,8 +203,7 @@ def sdk_candidate_read_only(workflow):
             or any(value not in {"read", "none"} for value in effective.values())):
         return ["SDK candidate must remain a read-only job"]
     checks = [step for step in candidate["steps"] if step.get("id") == "candidate"]
-    if (len(checks) != 1 or checks[0].get("name") != "Verify tested SDK candidate and reviewed version"
-            or "python scripts/sdk_release_authorization.py " not in checks[0].get("run", "")
+    if (len(checks) != 1 or "python scripts/sdk_release_authorization.py " not in checks[0].get("run", "")
             or "--admit-source" in checks[0]["run"] or not enabled(checks[0])):
         return ["SDK candidate must retain its observable package verification step"]
     for identifier, job in workflow["jobs"].items():
@@ -233,18 +215,115 @@ def sdk_candidate_read_only(workflow):
     return []
 
 
+def ingestion_boundary(workflow):
+    """Carry the signed claim across apply -> verify without hiding failed apply."""
+    jobs = workflow["jobs"]
+    if set(jobs) != {"prepare", "apply", "verify"}:
+        return ["ingestion-deploy.yml: exact prepare/apply/verify graph required"]
+    prepare, apply, verify = (jobs[key] for key in ("prepare", "apply", "verify"))
+    errors = []
+    for job, condition in ((prepare, "steps.replay.outputs.proceed == 'true'"), (apply, None)):
+        rehearsals = [step for step in job.get("steps", []) if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal"]
+        if len(rehearsals) != 1 or rehearsals[0].get("if") != condition or rehearsals[0].get("continue-on-error"):
+            errors.append("ingestion-deploy.yml: exact admitted rehearsal must gate staging and claim creation")
+    if (apply.get("needs") != "prepare" or apply.get("if") != "needs.prepare.outputs.ready == 'true'"
+            or prepare.get("outputs", {}).get("ready") != "${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}"):
+        errors.append("ingestion-deploy.yml: apply must require prepared replay and runtime admission")
+    if apply.get("outputs") != {"deployment_id": "${{ steps.revision.outputs.deployment_id }}", "claim_signed": "${{ steps.claim-receipt.outcome }}"}:
+        errors.append("ingestion-deploy.yml: apply must export the exact claim and signature outcome")
+    applies = [step for step in apply.get("steps", []) if mutations(step)[1]]
+    if len(applies) != 1 or applies[0].get("if") != "steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'":
+        errors.append("ingestion-deploy.yml: saved-plan apply requires the exact signed claim barrier")
+    return errors + verification_boundary(workflow, "ingestion-deploy.yml", "apply", ["prepare", "apply"])
+
+
+def verification_boundary(workflow, filename, parent, needs, *, apply_parent=None):
+    errors = []
+    verify = workflow["jobs"].get("verify", {})
+    expected_if = "${{ always() && needs." + parent + ".outputs.deployment_id != '' }}"
+    if verify.get("needs") != needs or verify.get("if") != expected_if:
+        errors.append(f"{filename}: verify must record every claimed apply outcome, including failure")
+    admission = {
+        "APPLY_RESULT": "${{ needs." + (apply_parent or parent) + ".result }}", "CLAIM_SIGNED": "${{ needs." + parent + ".outputs.claim_signed }}",
+    }
+    guards = [step for step in verify.get("steps", []) if admission.items() <= step.get("env", {}).items()]
+    if len(guards) != 1 or "run" not in guards[0] or "if" in guards[0] or guards[0].get("continue-on-error"):
+        errors.append(f"{filename}: canary requires successful apply and exact signed claim")
+    else:
+        steps = verify["steps"]
+        if any(mutations(step)[1] for step in steps[:steps.index(guards[0])]):
+            errors.append(f"{filename}: signed apply admission must precede canary")
+    outcomes = [step for step in verify.get("steps", []) if command(step, "finish")]
+    if (len(outcomes) != 1 or outcomes[0].get("if") != "${{ always() }}"
+            or not {"GH_TOKEN": "${{ github.token }}", "DEPLOYMENT_ID": "${{ needs." + parent + ".outputs.deployment_id }}", "JOB_STATUS": "${{ job.status }}"}.items() <= outcomes[0].get("env", {}).items()):
+        errors.append(f"{filename}: every claimed terminal outcome must be recorded even after failed apply")
+    return errors
+
+
+def terraform_boundary(workflow):
+    """Keep preparation/waiting outside the one serialized mutation boundary."""
+    jobs = workflow['jobs']
+    if set(jobs) != {'prepare', 'sync', 'propagation'}:
+        return ['Terraform executor requires preparation, serialized apply and propagation jobs']
+    prepare, sync, propagation = (jobs[key] for key in ('prepare', 'sync', 'propagation'))
+    if (any(jobs[key].get('environment') != PROTECTED for key in ('prepare', 'sync'))
+            or [key for key, job in jobs.items() if 'concurrency' in job] != ['sync']
+            or sync['concurrency'] != {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+            or sync.get('needs') != 'prepare' or sync.get('if') != "needs.prepare.outputs.proceed == 'true'"):
+        return ['Terraform preparation must gate the protected serialized apply']
+    if (propagation.get('needs') != 'sync' or propagation.get('permissions') != {}
+            or 'environment' in propagation
+            or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+            or sync.get('outputs', {}).get('applied') != "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}"):
+        return ['Terraform propagation requires successful signed apply without production authority']
+    return []
+
+
+def viewer_boundary(workflow):
+    """Skip IAM-only queue admission while keeping signed runtime and failure outcomes."""
+    jobs = workflow['jobs']
+    if set(jobs) != {'prepare', 'bootstrap', 'ready', 'deploy', 'verify'}:
+        return ['Viewer requires prepare/bootstrap/ready/deploy/verify jobs']
+    prepare, bootstrap, ready, deploy = (jobs[key] for key in ('prepare', 'bootstrap', 'ready', 'deploy'))
+    lock = {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
+    if (workflow.get('concurrency') != {'group': 'deployment-catalog-viewer', 'queue': 'max', 'cancel-in-progress': False}
+            or [key for key, job in jobs.items() if 'concurrency' in job] != ['bootstrap', 'deploy']
+            or any(jobs[key]['concurrency'] != lock for key in ('bootstrap', 'deploy'))
+            or bootstrap.get('needs') != 'prepare'
+            or bootstrap.get('if') != "${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true' && needs.prepare.outputs.claim_signed == 'success' && (github.event_name == 'workflow_dispatch' || inputs.sync_iam) }}"
+            or prepare.get('outputs', {}).get('deployment_id') != '${{ steps.deployment.outputs.deployment_id }}'
+            or prepare.get('outputs', {}).get('claim_signed') != '${{ steps.claim-receipt.outcome }}'
+            or ready.get('needs') != ['prepare', 'bootstrap']
+            or ready.get('if') != "${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.deployment_id != '' && needs.prepare.outputs.claim_signed == 'success' && (needs.bootstrap.result == 'success' || (needs.bootstrap.result == 'skipped' && github.event_name != 'workflow_dispatch' && !inputs.sync_iam)) }}"
+            or deploy.get('needs') != ['prepare', 'bootstrap', 'ready']
+            or deploy.get('if') != "${{ !cancelled() && needs.ready.result == 'success' }}"):
+        return ['Viewer readiness must separate optional IAM and signed runtime applies']
+    admission = {'APPLY_RESULT': '${{ needs.prepare.result }}', 'CLAIM_SIGNED': '${{ needs.prepare.outputs.claim_signed }}'}
+    guards = [step for step in deploy['steps'] if step.get('env') == admission]
+    if (len(guards) != 1 or not enabled(guards[0]) or 'if' in guards[0] or guards[0].get('continue-on-error')
+            or guards[0].get('run') != 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
+            or any(mutations(step)[1] for step in deploy['steps'][:deploy['steps'].index(guards[0])])):
+        return ['Viewer runtime apply requires its successful signed preparation']
+    return verification_boundary(workflow, 'catalog-viewer-deploy.yml', 'prepare', ['prepare', 'bootstrap', 'deploy'], apply_parent='deploy')
+
+
 def boundaries(root):
     errors = []
     for filename in WORKFLOWS:
         value = yaml.safe_load((root / ".github/workflows" / filename).read_text())
         if filename == "publish-typescript-sdk.yml":
             errors.extend(sdk_candidate_read_only(value))
+        if filename == "ingestion-deploy.yml":
+            errors.extend(ingestion_boundary(value))
+        if filename == "catalog-viewer-deploy.yml":
+            errors.extend(viewer_boundary(value))
         for job_id, job in value["jobs"].items():
-            steps = job.get("steps", [])
-            rehearsed, claim, barrier = False, None, None
+            steps = list(expanded_steps(root, job))
+            inherited = filename == "ingestion-deploy.yml" and job_id == "verify" or filename == "catalog-viewer-deploy.yml" and job_id in {"bootstrap", "deploy", "verify"}
+            rehearsed, claim, barrier = inherited, None, None
             outputs = []
             for index, step in enumerate(steps):
-                if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal" and enabled(step):
+                if step.get("uses") == ACTION and step.get("with", {}).get("mode") == "rehearsal" and enabled(step) and not step.get("continue-on-error"):
                     if step["with"].get("signer-workflow") != filename:
                         errors.append(f"{filename}/{job_id}: rehearsal must bind the exact leaf signer")
                     else:
@@ -264,7 +343,10 @@ def boundaries(root):
                     errors.append(f"{filename}/{step.get('name')}: signed rehearsal must precede artifact and production operations")
                 if deployment:
                     condition = str(step.get("if", ""))
-                    if not barrier or ("always()" in condition and f"steps.{barrier}.outcome == 'success'" not in condition):
+                    if inherited:
+                        if "always()" in condition:
+                            errors.append(f"{filename}/{step.get('name')}: canary cannot bypass signed apply admission")
+                    elif not barrier or ("always()" in condition and f"steps.{barrier}.outcome == 'success'" not in condition):
                         errors.append(f"{filename}/{step.get('name')}: verified signed claim must gate production mutation, including always recovery")
                 if command(step, "(?:finish|observe|reconcile)"):
                     outputs.append((index, step))
@@ -282,6 +364,7 @@ def permissions(root):
     This checks repository declarations. It cannot revoke a malicious contributor's
     independently configured GitHub authority or prevent administrator deletion.
     """
+    from scripts.ci_contract import delivery_condition
     errors = []
     for path in sorted((root / ".github/workflows").glob("*.yml")):
         value = yaml.safe_load(path.read_text())
@@ -294,10 +377,13 @@ def permissions(root):
             writes = effective == "write-all" or isinstance(effective, dict) and any(effective.get(key) == "write" for key in ("deployments", "attestations"))
             if not writes:
                 continue
-            protected = job.get("environment") == PROTECTED or isinstance(job.get("environment"), dict) and job["environment"].get("name") == PROTECTED or sdk_boundary(path.name, identifier, job)
+            protected = job.get("environment") == PROTECTED or isinstance(job.get("environment"), dict) and job["environment"].get("name") == PROTECTED or sdk_boundary(path.name, identifier, job, root)
             caller = str(job.get("uses", "")).startswith("./.github/workflows/")
             condition = str(job.get("if", ""))
             main_only = "github.ref == 'refs/heads/main'" in condition and "github.event_name == 'push'" in condition
+            delivery = value['jobs'].get('ci-ready', {}).get('outputs', {}).get('delivery', '')
+            main_only |= (path.name == 'ci.yml' and condition == delivery_condition(identifier)
+                          and 'ci-ready' in job.get('needs', []) and delivery == "${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}")
             notification = notification_boundary(path.name, identifier, value, job)
             if not (protected or notification or caller and (main_only or "pull_request" not in trigger and "pull_request_target" not in trigger)):
                 errors.append(f"{path.name}/{identifier}: deployment/signing write token requires a protected production job or main-only reusable caller")

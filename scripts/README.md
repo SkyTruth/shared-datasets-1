@@ -15,10 +15,15 @@ artifact build graph before execution. Run the same command without
 `--check-only` to produce or resume verified stages for any dataset format.
 See the [stage plan contract](../docs/publication-readiness.md#check-the-build-plan-and-resume-completed-stages).
 
-`ci_preflight.py` owns local container execution and host Docker credential
-isolation alongside the shared plan/run-suite/verify entrypoints. See
-[complete CI preflight](../docs/ci-preflight.md) for the required commands and
-evidence contract.
+`ci_preflight.py` owns the local driver and shared plan/run-suite/verify
+entrypoints. [CI preflight](../docs/ci-preflight.md) owns the ordered before-push
+procedure, resolved image matrix, offline checks, tools and evidence contract.
+Interface: `uv run python scripts/ci_preflight.py --help`.
+
+[Ingestion deployment](../docs/ci-deployment.md),
+[Terraform target changes](../docs/terraform-reconciliation.md#change-a-terraform-or-iam-target)
+and [recovery](../docs/ci-recovery.md) own their respective procedures; tool
+entries below explain individual commands only.
 
 ## Branch cleanup
 
@@ -88,8 +93,6 @@ offers a local canonical installation command. See the
 `compare_releases.py` compares complete pinned canonical bundles with a task-scoped SQLite index. CLI and authenticated viewer share the [comparison semantics and budgets](../docs/compare-releases.md); it does no remote writes/downloads. Interface: `uv run python scripts/compare_releases.py --help`.
 
 ## Validation and deployment tools
-
-`ci_preflight.py` validates a frozen clean committed head against current main in an isolated prospective merge; [preflight contract](../docs/ci-preflight.md). Interface: `uv run python scripts/ci_preflight.py --help`.
 
 `terraform_plan_allowlist.py` rejects saved plans outside a protected workflow's mutation scope; use in the owning constrained job. Interface: `uv run python scripts/terraform_plan_allowlist.py --help`.
 

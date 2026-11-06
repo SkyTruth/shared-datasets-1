@@ -5,17 +5,58 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 import yaml
+import pytest
 from scripts import deployment_emission as emission
 from scripts import install_deployment_verifier as installer
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "SkyTruth/shared-datasets-1"
+
+
+@pytest.mark.parametrize('version,code', [
+    ('gh version 2.96.0 (2026-07-02)', 0), ('gh version 2.95.0 (2026-06-01)', 0),
+    ('gh version 2.96.01 (2026-07-02)', 0), ('not a verifier', 0),
+    ('gh version 2.96.0 (2026-07-02)', 1), (None, 0),
+])
+def test_verification_requires_the_pinned_cli_before_any_attestation(tmp_path, monkeypatch, version, code):
+    binary = tmp_path / 'gh'
+    invoked = tmp_path / 'attestation-invoked'
+    if version is not None:
+        binary.write_text(f'#!{sys.executable}\nimport pathlib,sys\n'
+                          f'if sys.argv[1:] == ["--version"]:\n print({version!r}); sys.exit({code})\n'
+                          f'pathlib.Path({str(invoked)!r}).touch()\nprint("[]")\n')
+        binary.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path))
+    command = ['gh', 'attestation', 'verify', 'receipt.json']
+    if version == 'gh version 2.96.0 (2026-07-02)' and code == 0:
+        assert emission.verified_output(command, REPO, 'a' * 64).strip() == '[]'
+        assert invoked.exists()
+    else:
+        with pytest.raises(emission.EmissionError, match=r'2\.96\.0.*python scripts/install_deployment_verifier.py'):
+            emission.verified_output(command, REPO, 'a' * 64)
+        assert not invoked.exists()
+
+
+def test_every_receipt_job_installs_the_verifier_before_its_first_receipt():
+    from scripts.deployment_receipt_contracts import ACTION, enabled, expanded_steps
+    receipts = 0
+    for path in (ROOT / '.github/workflows').glob('*.yml'):
+        for job_id, job in yaml.safe_load(path.read_text())['jobs'].items():
+            installed = False
+            for step in expanded_steps(ROOT, job):
+                if step.get('run') == 'python scripts/install_deployment_verifier.py' and enabled(step) and not step.get('continue-on-error'):
+                    installed = True
+                if step.get('uses') == ACTION:
+                    assert installed, (path.name, job_id)
+                    receipts += 1
+    assert receipts > 0
 
 
 class ReceiptSigningTests(unittest.TestCase):
@@ -66,7 +107,9 @@ class ReceiptSigningTests(unittest.TestCase):
         self.assertIn("prepare-rehearsal", runs)
         self.assertIn("verify-rehearsal", runs)
         self.assertIn("verify-file", runs)
-        self.assertIn("install_deployment_verifier.py", runs)
+        self.assertNotIn("install_deployment_verifier.py", runs)
+        bootstrap = yaml.safe_load((ROOT / ".github/actions/deployment-bootstrap/action.yml").read_text())
+        self.assertIn("python scripts/install_deployment_verifier.py", [step.get("run") for step in bootstrap["runs"]["steps"]])
         self.assertNotIn("deployment_revision.py", runs)
         self.assertNotIn("--method POST", runs)
 

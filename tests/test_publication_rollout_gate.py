@@ -10,6 +10,7 @@ from scripts import publication_rollout_gate as gate
 from test_identity_reset import fixture, install_fixture, intent_for, executor
 from test_publication import MemoryStore, operation
 from workflow_helpers import load_workflow, workflow_steps_by_name
+from test_ingestion_deploy_workflow import shared_workflow, target_table
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,25 +86,22 @@ class PublicationDeploymentTests(unittest.TestCase):
                 gate.check_deployment(store, "sea-ice-daily")
 
     def test_workflows_check_real_state_before_build_and_apply_and_leave_eamlis_alone(self):
+        workflow = shared_workflow()
+        steps = workflow_steps_by_name(workflow, "prepare")
         for job in ("wdpa-monthly", "sea-ice-daily", "eamlis-monthly"):
-            workflow = load_workflow(ROOT / f".github/workflows/{job}-deploy.yml")
-            steps = workflow_steps_by_name(workflow, "deploy")
             names = list(steps)
             gate_name = "Verify feature-ID publication state"
             self.assertNotIn("Enforce publication rollout HOLD", names)
-            if job == "eamlis-monthly":
-                self.assertNotIn(gate_name, names)
-                continue
+            self.assertEqual(target_table()[job]["rollout_gate"], job != "eamlis-monthly")
             step = steps[gate_name]
             # An already verified revision performs no mutation. Every fresh
             # attempt still verifies actual installed state before building.
-            self.assertEqual(step["if"], "${{ steps.replay.outputs.proceed == 'true' }}")
+            self.assertEqual(step["if"], "steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'")
             self.assertNotIn("continue-on-error", step)
-            self.assertEqual(step["run"], f"uv run --no-sync python scripts/publication_rollout_gate.py --job {job}")
+            self.assertEqual(step["run"].strip(), 'uv run --frozen --no-dev python scripts/publication_rollout_gate.py --job "$TARGET"')
             self.assertLess(names.index("Authenticate to Google Cloud"), names.index(gate_name))
-            image_step = "Load exact tested wdpa-monthly image" if job == "wdpa-monthly" else f"Build {job} image"
-            self.assertLess(names.index(gate_name), names.index(image_step))
-            self.assertLess(names.index(gate_name), names.index("Terraform plan"))
+            self.assertLess(names.index(gate_name), names.index("Load exact tested image"))
+            self.assertEqual(workflow["jobs"]["apply"]["needs"], "prepare")
 
 
 class ScheduleControlTests(unittest.TestCase):

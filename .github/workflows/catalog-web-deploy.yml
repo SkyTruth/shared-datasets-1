@@ -112,6 +112,7 @@ jobs:
   deploy:
     name: Build and publish catalog web
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     environment: shared-datasets-production
     needs: [check-inputs]
     if: >-

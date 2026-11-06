@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from functools import cache
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,26 +15,38 @@ import test_deployment_revision as deployment_fixtures
 
 from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
 from scripts import deployment_emission as emissions, deployment_revision as deployments
-from scripts import operational_safety_check as safety, operational_snapshot as snapshots
-from scripts import slack_incidents as incidents
-from scripts.incident_verification_cache import VerificationCache
+from scripts import operational_safety_check as safety
+from scripts import slack_incidents as incidents, slack_notify
 from scripts.workflow_identity import WORKFLOW_NAMES
 from test_deployment_emission import run as emitter_run, verified
-from test_incident_verification_cache import GH_VERSION
 from test_slack_incidents import IDENTITY, signed_record
 
 PREFIX = "repos/" + safety.REPOSITORY
-NOW = datetime.now(timezone.utc).replace(microsecond=0)
+NOW = datetime(2026, 11, 5, 12, tzinfo=timezone.utc)
 START = NOW - timedelta(hours=24)
 
 
 @pytest.fixture(autouse=True)
 def receipt_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
+    monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(START))
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setattr(slack_notify, "notify", mock.Mock())
+    monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
+    monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
+    monkeypatch.setattr(safety, "heartbeat_series", mock.Mock(return_value=[]))
+    monkeypatch.setattr(safety, "recovery_identity", mock.Mock(return_value=[]))
 
 
 def stamp(value):
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@cache
+def repository_head():
+    return deployments.subprocess.check_output(["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[1], text=True).strip()
 
 
 class OperationalAPI:
@@ -45,14 +58,14 @@ class OperationalAPI:
                                      ("catalog-web-deploy.yml", 14), ("bucket-hygiene-audit.yml", 15),
                                      ("deployment-verification.yml", 16))
         }
-        self.head = deployments.subprocess.check_output(["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[1], text=True).strip()
+        self.head = repository_head()
         self.current = self.source(300, "operational-safety-check.yml", status="in_progress", conclusion=None)
         self.emitter = emitter_run(identifier=11, attempt=1, path=incidents.WORKFLOW, event="workflow_run")
         self.runs = {300: self.current, 11: self.emitter}
         self.jobs, self.statuses = {}, {}
         self.sources, self.records, self.production_records, self.calls, self.posts = [], [], [], [], []
         self.fail_on = None
+        self.comparison = "diverged"
 
     def source(self, identifier, filename="bucket-hygiene-audit.yml", *, status="completed", conclusion="failure", attempt=1):
         return {"id": identifier, "run_attempt": attempt, "workflow_id": self.definitions[filename]["id"],
@@ -71,6 +84,7 @@ class OperationalAPI:
     def install_state(self, state):
         record = json.loads(json.dumps(signed_record()))
         record["payload"]["state"] = state
+        record["created_at"] = stamp(NOW - timedelta(hours=1))
         self.records = [record]
         self.statuses[record["id"]] = [{"id": 12, "state": "success", "description": "applied", "environment_url": "",
                                        "log_url": emissions.invocation(safety.REPOSITORY, 11, 1)}]
@@ -82,7 +96,9 @@ class OperationalAPI:
 
     def get(self, path):
         self._check("get", path)
-        if path == PREFIX:
+        if "/compare/" in path:
+            value = {"status": self.comparison}
+        elif path == PREFIX:
             value = self.repository
         elif "/actions/workflows/" in path:
             key = path.rsplit("/", 1)[-1]
@@ -95,7 +111,7 @@ class OperationalAPI:
 
     def pages(self, path, field=None):
         self._check("pages", path)
-        if "/actions/runs?" in path:
+        if "/actions/runs?" in path or "/runs?branch=main" in path:
             value = self.sources
         elif "/jobs?" in path:
             value = self.jobs[int(path.split("/actions/runs/", 1)[1].split("/", 1)[0])]
@@ -130,7 +146,7 @@ def signed_transport(api):
 
 
 def dry(api, tmp_path, sources=()):
-    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path, None)
+    return safety.dry_reconciliation(api, api.current, IDENTITY, list(sources), START, NOW, tmp_path)[0]
 
 
 def test_inventory_retains_missed_final_events_and_source_attempt_changes():
@@ -139,12 +155,11 @@ def test_inventory_retains_missed_final_events_and_source_attempt_changes():
     api.add_source(missed)
     api.add_source(api.source(102, "operational-safety-check.yml", conclusion="success"))
     api.add_source(api.current)
-    inventory, all_sources, start, end = safety.source_inventory(api, api.current, stamp(START), now=NOW)
-    assert [source["id"] for source in inventory] == [101]
-    assert [source["id"] for source in all_sources] == [101, 102]
+    inventory, start, end = safety.source_inventory(api, api.current, stamp(START), now=NOW)
+    assert [source["id"] for source in inventory] == [101, 102]
     assert (start, end) == (START, NOW)
     missed["run_attempt"] += 1
-    changed, _, _, _ = safety.source_inventory(api, api.current, stamp(START), now=NOW)
+    changed, _, _ = safety.source_inventory(api, api.current, stamp(START), now=NOW)
     assert changed != inventory and changed[0]["run_attempt"] == 2
     assert "branch=main" in api.calls[-1][1]
 
@@ -154,7 +169,7 @@ def test_inventory_is_activation_limited_and_retains_unfinished_or_failed_safety
     api.add_source(api.source(101, "operational-safety-check.yml"))
     api.add_source(api.source(102, "operational-safety-check.yml", status="in_progress", conclusion=None))
     activated = NOW - timedelta(hours=2)
-    inventory, _, start, _ = safety.source_inventory(api, api.current, stamp(activated), now=NOW)
+    inventory, start, _ = safety.source_inventory(api, api.current, stamp(activated), now=NOW)
     assert [row["id"] for row in inventory] == [101, 102] and start == activated
     query = parse_qs(api.calls[-1][1].split("?", 1)[1])
     assert query["created"] == [stamp(activated) + ".." + stamp(NOW)]
@@ -169,7 +184,7 @@ def test_empty_registry_is_idle_but_missed_failure_requests_normal_worker_withou
     assert api.posts == []
 
 
-@pytest.mark.parametrize("pending", ["deferred", "permalink", "unknown-post"])
+@pytest.mark.parametrize("pending", ["deferred", "permalink"])
 def test_retained_delivery_or_deferred_work_needs_reconciliation_without_post(tmp_path, pending):
     api = OperationalAPI()
     state = acked_job_state(api)
@@ -177,10 +192,6 @@ def test_retained_delivery_or_deferred_work_needs_reconciliation_without_post(tm
         state["deferred"] = copy.deepcopy(state["incident"]["failures"])
     elif pending == "permalink":
         state["incident"]["permalink"] = ""
-    else:
-        state["incident"]["posts"]["parent"] = {"state": "claimed", "ts": None}
-        state["incident"]["permalink"] = ""
-        state["incident"]["parent_view_sha256"] = None
     api.install_state(state)
     with signed_transport(api):
         assert dry(api, tmp_path) is False
@@ -196,6 +207,35 @@ def test_successful_safety_source_is_used_when_its_original_incident_needs_recov
     api.install_state(acked_job_state(api))
     with signed_transport(api):
         assert dry(api, tmp_path, [recovered]) is False
+    assert api.posts == []
+
+
+def test_resolved_incident_watermark_progress_does_not_request_another_worker(tmp_path):
+    api = OperationalAPI()
+    state = incidents.fold(None, incidents.from_workflow(api.source(101)), IDENTITY)
+    state["incident"].update(posts={"parent": {"state": "delivered", "ts": "1791270000.000001"}},
+        permalink="https://example.slack.com/archives/" + IDENTITY["channel"] + "/p1791270000000001")
+    recovery = {**state["incident"]["failures"][0], "conclusion": "success", "run_id": 102,
+                "time": stamp(NOW - timedelta(minutes=4))}
+    state = incidents.fold(state, recovery, IDENTITY, ancestor=lambda *_: True)
+    state["incident"]["parent_view_sha256"] = incidents.parent_view_sha256(state)
+    api.install_state(state)
+    healthy = api.source(103, conclusion="success")
+    healthy["updated_at"] = stamp(NOW - timedelta(minutes=1))
+    api.add_source(healthy)
+    with signed_transport(api):
+        assert dry(api, tmp_path, [healthy]) is True
+    assert api.posts == []
+
+
+def test_unchanged_uncertain_send_waits_for_owner_without_hourly_worker(tmp_path):
+    api = OperationalAPI()
+    state = acked_job_state(api)
+    state["incident"].update(posts={"parent": {"state": "claimed", "ts": None}},
+                             permalink="", parent_view_sha256=None)
+    api.install_state(state)
+    with signed_transport(api):
+        assert dry(api, tmp_path) is True
     assert api.posts == []
 
 
@@ -233,29 +273,26 @@ class CatalogClient:
 @pytest.fixture
 def probe_inputs(tmp_path, monkeypatch):
     api, client = OperationalAPI(), CatalogClient()
-    monkeypatch.setattr(safety.subprocess, "check_output", lambda *_args, **_kwargs: GH_VERSION)
-    monkeypatch.setattr(VerificationCache, "restore", lambda *_args, **_kwargs: None)
     collect, checks = mock.Mock(), mock.Mock(return_value=[SimpleNamespace(ok=True)])
     monkeypatch.setattr(indexes, "collect", collect)
     monkeypatch.setattr(catalog, "run_checks", checks)
-    monkeypatch.setattr(snapshots.Snapshot, "restore", mock.Mock(return_value=None))
     return api, client, tmp_path, collect, checks
 
 
-def test_unchanged_authenticated_snapshot_skips_full_catalog_and_dry_work(probe_inputs, monkeypatch):
+def test_unchanged_catalog_still_traverses_live_incidents(probe_inputs):
     api, client, directory, collect, checks = probe_inputs
-    snapshot = mock.Mock()
-    snapshot.matches.return_value = True
-    snapshot.data = {"requests": ["one", "two"]}
-    monkeypatch.setattr(snapshots.Snapshot, "restore", mock.Mock(return_value=snapshot))
-    monkeypatch.setattr(safety, "dry_reconciliation", mock.Mock(side_effect=AssertionError("unexpected expensive dry run")))
     assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory) == {
-        "catalog": False, "reconcile": False, "snapshot": True}
-    snapshot.matches.assert_called_once_with(api)
-    snapshot.save.assert_called_once_with(directory, api.current)
-    collect.assert_not_called()
-    checks.assert_not_called()
-    assert any("environment=production-wdpa-monthly" in path for _method, path in api.calls)
+        "catalog": False, "reconcile": False, "verify": False}
+    collect.assert_called_once()
+    checks.assert_called_once()
+    assert any("environment=slack-incidents" in path for _method, path in api.calls)
+    missed = api.source(101)
+    api.add_source(missed)
+    assert safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)['reconcile'] is True
+    api.fail_on = '/actions/runs/101'
+    with pytest.raises(RuntimeError, match='live API unavailable'):
+        safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert api.posts == []
 
 
 def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_inputs):
@@ -265,7 +302,7 @@ def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_
                          100: [{"state": "success", "description": "verified"}]})
     checks.return_value = [SimpleNamespace(ok=False)]
     result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result == {"catalog": True, "reconcile": True, "snapshot": False}
+    assert result == {"catalog": True, "reconcile": False, "verify": True}
     collect.assert_called_once()
     checks.assert_called_once()
     assert api.posts == []
@@ -273,99 +310,33 @@ def test_catalog_check_is_not_skipped_for_an_older_pending_wdpa_execution(probe_
         assert any(f"/deployments/{identifier}/statuses?" in path for _method, path in api.calls)
 
 
-@pytest.mark.parametrize("conclusion", ["success", "failure", "cancelled"])
-def test_completion_waits_for_final_safety_outcome_before_replay(dispatch_context, conclusion):
-    api, environment, event = dispatch_context
-    filename = "deployment-verification.yml"
-    api.current = api.source(300, filename, status="in_progress", conclusion=None)
-    api.current["event"] = "workflow_dispatch"
-    api.runs[300] = api.current
-    environment["GITHUB_WORKFLOW_REF"] = safety.REPOSITORY + "/.github/workflows/" + filename + "@refs/heads/main"
-    sleeps = []
-    def finish(seconds):
-        sleeps.append(seconds)
-        api.runs[200].update(status="completed", conclusion=conclusion)
-    safety.wait_for_safety(api, event, environment, clock=lambda: 0, sleep=finish)
-    assert sleeps == [2]
-    assert sum(path.endswith("/actions/runs/200") for _method, path in api.calls) == 2
-    assert api.posts == []
-
-
-def test_unfinished_handoff_fails_at_bounded_deadline_instead_of_allowing_incomplete_replay(dispatch_context):
-    api, environment, event = dispatch_context
-    filename = "deployment-verification.yml"
-    api.current = api.source(300, filename, status="in_progress", conclusion=None)
-    api.current["event"] = "workflow_dispatch"
-    api.runs[300] = api.current
-    environment["GITHUB_WORKFLOW_REF"] = safety.REPOSITORY + "/.github/workflows/" + filename + "@refs/heads/main"
-    clock = iter([0, 121])
-    with pytest.raises(RuntimeError, match="safety handoff did not finish"):
-        safety.wait_for_safety(api, event, environment, clock=lambda: next(clock), sleep=mock.Mock())
-
-
-@pytest.mark.parametrize("change", ["branch", "path", "repository", "latest-attempt", "workflow", "head-format", "missing-attempt", "read-failure"])
-def test_completion_handoff_requires_current_native_parent_provenance(dispatch_context, change):
-    api, environment, event = dispatch_context
-    filename = "deployment-verification.yml"
-    api.current = api.source(300, filename, status="in_progress", conclusion=None)
-    api.current["event"] = "workflow_dispatch"
-    api.runs[300] = api.current
-    environment["GITHUB_WORKFLOW_REF"] = safety.REPOSITORY + "/.github/workflows/" + filename + "@refs/heads/main"
-    producer = api.runs[200]
-    if change == "branch":
-        producer["head_branch"] = "feature"
-    elif change == "path":
-        producer["path"] = ".github/workflows/ci.yml"
-    elif change == "repository":
-        producer["head_repository"]["id"] += 1
-    elif change == "latest-attempt":
-        producer["run_attempt"] = 2
-    elif change == "workflow":
-        producer["workflow_id"] += 1
-    elif change == "head-format":
-        producer["head_sha"] = "bad"
-    elif change == "missing-attempt":
-        event["inputs"].pop("safety_run_attempt")
-    else:
-        api.fail_on = "/actions/runs/200"
-    sleeps = mock.Mock()
-    with pytest.raises(RuntimeError):
-        safety.wait_for_safety(api, event, environment, clock=lambda: 0, sleep=sleeps)
-    sleeps.assert_not_called()
-    assert api.posts == []
-
-
-@pytest.mark.parametrize("missed", [False, True])
-def test_legacy_mode_keeps_completion_polling_without_requiring_bot_identity(tmp_path, monkeypatch, missed):
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_probe_main_requires_bot_identity_only_when_incidents_configured(tmp_path, monkeypatch, enabled):
     api, client = OperationalAPI(), CatalogClient()
-    if missed:
-        add_legacy_failure(api)
     environment = {"GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
                    "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/" + safety.WORKFLOW + "@refs/heads/main",
                    "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_OUTPUT": str(tmp_path / "outputs"),
-                   "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED": "false"}
+                   "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED": enabled, "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": stamp(START)}
     for key, value in environment.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(incidents, "GitHub", lambda: api)
+    monkeypatch.setattr(safety, "GitHub", lambda: api)
     monkeypatch.setattr(catalog, "get_client", lambda: client)
-    monkeypatch.setattr(safety, "catalog_changed", mock.Mock(return_value=False))
-    monkeypatch.setattr(incidents, "Slack", mock.Mock(side_effect=AssertionError("legacy mode must not require bot")))
-    monkeypatch.setattr(safety, "probe", mock.Mock(side_effect=AssertionError("legacy has no reusable bot registry")))
+    bot = mock.Mock()
+    bot.identity.return_value = IDENTITY
+    monkeypatch.setattr(incidents, "Slack", lambda *_: bot)
+    result = {"catalog": False, "reconcile": True, "verify": True}
+    probe = mock.Mock(return_value=result)
+    monkeypatch.setattr(safety, "probe", probe)
     monkeypatch.setattr(safety.sys, "argv", [safety.__file__, "--work-dir", str(tmp_path)])
     safety.main()
-    lines = (tmp_path / "outputs").read_text().splitlines()
-    assert lines[:3] == ["catalog=false", "reconcile=true", "snapshot=false"]
-    assert json.loads(lines[3].removeprefix("missed_handoffs=")) == ([{"id": 101, "run_attempt": 1}] if missed else [])
-
-
-def test_catalog_change_during_comparison_cannot_receive_an_idle_snapshot(probe_inputs):
-    api, client, directory, _collect, checks = probe_inputs
-    def update(*_args, **_kwargs):
-        client.objects[catalog.REMOTE_WEB_CATALOG_OBJECT] = "4"
-        return [SimpleNamespace(ok=True)]
-    checks.side_effect = update
-    result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
-    assert result["catalog"] is True and result["snapshot"] is False
+    if enabled == "true":
+        bot.identity.assert_called_once_with()
+    else:
+        bot.identity.assert_not_called()
+    probe.assert_called_once_with(api, api.current, IDENTITY if enabled == "true" else None, stamp(START), client, tmp_path)
+    assert json.loads((tmp_path / "result.json").read_text()) == result
+    assert (tmp_path / "outputs").read_text().splitlines() == ["catalog=false", "reconcile=true", "verify=true"]
 
 
 @pytest.mark.parametrize("failure", ["sources", "catalog-list", "catalog-object"])
@@ -380,24 +351,24 @@ def test_probe_read_failure_never_becomes_unchanged(probe_inputs, failure):
     assert api.posts == []
 
 
-@pytest.fixture
-def dispatch_context():
+@pytest.fixture(params=["catalog-web-deploy.yml", "unattended-workflow-alert.yml"])
+def dispatch_context(request):
     api = OperationalAPI()
-    api.current = api.source(300, "catalog-web-deploy.yml", status="in_progress", conclusion=None)
+    api.current = api.source(300, request.param, status="in_progress", conclusion=None)
     api.current["event"] = "workflow_dispatch"
     producer = api.source(200, "operational-safety-check.yml", status="in_progress", conclusion=None)
     api.runs.update({300: api.current, 200: producer})
     api.jobs[200] = [{"id": 1200, "run_id": 200, "run_attempt": 1, "head_sha": api.head, "name": safety.JOB,
                      "steps": [{"name": "Check operational work", "status": "completed", "conclusion": "success"}]}]
     environment = {"GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
-                   "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/.github/workflows/catalog-web-deploy.yml@refs/heads/main",
+                   "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/.github/workflows/" + request.param + "@refs/heads/main",
                    "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1"}
     return api, environment, {"inputs": {"safety_run_id": "200", "safety_run_attempt": "1"}}
 
 
 def test_catalog_admission_accepts_successful_inflight_probe_only_as_refresh_hint(dispatch_context):
     api, environment, event = dispatch_context
-    safety.validate_catalog_dispatch(api, event, environment)
+    safety.validate_safety_dispatch(api, event, environment, workflow=api.current["path"])
     assert api.posts == []
 
 
@@ -424,107 +395,305 @@ def test_catalog_admission_rejects_forged_context_or_producer(dispatch_context, 
         job["steps"][0]["conclusion"] = "skipped"
     else:
         event["inputs"]["safety_run_id"] = "../200"
-    with pytest.raises(RuntimeError, match="OPERATIONAL_SAFETY"):
-        safety.validate_catalog_dispatch(api, event, environment)
+    with pytest.raises((RuntimeError, ValueError), match="OPERATIONAL_SAFETY|comparison commit unavailable|trusted main|unknown unattended"):
+        safety.validate_safety_dispatch(api, event, environment, workflow=api.current["path"])
     assert api.posts == []
 
 
-def add_legacy_failure(api, identifier=101):
-    source = api.source(identifier, "operational-safety-check.yml")
+@pytest.mark.parametrize("defect", [None, "wrong-operation", "acknowledgement", "wrong-incident", "unfinished-probe"])
+def test_batch_cli_authenticates_exact_inflight_probe_without_parent_wait(tmp_path, monkeypatch, defect):
+    api = OperationalAPI()
+    api.current = api.source(300, "unattended-workflow-alert.yml", status="in_progress", conclusion=None)
+    api.current["event"] = "workflow_dispatch"
+    api.runs[300] = api.current
+    api.runs[200] = api.source(200, "operational-safety-check.yml", status="in_progress", conclusion=None)
+    api.jobs[200] = [{"run_id": 200, "run_attempt": 1, "head_sha": api.head, "name": safety.JOB,
+                     "steps": [{"name": "Check operational work", "status": "completed", "conclusion": "success"}]}]
+    inputs = {"delivery_result": "batch", "incident_id": "operational-batch", "operation": "safety:200/1"}
+    if defect == "wrong-operation":
+        inputs["operation"] = "safety:200/0"
+    elif defect == "acknowledgement":
+        inputs["message_ts"] = "1791270000.000001"
+    elif defect == "wrong-incident":
+        inputs["incident_id"] = "SD-123456789ABC"
+    elif defect == "unfinished-probe":
+        api.jobs[200][0]["steps"][0]["status"] = "in_progress"
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({"inputs": inputs}))
+    environment = {"GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
+                   "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/" + incidents.WORKFLOW + "@refs/heads/main",
+                   "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_OUTPUT": str(tmp_path / "outputs"),
+                   "GITHUB_EVENT_PATH": str(event_path), "SHARED_DATASETS_SLACK_INCIDENTS_SINCE": stamp(START)}
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(incidents, "GitHub", lambda: api)
+    monkeypatch.setattr(safety, "GitHub", lambda: api)
+    slack = mock.Mock()
+    slack.identity.return_value = IDENTITY
+    monkeypatch.setattr(incidents, "Slack", lambda *_: slack)
+    monkeypatch.setattr(safety.sys, "argv", ["slack_incidents.py", "prepare", "--work-dir", str(tmp_path)])
+    if defect:
+        with pytest.raises((RuntimeError, incidents.IncidentError)):
+            incidents.main()
+    else:
+        incidents.main()
+        assert json.loads((tmp_path / "prepared.json").read_bytes()) == []
+    assert api.posts == []
+    slack.post.assert_not_called()
+    slack.update.assert_not_called()
+
+
+@pytest.mark.parametrize('filename', ['unattended-workflow-alert.yml', 'deployment-verification.yml', 'catalog-web-deploy.yml', 'catalog-viewer-deploy.yml'])
+def test_token_dispatched_failure_is_replayed_without_native_event(tmp_path, filename):
+    api = OperationalAPI()
+    api.definitions.setdefault(filename, {'id': 99, 'path': '.github/workflows/' + filename})
+    source = api.source(101, filename)
+    source['event'] = 'workflow_dispatch'
     api.add_source(source)
-    return source
-
-
-def add_legacy_observer(api, identifier=201, *, parent=101, status="completed", conclusion="success"):
-    observer = api.source(identifier, "deployment-verification.yml", status=status, conclusion=conclusion)
-    observer.update(event="workflow_dispatch", display_title=f"Operational follow-up: safety {parent}/1")
-    api.add_source(observer)
-    return observer
-
-
-def test_legacy_discovery_returns_every_failed_attempt_without_an_admitted_handoff():
-    api = OperationalAPI()
-    for identifier in (101, 102, 103):
-        add_legacy_failure(api, identifier)
-    api.add_source(api.source(104, "operational-safety-check.yml", conclusion="success"))
-    api.add_source(api.source(105, "operational-safety-check.yml", status="in_progress", conclusion=None))
-    add_legacy_observer(api, parent=102)
-    assert safety.unadmitted_safety_failures(api, api.current, now=NOW) == [
-        {"id": 101, "run_attempt": 1}, {"id": 103, "run_attempt": 1}]
-    enumerations = [path for method, path in api.calls if method == "pages"]
-    assert len(enumerations) == 1
-    assert parse_qs(enumerations[0].split("?", 1)[1])["created"] == [stamp(START) + ".." + stamp(NOW)]
+    assert dry(api, tmp_path, [source]) is False
     assert api.posts == []
 
 
-@pytest.mark.parametrize("status,conclusion", [("queued", None), ("in_progress", None), ("completed", "failure"),
-                                             ("completed", "cancelled"), ("completed", "success")])
-def test_admitted_handoff_is_never_retried_for_an_unknown_webhook_outcome(status, conclusion):
+@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (7,'success',True), (1,'failure',True), (7,None,False)])
+def test_pending_checks_back_off_unchanged_success_but_not_failure(age, conclusion, expected):
     api = OperationalAPI()
-    add_legacy_failure(api)
-    add_legacy_observer(api, status=status, conclusion=conclusion)
-    assert safety.unadmitted_safety_failures(api, api.current, now=NOW) == []
-    assert not any("/jobs?" in path for _method, path in api.calls)
+    source = api.source(101, 'deployment-verification.yml', status='completed' if conclusion else 'in_progress', conclusion=conclusion)
+    source['created_at'] = stamp(NOW-timedelta(hours=age))
+    assert safety.verification_due(api, [source], [], now=NOW) is expected
+    assert safety.verification_due(api, [], [], now=NOW)
+
+
+@pytest.mark.parametrize('count', [0, 1, 2])
+@pytest.mark.parametrize('previous', ['success', 'failure', 'skipped'])
+def test_reconciliation_escalates_on_third_consecutive_probe_only(count, previous):
+    api = OperationalAPI()
+    for identifier in range(100, 100+count):
+        run = api.source(identifier, 'operational-safety-check.yml')
+        api.add_source(run)
+        api.jobs[identifier][0].update(name=safety.JOB, steps=[{'name':'Request operational reconciliation', 'status':'completed', 'conclusion':previous}])
+    assert safety.reconciliation_stalled(api, api.current) is (count == 2 and previous != 'skipped')
+
+
+@pytest.mark.parametrize('age', [1, 25])
+def test_uncertain_claim_waits_for_owner_and_health_cli_bounds_its_age(probe_inputs, monkeypatch, age):
+    api, client, directory, _, _ = probe_inputs
+    state = acked_job_state(api)
+    state['incident'].update(posts={'parent':{'state':'claimed','ts':None}}, permalink='', parent_view_sha256=None)
+    api.install_state(state)
+    api.records[0]['created_at'] = stamp(NOW - timedelta(hours=age))
+    with signed_transport(api):
+        result = safety.probe(api, api.current, IDENTITY, stamp(START), client, directory)
+    assert result == {'catalog':False, 'reconcile':False, 'verify':False}
+    assert json.loads((directory/'claims.json').read_bytes()) == [{'incident':state['incident']['id'], 'since':api.records[0]['created_at']}]
+    (directory/'result.json').write_text(json.dumps(result))
+    for k,v in {'GITHUB_REPOSITORY':safety.REPOSITORY, 'GITHUB_REF':'refs/heads/main',
+                'GITHUB_WORKFLOW_REF':safety.REPOSITORY+'/'+safety.WORKFLOW+'@refs/heads/main',
+                'GITHUB_RUN_ID':'300','GITHUB_RUN_ATTEMPT':'1'}.items():
+        monkeypatch.setenv(k,v)
+    monkeypatch.setattr(safety,'GitHub',lambda:api)
+    monkeypatch.setattr(catalog,'get_client',lambda:client)
+    monkeypatch.setattr(safety,'freshness',lambda *_a,**_k:[])
+    monkeypatch.setattr(safety.sys,'argv',['safety','--health','--work-dir',str(directory)])
+    safety.main()
+    problems = json.loads((directory/'health/cache.json').read_bytes())['problems']
+    assert any('unconfirmed Slack claim >=24 h' in item for item in problems) is (age > 24)
     assert api.posts == []
 
 
-@pytest.mark.parametrize("change", ["wrong-parent", "wrong-attempt", "wrong-workflow", "wrong-event", "manual-title"])
-def test_unrelated_observer_never_suppresses_a_missing_safety_handoff(change):
+@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',38)])
+@pytest.mark.parametrize('status,reason', [('success',''), ('skipped','source fingerprint unchanged'), ('skipped','source unavailable')])
+def test_freshness_separates_unchanged_source_from_missing_data(cadence, days, status, reason):
+    payload = {'latest_release':{'date':stamp(NOW-timedelta(days=365))[:10]},
+               'latest_run':{'status':status,'reason':reason,'date':stamp(NOW-timedelta(days=days-1))[:10]}}
+    assert safety.fresh_activity(payload, cadence, now=NOW) is (status=='success' or reason=='source fingerprint unchanged')
+    payload['latest_run']['date'] = stamp(NOW-timedelta(days=days))[:10]
+    assert not safety.fresh_activity(payload, cadence, now=NOW)
+    payload['updated_at'] = stamp(NOW)  # Schema/metadata repair cannot reset freshness.
+    assert not safety.fresh_activity(payload, cadence, now=NOW)
+
+
+def test_freshness_reads_exact_generations_and_bounds_unapproved_pause():
+    calls=[]
+    class Client:
+        def bucket(self, name):
+            assert name == catalog.DEFAULT_BUCKET
+            return self
+        def blob(self, name):
+            slug=name.removeprefix(indexes.PREFIX).removesuffix('.json')
+            def download(**kwargs):
+                assert kwargs == {'if_generation_match':7}
+                calls.append(slug)
+                return json.dumps({'schema_version':1,'asset_slug':slug,'latest_release':{'date':stamp(NOW)[:10]}, 'releases':[]}).encode()
+            return SimpleNamespace(reload=lambda:None, size=100, generation='7', download_as_bytes=download)
+    def scheduler(job):
+        return {'name':f'projects/shared-datasets-1/locations/us-central1/jobs/{job}', 'state':'PAUSED',
+                'userUpdateTime':stamp(NOW-timedelta(hours=72))}
+    problems=safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses={})
+    assert len(problems)==5 and all('>=72 h' in item for item in problems)
+    assert len(calls)==5
+    pauses={job:{'owner':'jonaraphael','reason':'reviewed maintenance','expires_at':stamp(NOW+timedelta(hours=1))} for job in safety.CRON_ASSETS}
+    assert safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses)==[]
+    pauses['dataset-usage']['expires_at']=stamp(NOW-timedelta(seconds=1))
+    assert len(safety.freshness(Client(), now=NOW, scheduler=scheduler, pauses=pauses))==1
+    with pytest.raises(RuntimeError, match='unavailable'):
+        safety.freshness(Client(), now=NOW, scheduler=lambda _: (_ for _ in ()).throw(RuntimeError('unavailable')))
+
+
+def test_pending_backoff_never_delays_new_execution_or_new_failure(monkeypatch):
+    api=OperationalAPI()
+    monkeypatch.setattr(safety.subprocess, 'check_output', lambda *_a, **_k: '{"status":{}}')
+    source=api.source(101,'deployment-verification.yml',conclusion='success')
+    source['created_at']=stamp(NOW-timedelta(hours=1))
+    api.statuses[99]=[{'created_at':stamp(NOW-timedelta(hours=2)), 'environment_url': 'https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-abcde?project=shared-datasets-1'}]
+    assert not safety.verification_due(api,[source],[99],now=NOW)
+    api.statuses[99][0]['created_at']=stamp(NOW-timedelta(minutes=30))
+    assert safety.verification_due(api,[source],[99],now=NOW)
+    failed={**source,'id':102,'conclusion':'failure'}
+    assert safety.verification_due(api,[source,failed],[99],now=NOW)
+
+
+@pytest.mark.parametrize('filename,cpu_peak,memory_peak', [('eamlis_monthly',2.60,0.96),('mpatlas_monthly',2.32,3.36),('sea_ice_daily',0.92,0.16)])
+def test_resources_retain_cpu_headroom_and_twice_observed_memory_peak(filename,cpu_peak,memory_peak):
+    import hcl2
+    from hcl2.utils import SerializationOptions
+    config=hcl2.loads((incidents.ROOT/'terraform/envs/prod'/f'{filename}.tf').read_text(), serialization_options=SerializationOptions(strip_string_quotes=True))
+    job=next(module[filename+'_job'] for module in config['module'] if filename+'_job' in module)
+    memory=job['memory']
+    gib=float(memory[:-2])/(1024 if memory.endswith('Mi') else 1)
+    assert int(job['cpu']) >= 1.5*cpu_peak and gib >= 2*memory_peak
+    assert gib >= {1:0.5,2:0.5,4:2,6:4,8:4}[int(job['cpu'])]
+
+
+def test_later_main_revision_accepts_only_ancestral_successful_probe_hint(dispatch_context, historical_git_repo):
+    api, environment, event=dispatch_context
+    previous=historical_git_repo.sha
+    api.comparison='ahead'
+    api.runs[200]['head_sha']=previous
+    api.jobs[200][0]['head_sha']=previous
+    safety.validate_safety_dispatch(api,event,environment,workflow=api.current['path'])
+
+
+def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
+    checked=NOW-timedelta(hours=47)
+    payload={'updated_at':stamp(checked),'latest_run':{'date':stamp(checked)[:10],'status':'success'}}
+    assert safety.fresh_activity(payload,'daily',now=NOW)
+    assert not safety.fresh_activity(payload,'daily',now=NOW+timedelta(hours=1))
+
+
+
+def test_health_report_posts_changes_and_daily_reminders_without_changing_problem_identity(tmp_path, monkeypatch):
+    previous = {'problems': [], 'warnings': [], 'notified_at': None}
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    for hour, problems, sends in [(0, ['paused'], 1), (3, ['paused'], 1), (24, ['paused'], 2),
+                                  (25, ['expired', 'paused'], 3), (26, [], 3), (27, ['paused'], 4)]:
+        safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
+        previous = json.loads((tmp_path / 'health/cache.json').read_text())
+        assert previous['problems'] == sorted(problems)
+        assert slack_notify.notify.call_count == sends
+    assert 'paused' in slack_notify.notify.call_args.kwargs['body']
+    assert previous['scope'] == slack_notify.notify.call_args.kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly'])])
+def test_health_cli_captures_read_errors_and_expired_policy_without_red_runs(tmp_path, monkeypatch, failure):
     api = OperationalAPI()
-    add_legacy_failure(api)
-    observer = add_legacy_observer(api)
-    if change == "wrong-parent":
-        observer["display_title"] = "Operational follow-up: safety 999/1"
-    elif change == "wrong-attempt":
-        observer["display_title"] = "Operational follow-up: safety 101/2"
-    elif change == "wrong-workflow":
-        observer["path"] = ".github/workflows/bucket-hygiene-audit.yml"
-    elif change == "wrong-event":
-        observer["event"] = "push"
-    else:
-        observer["display_title"] = "Deployment completion check"
-    assert safety.unadmitted_safety_failures(api, api.current, now=NOW) == [{"id": 101, "run_attempt": 1}]
+    for key, value in {'GITHUB_REPOSITORY': safety.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
+                       'GITHUB_WORKFLOW_REF': safety.REPOSITORY + '/' + safety.WORKFLOW + '@refs/heads/main',
+                       'GITHUB_RUN_ID': '300', 'GITHUB_RUN_ATTEMPT': '1'}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(safety, 'GitHub', lambda: api)
+    monkeypatch.setattr(catalog, 'get_client', lambda: None)
+    monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], ['hold expired']))
+    monkeypatch.setattr(safety, 'freshness', mock.Mock(side_effect=failure))
+    monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
+    (tmp_path / 'result.json').write_text('{"reconcile":false}')
+    (tmp_path / 'claims.json').write_text('[]')
+    safety.main()
+    report = json.loads((tmp_path/'health/cache.json').read_text())
+    assert report['scope'] == safety.HEALTH_SCOPE
+    assert report['problems'] == sorted(['hold expired', f'Health check incomplete (freshness): {type(failure).__name__}: {failure}'])
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: report)
+    safety.main()
+    assert slack_notify.notify.call_count == 1
 
 
-@pytest.mark.parametrize("kind", ["source", "observer"])
-@pytest.mark.parametrize("change", ["branch", "repository", "workflow", "path", "event", "attempt", "head", "title"])
-def test_legacy_handoff_discovery_checks_current_native_attempt_provenance(kind, change):
+@pytest.mark.parametrize('terminal', [{}, {'completionTime': stamp(NOW)}, {'failedCount': 1}, {'cancelledCount': 1}])
+def test_pending_completion_is_probed_before_backoff_and_retry_is_capped(monkeypatch, terminal):
     api = OperationalAPI()
-    source = add_legacy_failure(api)
-    observer = add_legacy_observer(api)
-    identifier = source["id"] if kind == "source" else observer["id"]
-    fresh = copy.deepcopy(api.runs[identifier])
-    api.runs[identifier] = fresh  # Keep the earlier census separate from the fresh GET.
-    if change == "branch":
-        fresh["head_branch"] = "feature"
-    elif change == "repository":
-        fresh["head_repository"]["id"] += 1
-    elif change == "workflow":
-        fresh["workflow_id"] += 1
-    elif change == "path":
-        fresh["path"] = ".github/workflows/ci.yml"
-    elif change == "event":
-        fresh["event"] = "push"
-    elif change == "attempt":
-        fresh["run_attempt"] += 1
-    elif change == "head":
-        fresh["head_sha"] = "invalid"
-    elif kind == "observer":
-        fresh["display_title"] = "Operational follow-up: safety 999/1"
-    else:
-        fresh.update(status="completed", conclusion="success")
-    with pytest.raises(RuntimeError, match="OPERATIONAL_SAFETY"):
-        safety.unadmitted_safety_failures(api, api.current, now=NOW)
-    assert api.posts == []
+    source = api.source(101, 'deployment-verification.yml', conclusion='success')
+    source['created_at'] = stamp(NOW - timedelta(hours=1))
+    api.statuses[99] = [{'created_at': stamp(NOW - timedelta(hours=2)), 'environment_url': 'https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-abcde?project=shared-datasets-1'}]
+    probe = mock.Mock(return_value=json.dumps({'status': terminal}))
+    monkeypatch.setattr(safety.subprocess, 'check_output', probe)
+    assert safety.verification_due(api, [source], [99], now=NOW) is bool(terminal)
+    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=2))
+    assert probe.call_count == 2 and 'wdpa-monthly-abcde' in probe.call_args.args[0]
 
 
-@pytest.mark.parametrize("path", ["/actions/runs?", "/actions/runs/101", "/actions/runs/201"])
-def test_failed_legacy_census_or_native_admission_read_remains_fatal(path):
+def test_health_only_failures_never_create_reconciliation_work_but_infrastructure_failures_do(tmp_path):
     api = OperationalAPI()
-    add_legacy_failure(api)
-    add_legacy_observer(api)
-    api.fail_on = path
-    with pytest.raises(RuntimeError, match="live API unavailable"):
-        safety.unadmitted_safety_failures(api, api.current, now=NOW)
-    assert api.posts == []
+    source = api.source(101, 'operational-safety-check.yml')
+    api.add_source(source)
+    api.jobs[101][0]['steps'] = [{'name': 'Check freshness and stalled operations', 'conclusion': 'failure'}, {'name': 'Retain safety health report', 'conclusion': 'success'}]
+    assert dry(api, tmp_path, [source]) is True
+    api.jobs[101][0]['steps'].pop()
+    assert dry(api, tmp_path, [source]) is False
+    api.jobs[101][0]['steps'] = [{'name': 'actions/checkout@v4', 'conclusion': 'failure'}]
+    assert dry(api, tmp_path, [source]) is False
 
+
+def test_expiry_warns_at_72_hours_and_alerts_afterwards_without_releasing_holds():
+    holds = json.loads((safety.ROOT / safety.INGESTION_ROLLOUT_HOLDS).read_text())
+    expiry = datetime.fromisoformat(next(iter(holds.values()))['expires_at'].replace('Z', '+00:00'))
+    assert len(safety.policy_warnings(expiry - timedelta(hours=75))[0]) == len(holds)
+    warnings, problems = safety.policy_warnings(expiry)
+    assert len(problems) == len(holds) and not warnings
+    assert set(safety.validate_suspensions(holds, now=expiry + timedelta(days=99))) == set(holds)
+
+
+def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():
+    pauses = json.loads((safety.ROOT / '.github/scheduler-pauses.json').read_text())
+    activation = json.loads((safety.ROOT / 'catalog/dataset-usage-activation.json').read_text())
+    assert activation['sources']['gcs_usage']['verified_at'] is None
+    assert pauses['dataset-usage']['owner'] == 'jonaraphael'
+    expiry = datetime.fromisoformat(pauses['dataset-usage']['expires_at'].replace('Z', '+00:00'))
+    assert any('dataset-usage' in item for item in safety.policy_warnings(expiry - timedelta(hours=72))[0])
+
+
+def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
+    import hcl2
+    from workflow_helpers import load_workflow
+    workflow = load_workflow(safety.ROOT/'.github/workflows/operational-safety-check.yml')
+    job = workflow['jobs']['safety']
+    assert 'SHARED_DATASETS_SLACK_WEBHOOK_URL' not in job['env']
+    assert {step.get('name') for step in job['steps'] if 'SHARED_DATASETS_SLACK_WEBHOOK_URL' in step.get('env', {})} == {'Check freshness and stalled operations', 'Report safety failure directly'}
+    config = hcl2.loads((safety.ROOT/'terraform/envs/prod/monitoring.tf').read_text(), serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
+    resources = {name: values for group in config['resource'] for entries in group.values() for name, values in entries.items()}
+    absence = resources['operational_safety_absent']['conditions'][0]['condition_absent'][0]
+    assert absence['duration'] == '25200s' and 'operational_safety_heartbeat' in absence['filter']
+    assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
+    assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
+
+
+def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result_files(tmp_path, monkeypatch):
+    api = OperationalAPI()
+    monkeypatch.setattr(safety, 'GitHub', lambda: api)
+    monkeypatch.setattr(safety.alerts, 'context', lambda *_a, **_k: api.current)
+    monkeypatch.setattr(safety, 'policy_warnings', lambda _: ([], []))
+    monkeypatch.setattr(catalog, 'get_client', lambda: None)
+    monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
+    monkeypatch.setenv('SAFETY_PROBE_OUTCOME', 'failure')
+    monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(tmp_path)])
+    previous = {'problems': [], 'warnings': [], 'notified_at': None}
+    for hour, sends in ((0, 1), (3, 1), (24, 2)):
+        class Clock(datetime):
+            @classmethod
+            def now(cls, _zone):
+                return NOW + timedelta(hours=hour)
+        monkeypatch.setattr(safety, 'datetime', Clock)
+        monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+        safety.main()
+        previous = json.loads((tmp_path / 'health/cache.json').read_text())
+        assert previous['problems'] == ['Operational discovery failure; inspect Check operational work']
+        assert slack_notify.notify.call_count == sends
+    safety.subprocess.check_call.assert_not_called()  # No false success heartbeat.

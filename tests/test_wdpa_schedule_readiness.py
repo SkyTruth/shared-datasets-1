@@ -102,3 +102,27 @@ def test_unverified_receipt_cannot_authorize_resume():
     with patch.object(deployment, "verify_record", side_effect=deployment.DeploymentError("invalid receipt")):
         with pytest.raises(deployment.DeploymentError, match="invalid receipt"):
             readiness.require_ready(api, "SkyTruth/shared-datasets-1", worker(), Mock())
+
+
+@pytest.mark.parametrize('deferred_count', [1, 2])
+def test_signed_deferrals_preserve_last_verified_live_image(deferred_count):
+    api = Mock()
+    deferred = [{'id': RECORD['id'] + n + 1} for n in range(deferred_count)]
+    api.pages.return_value = [RECORD, *deferred]
+    reader = Mock(return_value=execution())
+    with patch.object(deployment, 'verify_record', side_effect=lambda api, repo, record: {
+            **PAYLOAD, 'artifact': IMAGE if record == RECORD else 'registry/new@sha256:' + 'c' * 64}), \
+            patch.object(deployment, 'verified_statuses', side_effect=lambda api, repo, record: [
+                STATUS if record == RECORD else {'state': 'pending', 'description': 'deferred'}]):
+        readiness.require_ready(api, 'SkyTruth/shared-datasets-1', worker(), reader)
+    reader.assert_called_once_with('wdpa-canary')
+
+
+def test_only_deferred_records_cannot_authorize_resume():
+    with pytest.raises(deployment.DeploymentError, match='no .*verified'):
+        check(status={'state': 'pending', 'description': 'deferred'})
+
+
+def test_failed_status_cannot_be_skipped_as_a_deferral():
+    with pytest.raises(deployment.DeploymentError, match='signed verified'):
+        check(status={'state': 'failure', 'description': 'deferred'})

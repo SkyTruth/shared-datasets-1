@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
 COPY scripts/ci_install_tools.py scripts/ci_toolchain.py /opt/ci-source/scripts/
 RUN cd /opt/ci-source && python scripts/ci_install_tools.py --destination /opt/ci \
-    node22 node24 terraform gitleaks actionlint
+    node22 node24 terraform gitleaks actionlint shellcheck
 
 # Lockfile-dependent wheels, including native builds, survive across fresh suite
 # containers. Each suite still installs its own environment with locked sync.

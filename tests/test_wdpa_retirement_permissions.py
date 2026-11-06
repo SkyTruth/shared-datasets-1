@@ -61,7 +61,7 @@ def test_retirement_and_bootstrap_have_disjoint_scopes_and_verified_order():
     assert bootstrap["with"]["block_deletes"] is True
     assert bootstrap["with"]["readiness_target"] == "iam-bootstrap"
     assert bootstrap["with"]["post_apply_wait_seconds"] == 30
-    assert TERRAFORM_SYNCS[bootstrap["with"]["sync_name"]] == "scratch-cleanup-iam-sync.yml"
+    assert TERRAFORM_SYNCS[bootstrap["with"]["sync_name"]]["workflow"] == "scratch-cleanup-iam-sync.yml"
     assert blocked_changes(saved_plan(), allowed_exact=bootstrap_scope, allowed_patterns=[], block_deletes=True)
     outside = copy.deepcopy(saved_plan())
     outside["resource_changes"][-1]["address"] = "module.wdpa_job_service_account.google_service_account.this"

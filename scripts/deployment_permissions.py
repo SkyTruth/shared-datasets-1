@@ -1,79 +1,79 @@
 #!/usr/bin/env python3
-"""Read-only permission probes for the authenticated protected deployer.
-
-Only trusted main runs this code. A grant declared in Terraform is not live
-readiness. Safe permission reads may retry for propagation; mutations never do.
-"""
+"""Probe live protected-deployer authority; retry only idempotent permission reads."""
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 import subprocess
+import ssl
 import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
 
+from scripts.terraform_target_contracts import registry
+
 PROJECT = "shared-datasets-1"
-REGION = "us-central1"
-SECRET = "shared-datasets-slack-webhook-url"
-IMAGE_REPOSITORY = f"projects/{PROJECT}/locations/{REGION}/repositories/shared-datasets-jobs"
-# Docker pushes write image versions and SHA tags; retained-image promotion
-# and digest inspection also read images. All are scoped to the existing
-# repository, with no repository creation/deletion or IAM policy authority.
-# https://docs.cloud.google.com/artifact-registry/docs/docker/pushing-and-pulling
-# https://docs.cloud.google.com/iam/docs/roles-permissions/artifactregistry#artifactregistry.writer
-IMAGE_PERMISSIONS = (
-    "artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts",
-    "artifactregistry.repositories.uploadArtifacts", "artifactregistry.dockerimages.get",
-    "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update",
-)
-PROJECT_PERMISSIONS = (
-    "run.jobs.get", "run.jobs.update", "run.jobs.run", "run.jobs.runWithOverrides",
-    "run.executions.get", "run.executions.list", "run.operations.get",
-)
-BUCKET_PERMISSIONS = ("storage.buckets.get", "storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.list", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy")
-SECRET_PERMISSIONS = (
-    "secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy",
-)
-MONITORING_PERMISSIONS = (
-    "logging.notificationRules.create", "logging.notificationRules.delete",
-    "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete",
-    "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
-    "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
-)
-TERRAFORM_STATE_READ_PERMISSIONS = (
-    "compute.globalAddresses.get", "compute.regionNetworkEndpointGroups.get",
-    "compute.sslCertificates.get", "compute.targetHttpProxies.get",
-    "iam.workloadIdentityPoolProviders.get",
-)
+
+
+def checks(target):
+    """Expand reviewed probe references; unknown targets never inherit authority."""
+    probes = registry(section="permission_probes")
+    def expand(name, ancestors=()):
+        if name in ancestors:
+            raise ValueError("Cyclic deployment permission probes")
+        rows = probes[name]
+        if (not isinstance(rows, list) or not rows or any(
+                not isinstance(row, str) and (not isinstance(row, list) or len(row) != 2
+                or not isinstance(row[0], str) or not row[0].startswith("https://")
+                or not isinstance(row[1], list) or not row[1] or not all(isinstance(p, str) and p for p in row[1])) for row in rows)):
+            raise ValueError("Invalid deployment permission probe")
+        return [check for row in rows
+                for check in (expand(row, (*ancestors, name)) if isinstance(row, str) else [(row[0], tuple(row[1]))])]
+    return expand(target)
+
+
+MONITORING_PERMISSIONS = checks("monitoring-alerts")[0][1]
+PROJECT_PERMISSIONS = checks("job-runtime")[0][1]
+SECRET_PERMISSIONS = checks("translation-bootstrap")[0][1]
+
+
+def read_json(req, *, timeout):
+    """Bounded retries for idempotent Google reads, including permission POSTs."""
+    if req.get_method() not in {"GET", "HEAD"} and not req.full_url.endswith((":testIamPermissions", "/testIamPermissions", ":troubleshoot")):
+        raise ValueError("Deployment read retries cannot execute a mutation")
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.load(response)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError) as error:
+            cause = error.reason if isinstance(error, urllib.error.URLError) else error
+            if attempt == 2 or isinstance(cause, ssl.SSLCertVerificationError) or (
+                    isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600):
+                raise
+            time.sleep(5 * (attempt + 1))
 
 
 def request(url, permissions, token):
     raw = json.dumps({"permissions": list(permissions)}).encode()
     req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            payload = json.load(response)
+        payload = read_json(req, timeout=30)
     except urllib.error.HTTPError as error:
-        # Capture structured Google error diagnostics, never request headers or
-        # an incomplete body that might contain a truncated credential value.
+        # Bound diagnostics to structured Google fields and redact credentials.
         body = error.read(16 * 1024 + 1)
         diagnostic = 'response body unavailable, unstructured or over 16 KiB'
-        if len(body) <= 16 * 1024:
-            try:
-                vendor = json.loads(body)
-            except (ValueError, UnicodeDecodeError):
-                vendor = None
-            if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
-                safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
-                encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
-                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]')[:4096]
+        try:
+            vendor = json.loads(body) if len(body) <= 16 * 1024 else None
+        except ValueError:
+            vendor = None
+        if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
+            safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
+            diagnostic = json.dumps(safe, ensure_ascii=True).replace(json.dumps(token, ensure_ascii=True)[1:-1], '[REDACTED]')[:4096]
         raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
     actual = payload.get("permissions", [])
     if not isinstance(actual, list) or not all(isinstance(value, str) for value in actual):
@@ -81,67 +81,11 @@ def request(url, permissions, token):
     return sorted(set(permissions) - set(actual))
 
 
-def checks(target):
-    secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}:testIamPermissions", SECRET_PERMISSIONS)
-    project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
-    if target == "iam-bootstrap":
-        return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
-    if target == "terraform-state-read":
-        # These reads were denied in the first full state-only plan despite a
-        # successful IAM bootstrap probe. This target covers the shared project;
-        # foreign consumer-account access is outside the current recovery scope.
-        # The full refreshed plan remains authoritative for all other reads.
-        return [(project_url, TERRAFORM_STATE_READ_PERMISSIONS)]
-    if target == "artifact-registry":
-        return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
-    if target == "artifact-registry-images":
-        return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
-    if target == "monitoring-slack-secret":
-        return [(f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/shared-datasets-slack-bot-token:testIamPermissions", ("secretmanager.versions.add",))]
-    if target == "monitoring-alerts":
-        return [(project_url, MONITORING_PERMISSIONS)]
-    if target == "preview-service-account-iam":
-        # The preview WIF binding references the managed GitHub pool, while
-        # its signing binding references a managed custom role. Terraform
-        # refreshes both and their enabled-service dependencies before planning.
-        # The locked Google provider also lists pool attestation rules and
-        # enabled services unconditionally, even when only IAM members target
-        # the pool. Keep the complete read closure bound in the provider fixture.
-        # Test the pool on its actual resource so conditional authority cannot
-        # pass merely because a project-wide permission hint succeeded.
-        # https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools/testIamPermissions
-        pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
-        return [
-            (project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list")),
-            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules")),
-        ]
-    if target == "bucket-iam":
-        expected = ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy")
-        return [("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?" + urlencode([("permissions", value) for value in expected]), expected)]
-    if target in {"pmtiles-cdn", "pmtiles-cdn-bootstrap"}:
-        expected = BUCKET_PERMISSIONS if target == "pmtiles-cdn" else ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy", "storage.buckets.update")
-        bucket = ("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?" + urlencode([("permissions", value) for value in expected]), expected)
-        return [bucket] if target == "pmtiles-cdn" else checks("iam-bootstrap") + [bucket]
-    if target == "catalog-viewer":
-        signing_secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/pmtiles-cdn-signed-request-key:testIamPermissions", SECRET_PERMISSIONS)
-        return [(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", ("run.services.get", "run.services.update", "run.services.getIamPolicy", "run.services.setIamPolicy", "run.operations.get")), signing_secret]
-    if target == "translation-bootstrap":
-        return [secret]
-    if target == "ingestion-iam":
-        job = f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/jobs/eamlis-monthly:testIamPermissions"
-        return checks("iam-bootstrap") + checks("bucket-iam") + [secret, (job, ("run.jobs.getIamPolicy", "run.jobs.setIamPolicy"))]
-    project = (f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", PROJECT_PERMISSIONS)
-    return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
-
-
 def verify_checks(required, probe, *, attempts=7, pause=time.sleep):
-    # Calling Compute testIamPermissions without its list prerequisite returns
-    # 403 before it can report the actual resource-operation permissions. Keep
-    # these phases ordered; success in the first phase cannot satisfy the second.
+    # Probe-call prerequisites must pass before independent resource-operation permission checks.
     for phase, checks in (("permission-probe call", probe_call_checks(required)), ("resource operation", required)):
         for attempt in range(attempts):
-            missing = [(url, probe(url, permissions)) for url, permissions in checks]
-            missing = [(url, permissions) for url, permissions in missing if permissions]
+            missing = [(url, missing) for url, permissions in checks if (missing := probe(url, permissions))]
             if not missing:
                 break
             if attempt + 1 < attempts:
@@ -157,9 +101,16 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "monitoring-slack-secret", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "terraform-state-read", "translation-bootstrap", "mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "wdpa-monthly-build", "sea-ice-daily", "dataset-usage"])
+    parser.add_argument("--target", choices=sorted(registry(section="permission_probes")))
     parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
+    parser.add_argument("--static-base", help="Check changed HCL against apply scopes and permission manifests without credentials")
+    parser.add_argument("--static-head", default="HEAD")
     args = parser.parse_args()
+    if args.static_base:
+        from scripts.terraform_plan_permissions import static_checks
+        static_checks(Path.cwd(), args.static_base, args.static_head)
+        print("Changed HCL apply scopes and permission contracts verified; live IAM and saved plans remain protected checks.")
+        return
     if not (args.target or args.plan_json):
         parser.error("--target or --plan-json is required")
     if args.target == "artifact-registry-images" and args.plan_json:
@@ -174,10 +125,8 @@ def main():
     if not token:
         parser.error("authenticated deployment identity has no access token")
     verify_checks(required, lambda url, permissions: request(url, permissions, token))
-    if args.plan_json:
-        print("Saved-plan mutation permissions and declared post-apply operations verified.")
-    else:
-        print(f"{args.target}: deployment permission prerequisites verified.")
+    print("Saved-plan mutation permissions and declared post-apply operations verified." if args.plan_json
+          else f"{args.target}: deployment permission prerequisites verified.")
 
 
 if __name__ == "__main__":

@@ -1,125 +1,64 @@
 # Job operations
 
-Load only the section for the job being deployed or controlled. Runtime,
-container recipes and processing limits remain in `ingestion/<job>/README.md`.
+[Deployment](../../../../docs/ci-deployment.md) owns the common procedure; each README owns runtime limits.
+[deployment contracts](../../../../docs/deployment-contracts.md#records-receipts-and-runtime-outcomes)
+own canary windows, exact-image verification and signed terminal outcomes.
 
 ## mpatlas-monthly deployment
 
-Follow [the MPAtlas job contract](../../../../ingestion/mpatlas_monthly/README.md).
-Reviewed main changes deploy through `mpatlas-monthly-deploy.yml` after tested
-image, ingestion IAM, registry and cron-monitoring prerequisites. The workflow
-creates/updates its job, scheduler invoker, monthly scheduler and optional
-canonical deny-policy writer exception, consumes
-the retained CI image, runs a waited canary and validates the latest release.
-The job compares raw source SHA-256, then canonical feature hashes against the
-existing published metadata, and publishes only changed content. Verify skipped
-check-ins leave the prior release intact. Do not use a local production apply.
+The [MPAtlas README](../../../../ingestion/mpatlas_monthly/README.md#runtime-and-protected-deployment)
+owns first-install scope and source behavior: job, scheduler invoker, scheduler and optional
+writer deny exception. Confirm unchanged-source check-ins preserve the prior release.
 
 ## eamlis-monthly deployment
 
-Production deploys run through `.github/workflows/eamlis-monthly-deploy.yml`
-in the `shared-datasets-production` environment. Merging reviewed changes that
-touch this job, `ingestion/common/`, the copied `scripts/` modules, or the job
-Terraform routes deployment through successful main CI. The deploy workflow
-uses `scripts/tested_image_authorization.py` to verify and load the exact image
-retained by CI's `production-images` suite, smoke-tests and pushes those bytes
-without rebuilding, pins the immutable registry digest, applies only
-`module.eamlis_monthly_job.google_cloud_run_v2_job.this`,
-runs a waited canary execution, and validates the latest release metadata
-contract plus asset-scoped bucket hygiene. Use the workflow's `canary_run_date`
-dispatch input for a deliberate backfill or metadata-contract repair run. Do
-not deploy this job with a local `terraform apply` or by pushing hand-built
-images.
+The [EAMLIS README](../../../../ingestion/eamlis_monthly/README.md) owns source
+quality/identity installation. A paused schedule defers image preparation/apply unless
+`canary_run_date` is explicit. This runs one canary without resuming cron; unknown Scheduler state fails.
 
-When EAMLIS Scheduler is paused, deployment defers its automatic canary unless
-an explicit `canary_run_date` is supplied. It still verifies the deployed digest
-and existing release contract. This preserves a maintenance pause and avoids
-trying a legacy completed run date after identity activation. It never resumes
-the schedule. Missing or unexpected Scheduler state fails the gate.
+## Schedule pause records
 
-## eamlis-monthly schedule control and teardown
+Record every maintenance pause in [`.github/scheduler-pauses.json`](../../../../.github/scheduler-pauses.json)
+in a reviewed change, keyed by Scheduler job name, with CODEOWNER `owner`, `reason` and bounded
+timezone-qualified `expires_at`. Remove it when resuming.
+[Alert routing](../../../../docs/alert-routing.md#scheduled-freshness-and-capacity)
+owns expiry/absence checks. Deployment holds do not authorize schedule pauses.
 
-Immediate stop:
+Pausing prevents future invocations without draining executions or releasing claims. Preserve jobs, identities, state and data.
+
+Use protected [`ingestion-schedule-control.yml`](../../../../.github/workflows/ingestion-schedule-control.yml)
+from `main` for every registered publisher: `eamlis-monthly`, `wdpa-monthly`,
+`sea-ice-daily` and `mpatlas-monthly`. Follow pause records, then select the job:
 
 ```bash
-gcloud scheduler jobs pause eamlis-monthly \
-  --location=us-central1 \
-  --project=shared-datasets-1
+gh workflow run ingestion-schedule-control.yml --ref main -f job=sea-ice-daily -f action=pause
 ```
 
-Pausing the scheduler stops future automatic monthly runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
-
-## sea-ice-daily schedule control and teardown
-
-Pause future scheduled runs through the protected workflow:
-
-```bash
-gh workflow run ingestion-schedule-control.yml --ref main \
-  -f job=sea-ice-daily \
-  -f action=pause
-```
-
-Wait for the workflow to complete and verify the scheduler is paused. Pausing
-stops future automatic runs but does not cancel an execution already running.
-It preserves the job, identities, Terraform state, and published data.
-
-For permanent teardown, remove the sea-ice resources from Terraform in a
-reviewed PR and summarize a local review plan's resource deletions. The protected
-production workflow must support those exact deletions; if its allowlist does
-not, extend the constrained workflow in the same PR. Apply only after
-`jonaraphael` review and merge to `main`, through the
-`shared-datasets-production` environment. Follow
-[protected Terraform guidance](../../protected-terraform-apply/SKILL.md);
-do not run a local production destroy or apply.
-
-Infrastructure teardown preserves existing GCS releases, latest files, run
-records, README files, and catalog rows. A separately requested canonical
-deletion requires its own immutable reviewed dataset plan.
+Observe terminal control completion and verify the live Scheduler is paused. An approved
+`action=resume` must pass publication gates, EAMLIS identity/source quality and WDPA signed canary
+readiness; code deployment alone cannot clear a hold. Sea-ice automatic resume also requires
+its registered resume option and successful canary, release and hygiene verification.
 
 ## wdpa-monthly deployment
 
-The protected `wdpa-monthly-deploy.yml` loads the exact tested Linux AMD64 image
-retained by successful main CI, verifies its registry/configuration digest and
-applies the allowlisted saved plan. Require ingestion/registry IAM prerequisites,
-installed publication state and no active conflicting worker execution.
-Manual dispatch on `main` requires `executor_sha`, `source_run_id` and
-`source_run_attempt` from the successful main-push CI attempt.
+Use [the monthly runbook](../../../../docs/wdpa-monthly-runbook.md#deploy-code-and-activate-the-schedule)
+for paused-worker activation and explicit current-month canary dates. No monthly acceptance PR,
+pinned bundle or redeployment is required. Never persist `RUN_DATE` or `WDPA_PROMOTION_BUNDLE`
+in the job template. Preserve installed publication state and existing owned claims.
+The worker deployment cannot recreate the retired observer.
 
-The scheduled worker downloads, samples, fully builds, validates and publishes
-the current UTC month. No monthly acceptance PR, pinned bundle or redeployment is
-required. The job template must not set `RUN_DATE` or `WDPA_PROMOTION_BUNDLE`.
-Already completed months and unchanged content produce skipped check-ins.
-Unavailable upstream data is retried at the next scheduled invocation.
+## Dataset usage
 
-Follow the [monthly runbook](../../../../docs/wdpa-monthly-runbook.md) for the
-one-time migration from the paused publisher: protected IAM sync, one protected
-deployment with an explicit canary date, terminal verification, then protected
-schedule resume. A paused schedule without an explicit canary date defers the
-whole deployment before mutation.
-Preserve owned claims, counters, generation preconditions and committed receipts.
-The old manual build workflow is retired; October evidence remains historical.
+The [usage README](../../../../ingestion/dataset_usage/README.md) owns reader-first
+migration, private report verification and cost/source activation. Its wrapper uses the shared executor's
+`usage` plan guard and runtime window. Verify private telemetry; it neither publishes canonical
+releases nor resumes Scheduler by default.
 
-Do not deploy with local production Terraform or a locally pushed image.
-The obsolete catalog observer and its disabled health policy are removed by the
-protected scratch-cleanup retirement. WDPA deployment cannot recreate them.
-WDPA uses shared worker/Scheduler alerts and per-asset release-index check-ins.
+## Permanent infrastructure teardown
 
-## wdpa-monthly schedule control and teardown
-
-Immediate stop:
-
-```bash
-gcloud scheduler jobs pause wdpa-monthly \
-  --location=us-central1 \
-  --project=shared-datasets-1
-```
-
-Pausing stops future automatic monthly runs; it does not drain running
-executions or release publication claims. It preserves the job, identities,
-Terraform state and published data.
-
-Permanent infrastructure teardown requires a reviewed PR and a constrained
-protected production workflow with explicit worker, scheduler and IAM
-allowlists. Do not run a local Terraform destroy/apply or delete dataset releases,
-latest files, run records, README files or catalog rows as part of cost teardown.
+Use [the target-change procedure](../../../../docs/terraform-reconciliation.md#change-a-terraform-or-iam-target)
+with exact worker, Scheduler and IAM deletion scopes in a reviewed PR. Extend the constrained workflow
+if allowlists cannot cover deletion; only protected production applies the approved plan.
+Never run local production destroy/apply. Preserve releases, `latest/`, run records, READMEs and catalog rows.
+Canonical deletion is a separate immutable reviewed
+[dataset-plan operation](../../../../.github/dataset-plans/README.md).

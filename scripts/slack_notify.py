@@ -23,14 +23,8 @@ class SlackNotificationError(RuntimeError):
     """Raised when Slack notification delivery fails."""
 
 
-def build_slack_payload(
-    *,
-    title: str,
-    body: str,
-    status: str = "info",
-    emoji: str | None = None,
-    fields: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
+def build_slack_payload(*, title: str, body: str, status: str = "info", emoji: str | None = None,
+                        fields: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Build a compact Block Kit message payload."""
 
     status_prefix = emoji or {
@@ -45,43 +39,20 @@ def build_slack_payload(
         "decision": "🙋",
     }.get(status, "💡")
     text = f"{status_prefix} {title}\n{body}".strip()
-    blocks: list[dict[str, Any]] = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"{status_prefix} {title}"[:150],
-                "emoji": True,
-            },
-        },
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": body[:3000]},
-        },
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"{status_prefix} {title}"[:150], "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body[:3000]}},
     ]
     if fields:
-        blocks.append(
-            {
-                "type": "section",
-                "fields": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"*{key}*\n{value}",
-                    }
-                    for key, value in fields.items()
-                ][:10],
-            }
-        )
+        blocks.append({"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*{key}*\n{value}"} for key, value in fields.items()
+        ][:10]})
     return {"text": text, "blocks": blocks}
 
 
-def load_webhook_url(
-    *,
-    project_id: str = DEFAULT_PROJECT_ID,
-    secret_id: str | None = None,
-    env: Mapping[str, str] | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> str:
+def load_webhook_url(*, project_id: str = DEFAULT_PROJECT_ID, secret_id: str | None = None,
+                     env: Mapping[str, str] | None = None,
+                     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> str:
     """Load Slack webhook URL from env or Secret Manager via gcloud."""
 
     environ = env or os.environ
@@ -91,17 +62,7 @@ def load_webhook_url(
         raise SlackNotificationError(f"GitHub Actions secret {WEBHOOK_ENV} is not configured")
 
     resolved_secret_id = secret_id or environ.get(SECRET_ENV) or DEFAULT_SECRET_ID
-    command = [
-        "gcloud",
-        "secrets",
-        "versions",
-        "access",
-        "latest",
-        "--secret",
-        resolved_secret_id,
-        "--project",
-        project_id,
-    ]
+    command = ["gcloud", "secrets", "versions", "access", "latest", "--secret", resolved_secret_id, "--project", project_id]
     try:
         result = runner(command, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
@@ -113,21 +74,13 @@ def load_webhook_url(
     return webhook_url
 
 
-def post_webhook(
-    webhook_url: str,
-    payload: Mapping[str, Any],
-    *,
-    opener: Callable[..., Any] = urllib.request.urlopen,
-) -> None:
+def post_webhook(webhook_url: str, payload: Mapping[str, Any], *,
+                 opener: Callable[..., Any] = urllib.request.urlopen) -> None:
     """Post a payload to Slack."""
 
     data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        webhook_url,
-        data=data,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
+    request = urllib.request.Request(webhook_url, data=data,
+        headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
     try:
         with opener(request, timeout=30) as response:
             status = int(getattr(response, "status", response.getcode()))
@@ -137,18 +90,9 @@ def post_webhook(
         raise SlackNotificationError(f"Slack webhook request failed: {exc}") from exc
 
 
-def notify(
-    *,
-    title: str,
-    body: str,
-    status: str = "info",
-    emoji: str | None = None,
-    fields: Mapping[str, Any] | None = None,
-    webhook_url: str | None = None,
-    project_id: str = DEFAULT_PROJECT_ID,
-    dry_run: bool = False,
-    strict: bool = False,
-) -> bool:
+def notify(*, title: str, body: str, status: str = "info", emoji: str | None = None,
+           fields: Mapping[str, Any] | None = None, webhook_url: str | None = None,
+           project_id: str = DEFAULT_PROJECT_ID, dry_run: bool = False, strict: bool = False) -> bool:
     """Send a Slack message, returning False on best-effort delivery failures."""
 
     payload = build_slack_payload(title=title, body=body, status=status, emoji=emoji, fields=fields)

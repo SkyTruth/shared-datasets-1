@@ -16,40 +16,34 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
-from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
+from scripts.deployment_revision import TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS
 from scripts import cdn_plan_readiness as cdn
+from scripts import terraform_target_contracts as terraform_targets
+from scripts.terraform_target_contracts import workflow
 
-DEPLOYS = {"mpatlas": "mpatlas-monthly", "wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
+DEPLOYS = {config["selection"].replace("_", "-"): target for target, config in INGESTION_CONFIGS.items()}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
-    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml",
+    "prod-terraform-target-apply.yml", "ingestion-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
-    "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
-    "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
+    "ingestion-deploy.yml",
+    "catalog-viewer-deploy.yml",
 )
 
 
-def workflow(root, name):
-    return yaml.safe_load((root / ".github/workflows" / name).read_text())
+def role_permissions(root, filename, name, *, revision=None):
+    return set(terraform_targets.resource_index(root, revision)['terraform/envs/prod/' + filename].get(
+        'google_project_iam_custom_role.' + name, {}).get('permissions', []))
 
 
-def role_permissions(text, name):
-    match = re.search(r'resource "google_project_iam_custom_role" "' + re.escape(name) + r'"\s*\{(.*?)\n\}', text, re.S)
-    if not match:
-        return set()
-    permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
-    return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
-
-
-def saved_plan_permission_contract(root):
+def saved_plan_permission_contract(root, filenames=PLAN_PROBE_WORKFLOWS):
     """Every automatic protected apply must check that saved plan's operations."""
     errors = []
     path = r'''["']?([^\s"']+\.%s)["']?'''
@@ -58,24 +52,35 @@ def saved_plan_permission_contract(root):
     apply = re.compile(r"(?:terraform_retry\.sh|\bterraform\b).*\sapply(?:\s|$)")
     binary = re.compile(path % "tfplan")
     target = re.compile(r'''--target\s+["']?([^\s"']+)["']?''')
-    for filename in PLAN_PROBE_WORKFLOWS:
+    bootstrap_guard = re.compile(r"cdn_plan_readiness\.py\s+check-bootstrap\s+--plan-json\s+" + path % "json")
+    for filename in filenames:
         applies = 0
         for job in workflow(root, filename)["jobs"].values():
-            saved, checked = {}, set()
-            for step in job.get("steps", []):
+            saved, checked, role_plans, guarded = {}, set(), set(), set()
+            for step in receipts.expanded_steps(root, job):
                 run = re.sub(r"\$\{([A-Z_]+)\}", r"$\1", step.get("run", "").replace("\\\n", " "))
                 for line in run.splitlines():
+                    if '-target=' + cdn.ROLE_ADDRESS in line:
+                        role_plans.update(binary.findall(run))
                     rendered = show.search(line)
                     if rendered:
                         saved[rendered[1]] = rendered[2]
                         checked.discard(rendered[2])  # A newly rendered plan invalidates an earlier probe.
+                        guarded.discard(rendered[2])
                     tested = probe.search(line)
-                    if tested and target.search(line) and str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}:
+                    guard = bootstrap_guard.search(line)
+                    if guard and receipts.enabled(step) and not step.get('continue-on-error'):
+                        guarded.add(guard[1])
+                    if tested and target.search(line) and receipts.enabled(step) and not step.get("continue-on-error"):
                         selected = target.search(line)[1]
                         # Cache invalidation is a post-apply operation and must
                         # remain in the CDN plan contract, even on no-change plans.
-                        if filename != "pmtiles-cdn-sync.yml" or not tested[1].endswith("/pmtiles-cdn-sync.tfplan.json") or selected == "pmtiles-cdn":
+                        if (filename != "pmtiles-cdn-sync.yml" or selected == "pmtiles-cdn"
+                                or tested[1] in guarded and tested[1] in {saved.get(plan) for plan in role_plans}):
                             checked.add(tested[1])
+                    if filename == "pmtiles-cdn-sync.yml" and receipts.command({'run': line}, 'start'):
+                        if len(role_plans) != 1 or not any(saved.get(plan) in guarded & checked for plan in role_plans):
+                            errors.append('CDN exact role guard and saved-plan permissions must precede the signed claim')
                     if apply.search(line):
                         applies += 1
                         candidate = binary.search(line)
@@ -94,8 +99,8 @@ def image_permission_contract(root):
         pushes = 0
         for job in workflow(root, filename)["jobs"].values():
             checked = False
-            for step in job.get("steps", []):
-                enabled = str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}
+            for step in receipts.expanded_steps(root, job):
+                enabled = receipts.enabled(step) and not step.get("continue-on-error")
                 for line in step.get("run", "").replace("\\\n", " ").splitlines():
                     if enabled and probe.fullmatch(line):
                         checked = True
@@ -113,38 +118,17 @@ def image_permission_contract(root):
 
 
 def iam_contract(root):
+    terraform_targets.resource_index.cache_clear()
     errors = []
+    syncs = {name: item['workflow'] for name, item in terraform_targets.registry(root).items()}
     errors += cdn.bootstrap_definition_errors((root / 'terraform/envs/prod/shared_bucket_public.tf').read_text())
-    cdn_workflow = workflow(root, 'pmtiles-cdn-sync.yml')
     errors += cdn.routing_contract_errors(root)
-    cdn_steps = {step.get('name'): step for step in cdn_workflow['jobs']['sync']['steps']}
-    bootstrap = cdn_steps.get('Terraform plan PMTiles managed-folder IAM bootstrap', {}).get('run', '')
-    if '-target=' + cdn.ROLE_ADDRESS not in bootstrap:
-        errors.append('CDN bootstrap must target the exact existing URL-map role')
-    guard = cdn_steps.get('Enforce PMTiles managed-folder IAM bootstrap allowlist', {})
-    expected = 'python scripts/cdn_plan_readiness.py check-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"'
-    if guard.get('run') != expected or guard.get('if') != "steps.replay.outputs.proceed == 'true'":
-        errors.append('CDN bootstrap must enforce exact role adoption on its saved plan')
-    ordered = [
-        'Export PMTiles managed-folder IAM bootstrap plan JSON',
-        'Enforce PMTiles managed-folder IAM bootstrap allowlist',
-        'Verify permissions required by the saved CDN bootstrap plan',
-        'Record serialized CDN deployment attempt',
-        'Attest serialized deployment claim before mutation',
-        'Terraform apply PMTiles managed-folder IAM bootstrap',
-    ]
-    names = [step.get('name') for step in cdn_workflow['jobs']['sync']['steps']]
-    if any(names.count(name) != 1 for name in ordered) or sorted(names.index(name) for name in ordered if name in names) != [names.index(name) for name in ordered if name in names]:
-        errors.append('CDN exact role guard must follow saved-plan export and precede permissions, signed claim and bootstrap apply')
-    exported = cdn_steps.get(ordered[0], {}).get('run')
-    if exported != 'terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"':
-        errors.append('CDN role guard must consume JSON exported from the exact saved bootstrap plan')
+    errors += saved_plan_permission_contract(root, ('pmtiles-cdn-sync.yml',))
     for path in (root / '.github/workflows').glob('*.yml'):
         if path.name != 'pmtiles-cdn-sync.yml' and cdn.ROLE_ADDRESS in path.read_text():
             errors.append(f'{path.name}: URL-map role adoption belongs only to the constrained CDN bootstrap')
-    text = (root / "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf").read_text()
     for role, expected in (("scheduled_ingestion_deployer", PROJECT_PERMISSIONS), ("translation_notice_iam_manager", SECRET_PERMISSIONS)):
-        missing = set(expected) - role_permissions(text, role)
+        missing = set(expected) - role_permissions(root, "scheduled_ingestion_deploy_iam.tf", role)
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     iam = workflow(root, "scheduled-ingestion-deploy-iam-sync.yml")["jobs"]
@@ -155,8 +139,7 @@ def iam_contract(root):
         errors.append("translation secret authority has no explicit bootstrap target")
     if iam["sync"].get("with", {}).get("readiness_target") != "ingestion-iam":
         errors.append("runtime grants must verify live secret permission readiness after bootstrap")
-    monitoring = (root / "terraform/envs/prod/monitoring_alert_policy_iam.tf").read_text()
-    missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
+    missing = set(MONITORING_PERMISSIONS) - role_permissions(root, "monitoring_alert_policy_iam.tf", "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
     for filename, role, expected in (
@@ -164,15 +147,16 @@ def iam_contract(root):
         ("preview_terraform_iam.tf", "preview_terraform", {"iam.serviceAccounts.actAs", "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.update", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}),
         ("shared_bucket_public.tf", "pmtiles_managed_folder_sync", {"storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy"}),
     ):
-        missing = expected - role_permissions((root / "terraform/envs/prod" / filename).read_text(), role)
+        missing = expected - role_permissions(root, filename, role)
         if missing:
             errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")
+    errors += receipts.terraform_boundary(generic)
     required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
-    for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
+    for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "sync_name"):
         if not required[key].get("required"):
             errors.append(f"generic Terraform apply must require {key}")
-    for filename in sorted(set(TERRAFORM_SYNCS.values())):
+    for filename in sorted(set(syncs.values())):
         caller = workflow(root, filename)
         triggers = caller.get("on", caller.get(True))
         if set(triggers) != {"workflow_call", "workflow_dispatch"}:
@@ -183,7 +167,7 @@ def iam_contract(root):
                     errors.append(f"{filename}/{name}: unregistered inline deployment")
                 continue
             inputs = job["with"]
-            if inputs.get("caller_workflow") != filename or TERRAFORM_SYNCS.get(inputs["sync_name"]) != filename:
+            if inputs.get("caller_workflow") != filename or syncs.get(inputs["sync_name"]) != filename:
                 errors.append(f"{filename}/{name}: target does not belong to its trusted caller")
             if not inputs.get("readiness_target"):
                 errors.append(f"{filename}/{name}: live permission prerequisite is missing")
@@ -191,7 +175,8 @@ def iam_contract(root):
                 if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
                     errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
     for filename, child, parents in (
-        ("artifact-registry-iam-sync.yml", "writer", "bootstrap"),
+        ("artifact-registry-iam-sync.yml", "identities", "bootstrap"),
+        ("artifact-registry-iam-sync.yml", "writer", ["bootstrap", "identities"]),
         ("cron-alert-policy-sync.yml", "resources", "bootstrap"),
         ("cron-alert-policy-sync.yml", "sync", ["bootstrap", "resources"]),
         ("preview-terraform-iam-sync.yml", "sync", "bootstrap"),
@@ -202,32 +187,49 @@ def iam_contract(root):
 
 
 def deployment_contract(root, target):
-    name = DEPLOYS[target] + "-deploy.yml"
+    name = INGESTION_CONFIGS[DEPLOYS[target]]["workflow"]
     value = workflow(root, name)
     triggers = value.get("on", value.get(True, {}))
     errors = []
     if "push" in triggers or "pull_request" in triggers or "workflow_call" not in triggers:
         errors.append(f"{name}: automatic deployment must be called after ci-ready")
-    job = value["jobs"]["deploy"]
-    if job.get("environment") != "shared-datasets-production" or job.get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
+    caller = value["jobs"]["deploy"]
+    if caller.get("uses") != "./.github/workflows/ingestion-deploy.yml" or caller.get("with", {}).get("target") != DEPLOYS[target]:
+        return [f"{name}: registered target must call the shared ingestion executor"]
+    for key in ("executor_sha", "source_run_id", "source_run_attempt"):
+        if caller.get("with", {}).get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
+            errors.append(f"{name}: exact tested {key} must be required and forwarded")
+    shared = workflow(root, "ingestion-deploy.yml")
+    jobs = shared["jobs"]
+    if INGESTION_CONFIGS[DEPLOYS[target]]["plan_guard"] == "usage":
+        guards = [step for step in jobs["apply"]["steps"] if "scripts/dataset_usage_deploy.py --plan-json" in step.get("run", "")]
+        if (len(guards) != 1 or guards[0].get("continue-on-error")
+                or guards[0].get("if") != "steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'"):
+            errors.append(f"{name}: usage telemetry saved-plan guard must gate deployment")
+    if jobs["apply"].get("concurrency") != {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False}:
         errors.append(f"{name}: protected serialized production job required")
-    steps = {s.get("name"): s for s in job["steps"]}
-    checkout = steps.get("Check out repository", {}).get("with", {})
-    if checkout.get("ref") != "${{ inputs.executor_sha }}" or checkout.get("fetch-depth") != 0:
-        errors.append(f"{name}: exact executor SHA and complete history required")
-    order = list(steps)
-    bootstrap = steps.get("Check out trusted verifier", {}).get("with", {})
-    if bootstrap.get("ref") != "${{ github.workflow_sha }}" or bootstrap.get("fetch-depth") != 0:
-        errors.append(f"{name}: verifier must originate from immutable trusted main workflow code")
-    if "--bootstrap" not in steps.get("Verify executor before candidate checkout", {}).get("run", ""):
-        errors.append(f"{name}: candidate authorization must execute trusted bootstrap code")
-    for prerequisite, consumer in (("Verify executor before candidate checkout", "Check out repository"), ("Verify tested main revision", "Authenticate to Google Cloud"), ("Check prior deployment before rebuilding", "Authenticate to Google Cloud"), ("Check runtime verification window", "Configure Docker for Artifact Registry"), ("Verify live deployment permissions", "Claim tested deployment revision"), ("Claim tested deployment revision", "Terraform apply")):
-        if prerequisite not in order or consumer not in order or order.index(prerequisite) >= order.index(consumer):
-            errors.append(f"{name}: {prerequisite} must precede {consumer}")
+    for job in jobs.values():
+        if job.get("environment") != "shared-datasets-production":
+            errors.append(f"{name}: protected production job required")
+        bootstraps = [step for step in job.get("steps", []) if step.get("uses") == receipts.BOOTSTRAP]
+        if len(bootstraps) != 1 or any(key in bootstraps[0] for key in ("if", "continue-on-error")) or bootstraps[0].get("with") != {
+            "workflow": "${{ env.WORKFLOW_FILE }}", "executor-sha": "${{ inputs.executor_sha }}",
+            "source-run-id": "${{ inputs.source_run_id }}", "source-run-attempt": "${{ inputs.source_run_attempt }}",
+        }:
+            errors.append(f"{name}: exact unconditional trusted bootstrap required")
+        steps = job.get("steps", [])
+        checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        checkout = checkouts[0] if len(checkouts) == 1 else {}
+        if (not checkout.get("uses", "").startswith("actions/checkout@")
+                or checkout.get("with", {}).get("ref") != "${{ github.workflow_sha }}"
+                or checkout.get("with", {}).get("fetch-depth") != 0
+                or "if" in checkout or checkout.get("continue-on-error")
+                or bootstraps and steps.index(checkout) >= steps.index(bootstraps[0])):
+            errors.append(f"{name}: unconditional trusted main workflow checkout with complete history required")
+        if bootstraps and any(receipts.mutations(step)[1] or step.get("uses", "").startswith("google-github-actions/auth@")
+                              for step in receipts.expanded_steps(root, {"steps": steps[:steps.index(bootstraps[0])]})):
+            errors.append(f"{name}: trusted bootstrap must precede authentication and mutation")
     if target == "wdpa":
-        loader = steps.get("Load exact tested wdpa-monthly image", {})
-        if "tested_image_authorization.py --workflow wdpa-monthly-deploy.yml --target wdpa-monthly" not in loader.get("run", ""):
-            errors.append(f"{name}: WDPA must deploy the exact CI-tested producer")
         tf = (root / "terraform/envs/prod/wdpa_monthly.tf").read_text()
         if "WDPA_PROMOTION_BUNDLE" in tf or re.search(r"(?m)^\s*RUN_DATE\s*=", tf):
             errors.append("WDPA scheduler must not pin a monthly bundle or calendar date")
@@ -304,11 +306,11 @@ def check(root, targets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "mpatlas", "wdpa", "wdpa-history", "eamlis", "sea-ice", "iam", "dataset-usage"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", *DEPLOYS, "wdpa-history", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"mpatlas", "wdpa", "eamlis", "sea-ice", "iam", "dataset-usage"}
+        targets = {*DEPLOYS, "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

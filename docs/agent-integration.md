@@ -14,47 +14,31 @@ an explicit handoff; do not invent a second owner or an indefinite automatic wai
 
 ## Final boundary
 
-1. Before publication builds or validation cycles, complete the decision
-   inventory for every declared asset/partition using
-   [publication readiness](publication-readiness.md). Batch the human choices,
-   preserve reusable analysis, and check runtime/report boundaries cheaply.
-   During editing, run focused checks for the changed behavior and its negative
-   controls. Verify tools and external prerequisites with cheap read-only probes.
-   Keep full preflight for the final boundary. An explicitly requested early
-   checkpoint remains provisional and cannot replace final validation.
-2. Finish known prerequisites and reconcile overlapping changes. Fetch current
-   main and perform any main merge required by strict branch checks **before**
-   final preflight. Commit only task files, then freeze that checkout and head.
-   Do not start a second preflight or keep editing while the first is running.
-3. Run the complete clean-checkout command in `docs/ci-preflight.md` against the
-   exact committed head and current main. Its local kernel slot admits one full
-   driver per user/host. A busy result fails before expensive work; inspect the
-   named owner rather than running a polling or automatic retry loop. Different
-   task work directories do not create additional slots. Focused checks remain
-   available while another owner validates.
-4. Inspect the final evidence and recheck remote main, source head and cleanliness
-   before push. If any required identity changed, resolve it and rerun complete
-   preflight. An unchanged qualifying completed run need not be repeated solely
-   to prepare a PR body or wait for hosted checks. Record its exact evidence path;
-   local evidence is never a hosted pass or a review/deployment authorization.
-5. Push the final revision once. Read-only PR-body/evidence updates need no code
-   push. Wait for required hosted checks on that head and current base. The
-   workflow cancels obsolete PR graphs together; main runs and dispatches retain
-   independent evidence. Do not manufacture a push to recover an external outage.
-6. Only the authorized integration owner may perform a normal merge, with the
-   exact head guard, required checks and review boundaries intact. This runbook
-   does not grant merge authority. Observe main CI and any separately authorized
-   deployment/incident reconciliation as distinct terminal outcomes.
+Use [validation before push](ci-preflight.md#validate-before-push) as the single
+ordered checklist. Before handing a frozen head to that procedure, the
+integration owner must finish prerequisites, reconcile overlapping changes and
+perform any authorized current-main merge required by strict checks. Complete
+[publication readiness](publication-readiness.md) before expensive publication
+builds/validation; an early checkpoint stays provisional.
+
+The local full-preflight slot is exclusive across worktrees. A busy result is a
+coordination failure: inspect the named owner and use focused checks elsewhere,
+without polling/retry loops or editing the validating checkout. Different task
+work directories do not create extra slots. The
+[preflight isolation contract](ci-preflight.md#isolation-and-tools) owns lock
+release and surviving process-owned Docker work after interruption.
+
+Only the authorized integration owner may merge with the exact head guard,
+required checks and review boundaries intact. This guide grants no merge
+authority. Observe main CI and any separately authorized deployment/incident
+reconciliation as distinct terminal outcomes. Read-only evidence/PR-body updates
+need no new commit or hosted run when qualifying validation remains unchanged.
 
 ## Failure and follow-up ownership
 
-Classify the failed boundary before retrying. Reproducible tests, missing
-prerequisites, denied authority, stale evidence and incompatible contracts need
-repair. For transient read-only CI failures, the same owner may retry only failed
-jobs on the live revision. Bound recovery to two additional attempts, with
-15-minute then 60-minute cooldowns (or a longer provider interval). If the same
-outage repeats, wait for new recovery evidence rather than spending the remaining
-budget automatically. Never increase retries to defeat throttling.
+Follow [CI/deployment recovery](ci-recovery.md) for classification and the
+single bounded retry policy. Reproducible defects, missing prerequisites,
+denied authority and stale evidence require repair, not unchanged reruns.
 
 A requested follow-up belongs to the existing owner. Store its PR number,
 prerequisites, purpose, terminal condition and retry budget. On each wake, read
@@ -63,14 +47,6 @@ Stay quiet while prerequisites are unchanged. Stop acting when the PR is merged,
 closed or superseded, and disable its own completed schedule when authorized.
 Never mutate an unrelated automation. A new commit invalidates old validation;
 it is not a reason to retry the old run.
-
-The kernel releases the local slot on normal failure, cancellation and process
-death. A stale PID record never blocks a new owner, and no TTL or lock-file
-deletion is needed. A crash may leave Docker processes or containers behind:
-the recovery owner inspects exact surviving work before another heavy run and
-cleans up only process-owned resources within existing authorization. The slot
-does not claim to coordinate legacy checkouts, direct Docker commands, other
-users or other hosts.
 
 ## Preserved boundaries
 
@@ -81,5 +57,5 @@ Full-history checks, native fixtures, Node 22/24, browser no-skips/no-retries,
 exact tested images and protected deployment authorization remain required.
 Test selection and deployment selection are separate contracts.
 
-See the [October investigation](ci-validation-investigation-2026-10-09.md) for
+See the [October investigation](history/ci-validation-investigation-2026-10-09.md) for
 the historical trace, measurements and deliberately deferred work.

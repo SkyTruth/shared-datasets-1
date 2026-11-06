@@ -135,12 +135,6 @@ WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS = (
     "Promote staged object manually",
     "github.event.inputs.pr_number == ''",
 )
-FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS = (
-    "PREVIEW_REF: ${{ github.ref_name }}",
-    "PREVIEW_SOURCE_REF: ${{ github.ref }}",
-    "ref: ${{ github.ref }}",
-    "Select the branch or tag to deploy from the workflow branch dropdown.",
-)
 # Match the direct CLI and the repo-owned wrapper, including quoted paths.
 # Inspect execution steps, never workflow-wide comments or unrelated jobs.
 TERRAFORM_COMMAND_RE = re.compile(
@@ -168,14 +162,8 @@ class GuardrailError(ValueError):
 
 
 def run_git(args: Sequence[str], *, repo_root: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo_root,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    return subprocess.run(["git", *args], cwd=repo_root, check=False, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def git_changed_files(base: str, head: str, *, repo_root: Path) -> list[ChangedFile]:
@@ -238,16 +226,6 @@ def changed_catalog_slugs(base_text: str | None, head_text: str | None) -> set[s
     return {slug for slug in slugs if base.get(slug) != head.get(slug)}
 
 
-def changed_asset_doc_slugs(changes: Sequence[ChangedFile]) -> set[str]:
-    slugs: set[str] = set()
-    for change in changes:
-        for path in (change.path, change.old_path):
-            match = ASSET_DOC_RE.fullmatch(path or "")
-            if match:
-                slugs.add(match.group(1))
-    return slugs
-
-
 def check_catalog_csv_source(changes: Sequence[ChangedFile], *, base: str, head: str, repo_root: Path) -> list[str]:
     if not any(change.path == CATALOG_PATH or change.old_path == CATALOG_PATH for change in changes):
         return []
@@ -255,7 +233,8 @@ def check_catalog_csv_source(changes: Sequence[ChangedFile], *, base: str, head:
         git_show(base, CATALOG_PATH, repo_root=repo_root),
         git_show(head, CATALOG_PATH, repo_root=repo_root),
     )
-    doc_slugs = changed_asset_doc_slugs(changes)
+    doc_slugs = {match[1] for change in changes for path in (change.path, change.old_path)
+                 if (match := ASSET_DOC_RE.fullmatch(path or ""))}
     if not catalog_slugs:
         return [
             f"{CATALOG_PATH} changed without row-level asset metadata changes; update docs/assets/*.md and regenerate instead."
@@ -315,10 +294,6 @@ def check_approved_formats(*, base: str, head: str, repo_root: Path, labels: set
     ]
 
 
-def changed_paths(changes: Sequence[ChangedFile]) -> set[str]:
-    return {path for change in changes for path in (change.path, change.old_path) if path}
-
-
 def file_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -335,7 +310,7 @@ def check_second_iac_framework(
     if has_label(labels, "iac_framework"):
         return []
     matches: list[str] = []
-    for path in sorted(changed_paths(changes)):
+    for path in sorted({path for change in changes for path in (change.path, change.old_path) if path}):
         if SECOND_IAC_PATH_RE.search(path):
             matches.append(path)
             continue
@@ -354,17 +329,6 @@ def check_second_iac_framework(
     ]
 
 
-def production_ingestion_jobs(repo_root: Path) -> list[str]:
-    jobs: list[str] = []
-    ingestion_root = repo_root / "ingestion"
-    for path in sorted(ingestion_root.iterdir()):
-        if path.name in INGESTION_JOB_EXCLUDES or not path.is_dir():
-            continue
-        if (path / "run.py").exists() and (path / "README.md").exists():
-            jobs.append(path.name)
-    return jobs
-
-
 def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for run_path in sorted((repo_root / "ingestion").rglob("*.py")):
@@ -380,7 +344,10 @@ def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
 
 def check_ingestion_skip_tests(repo_root: Path) -> list[str]:
     errors: list[str] = []
-    for job in production_ingestion_jobs(repo_root):
+    for path in sorted((repo_root / "ingestion").iterdir()):
+        if path.name in INGESTION_JOB_EXCLUDES or not path.is_dir() or not (path / "run.py").exists() or not (path / "README.md").exists():
+            continue
+        job = path.name
         if job in NON_PUBLISHING_JOBS:
             # This observational worker publishes health/report snapshots every
             # day and cannot follow unchanged dataset-release skip semantics.
@@ -396,16 +363,12 @@ def check_ingestion_skip_tests(repo_root: Path) -> list[str]:
     return errors
 
 
-def tracked_files(repo_root: Path) -> list[str]:
+def check_secrets(repo_root: Path) -> list[str]:
+    errors: list[str] = []
     result = run_git(["ls-files"], repo_root=repo_root)
     if result.returncode != 0:
         raise GuardrailError(f"git ls-files failed: {result.stderr.strip()}")
-    return [line for line in result.stdout.splitlines() if line]
-
-
-def check_secrets(repo_root: Path) -> list[str]:
-    errors: list[str] = []
-    for path in tracked_files(repo_root):
+    for path in filter(None, result.stdout.splitlines()):
         if SECRET_FILE_RE.search(path) and not SECRET_FILE_ALLOW_RE.search(path):
             errors.append(f"{path}: tracked credential-like file is not allowed")
             continue
@@ -433,16 +396,10 @@ def check_terraform_static(repo_root: Path) -> list[str]:
     return errors
 
 
-def terraform_apply_guidance_paths(repo_root: Path) -> list[Path]:
-    paths: set[Path] = set()
-    for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS:
-        paths.update(path for path in repo_root.glob(pattern) if path.is_file())
-    return sorted(paths)
-
-
 def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
     errors: list[str] = []
-    for path in terraform_apply_guidance_paths(repo_root):
+    for path in sorted({path for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS
+                        for path in repo_root.glob(pattern) if path.is_file()}):
         text = file_text(path)
         if not text:
             continue
@@ -555,10 +512,7 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
         uses_gcp_auth = any(marker in text for marker in WORKFLOW_GCP_AUTH_MARKERS)
         if uses_gcp_auth and "workflow_dispatch:" in text:
             has_immutable_main_bootstrap = has_guarded_main_workflow_checkout(workflow, rel.as_posix())
-            allows_dropdown_preview_ref = rel.as_posix() == ".github/workflows/feature-preview-deploy.yml" and all(
-                marker in text for marker in FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS
-            )
-            if WORKFLOW_MAIN_REF_GUARD not in text and not allows_dropdown_preview_ref and not has_immutable_main_bootstrap:
+            if WORKFLOW_MAIN_REF_GUARD not in text and not has_immutable_main_bootstrap:
                 errors.append(f"{rel}: GCP-auth workflow_dispatch paths must validate refs/heads/main")
             if not any(marker in text for marker in WORKFLOW_TRUSTED_CHECKOUT_MARKERS) and not has_immutable_main_bootstrap:
                 errors.append(
@@ -629,24 +583,17 @@ def check_diff(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
     changes = git_changed_files(args.base, args.head, repo_root=repo_root)
     labels = labels_from_event(args.event_path)
-    errors: list[str] = []
-    errors.extend(check_catalog_csv_source(changes, base=args.base, head=args.head, repo_root=repo_root))
-    errors.extend(check_top_level_categories(base=args.base, head=args.head, repo_root=repo_root, labels=labels))
-    errors.extend(check_approved_formats(base=args.base, head=args.head, repo_root=repo_root, labels=labels))
-    errors.extend(check_second_iac_framework(changes, repo_root=repo_root, labels=labels))
-    return errors
+    return [*check_catalog_csv_source(changes, base=args.base, head=args.head, repo_root=repo_root),
+            *check_top_level_categories(base=args.base, head=args.head, repo_root=repo_root, labels=labels),
+            *check_approved_formats(base=args.base, head=args.head, repo_root=repo_root, labels=labels),
+            *check_second_iac_framework(changes, repo_root=repo_root, labels=labels)]
 
 
 def check_static(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
-    errors: list[str] = []
-    errors.extend(check_ingestion_no_gcs_deletes(repo_root))
-    errors.extend(check_ingestion_skip_tests(repo_root))
-    errors.extend(check_secrets(repo_root))
-    errors.extend(check_terraform_static(repo_root))
-    errors.extend(check_no_local_terraform_apply_guidance(repo_root))
-    errors.extend(check_workflow_boundaries(repo_root))
-    return errors
+    return [*check_ingestion_no_gcs_deletes(repo_root), *check_ingestion_skip_tests(repo_root),
+            *check_secrets(repo_root), *check_terraform_static(repo_root),
+            *check_no_local_terraform_apply_guidance(repo_root), *check_workflow_boundaries(repo_root)]
 
 
 def report(errors: Iterable[str]) -> int:

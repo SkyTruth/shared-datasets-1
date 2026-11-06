@@ -8,6 +8,8 @@ import urllib.request
 
 
 def job_name(suite: str) -> str:
+    if suite.startswith("production-images-"):
+        return f"production-images ({suite.removeprefix('production-images-')})"
     if suite in {"sdk-node22", "sdk-node24"}:
         return f"sdk-validation (Node {suite.removeprefix('sdk-node')})"
     return suite

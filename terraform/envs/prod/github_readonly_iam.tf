@@ -8,16 +8,16 @@ resource "google_iam_workload_identity_pool_provider" "github_readonly" {
   disabled                           = false
 
   attribute_mapping = {
-    "google.subject"             = "assertion.sub"
-    "attribute.actor"            = "assertion.actor"
-    "attribute.repository"       = "assertion.repository"
-    "attribute.repository_owner" = "assertion.repository_owner"
-    "attribute.workflow"         = "assertion.workflow"
+    "google.subject"          = "assertion.sub"
+    "attribute.bucket_reader" = "'allowed'"
   }
 
   attribute_condition = join(" && ", [
     "assertion.repository == '${var.github_repository}'",
-    "(assertion.workflow == 'Catalog drift guard' || assertion.workflow == 'Bucket hygiene audit' || assertion.workflow == 'Dataset breaking change alert')",
+    "(${join(" || ", [
+      "(assertion.ref == 'refs/heads/main' && ${local.github_job_workflow_ref} in ${jsonencode([for workflow in local.github_workflow_identities.bucket_reader : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main" if workflow != "dataset-breaking-change-alert.yml"])})",
+      "(assertion.event_name == 'pull_request' && assertion.ref.matches('^refs/pull/[0-9]+/merge$') && assertion.workflow_ref == ${local.github_job_workflow_ref} && assertion.workflow_ref == '${var.github_repository}/.github/workflows/dataset-breaking-change-alert.yml@' + assertion.ref)",
+    ])})",
   ])
 
   oidc {
@@ -38,13 +38,18 @@ module "github_readonly_service_account" {
 resource "google_service_account_iam_member" "github_readonly_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.github_readonly_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.bucket_reader/allowed"
 }
 
 resource "google_storage_bucket_iam_member" "github_readonly_object_viewer" {
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
   member = module.github_readonly_service_account.member
+
+  condition {
+    title      = "advisory_and_audit_objects"
+    expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.canonical_mutation_publisher_condition}) || (${local.pending_publish_source_condition})"
+  }
 
   depends_on = [google_storage_bucket.shared_bucket]
 }

@@ -2,6 +2,7 @@ name: CI / Validate and deliver
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches:
       - main
@@ -27,34 +28,27 @@ jobs:
   geospatial-changes:
     name: geospatial-changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     outputs:
+      pr_terraform: ${{ steps.pr-plan.outputs.pr_terraform }}
       should_run: ${{ steps.plan.outputs.should_run }}
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
       browser: ${{ steps.plan.outputs.browser }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
       production_images: ${{ steps.plan.outputs.production-images }}
       production_image_targets: ${{ steps.plan.outputs.production-image-targets }}
-      image_handoff_benchmark: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/tested_image_authorization.py') || contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/tested_image_bundle.py') || contains(fromJSON(steps.plan.outputs.changed-paths), 'scripts/benchmark_image_handoff.py')) }}
-      mpatlas: ${{ steps.plan.outputs.mpatlas }}
-      eamlis: ${{ steps.plan.outputs.eamlis }}
-      wdpa: ${{ steps.plan.outputs.wdpa }}
-      sea_ice: ${{ steps.plan.outputs.sea_ice }}
-      ingestion_iam: ${{ steps.plan.outputs.ingestion_iam }}
-      pmtiles_cdn: ${{ steps.plan.outputs.pmtiles_cdn }}
-      catalog_viewer: ${{ steps.plan.outputs.catalog_viewer }}
-      dataset_usage: ${{ steps.plan.outputs.dataset_usage }}
-      artifact_registry_iam: ${{ steps.plan.outputs.artifact_registry_iam }}
-      preview_terraform_iam: ${{ steps.plan.outputs.preview_terraform_iam }}
-      scratch_cleanup_iam: ${{ steps.plan.outputs.scratch_cleanup_iam }}
-      cron_alert_policy: ${{ steps.plan.outputs.cron_alert_policy }}
     steps:
-      - uses: actions/checkout@v4
+      - &validation-checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - &validation-python
+        uses: astral-sh/setup-uv@v5
         with:
+          version: '0.11.8'
           python-version: '3.12.12'
+          enable-cache: true
       - name: Check publication runtime before validation fanout
         run: python scripts/publication_runtime_check.py
       - name: Select validation for the tested merge tree
@@ -63,113 +57,105 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || github.sha }}
           SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python scripts/ci_preflight.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --source-head "$SOURCE_HEAD" \
+          uv run --frozen --only-group ci-plan python scripts/ci_preflight.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --source-head "$SOURCE_HEAD" \
             --output "$RUNNER_TEMP/ci-plan/plan.json" --github-output "$GITHUB_OUTPUT"
+      - name: Select live PR Terraform check
+        id: pr-plan
+        run: uv run --frozen --only-group ci-plan python scripts/pr_terraform_plan.py select --plan "$RUNNER_TEMP/ci-plan/plan.json"
       - uses: actions/upload-artifact@v4
         with:
           name: ci-validation-plan-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-plan/plan.json
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
+          retention-days: 14
 
   lint:
     needs: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
-      - uses: actions/download-artifact@v4
+      - &validation-plan
+        uses: actions/download-artifact@v4
         with:
           pattern: ci-validation-plan-attempt*
           path: ${{ runner.temp }}/ci-plans
       - name: Run selected lint checks
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
-      - uses: actions/upload-artifact@v4
+      - &retained-validation-results
+        uses: actions/upload-artifact@v4
         id: retained-results
         if: always()
         with:
-          name: ci-result-lint-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/lint
+          name: ci-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}
           if-no-files-found: error
           retention-days: 14
-      - name: Upload compact gate result
+      - &compact-gate-result
+        name: Upload compact gate result
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.retained-results.outcome == 'success' }}
         with:
-          name: ci-gate-result-lint-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/lint/result.json
+          name: ci-gate-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}/result.json
           if-no-files-found: error
           retention-days: 14
 
-  tests:
+  tests: &python-tests
     needs: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
         with:
           binaries: gitleaks terraform
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-plan
       - name: Run selected secret, guardrail and Python checks
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-tests-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/tests
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-tests-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/tests/result.json
-          if-no-files-found: error
-          retention-days: 14
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "$GITHUB_JOB" --output "$RUNNER_TEMP/ci-results/$GITHUB_JOB"
+      - *retained-validation-results
+      - *compact-gate-result
+
+  tests-control-plane: *python-tests
+
+  owner-acceptance:
+    needs: geospatial-changes
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - *validation-checkout
+      - *validation-python
+      - *validation-plan
+      - name: Owner approval of this exact head required before merge
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'jonaraphael' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
+          if [[ "$selected" == true ]]; then
+            python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
+          fi
 
   geospatial-integration:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    permissions:
+    permissions: &validation-permissions
       contents: read
       actions: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
-      - name: Reuse verified PR native validation
-        id: reuse
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
-          --suite geospatial-integration --output "$RUNNER_TEMP/ci-results/geospatial-integration" --github-output "$GITHUB_OUTPUT"
+      - *validation-checkout
+      - *validation-plan
       - uses: docker/setup-buildx-action@v3
-        if: steps.reuse.outputs.reused != 'true'
       - name: Build geospatial CI image
-        if: steps.reuse.outputs.reused != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -179,7 +165,6 @@ jobs:
           cache-from: type=gha,scope=geospatial-ci
           cache-to: type=gha,mode=max,scope=geospatial-ci,ignore-error=true
       - name: Run shared native validation
-        if: steps.reuse.outputs.reused != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/ci-results/geospatial-integration"
           docker run --rm --platform linux/amd64 \
@@ -191,55 +176,28 @@ jobs:
             shared-datasets-geospatial-ci:local python scripts/ci_preflight.py run-suite \
             --plan /evidence/ci-plans --suite geospatial-integration \
             --output /evidence/ci-results/geospatial-integration
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/geospatial-integration
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-geospatial-integration-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/geospatial-integration/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   production-images:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.production_images == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
+    name: production-images (${{ matrix.target }})
+    strategy:
+      fail-fast: true
+      matrix:
+        target: ${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
-      - name: Reuse verified PR production images
-        id: reuse
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
-          --suite production-images --output "$RUNNER_TEMP/ci-results/production-images" --github-output "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/ci-tools
-        if: steps.reuse.outputs.reused != 'true'
+      - *validation-checkout
+      - *validation-plan
+      - *validation-python
       - uses: docker/setup-buildx-action@v3
-        if: steps.reuse.outputs.reused != 'true'
+        if: matrix.target != 'catalog-viewer' && matrix.target != 'monitoring-slack'
       - name: Expose the ephemeral Actions cache runtime
-        if: steps.reuse.outputs.reused != 'true'
+        if: matrix.target != 'catalog-viewer' && matrix.target != 'monitoring-slack'
         uses: actions/github-script@v7
         with:
           script: |
@@ -250,156 +208,36 @@ jobs:
               core.exportVariable(name, value);
             }
       - name: Test the actual production image recipes
-        if: steps.reuse.outputs.reused != 'true'
         env:
           SHARED_DATASETS_GITHUB_IMAGE_CACHE: "true"
-        run: python scripts/ci_preflight.py run-suite --plan "$(find "$RUNNER_TEMP/ci-plans" -name plan.json | sort -V | tail -1)" --suite production-images --output "$RUNNER_TEMP/ci-results/production-images"
-      - name: Retain tested mpatlas-monthly image
+        run: uv run --no-project --python 3.12.12 python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite production-images --image-target "${{ matrix.target }}" --output "$RUNNER_TEMP/ci-results/production-images"
+      - name: Retain tested image
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
-        id: retained-mpatlas-monthly
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly')
+        id: retained-image
         with:
-          name: ci-image-mpatlas-monthly-attempt${{ github.run_attempt }}
+          name: ci-image-${{ matrix.target }}-attempt${{ github.run_attempt }}
           compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Retain tested eamlis-monthly image
-        uses: actions/upload-artifact@v4
-        id: retained-eamlis-monthly
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly')
-        with:
-          name: ci-image-eamlis-monthly-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/eamlis-monthly.docker.tar
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Retain tested wdpa-monthly image
-        uses: actions/upload-artifact@v4
-        id: retained-wdpa-monthly
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly')
-        with:
-          name: ci-image-wdpa-monthly-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/wdpa-monthly.docker.tar
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain tested sea-ice-daily image
-        uses: actions/upload-artifact@v4
-        id: retained-sea-ice-daily
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily')
-        with:
-          name: ci-image-sea-ice-daily-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/sea-ice-daily.docker.tar
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain tested catalog-viewer image
-        uses: actions/upload-artifact@v4
-        id: retained-catalog-viewer
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer')
-        with:
-          name: ci-image-catalog-viewer-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/catalog-viewer.docker.tar
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Retain tested dataset-usage image
-        uses: actions/upload-artifact@v4
-        id: retained-dataset-usage
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage')
-        with:
-          name: ci-image-dataset-usage-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/dataset-usage.docker.tar
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Retain tested monitoring-slack image
-        uses: actions/upload-artifact@v4
-        id: retained-monitoring-slack
-        if: steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack')
-        with:
-          name: ci-image-monitoring-slack-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/monitoring-slack.docker.tar
+          path: ${{ runner.temp }}/ci-results/production-images/images/${{ matrix.target }}.docker.tar
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
         id: retained-results
         if: always()
         with:
-          name: ci-result-production-images-attempt${{ github.run_attempt }}
+          name: ci-result-production-images-${{ matrix.target }}-attempt${{ github.run_attempt }}
           compression-level: 0
           path: |
             ${{ runner.temp }}/ci-results/production-images
-            !${{ runner.temp }}/ci-results/production-images/images/*.docker.tar
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Retain full-bundle benchmark baseline
-        if: needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-full-images-attempt${{ github.run_attempt }}
-          compression-level: 0
-          path: ${{ runner.temp }}/ci-results/production-images
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain compression-zero benchmark image
-        if: needs.geospatial-changes.outputs.image_handoff_benchmark == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-image-mpatlas-level0-attempt${{ github.run_attempt }}
-          compression-level: 0
-          path: ${{ runner.temp }}/ci-results/production-images/images/mpatlas-monthly.docker.tar
+            !${{ runner.temp }}/ci-results/production-images/**/*.docker.tar
           if-no-files-found: error
           retention-days: 14
       - name: Upload compact gate result
         uses: actions/upload-artifact@v4
-        if: >-
-          ${{ always() && steps.retained-results.outcome == 'success' &&
-            (steps.reuse.outputs.reused == 'true' || (
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly') || steps.retained-mpatlas-monthly.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly') || steps.retained-eamlis-monthly.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly') || steps.retained-wdpa-monthly.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily') || steps.retained-sea-ice-daily.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer') || steps.retained-catalog-viewer.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage') || steps.retained-dataset-usage.outcome == 'success') &&
-            (!contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack') || steps.retained-monitoring-slack.outcome == 'success'))) }}
+        if: ${{ always() && steps.retained-results.outcome == 'success' && (steps.retained-image.outcome == 'success' || (github.event_name == 'pull_request' && steps.retained-image.outcome == 'skipped')) }}
         with:
-          name: ci-gate-result-production-images-attempt${{ github.run_attempt }}
+          name: ci-gate-result-production-images-${{ matrix.target }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/production-images/result.json
-          if-no-files-found: error
-          retention-days: 14
-
-  image-handoff-benchmark:
-    needs: [geospatial-changes, production-images]
-    if: needs.geospatial-changes.outputs.image_handoff_benchmark == 'true' && needs.production-images.result == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.12'
-      - name: Compare exact-byte image artifact handoffs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/benchmark_image_handoff.py --repository "$GITHUB_REPOSITORY" \
-            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --sha "$GITHUB_SHA" \
-            --baseline-ref 7bcded0ac55cebc67889321f11782895ffd729f0 \
-            --output "$RUNNER_TEMP/image-handoff-benchmark"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: image-handoff-benchmark-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/image-handoff-benchmark
           if-no-files-found: error
           retention-days: 14
 
@@ -413,117 +251,74 @@ jobs:
       fail-fast: false
       matrix:
         node: ['22', '24']
+    env:
+      ARTIFACT_SUITE: sdk-node${{ matrix.node }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+      - *validation-checkout
       - uses: ./.github/actions/ci-tools
         with:
           node: ${{ matrix.node }}
           binaries: gitleaks
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-plan
       - name: Run shared SDK version, runtime and packed consumer validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
 
   browser:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
-      - name: Reuse verified PR browser validation
-        id: reuse
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          python scripts/ci_preflight.py reuse-suite --plan "$RUNNER_TEMP/ci-plans"
-          --suite browser --output "$RUNNER_TEMP/ci-results/browser" --github-output "$GITHUB_OUTPUT"
+      - *validation-checkout
+      - *validation-plan
       - uses: ./.github/actions/ci-tools
-        if: steps.reuse.outputs.reused != 'true'
         with:
           binaries: gitleaks
       - name: Run shared real-browser validation
-        if: steps.reuse.outputs.reused != 'true'
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
-        with:
-          name: ci-result-browser-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/browser
-          if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' }}
-        with:
-          name: ci-gate-result-browser-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/browser/result.json
-          if-no-files-found: error
-          retention-days: 14
+      - *retained-validation-results
+      - *compact-gate-result
+
+  pr-terraform-plan:
+    needs: geospatial-changes
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.geospatial-changes.outputs.pr_terraform == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/pr-terraform-plan.yml
 
   ci-ready:
     name: ci-ready
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     if: always()
-    needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser]
+    needs: [geospatial-changes, lint, tests, tests-control-plane, owner-acceptance, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
+      delivery: ${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.12'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-validation-plan-attempt*
-          path: ${{ runner.temp }}/ci-plans
+      - *validation-checkout
+      - *validation-python
+      - *validation-plan
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-gate-result-*
           path: ${{ runner.temp }}/ci-results
+      - name: Require owner acceptance check
+        env:
+          RESULT: ${{ needs.owner-acceptance.result }}
+        run: '[[ "$RESULT" == "success" ]]'
+      - name: Require selected same-repo Terraform plan
+        env:
+          REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.geospatial-changes.outputs.pr_terraform == 'true' }}
+          RESULT: ${{ needs.pr-terraform-plan.result }}
+        run: '[[ "$REQUIRED" != "true" || "$RESULT" == "success" ]]'
       - name: Require every selected suite and matrix entry
+        id: verify
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -532,20 +327,38 @@ jobs:
           python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ci-jobs.json").write_text(os.environ["JOB_RESULTS"])'
           python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
             --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json" \
-            --output "$RUNNER_TEMP/ci-ready/evidence.json"
+            --output "$RUNNER_TEMP/ci-ready/evidence.json" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: ci-ready-evidence-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-ready/evidence.json
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 14 }}
+          retention-days: 14
 
-  # Post-gate callers check selection and prerequisite results explicitly.
-  # Explicit status avoids implicit success() over skipped optional ancestors.
+  typescript-sdk:
+    needs: ci-ready
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').typescript-sdk }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch top-level npm trusted publisher
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXECUTOR_SHA: ${{ needs.ci-ready.outputs.tested_sha }}
+        run: |
+          gh workflow run publish-typescript-sdk.yml --ref main \
+            -f executor_sha="$EXECUTOR_SHA" -f source_run_id="$GITHUB_RUN_ID" \
+            -f source_run_attempt="$GITHUB_RUN_ATTEMPT"
+
   dataset-mutation-selection:
     needs: ci-ready
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-mutation-selection }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -570,23 +383,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/catalog_web_changes.py
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12.12'
-      - uses: astral-sh/setup-uv@v5
-        with:
-          version: '0.11.8'
-      - name: Sync pinned announcement parser dependencies
-        run: uv sync --locked --no-dev
+      - *validation-python
       - name: Inspect every commit for repository announcements
         id: repo_alert_selection
         env:
           BASE_SHA: ${{ github.event.before }}
-        run: uv run --no-sync python scripts/repo_alerts.py select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+        run: uv run --frozen --no-dev python scripts/repo_alerts.py select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
 
   refresh-reviewed-catalog:
-    needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.result == 'success' && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
+    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').refresh-reviewed-catalog && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -605,7 +411,7 @@ jobs:
 
   announce-repo-functionality:
     needs: [ci-ready, dataset-mutation-selection]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' && needs.dataset-mutation-selection.result == 'success' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/repo-functionality-alert.yml
@@ -616,8 +422,8 @@ jobs:
 
   publish-reviewed-dataset:
     name: "Publish PR #${{ matrix.pr_number }}"
-    needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') && needs.dataset-mutation-selection.result == 'success' }}
+    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset && needs.dataset-mutation-selection.outputs.has_mutations == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -637,25 +443,25 @@ jobs:
     secrets: inherit
 
   ingestion-iam:
-    needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
-    permissions:
+    needs: ci-ready
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').ingestion-iam }}
+    permissions: &terraform-permissions
       contents: read
       actions: read
+      pull-requests: read
       deployments: write
       id-token: write
       attestations: write
     uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
-    with:
+    with: &deployment-source
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
 
   mpatlas:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.mpatlas == 'true' }}
-    permissions:
+    needs: &ingestion-prerequisites [ci-ready, ingestion-iam, artifact-registry-iam, cron-alert-policy]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').mpatlas }}
+    permissions: &deployment-permissions
       contents: read
       actions: read
       pull-requests: read
@@ -663,183 +469,94 @@ jobs:
       id-token: write
       attestations: write
     uses: ./.github/workflows/mpatlas-monthly-deploy.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source
     secrets: inherit
 
   eamlis:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.eamlis == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: *ingestion-prerequisites
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').eamlis }}
+    permissions: *deployment-permissions
     uses: ./.github/workflows/eamlis-monthly-deploy.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source
     secrets: inherit
 
   wdpa:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
-      pull-requests: read
+    needs: *ingestion-prerequisites
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').wdpa }}
+    permissions: *deployment-permissions
     uses: ./.github/workflows/wdpa-monthly-deploy.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source
     secrets: inherit
 
   sea-ice:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam, cron-alert-policy]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') && needs.geospatial-changes.outputs.sea_ice == 'true' && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: *ingestion-prerequisites
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').sea-ice }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/sea-ice-daily-deploy.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source
     secrets: inherit
 
   pmtiles-cdn:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: ci-ready
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').pmtiles-cdn }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/pmtiles-cdn-sync.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source
     secrets: inherit
 
   dataset-usage:
     # Settle bucket CORS before the logging-only deployment plans the same bucket.
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.dataset_usage == 'true' && (needs.geospatial-changes.outputs.catalog_viewer != 'true' || needs.catalog-viewer.result == 'success') && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: [ci-ready, artifact-registry-iam, catalog-viewer, pmtiles-cdn]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-usage }}
+    permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
-    with:
-      sync_iam: ${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
+    with: &deployment-source-with-iam
+      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
   catalog-viewer:
-    needs: [ci-ready, geospatial-changes, artifact-registry-iam]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: [ci-ready, artifact-registry-iam]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer }}
+    permissions: *deployment-permissions
     uses: ./.github/workflows/catalog-viewer-deploy.yml
-    with:
-      sync_iam: ${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source-with-iam
     secrets: inherit
 
   artifact-registry-iam:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: ci-ready
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').artifact-registry-iam }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/artifact-registry-iam-sync.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
+    with: *deployment-source
 
   preview-terraform-iam:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.preview_terraform_iam == 'true' }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: [ci-ready, artifact-registry-iam]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').preview-terraform-iam }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/preview-terraform-iam-sync.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
+    with: *deployment-source
 
   scratch-cleanup-iam:
-    needs: [ci-ready, geospatial-changes, dataset-usage]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: ci-ready
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').scratch-cleanup-iam }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/scratch-cleanup-iam-sync.yml
-    with:
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
-    secrets: inherit
+    with: *deployment-source
 
   cron-alert-policy:
-    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
-    if: ${{ !cancelled() && (needs.geospatial-changes.outputs.ingestion_iam != 'true' || needs.ingestion-iam.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.artifact_registry_iam != 'true' || needs.artifact-registry-iam.result == 'success') && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
-    permissions:
-      contents: read
-      actions: read
-      deployments: write
-      id-token: write
-      attestations: write
+    needs: [ci-ready, ingestion-iam, artifact-registry-iam]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').cron-alert-policy }}
+    permissions: *terraform-permissions
     uses: ./.github/workflows/cron-alert-policy-sync.yml
-    with:
-      sync_iam: ${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
-      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ format('{0}', github.run_id) }}
-      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    with: *deployment-source-with-iam
     secrets: inherit
 
   identity-decision-reconcile:
-    needs: [ci-ready, geospatial-changes, cron-alert-policy]
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && (needs.geospatial-changes.outputs.cron_alert_policy != 'true' || needs.cron-alert-policy.result == 'success') }}
+    needs: [ci-ready, cron-alert-policy]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').identity-decision-reconcile }}
     permissions:
       contents: read
       actions: read

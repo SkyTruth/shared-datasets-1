@@ -17,7 +17,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -27,7 +26,6 @@ from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import install_deployment_verifier as verifier
-from scripts.incident_verification_cache import VerificationCache
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
@@ -45,7 +43,8 @@ ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_TARGETS = {"dataset-usage", "wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily"}
+RUNTIME_TARGETS = deployments.INGESTION_TARGETS | {"dataset-usage"}
+RECOVERY_TARGETS = deployments.TARGET_WORKFLOWS | deployments.TERRAFORM_WORKFLOWS
 SDK_WORKFLOW = "publish-typescript-sdk.yml"
 SDK_CANDIDATE_STEP = "Verify tested SDK candidate and reviewed version"
 # Exact read-only jobs remain distinct from the mutating sibling and its receipt.
@@ -78,6 +77,11 @@ def escape(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def record_payload(record):
+    value = record["payload"]
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def observation_key(value):
     proof = value["proof"]
     return f"{value['run_id']}:{value['attempt']}:{value['job_id']}:{proof['status_id'] if proof else 0}"
@@ -105,20 +109,21 @@ def validate_observation(value):
     return value
 
 
-def job_targets(root=ROOT):
-    """Derive complete registered job paths from the checked-in caller graph.
+def job_targets(root=ROOT, *, revision=None, workflow=None):
+    """Derive registered paths from a source revision, never execute its code.
 
     Resolving leaf names alone would conflate IAM bootstrap and sync or different
     ingestion targets. Unregistered jobs retain their own exact job scope.
     """
     # Preserve the exact historical mutating job scope for signed receipt recovery.
     # The retired workflow must not be loaded from today's caller graph.
+    require(revision is None or deployments.SHA.fullmatch(revision), "invalid source workflow revision")
     targets = {("wdpa-monthly-build.yml", "build"): "wdpa-monthly-build"}
     reverse = {workflow: target for target, workflow in deployments.TARGET_WORKFLOWS.items()}
 
     def walk(filename, prefix="", inherited=None, inputs=None, source=None):
         source = source or filename
-        document = yaml.safe_load((root / ".github/workflows" / filename).read_text())
+        document = yaml.safe_load(workflow_source(root, filename, revision) if revision else (root / ".github/workflows" / filename).read_text())
         for key, job in document["jobs"].items():
             name = job.get("name", key)
             for input_name, value in (inputs or {}).items():
@@ -141,6 +146,9 @@ def job_targets(root=ROOT):
             elif inherited and (filename, key) not in READ_ONLY_JOBS:
                 targets[(source, path)] = inherited
 
+    if workflow is not None:
+        walk(workflow, inherited=reverse.get(workflow))
+        return targets
     walk("ci.yml")
     for filename, target in reverse.items():
         if filename not in RETIRED_WORKFLOWS:
@@ -148,6 +156,12 @@ def job_targets(root=ROOT):
     for filename in set(deployments.TERRAFORM_WORKFLOWS.values()):
         walk(filename)
     return targets
+
+
+@cache
+def workflow_source(root, filename, revision):
+    require(re.fullmatch(r"[a-z0-9-]+\.yml", filename), "invalid source workflow path")
+    return subprocess.check_output(["git", "show", revision + ":.github/workflows/" + filename], cwd=root, text=True)
 
 
 def registered_name(name):
@@ -212,8 +226,9 @@ def reported_runtime_failure(api, run, job):
         deployments.verify_receipt(api, REPOSITORY, record, exact[0])
     except (deployments.DeploymentError, subprocess.CalledProcessError):
         return None  # Unverified external evidence retains the original failure alert.
-    if (record["id"] != int(match[1]) or payload["target"] != "wdpa-monthly"
-            or re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/wdpa-monthly-[a-z0-9]{5}\?project=shared-datasets-1",
+    target = payload["target"]
+    if (record["id"] != int(match[1]) or target not in RECOVERY_TARGETS or target not in RUNTIME_TARGETS
+            or re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/" + re.escape(target) + r"-[a-z0-9]{5}\?project=shared-datasets-1",
                             exact[0].get("environment_url", "")) is None):
         return None
     return {"record": record, "status": exact[0]}
@@ -227,7 +242,7 @@ def completion_failure(observation):
 
 
 def observer_failure_proofs(api, failures):
-    """Reverify the original jobs and their signed WDPA failed outcomes."""
+    """Reverify the original jobs and their signed registered worker outcomes."""
     if not failures or not all(completion_failure(item) for item in failures):
         return None
     proofs = []
@@ -252,14 +267,16 @@ def observer_failure_proofs(api, failures):
     return proofs
 
 
-def source_observations(api, event, targets):
+def source_observations(api, event, targets=None):
     run = event["workflow_run"]
     if not alerts.verify_source_event(api, run):
         return []
     if run["conclusion"] not in alerts.FAILED_CONCLUSIONS | {"success"}:
         return []
     jobs = api.pages(f"repos/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
-    if alerts.catalog_probe_only(run, jobs):
+    if targets is None:
+        targets = job_targets(revision=run["head_sha"], workflow=alerts.WORKFLOW_PATHS[run["name"]])
+    if alerts.safety_health_only(run, jobs) or alerts.catalog_probe_only(run, jobs):
         return []  # Neither a deployment failure nor evidence of recovery.
     if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
         if run["event"] != "push":
@@ -270,7 +287,7 @@ def source_observations(api, event, targets):
         successes = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
                      and job["name"] not in alerts.VALIDATION_JOBS and ("ci.yml", registered_name(job["name"])) not in targets]
         return [from_job(run, job, targets) for job in failures + successes]
-    if alerts.alert_for_run(event) is None and run["conclusion"] != "success":
+    if run["conclusion"] != "success" and (not alerts.unattended(run) or event["repository"]["full_name"] != REPOSITORY):
         return []  # Supervised manual failures keep existing GitHub-only routing.
     if alerts.WORKFLOW_PATHS[run["name"]] in {"bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"}:
         return [from_workflow(run)]
@@ -347,23 +364,16 @@ def same_migrated_episode(original, current):
             and all(new["posts"].get(key) == post for key, post in old["posts"].items() if post["state"] == "delivered"))
 
 
-def replay_observations(api, targets, since, *, now=None, completed_until=None):
-    """Hourly observation catches bounded queue loss without another scheduler.
+def replay_observations(api, since, *, now=None, completed_until=None):
+    """Periodic observation catches bounded queue loss without another scheduler.
 
     Reconcile the last 24 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
     """
-    now = now or datetime.now(timezone.utc)
-    start = max(instant(since), now - timedelta(hours=24))
-    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
-                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
-    runs = api.pages(f"repos/{REPOSITORY}/actions/runs?{query}", field="workflow_runs")
-    observations = []
-    for run in runs:
-        if (run.get("status") == "completed" and run.get("name") in alerts.WORKFLOW_PATHS
-                and run.get("head_branch") == "main" and run.get("head_repository", {}).get("full_name") == REPOSITORY):
-            observations.extend(source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run}, targets))
-    return [item for item in observations if start <= instant(item["time"]) <= (completed_until or now)]
+    runs, start, end = alerts.source_inventory(api, None, since, now=now or datetime.now(timezone.utc))
+    observations = [item for run in runs if run.get("status") == "completed"
+                    for item in source_observations(api, {"repository": {"full_name": REPOSITORY}, "workflow_run": run})]
+    return [item for item in observations if start <= instant(item["time"]) <= (completed_until or end)]
 
 
 def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: None):
@@ -375,10 +385,10 @@ def replay_window(ledger, identity, operation, *, now=None, on_saved=lambda _: N
     start, end = map(instant, match.groups())
     require(timedelta(0) < end - start <= timedelta(days=7) and end <= (now or datetime.now(timezone.utc)),
             "replay requires a closed past window of at most seven days")
-    observations, targets = [], job_targets()
+    observations = []
     while start < end:
         stop = min(start + timedelta(days=1), end)
-        observations.extend(replay_observations(ledger.api, targets, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
+        observations.extend(replay_observations(ledger.api, start.strftime("%Y-%m-%dT%H:%M:%SZ"), now=stop, completed_until=end))
         start = stop
     return prepare(ledger, identity, observations, on_saved=on_saved)
 
@@ -403,7 +413,7 @@ def terminal_success(api, scope, healthy=None, terminal_validation=None):
     if target == RETIRED_SETUP_TARGET:
         # Its signed, already-resolved incident survives the retired deployment.
         return None, None
-    require(target in deployments.TARGET_WORKFLOWS | deployments.TERRAFORM_WORKFLOWS, "unregistered recovery target")
+    require(target in RECOVERY_TARGETS, "unregistered recovery target")
     records = api.pages(f"repos/{REPOSITORY}/deployments?environment=production-{target}&per_page=100")
     if not records:
         return None, None
@@ -426,8 +436,7 @@ def terminal_success(api, scope, healthy=None, terminal_validation=None):
     # Expensive verification must not hide a status appended while it ran or
     # mint a checkpoint for history that was not fully validated.
     current = api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
-    require(current == statuses, "deployment status history changed during terminal validation")
-    if not terminal:
+    if current != statuses or not terminal:
         return None, None
     return terminal_observation(scope, record, payload, statuses[0]), validation
 
@@ -464,7 +473,8 @@ def verify_saved_success(api, observation):
 
 
 def runtime_covers_failures(proofs, recovery, ancestor):
-    return all(ancestor(proof["record"]["sha"], recovery["sha"])
+    return all(deployments.record_payload(proof["record"])["target"] == recovery["label"]
+               and ancestor(proof["record"]["sha"], recovery["sha"])
                and instant(proof["status"]["created_at"]) < instant(recovery["time"])
                for proof in proofs)
 
@@ -474,10 +484,23 @@ def observer_runtime_recovery(api, failures, *, ancestor, success=terminal_succe
     proofs = observer_failure_proofs(api, failures)
     if proofs is None:
         return None
-    recovery, _ = success(api, "deployment:wdpa-monthly")
+    target = deployments.record_payload(proofs[0]["record"])["target"]
+    recovery, _ = success(api, "deployment:" + target)
     if recovery and runtime_covers_failures(proofs, recovery, ancestor):
         return recovery
     return None
+
+
+def verified_recovery(api, failures, *, ancestor, success=terminal_success):
+    """One recovery contract for incident reconciliation and legacy parents."""
+    require(bool(failures), "recovery requires original failures")
+    if all(item["kind"] == "deployment" and item["scope"] == failures[0]["scope"] for item in failures):
+        recovery, _ = success(api, failures[0]["scope"])
+        if recovery and all(ancestor(item["sha"], recovery["sha"])
+                            and instant(item["time"]) < instant(recovery["time"]) for item in failures):
+            return recovery
+        return None
+    return observer_runtime_recovery(api, failures, ancestor=ancestor, success=success)
 
 
 def recover_state(api, state, *, ancestor, success):
@@ -488,7 +511,7 @@ def recover_state(api, state, *, ancestor, success):
             if state["healthy"] == evidence:
                 state["terminal_validation"] = validation
     elif state["kind"] == "job" and state["incident"]["resolution"] is None:
-        evidence = observer_runtime_recovery(api, state["incident"]["failures"], ancestor=ancestor, success=success)
+        evidence = verified_recovery(api, state["incident"]["failures"], ancestor=ancestor, success=success)
         if evidence:
             state = copy.deepcopy(state)
             # Keep the signed failure history, scope, incident ID and outbox. The
@@ -593,7 +616,8 @@ def validate_state(state, *, legacy=False, historical=False):
     for recovery in (state["healthy"], incident["resolution"]):
         if state["kind"] == "job" and recovery is not None and recovery["kind"] == "deployment":
             require(all(completion_failure(item) for item in incident["failures"])
-                    and recovery["label"] == recovery["job_name"] == "wdpa-monthly"
+                    and recovery["label"] == recovery["job_name"] and recovery["label"] in RUNTIME_TARGETS
+                    and recovery["label"] in RECOVERY_TARGETS
                     and recovery["proof"] is not None, "invalid completion-job runtime recovery")
     require(isinstance(incident["posts"], dict), "invalid Slack outbox")
     allowed = set(failure_posts(state))
@@ -665,12 +689,7 @@ def failure_posts(state):
 def desired_posts(state):
     incident = state["incident"]
     parent = incident["posts"].get("parent")
-    if incident["resolution"] is not None:
-        # Existing failed-attempt claims still need owner reconciliation, but
-        # corrected failures cannot authorize any new message or retry reply.
-        return {"parent": None} if parent and parent["state"] == "delivered" else {}
-    # Failed attempts update the original parent; never claim new replies.
-    return {"parent": None}
+    return {"parent": None} if incident["resolution"] is None or parent and parent["state"] == "delivered" else {}
 
 
 def pending_posts(state):
@@ -775,30 +794,20 @@ class GitHub(deployments.GitHub):
 
 
 def worker_context(api, environment=os.environ):
-    require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
-            and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + WORKFLOW + "@refs/heads/main", "incidents require the trusted main workflow")
-    run_id, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
-    run = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}")
-    repo = api.get(f"repos/{REPOSITORY}")
-    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
-    require(run.get("id") == run_id and run.get("run_attempt") == attempt and run.get("path") == WORKFLOW
-            and run.get("workflow_id") == workflow.get("id") and workflow.get("path") == WORKFLOW
-            and run.get("head_branch") == "main" and run.get("event") in {"workflow_run", "workflow_dispatch"}
-            and deployments.SHA.fullmatch(str(run.get("head_sha", "")))
-            and all(run.get(key, {}).get("id") == repo.get("id") and run.get(key, {}).get("full_name") == REPOSITORY for key in ("repository", "head_repository")), "invalid incident worker provenance")
-    return run
+    try:
+        return alerts.context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
+    except (RuntimeError, ValueError) as error:
+        raise IncidentError("invalid incident worker provenance") from error
+
 
 
 class Ledger:
-    def __init__(self, api, run, directory, *, verification_cache=None):
+    def __init__(self, api, run, directory):
         self.api, self.run, self.directory = api, run, directory
         self.verified_statements = []
-        self.verification_cache = verification_cache
 
     def verify(self, record):
-        payload = record["payload"]
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = record_payload(record)
         require(isinstance(payload, dict) and set(payload) == {"schema", "state", "execution_run_id", "execution_run_attempt"}
                 and payload["schema"] in READ_SCHEMAS and record.get("task") == "slack-incident"
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
@@ -813,22 +822,15 @@ class Ledger:
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
-        def verify(api):
-            emissions.verify(api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
-                             verified_statements=self.verified_statements)
-        if self.verification_cache is None:
-            verify(self.api)
-        else:
-            self.verification_cache.verify(self.api, record, statuses, payload["state"]["identity"], verify)
+        emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True,
+                         verified_statements=self.verified_statements)
         return migrate_verified_state(payload["state"], payload["schema"])
 
     def load(self):
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
         latest = {}
         for record in records:
-            payload = record["payload"]
-            if isinstance(payload, str):
-                payload = json.loads(payload)
+            payload = record_payload(record)
             require(isinstance(payload, dict) and payload.get("schema") in READ_SCHEMAS, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
             if scope not in latest or record["id"] > latest[scope]["id"]:
@@ -856,9 +858,7 @@ class Ledger:
                     # the migrated predecessor, preserving its parent/history.
                     bridges = []
                     for record in records:
-                        payload = record["payload"]
-                        if isinstance(payload, str):
-                            payload = json.loads(payload)
+                        payload = record_payload(record)
                         historical = payload["state"]
                         if (record["id"] < latest[scope]["id"] and historical["scope"] == scope
                                 and historical["incident"]["id"] == migrated["incident"]["id"]):
@@ -909,9 +909,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     match = re.fullmatch(r"checkpoint:([1-9][0-9]*):([0-9a-f]{64})", operation)
     require(match is not None, "require checkpoint:ID:SHA256 after reviewing the exact checkpoint")
     record = ledger.api.get(f"repos/{REPOSITORY}/deployments/{match[1]}")
-    payload = record["payload"]
-    if isinstance(payload, str):
-        payload = json.loads(payload)
+    payload = record_payload(record)
     require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
     state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
@@ -920,7 +918,7 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
     latest = ledger.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
-    same_scope = [item for item in latest if (json.loads(item["payload"]) if isinstance(item["payload"], str) else item["payload"])["state"]["scope"] == state["scope"]]
+    same_scope = [item for item in latest if record_payload(item)["state"]["scope"] == state["scope"]]
     require(same_scope and max(item["id"] for item in same_scope) == record["id"], "checkpoint is no longer the latest incident state")
     # Recovery truth is independently rechecked even when the owner confirms
     # notification delivery bookkeeping from an interrupted writer.
@@ -932,8 +930,8 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             proofs = observer_failure_proofs(ledger.api, failures)
             require(proofs is not None and runtime_covers_failures(proofs, resolution, deployments.git_ancestor),
                     "checkpoint runtime recovery does not cover the original signed worker failures")
-            resolution = {**resolution, "scope": "deployment:wdpa-monthly"}
-            healthy = {**healthy, "scope": "deployment:wdpa-monthly"}
+            resolution = {**resolution, "scope": "deployment:" + resolution["label"]}
+            healthy = {**healthy, "scope": "deployment:" + healthy["label"]}
             failures = [{"sha": proof["record"]["sha"]} for proof in proofs]
         verify_saved_success(ledger.api, resolution)
         if healthy != resolution:
@@ -977,7 +975,6 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             states[scope] = recover_state(ledger.api, state, ancestor=ancestor, success=success)
     prepared = []
     for scope, state in states.items():
-        require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
         existing = original.get(scope)
         incident = state["incident"]
         if scope in blocked:
@@ -1011,16 +1008,14 @@ def deliver(ledger, records, slack):
         state = ledger.verify(record)
         require(state["identity"] == identity, "Slack bot, workspace or channel changed since claim")
         incident = state["incident"]
-        posts = desired_posts(state)
-        for key in posts:
-            post = incident["posts"][key]
-            if post["state"] == "delivered":
-                continue
+        # Only the parent is produced now; historical reply claims remain in
+        # pending_posts for explicit reconciliation, never automatic delivery.
+        parent = incident["posts"].get("parent")
+        if "parent" in desired_posts(state) and parent["state"] == "claimed":
             ts = slack.post(render(state))
             incident["parent_view_sha256"] = parent_view_sha256(state)
-            post.update(state="delivered", ts=ts)
+            parent.update(state="delivered", ts=ts)
             ledger.save(state, "outcomes")
-        parent = incident["posts"].get("parent")
         if not parent or parent["state"] != "delivered":
             continue
         view = parent_view_sha256(state)
@@ -1074,9 +1069,7 @@ def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=
         if key not in incident["posts"]:
             incident["posts"][key] = {"state": "claimed", "ts": None}
     record = ledger.save(state, "claims")
-    if pending_posts(state) or needs_parent_delivery(state):
-        return [record]
-    return []
+    return [record] if pending_posts(state) or needs_parent_delivery(state) else []
 
 
 def main():
@@ -1102,7 +1095,7 @@ def main():
         def retain(record):
             partial.append(record)
             plan_path.write_text(json.dumps(partial, sort_keys=True) + "\n")
-        if run["event"] == "workflow_dispatch":
+        if run["event"] == "workflow_dispatch" and event["inputs"]["delivery_result"] != "batch":
             inputs = event["inputs"]
             if inputs["delivery_result"] == "seal-checkpoint":
                 require(not inputs.get("message_ts"), "checkpoint sealing does not acknowledge a Slack message")
@@ -1114,25 +1107,30 @@ def main():
             else:
                 records = reconcile(ledger, identity, inputs["incident_id"], inputs["operation"], inputs["delivery_result"], inputs.get("message_ts", ""))
         else:
-            targets = job_targets()
             since = os.environ.get("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", "")
             activated = instant(since)
-            observations = source_observations(api, event, targets)
-            source = event["workflow_run"]
-            if (source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
+            if run["event"] == "workflow_dispatch":
+                from scripts.operational_safety_check import validate_safety_dispatch
+                inputs = event["inputs"]
+                producer = re.fullmatch(r"safety:([1-9][0-9]*)/([1-9][0-9]*)", inputs["operation"])
+                require(inputs["incident_id"] == "operational-batch" and not inputs.get("message_ts") and producer,
+                        "batch requires an exact safety attempt, without delivery acknowledgement")
+                validate_safety_dispatch(api, {"inputs": {"safety_run_id": producer[1], "safety_run_attempt": producer[2]}}, workflow=WORKFLOW)
+                observations = replay_observations(api, since)
+                source = None
+            else:
+                source = event["workflow_run"]
+                observations = source_observations(api, event)
+            if (source and source["event"] in {"schedule", "workflow_dispatch"} and source["conclusion"] == "success"
                     and alerts.WORKFLOW_PATHS[source["name"]] == "catalog-web-deploy.yml" and not observations):
-                # An idle input probe has no incident evidence. The completion
-                # checker still owns hourly replay and unrelated pending work.
+                # An idle input probe has no incident evidence. The
+                # safety probe still owns periodic replay and unrelated pending work.
                 print("Prepared 0 incident transitions; scheduled catalog probe has no incident evidence.")
                 return
             observations = [item for item in observations if instant(item["time"]) >= activated]
-            if alerts.WORKFLOW_PATHS[event["workflow_run"]["name"]] == "deployment-verification.yml":
-                observations.extend(replay_observations(api, targets, since))
-            ledger.verification_cache = VerificationCache.restore(api, run, identity)
+            if source and alerts.WORKFLOW_PATHS[source["name"]] == "deployment-verification.yml":
+                observations.extend(replay_observations(api, since))
             records = prepare(ledger, identity, observations, on_saved=retain)
-            ledger.verification_cache.save(args.work_dir)
-            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
-                stream.write("verification_cache=true\n")
         plan_path.write_text(json.dumps(records, sort_keys=True) + "\n")
         print(f"Prepared {len(records)} incident transition(s); routine healthy runs remain quiet.")
     else:

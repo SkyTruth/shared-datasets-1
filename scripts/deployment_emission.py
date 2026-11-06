@@ -1,10 +1,8 @@
 """Verify durable run-bound receipts using GitHub's Sigstore attestations.
 
-Deployment API payloads, creators and log URLs are untrusted claims. A receipt
-binds their exact record/status IDs to a signature whose Fulcio certificate
-identifies the actual main workflow, revision and run attempt. Receipt bytes
-are reconstructed from the durable API record; ordinary Actions artifact
-retention does not participate in this protocol.
+Receipts bind untrusted API record/status claims to the actual main workflow,
+revision and run attempt through its Fulcio certificate. Bytes reconstruct from
+the durable API record independently of Actions artifact retention.
 """
 from __future__ import annotations
 
@@ -20,30 +18,24 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.ingestion_targets import DEPLOY_TARGETS
+from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub
+from scripts.install_deployment_verifier import VERSION
 
 SCHEMA = "shared-datasets-deployment-emission-v1"
 PREDICATE = "https://slsa.dev/provenance/v1"
 PHASES = {
-    "started": "in_progress", "verification_pending": "in_progress",
+    "deferred": "pending", "started": "in_progress", "verification_pending": "in_progress",
     "applied": "success", "verified": "success", "failed": "failure", "unknown": "error",
 }
 OBSERVER = ".github/workflows/deployment-verification.yml"
 RECOVERY = ".github/workflows/deployment-recovery.yml"
 REHEARSAL_SIGNERS = {
-    "dataset-usage-deploy.yml",
-    "prod-terraform-target-apply.yml",
+    *(config["workflow"] for config in DEPLOY_TARGETS.values()),
+    "ingestion-deploy.yml", "prod-terraform-target-apply.yml",
     "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
-    "wdpa-monthly-deploy.yml",
-    "mpatlas-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml", "publish-typescript-sdk.yml",
-    "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
+    "publish-typescript-sdk.yml", "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
 }
-
-
-class ReadOnlyGitHub:
-    """Read-only API client for the current deployment's signing check."""
-
-    def get(self, path):
-        return json.loads(subprocess.check_output(["gh", "api", path]))
 
 
 class EmissionError(RuntimeError):
@@ -119,12 +111,8 @@ def verify_result(results, value, expected, *, batch=False):
         statement = verified.get("statement", {})
         subject = {"name": name(value), "digest": {"sha256": digest}}
         subjects = statement.get("subject")
-        subjects_match = subjects == [subject]
-        if batch:
-            # Notification checkpoints may be attested together. Require this
-            # exact subject once; production receipts retain single-subject
-            # verification unless the caller explicitly selects batch mode.
-            subjects_match = isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
+        subjects_match = (isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
+                          if batch else subjects == [subject])
         if (
             all(cert.get(key) == item for key, item in expected.items())
             and verified.get("verifiedTimestamps")
@@ -137,7 +125,12 @@ def verify_result(results, value, expected, *, batch=False):
 
 
 def verified_output(command, repository, digest):
-    """Retry the observed read-only service outage, never failed verification."""
+    hint = f"receipt verification requires gh {VERSION}; run python scripts/install_deployment_verifier.py"
+    try:
+        version = subprocess.run(["gh", "--version"], text=True, capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise EmissionError(hint) from error
+    require(version.startswith(f"gh version {VERSION} "), hint)
     outage = re.compile(
         r"Error: HTTP 503: trust-metadata-api service unavailable \(https://api\.github\.com/repos/"
         + re.escape(repository) + r"/attestations/sha256:" + digest + r"(?:\?[^\s)]*)?\)"
@@ -156,9 +149,6 @@ def verified_output(command, repository, digest):
 
 
 def verify(api, repository, record, status, *, original_signer, batch=False, verified_statements=None):
-    # Only the incident ledger shares verified multi-subject statements within
-    # one invocation. Live provenance and the exact subject policy still apply
-    # on every call; production receipt callers retain their uncached default.
     require(verified_statements is None or batch, "statement reuse requires batch receipt verification")
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
@@ -170,7 +160,7 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
     if (run_id, attempt) == (payload["execution_run_id"], payload["execution_run_attempt"]):
         signer = original_signer
     else:
-        require(status["description"] != "started" and run.get("path") in {OBSERVER, RECOVERY}, "phase update came from an unrelated execution")
+        require(status["description"] not in {"started", "deferred"} and run.get("path") in {OBSERVER, RECOVERY}, "phase update came from an unrelated execution")
         signer = run["path"]
     repo = api.get(f"repos/{repository}")
     workflow = api.get(f"repos/{repository}/actions/workflows/{run['path'].rsplit('/', 1)[-1]}")
@@ -181,7 +171,7 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
             try:
                 verify_result(results, value, expected, batch=True)
             except EmissionError:
-                continue  # Another subject or policy needs its own verification.
+                continue
             return
     receipts = Path(os.environ["RUNNER_TEMP"]) / "deployment-receipts"
     receipts.mkdir(parents=True, exist_ok=True)
@@ -195,8 +185,6 @@ def verify(api, repository, record, status, *, original_signer, batch=False, ver
             "--source-digest", expected["sourceRepositoryDigest"],
             "--source-ref", "refs/heads/main", "--deny-self-hosted-runners", "--format", "json",
         ]
-        # Only a confirmed transient service outage retries this same read.
-        # A final nonzero exit is fatal; raw bundles never become evidence.
         results = json.loads(verified_output(command, repository, hashlib.sha256(canonical(value)).hexdigest()))
     verify_result(results, value, expected, batch=batch)
     if verified_statements is not None:
@@ -239,7 +227,6 @@ def main():
         verify_rehearsal(api, repository, ".github/workflows/" + args.signer_workflow)
     else:
         from scripts import deployment_revision as revision
-        api = revision.GitHub()
         value = json.loads(args.receipt.read_bytes())
         require(value.get("schema") == SCHEMA and value.get("repository") == repository, "invalid receipt file")
         record = api.get(f"repos/{repository}/deployments/{value['deployment_id']}")

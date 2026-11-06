@@ -1,0 +1,96 @@
+"""A single registry and uniform status conditions preserve deployment admission."""
+from graphlib import TopologicalSorter
+from itertools import combinations
+import json
+from pathlib import Path
+
+import pytest
+import yaml
+
+from scripts import ci_contract as ci, deployment_receipt_contracts as receipts
+from scripts import deployment_revision as revisions, workflow_failure_alert as alerts
+from scripts.terraform_target_contracts import registry
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_registry_migration_preserves_all_signed_and_historical_routing_facts():
+    expected = json.loads((ROOT / 'tests/fixtures/deployment-registry-contract.json').read_text())
+    assert revisions.TARGET_WORKFLOWS == expected['records']
+    assert {key: sorted(value) for key, value in alerts.WORKFLOW_EVENTS.items()} == expected['events']
+    assert sorted(alerts.PUBLICATION_JOBS) == expected['publication_jobs']
+    assert {name: row['prerequisites'] for name, row in registry().items()} == expected['prerequisites']
+    assert {name: row['retired_resources'] for name, row in registry().items() if 'retired_resources' in row} == expected['retired_resources']
+    assert not (ROOT / 'terraform/iam-plan-prerequisites.json').exists()
+    assert 'record_workflows' not in json.loads((ROOT / '.github/terraform-targets.json').read_text())
+    exceptions = registry(section='selection_exceptions')
+    assert not any(name.endswith(('/approval.py', '/restore.py')) for name in exceptions)
+
+
+def test_every_selected_prerequisite_runs_or_has_failed_or_cancelled_ancestry():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    graph = {name: row['terraform_prerequisites'] for name, row in registry(section='deployments').items()}
+    order = list(TopologicalSorter(graph).static_order())
+    # Bind the scheduler truth table to the exact checked-in expression, rather
+    # than parsing a second expression language in Python. failure() is transitive:
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#failure
+    for name in graph:
+        caller = name.replace('_', '-')
+        assert jobs[caller]['if'] == "${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + " }}"
+        assert set(graph[name]) == {parent.replace('-', '_') for parent in jobs[caller]['needs'] if parent.replace('-', '_') in graph}
+    for width in range(len(order) + 1):
+        for subset in combinations(order, width):
+            selected = set(subset)
+            for stopped, outcome in ((None, None), *((name, result) for name in selected for result in ('failure', 'cancelled'))):
+                delivery = json.loads(json.dumps(ci.delivery_outputs({'deployments': list(selected), 'suites': []}, 'push', 'refs/heads/main')))
+                outcomes, failed_ancestry, cancelled_ancestry = {}, {}, {}
+                for name in order:
+                    # failure() is transitive; contains(needs.*.result, 'cancelled') sees direct needs only,
+                    # which suffices because every caller lists its transitive prerequisites.
+                    failed_ancestry[name] = any(outcomes[parent] == 'failure' or failed_ancestry[parent] for parent in graph[name])
+                    cancelled_ancestry[name] = any(outcomes[parent] == 'cancelled' or cancelled_ancestry[parent] for parent in graph[name])
+                    direct_cancelled = any(outcomes[parent] == 'cancelled' for parent in graph[name])
+                    assert direct_cancelled == cancelled_ancestry[name]
+                    admitted = delivery[name.replace('_', '-')] and not failed_ancestry[name] and not direct_cancelled
+                    outcomes[name] = outcome if admitted and name == stopped else 'success' if admitted else 'skipped'
+                    if name in selected and outcomes[name] == 'skipped':
+                        assert failed_ancestry[name] or cancelled_ancestry[name]
+
+
+@pytest.mark.parametrize('defect', ['producer-event', 'producer-ref', 'producer-success', 'failure', 'cancelled', 'cancelled-needs', 'lookup', 'needs'])
+def test_delivery_write_tokens_require_exact_main_output_and_caller_guards(tmp_path, defect):
+    document = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+    directory = tmp_path / '.github/workflows'
+    directory.mkdir(parents=True)
+    path = directory / 'ci.yml'
+    path.write_text(yaml.safe_dump(document))
+    assert receipts.permissions(tmp_path) == []
+    jobs = document['jobs']
+    if defect.startswith('producer-'):
+        clause = {'producer-event': "github.event_name == 'push' && ", 'producer-ref': "github.ref == 'refs/heads/main' && ",
+                  'producer-success': "job.status == 'success' && "}[defect]
+        jobs['ci-ready']['outputs']['delivery'] = jobs['ci-ready']['outputs']['delivery'].replace(clause, '')
+    elif defect == 'needs':
+        jobs['mpatlas']['needs'] = ['geospatial-changes']
+    else:
+        clause = {'failure': '!failure() && ', 'cancelled': '!cancelled() && ', 'cancelled-needs': "!contains(needs.*.result, 'cancelled') && ",
+                  'lookup': '.mpatlas'}[defect]
+        jobs['mpatlas']['if'] = jobs['mpatlas']['if'].replace(clause, '.wdpa' if defect == 'lookup' else '')
+    path.write_text(yaml.safe_dump(document))
+    assert any('PR-capable validation' in error for error in receipts.permissions(tmp_path))
+
+
+def test_health_artifact_names_describe_the_retained_contract():
+    assert not (ROOT / 'scripts/incident_verification_cache.py').exists()
+    from scripts import incident_health_artifacts
+    assert incident_health_artifacts.MEMBER == 'cache.json'
+    assert (ROOT / 'tests/test_incident_health_artifacts.py').is_file()
+
+
+def test_deployment_procedure_is_the_single_target_change_entrypoint():
+    procedure = (ROOT / 'docs/ci-deployment.md').read_text()
+    assert '## Caller scheduling' in procedure
+    assert 'retired_resources' in procedure and 'permission_probes' in procedure
+    terraform = (ROOT / 'docs/terraform-reconciliation.md').read_text()
+    section = terraform.split('## Change a Terraform or IAM target')[1].split('## Manual state-only reconciliation')[0]
+    assert '(ci-deployment.md)' in section and '1.' not in section

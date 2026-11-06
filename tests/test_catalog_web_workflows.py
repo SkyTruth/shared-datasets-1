@@ -13,7 +13,6 @@ from scripts import cdn_plan_readiness as cdn
 
 from workflow_helpers import (
     load_workflow,
-    python_literal_string_set,
     terraform_targets,
     workflow_all_step_runs,
     workflow_steps_by_name,
@@ -107,15 +106,17 @@ def assert_protected_terraform_sync(
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
     guard = steps["Validate main ref"]["run"]
     testcase.assertIn('"${GITHUB_REF}" != "refs/heads/main"', guard)
-    testcase.assertIn(f".github/workflows/{workflow_path.name}@refs/heads/main", guard)
+    testcase.assertIn(".github/workflows/$WORKFLOW_FILE@refs/heads/main", guard)
     testcase.assertIn(".github/workflows/ci.yml@refs/heads/main", guard)
     testcase.assertIn("exit 1", guard)
 
     testcase.assertEqual(terraform_targets(plan_run), expected_targets)
     testcase.assertIn("-refresh=false", plan_run)
     testcase.assertIn(f'out="${{RUNNER_TEMP}}/{plan_name}.tfplan"', plan_run)
-    testcase.assertEqual(python_literal_string_set(enforce_run, "allowed_exact"), expected_targets)
-    testcase.assertIn("Refusing automatic", enforce_run)
+    for resource in expected_targets | blocked_resources:
+        result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(resource, ["update"])])
+        testcase.assertEqual(result.returncode == 0, resource in expected_targets, result.stderr)
+    testcase.assertIn("Refusing", enforce_run)
     testcase.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod", steps["Terraform apply"]["run"])
     testcase.assertIn(" apply ", steps["Terraform apply"]["run"])
 
@@ -123,8 +124,9 @@ def assert_protected_terraform_sync(
         testcase.assertNotIn(f"-target={resource}", plan_run)
         testcase.assertNotIn(f'"{resource}"', enforce_run)
 
-    testcase.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", all_runs)
-    testcase.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", all_runs)
+    configured = steps["Require a configured protected identity"]
+    testcase.assertEqual(configured["run"], 'test -n "$ACCOUNT" && test -n "$PROVIDER"')
+    testcase.assertEqual(configured["env"]["PROVIDER"], '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}')
     testcase.assertNotIn(
         "vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER",
         all_runs,
@@ -245,7 +247,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             {"group": "release-index-rebuild-${{ inputs.asset_slug }}", "cancel-in-progress": False},
         )
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ github.workflow_sha }}")
-        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
+        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 1)
         self.assertEqual(
             env["PUBLISHER_SERVICE_ACCOUNT"],
             "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
@@ -302,7 +304,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             for step in workflow["jobs"]["sync"]["steps"]
             if "name" in step
         ]
-        verify_run = steps["Verify catalog CDN routes"]["run"]
+        verify_run = workflow_steps_by_name(workflow, 'verify')["Verify catalog CDN routes"]["run"]
         enforce_run = steps["Enforce PMTiles resource-change allowlist"]["run"]
         bootstrap_targets = {
             "google_storage_bucket.shared_bucket",
@@ -322,13 +324,13 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             step_names.index("Terraform plan"),
         )
         self.assertLess(
-            step_names.index("Wait for PMTiles managed-folder IAM propagation"),
+            step_names.index("Verify PMTiles managed-folder dependencies"),
             step_names.index("Terraform plan"),
         )
         self.assertEqual(terraform_targets(bootstrap_plan), bootstrap_targets)
         self.assertIn("-refresh=false", bootstrap_plan)
         self.assertIn('out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"', bootstrap_plan)
-        self.assertIn("unused-by-pmtiles-cdn-sync", bootstrap_plan)
+        self.assertIn("python scripts/ingestion_targets.py image-vars", bootstrap_plan)
         self.assertEqual(cdn.BOOTSTRAP_EXACT, bootstrap_allowed_exact)
         self.assertEqual(
             cdn.BOOTSTRAP_UPDATE_ONLY,
@@ -339,42 +341,22 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             "terraform_retry.sh\" -chdir=terraform/envs/prod apply -input=false",
             steps["Terraform apply PMTiles managed-folder IAM bootstrap"]["run"],
         )
-        self.assertEqual(steps["Wait for PMTiles managed-folder IAM propagation"]["run"], "sleep 30")
+        self.assertFalse(any('sleep 30' in step.get('run', '') for step in workflow['jobs']['sync']['steps']))
 
-        self.assertEqual(
-            python_literal_string_set(enforce_run, "allowed_for_each_prefixes"),
-            {
-                "google_storage_managed_folder.shared_bucket_public_prefixes",
-                "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-            },
-        )
-        self.assertIn('address.startswith(f"{prefix}[")', enforce_run)
+        for prefix in (
+            "google_storage_managed_folder.shared_bucket_public_prefixes",
+            "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+        ):
+            for suffix in ('["fixture"]', '_foreign["fixture"]'):
+                result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(prefix + suffix, ["update"])])
+                self.assertEqual(result.returncode == 0, suffix == '["fixture"]', result.stderr)
         self.assertIn('managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"', enforce_run)
         self.assertIn('address == "google_storage_bucket.shared_bucket" and "delete" in actions', enforce_run)
         self.assertIn('"delete" in actions', enforce_run)
 
-        self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])
-        self.assertIn('--path="/_catalog/*"', steps["Invalidate catalog CDN cache"]["run"])
-        self.assertIn(
-            'check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"',
-            verify_run,
-        )
-        self.assertIn(
-            'check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"',
-            verify_run,
-        )
-        self.assertIn('check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"', verify_run)
-        self.assertIn('release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"', verify_run)
-        self.assertIn("candidate_releases.extend(release_index.get(\"releases\") or [])", verify_run)
-        self.assertIn(
-            "WDPA marine release index does not include a canonical metadata sidecar in any release",
-            verify_run,
-        )
-        self.assertIn('check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"', verify_run)
-        self.assertNotIn("latest release does not include a canonical metadata sidecar", verify_run)
-        self.assertIn("expected 200 without redirect", verify_run)
-        self.assertNotIn("curl -L", verify_run)
-        self.assertNotIn("--location", verify_run)
+        self.assertIn("python scripts/ingestion_targets.py image-vars", steps["Terraform plan"]["run"])
+        self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
+        self.assertEqual(verify_run, 'python -I -S scripts/cdn_plan_readiness.py verify-routes')
 
     def test_pmtiles_bootstrap_allows_only_in_place_shared_bucket_update(self):
         shared_bucket = "google_storage_bucket.shared_bucket"

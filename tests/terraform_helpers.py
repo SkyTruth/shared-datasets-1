@@ -1,9 +1,11 @@
 """Read real HCL structure and evaluate provider-free policy expressions."""
 from __future__ import annotations
 
+from functools import cache
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -26,6 +28,18 @@ def resources(document: dict):
                 yield kind, name, attributes
 
 
+@cache
+def terraform_executable():
+    from scripts.ci_toolchain import TOOLCHAIN
+    executable = shutil.which("terraform")
+    if executable is None:
+        raise RuntimeError("Install pinned Terraform " + TOOLCHAIN["terraform"] + " on PATH before running policy tests")
+    actual = json.loads(subprocess.check_output([executable, "version", "-json"], text=True))["terraform_version"]
+    if actual != TOOLCHAIN["terraform"]:
+        raise RuntimeError(f"Policy tests require Terraform {TOOLCHAIN['terraform']}; {executable} reports {actual}")
+    return executable
+
+
 def evaluate(locals_: dict, expression: str, *, variables: dict | None = None):
     """Evaluate isolated expressions with no providers, remote state or credentials."""
     root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", Path(tempfile.gettempdir()) / "shared-datasets-1"))
@@ -40,7 +54,7 @@ def evaluate(locals_: dict, expression: str, *, variables: dict | None = None):
         cli_config = directory / "terraform.rc"
         cli_config.write_text("")
         completed = subprocess.run(
-            ["terraform", f"-chdir={directory}", "console", "-no-color"],
+            [terraform_executable(), f"-chdir={directory}", "console", "-no-color"],
             input=f"jsonencode({expression})\n", text=True, capture_output=True,
             env={"PATH": os.environ["PATH"], "CHECKPOINT_DISABLE": "1",
                  "TF_CLI_CONFIG_FILE": str(cli_config)},

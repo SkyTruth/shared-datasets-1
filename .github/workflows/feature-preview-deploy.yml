@@ -1,8 +1,11 @@
 name: Preview / Deploy feature branch
-
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: "Full ref resolving to this exact reviewed main revision (normally refs/heads/main)"
+        type: string
+        required: true
       preview_data_mode:
         description: "Preview data handling"
         type: choice
@@ -14,7 +17,7 @@ on:
 permissions:
   contents: read
   id-token: write
-
+  pull-requests: read
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
@@ -27,44 +30,49 @@ env:
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
-  PREVIEW_TERRAFORM_DIR: preview-source/terraform/envs/preview
+  PREVIEW_TERRAFORM_DIR: terraform/envs/preview
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
   TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
 jobs:
   preview:
     name: Deploy selected branch to preview
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: shared-datasets-production
     concurrency:
       group: feature-branch-preview
       cancel-in-progress: false
-
     env:
-      PREVIEW_REF: ${{ github.ref_name }}
-      PREVIEW_SOURCE_REF: ${{ github.ref }}
+      PREVIEW_REF: ${{ inputs.source_ref }}
       PREVIEW_DATA_MODE: ${{ github.event.inputs.preview_data_mode || 'preserve' }}
-
     steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/feature-preview-deploy.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - name: Check out preview control plane
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
       - name: Validate selected ref
         run: |
           set -euo pipefail
-
-          if [[ -z "${PREVIEW_SOURCE_REF}" || -z "${PREVIEW_REF}" ]]; then
-            echo "Select the branch or tag to deploy from the workflow branch dropdown." >&2
+          case "${PREVIEW_REF}" in
+            refs/heads/*|refs/tags/*) git check-ref-format "${PREVIEW_REF}" ;;
+            *) echo "source_ref must be a full branch or tag ref." >&2; exit 1 ;;
+          esac
+          git fetch --no-tags --depth=1 origin "${PREVIEW_REF}"
+          if [[ "$(git rev-parse FETCH_HEAD)" != "${GITHUB_SHA}" ]]; then
+            echo "Preview source must resolve to this exact reviewed main revision; unmerged branch code cannot use production authority." >&2
             exit 1
           fi
-          case "${PREVIEW_SOURCE_REF}" in
-            refs/heads/*|refs/tags/*) ;;
-            *)
-              echo "Only branch or tag refs are valid preview deploy sources; select a branch or tag." >&2
-              exit 1
-              ;;
-          esac
-
           case "${PREVIEW_DATA_MODE}" in
             preserve|reset) ;;
             *)
@@ -73,169 +81,66 @@ jobs:
               ;;
           esac
           echo "Preview data mode: ${PREVIEW_DATA_MODE}"
-
-      - name: Check out preview control plane
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Check out selected feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref }}
-          path: preview-source
-
       - name: Record checked-out SHA
         run: echo "PREVIEW_DEPLOY_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
-        working-directory: preview-source
-
+      - name: Verify owner acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ github.workflow_sha }}
+        run: python -I -S scripts/deployment_revision.py accept
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-
-      - name: Sync selected branch dependencies
+      - name: Sync reviewed main dependencies
         run: uv sync --frozen
-        working-directory: preview-source
-
-      - name: Validate Terraform auth configuration
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
+      - name: Authenticate protected preview deployer
+        uses: ./.github/actions/deployment-auth
       - name: Validate preview IAM bootstrap
         run: |
-          set -euo pipefail
-
-          preview_service_account="feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          preview_loader_service_account="feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          project_number="$(gcloud projects describe "${GOOGLE_CLOUD_PROJECT}" --format='value(projectNumber)')"
-          preview_loader_wif_member="principal://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/subject/repo:SkyTruth/shared-datasets-1:environment:shared-datasets-production"
-
-          missing_bootstrap=0
-          if ! gcloud iam service-accounts describe "${preview_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
-            echo "Missing preview service account: ${preview_service_account}" >&2
-            missing_bootstrap=1
-          fi
-          if ! gcloud iam service-accounts describe "${preview_loader_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
-            echo "Missing preview loader service account: ${preview_loader_service_account}" >&2
-            missing_bootstrap=1
-          fi
-          if [[ "${missing_bootstrap}" == "1" ]]; then
-            echo "Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first." >&2
-            exit 1
-          fi
-
-          gcloud projects get-iam-policy "${GOOGLE_CLOUD_PROJECT}" --format=json > "${RUNNER_TEMP}/preview-project-iam.json"
-          gcloud iam service-accounts get-iam-policy "${preview_service_account}" \
-            --project="${GOOGLE_CLOUD_PROJECT}" \
-            --format=json > "${RUNNER_TEMP}/preview-service-iam.json"
-          gcloud iam service-accounts get-iam-policy "${preview_loader_service_account}" \
-            --project="${GOOGLE_CLOUD_PROJECT}" \
-            --format=json > "${RUNNER_TEMP}/preview-loader-iam.json"
-          export PREVIEW_LOADER_WIF_MEMBER="${preview_loader_wif_member}"
-
-          python - "${RUNNER_TEMP}/preview-project-iam.json" "${RUNNER_TEMP}/preview-service-iam.json" "${RUNNER_TEMP}/preview-loader-iam.json" <<'PY'
-          import json
-          import os
-          import sys
-
-          project_policy = json.load(open(sys.argv[1]))
-          service_policy = json.load(open(sys.argv[2]))
-          loader_policy = json.load(open(sys.argv[3]))
+          python -I -S - <<'PY'
+          import json, os, subprocess
           project = os.environ["GOOGLE_CLOUD_PROJECT"]
-          terraform_service_account = os.environ["TERRAFORM_SERVICE_ACCOUNT"]
-          preview_service_member = f"serviceAccount:feature-preview-service@{project}.iam.gserviceaccount.com"
-          preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
-          preview_sign_blob_role = f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob"
-          loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
-
-          def project_binding_exists(role, member):
-              return any(
-                  binding.get("role") == role and member in binding.get("members", [])
-                  for binding in project_policy.get("bindings", [])
-              )
-
-          def service_account_binding_exists(policy, role, member):
-              return any(
-                  binding.get("role") == role and member in binding.get("members", [])
-                  for binding in policy.get("bindings", [])
-              )
-
-          missing = []
-          if not project_binding_exists(preview_terraform_role, f"serviceAccount:{terraform_service_account}"):
-              missing.append("preview Terraform custom role binding")
-          if not service_account_binding_exists(service_policy, preview_sign_blob_role, preview_service_member):
-              missing.append("preview service self signBlob binding")
-          if not service_account_binding_exists(loader_policy, "roles/iam.workloadIdentityUser", loader_wif_member):
-              missing.append("preview loader Workload Identity binding")
-
-          if missing:
-              print("Preview IAM bootstrap is incomplete. Run the protected 'Infrastructure / Preview Terraform IAM sync' workflow first.")
-              for item in missing:
-                  print(f"- {item}")
-              raise SystemExit(1)
+          def read(*args):
+              return subprocess.check_output(["gcloud", *args], text=True).strip()
+          number = read("projects", "describe", project, "--format=value(projectNumber)")
+          service = f"feature-preview-service@{project}.iam.gserviceaccount.com"
+          loader = f"feature-preview-loader@{project}.iam.gserviceaccount.com"
+          checks = [
+              (("projects", "get-iam-policy", project), f"projects/{project}/roles/sharedDatasetsPreviewTerraform",
+               "serviceAccount:" + os.environ["TERRAFORM_SERVICE_ACCOUNT"]),
+              (("iam", "service-accounts", "get-iam-policy", service), f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob",
+               "serviceAccount:" + service),
+              (("iam", "service-accounts", "get-iam-policy", loader), "roles/iam.workloadIdentityUser",
+               f"principalSet://iam.googleapis.com/projects/{number}/locations/global/workloadIdentityPools/github/attribute.preview/allowed"),
+          ]
+          for args, role, member in checks:
+              policy = json.loads(read(*args, "--format=json"))
+              if not any(binding.get("role") == role and member in binding.get("members", []) for binding in policy.get("bindings", [])):
+                  raise SystemExit(f"Preview IAM bootstrap is incomplete: {role} for {member}. Run protected Preview Terraform IAM sync.")
           PY
-
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-
-      - name: Verify selected feature branch contains preview services
-        run: |
-          set -euo pipefail
-
-          test -f preview-source/services/feature_preview_service/Dockerfile
-          grep -q "GcsSidecarFeatureIndex" preview-source/services/feature_preview_service/run.py
-          if grep -q 'resource "google_firestore_database"' preview-source/terraform/envs/preview/*.tf; then
-            echo "The selected branch must include Firestore retirement before preview deployment." >&2
-            exit 1
-          fi
-          test -f preview-source/services/catalog_viewer/Dockerfile
-          if ! grep -q "SHARED_DATASETS_SITE_PREFIX" preview-source/services/catalog_viewer/run.py; then
-            echo "The selected feature branch must support the catalog viewer site-prefix override before it can run in preview." >&2
-            exit 1
-          fi
-
       - name: Build preview service image
         run: |
           set -euo pipefail
-
           safe_ref="$(printf '%s' "${PREVIEW_REF}" | tr -c 'A-Za-z0-9_.-' '-' | cut -c 1-80)"
           safe_ref="${safe_ref#-}"
           safe_ref="${safe_ref%-}"
           if [[ -z "${safe_ref}" ]]; then
             safe_ref="ref"
           fi
-
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:preview-${safe_ref}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build \
             --platform linux/amd64 \
-            -f preview-source/services/feature_preview_service/Dockerfile \
+            -f services/feature_preview_service/Dockerfile \
             -t "${image_tag}" \
-            preview-source
+            .
           docker push "${image_tag}"
           image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
@@ -248,17 +153,15 @@ jobs:
           image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
           echo "SAFE_PREVIEW_REF=${safe_ref}" >> "${GITHUB_ENV}"
           echo "PREVIEW_SERVICE_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
-
       - name: Build preview catalog viewer image
         run: |
           set -euo pipefail
-
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${CATALOG_VIEWER_IMAGE_NAME}:preview-${SAFE_PREVIEW_REF}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build \
             --platform linux/amd64 \
-            -f preview-source/services/catalog_viewer/Dockerfile \
+            -f services/catalog_viewer/Dockerfile \
             -t "${image_tag}" \
-            preview-source
+            .
           docker push "${image_tag}"
           image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
@@ -270,31 +173,25 @@ jobs:
           fi
           image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${CATALOG_VIEWER_IMAGE_NAME}@${image_digest}"
           echo "PREVIEW_CATALOG_VIEWER_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-
       - name: Terraform init
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init -input=false
-
       - name: Release stable preview bootstrap state
         run: |
           set -euo pipefail
-
           bootstrap_addresses=(
             "module.feature_preview_service_account.google_service_account.this"
             "module.feature_preview_loader_service_account.google_service_account.this"
             "google_service_account_iam_member.feature_preview_loader_github_wif"
           )
-
           for address in "${bootstrap_addresses[@]}"; do
             if terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state list | grep -qx "${address}"; then
               terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state rm "${address}"
             fi
           done
-
       - name: Preserve retired preview database before reset or deployment
         run: |
           set -euo pipefail
@@ -306,29 +203,23 @@ jobs:
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/preview-database-retirement.tfplan" > "${RUNNER_TEMP}/preview-database-retirement.json"
           python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/preview-database-retirement.json" --database-only preview
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/preview-database-retirement.tfplan"
-
       - name: Terraform reset plan
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: |
           set -euo pipefail
-
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" plan \
             -destroy \
             -input=false \
             -out="${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
-
       - name: Export Terraform reset plan JSON
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
-
       - name: Terraform apply reset plan
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
-
       - name: Terraform plan
         run: |
           set -euo pipefail
-
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" plan \
             -input=false \
             -out="${RUNNER_TEMP}/feature-branch-preview.tfplan" \
@@ -336,17 +227,14 @@ jobs:
             -var="preview_catalog_viewer_image=${PREVIEW_CATALOG_VIEWER_IMAGE}" \
             -var="preview_ref=${PREVIEW_REF}" \
             -var="preview_deploy_sha=${PREVIEW_DEPLOY_SHA}"
-
       - name: Export Terraform plan JSON
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/feature-branch-preview.tfplan" > "${RUNNER_TEMP}/feature-branch-preview.tfplan.json"
-
       - name: Enforce preview resource-change allowlist
         run: |
           python - "${RUNNER_TEMP}/feature-branch-preview.tfplan.json" <<'PY'
           import json
           import re
           import sys
-
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
@@ -371,7 +259,6 @@ jobs:
               "service_account": "feature-preview-service",
               "index_loader_service_account": "feature-preview-loader",
           }
-
           def planned_values(resource):
               change = resource.get("change", {})
               for key in ("after", "before"):
@@ -379,12 +266,10 @@ jobs:
                   if isinstance(value, dict):
                       return value
               return {}
-
           def require_value(violations, address, values, key, expected_value):
               actual = values.get(key)
               if actual is not None and actual != expected_value:
                   violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
-
           def require_env_value(violations, address, env, key, expected_value, label=None):
               label = label or key
               if key not in env:
@@ -393,7 +278,6 @@ jobs:
               actual = env[key]
               if actual is not None and actual != expected_value:
                   violations.append(f"{address} {label} must be {expected_value!r}")
-
           def cloud_run_env(values):
               template = values.get("template") or []
               if not template or not isinstance(template, list):
@@ -403,7 +287,6 @@ jobs:
                   return {}
               env = containers[0].get("env") or []
               return {item.get("name"): item.get("value") for item in env if isinstance(item, dict)}
-
           blocked = []
           value_violations = []
           for resource in plan.get("resource_changes", []):
@@ -454,7 +337,6 @@ jobs:
                       require_value(value_violations, address, values, "bucket", expected["bucket"])
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
-
           if blocked:
               print("Refusing preview deploy because the Terraform plan changes non-allowlisted resources:")
               for item in blocked:
@@ -466,16 +348,13 @@ jobs:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
-
       - name: Terraform apply preview plan
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview.tfplan"
-
       - name: Report preview outputs
         run: |
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_service_uri
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_catalog_viewer_uri
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_bucket
-
       - name: Collect preview release indexes
         run: |
           set -euo pipefail
@@ -484,13 +363,11 @@ jobs:
             echo "Preview data reset requested; building catalog without prior release indexes."
             exit 0
           fi
-
           if gcloud storage ls "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" >/dev/null 2>&1; then
             gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" "${RUNNER_TEMP}/preview-release-indexes/"
           else
             echo "No existing preview release indexes found; building catalog shell."
           fi
-
       - name: Build preview catalog web bundle
         run: |
           set -euo pipefail
@@ -504,14 +381,11 @@ jobs:
             --force-access-tier private \
             --metadata-sidecar-autoload-max-bytes 33554432 \
             --out "${RUNNER_TEMP}/preview-catalog-web"
-        working-directory: preview-source
-
       - name: Authenticate as preview catalog publisher
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.CATALOG_PUBLISHER_SERVICE_ACCOUNT }}
-
       - name: Publish preview catalog web bundle
         env:
           SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
@@ -521,4 +395,3 @@ jobs:
             --source "${RUNNER_TEMP}/preview-catalog-web" \
             --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
             --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
-        working-directory: preview-source

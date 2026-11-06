@@ -8,30 +8,32 @@ authorization or uses production credentials.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from threading import Event
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.check_geospatial_test_results import check_results
 from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
-from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
+from scripts.terraform_target_contracts import production_image_limits
+from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
-    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    INGESTION_DEPLOYMENTS, INGESTION_ROLLOUT_HOLDS, documentation_only, select_deployments,
-    select_production_images, select_suites, verify_results, write_json,
+    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs,
+    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -220,15 +222,10 @@ def require_complete_history(root: Path) -> None:
         raise ValueError("full checkout history is required; fetch --unshallow before preflight")
 
 
-def ingestion_rollout_holds(root: Path, revision: str) -> tuple[str, ...]:
+def ingestion_rollout_holds(root: Path, revision: str, *, historical=False) -> tuple[str, ...]:
     if not git(root, "ls-tree", "--name-only", revision, "--", INGESTION_ROLLOUT_HOLDS):
         return ()
-    holds = json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True))
-    if (not isinstance(holds, list)
-            or any(not isinstance(target, str) or target not in INGESTION_DEPLOYMENTS for target in holds)
-            or len(set(holds)) != len(holds)):
-        raise ValueError("ingestion rollout holds must be a list of distinct scheduled deployment targets")
-    return tuple(holds)
+    return rollout_holds(json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True)), historical=historical)
 
 
 def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None) -> dict:
@@ -239,14 +236,15 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         raise ValueError("head must be the checked-out tested revision")
     try:
         resolved_base = git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
-        changed = git(root, "diff", "--name-only", "-z", resolved_base, resolved_head, raw=True)
+        changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, resolved_head, raw=True)
         paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
-        # An absent comparison selects all, but individual history-dependent
-        # commands still fail when their required base cannot be resolved.
         resolved_base = base
         paths = None
-    suites, reason = select_suites(paths)
+    holds = ingestion_rollout_holds(root, tested_sha)
+    released = ()
+    if paths and INGESTION_ROLLOUT_HOLDS in paths:
+        released = tuple(set(ingestion_rollout_holds(root, resolved_base, historical=True)) - set(holds))
     catalog_snapshots = None
     if paths and "catalog/shared-datasets-catalog.csv" in paths:
         try:
@@ -258,10 +256,10 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
-        "contract_digest": contract_digest(root), "suites": suites,
-        "selection_reason": reason, "changed_paths": paths,
-        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots,
-            ingestion_holds=ingestion_rollout_holds(root, tested_sha)),
+        "contract_digest": contract_digest(root), "changed_paths": paths,
+        "production_image_limits": production_image_limits(root),
+        **resolve_selection(paths, base=resolved_base if paths is not None else None, root=root,
+                            catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
     }
 
 
@@ -298,10 +296,17 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
-        if documentation_only(plan.get("changed_paths")):
+        if (root / INGESTION_ROLLOUT_HOLDS).exists():
+            previous = None
+            if INGESTION_ROLLOUT_HOLDS in (plan.get("changed_paths") or []):
+                previous = json.loads(git(root, "show", f"{base}:{INGESTION_ROLLOUT_HOLDS}")) if git(root, "ls-tree", "--name-only", base, "--", INGESTION_ROLLOUT_HOLDS) else {}
+            rollout_holds(json.loads((root / INGESTION_ROLLOUT_HOLDS).read_text()), previous=previous)
+        if documentation_only(plan.get("changed_paths"), root=root):
             add("git", "diff", "--check", base, head)
             return commands
         add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
+        add("uv", "run", "--no-sync", "python", "scripts/reviewed_dataset_plan.py", "check-diff", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")
@@ -309,12 +314,15 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false", "-lockfile=readonly")
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
+        add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", "--target", "all")
+    elif suite == "tests-control-plane":
+        add("uv", "sync", "--locked", "--all-groups")
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check")
         add("uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(output / "catalog-web"))
-        if documentation_only(plan.get("changed_paths")):
+        if documentation_only(plan.get("changed_paths"), root=root):
             return commands
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
@@ -325,11 +333,6 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
         add("uv", "run", "--no-sync", "python", ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py", "--local-only", "--format", "markdown", "--fail-on-findings")
         add("uv", "run", "--no-sync", "python", "scripts/check_identity_resolutions.py", "--offline")
-        release_targets = {"mpatlas": "mpatlas", "eamlis": "eamlis", "wdpa": "wdpa", "sea_ice": "sea-ice", "ingestion_iam": "iam", "dataset_usage": "dataset-usage"}
-        selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
-        if selected_targets:
-            add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
-        add("uv", "run", "--no-sync", "pytest", "-n", "2", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
         add("node", "scripts/release-policy.mjs", "changes", base, head, cwd=package)
@@ -355,14 +358,23 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "sync", "--locked", "--all-groups", "--extra", "wdpa-native")
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
-        # Host checks use only the standard library; image dependencies stay in Docker.
-        targets = select_production_images(plan.get("changed_paths"))
+        targets = planned_images(plan)
+        if "image_target" in plan:
+            if plan["image_target"] not in targets:
+                raise ValueError("image target was not selected by the validation plan")
+            targets = [plan["image_target"]]
         if not targets:
             raise ValueError("production image suite selected without image targets")
-        add(sys.executable, "-I", "scripts/production_image_contracts.py",
-            *(argument for target in targets for argument in ("--target", target)), "--output", str(output))
+        for target in targets:
+            add(sys.executable, "-I", "scripts/production_image_contracts.py",
+                "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target))
     else:
         raise ValueError(f"unknown suite: {suite}")
+    if suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
+        files = [str(path.relative_to(root)) for path in sorted(set((root / "tests").rglob("test_*.py")) | set((root / "tests").rglob("*_test.py")))
+                 if ("ci_" in path.name or "deployment" in path.name) == (suite == "tests-control-plane")]
+        add("terraform", "-chdir=terraform/envs/prod", "init", "-backend=false", "-input=false", "-lockfile=readonly")
+        add("uv", "run", "--no-sync", "pytest", *files, "-n", "4", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     return commands
 
 
@@ -372,6 +384,7 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
         "python": [sys.executable, "--version"], "uv": ["uv", "--version"],
         "node": ["node", "--version"], "terraform": ["terraform", "version", "-json"],
         "gitleaks": ["gitleaks", "version"], "actionlint": ["actionlint", "-version"],
+        "shellcheck": ["shellcheck", "--version"],
         "gdal": ["gdalinfo", "--version"],
         "tippecanoe": ["tippecanoe", "--version"], "pmtiles": ["pmtiles", "version"],
     }
@@ -390,42 +403,20 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     return versions
 
 
-def reuse_suite(root: Path, plan: dict, suite: str, output: Path) -> bool:
-    """Record a verified original producer; never relabel its bytes as main's."""
-    if os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF") != "refs/heads/main":
-        return False
-    from scripts.ci_reuse import discover
-    from scripts.sdk_release_authorization import GitHub
-
-    validate_checkout(root, plan)
-    main_source = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-    source = discover(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root, suite, main_source=main_source)
-    if source is None:
-        return False
-    result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
-    result.update({
-        "schema_version": 1, "suite": suite, "status": "success", "tools": source.result["tools"],
-        "source": main_source,
-        "commands": [{"argv": ["ci_preflight.py", "reuse-suite", "--suite", suite], "exit_code": 0}],
-        "reused_from": source.reference,
-    })
-    validate_checkout(root, plan)
-    write_json(output / "result.json", result)
-    print(f"{suite}: verified original PR producer {source.reference}; no rebuild or artifact copy.")
-    return True
-
-
-def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
+def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None) -> dict:
     if suite not in plan["suites"]:
         raise ValueError(f"suite {suite} was not selected")
     output.mkdir(parents=True, exist_ok=True)
     result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
     result.update({"schema_version": 1, "suite": suite, "status": "failure", "commands": [], "tools": {}})
+    if image_target is not None:
+        if suite != "production-images":
+            raise ValueError("image target requires the production-images suite")
+        plan = {**plan, "image_target": image_target}
+        result["image_target"] = image_target
     if os.environ.get("GITHUB_RUN_ID"):
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
     environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
-    # This exact process-owned path is bind-mounted across differing host and
-    # container UIDs. The setting also applies to Git invoked by SDK policy.
     environment.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root)})
     environment["SHARED_DATASETS_WORKDIR"] = str(output / "work")
     node_bin = environment.get("CI_NODE24_BIN" if suite == "sdk-node24" else "CI_NODE22_BIN")
@@ -448,23 +439,60 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
         if suite == "production-images":
             result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
             result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
-        for index, (command, cwd) in enumerate(suite_commands(suite, root, plan, output)):
+        cancelled = Event()
+        def execute(item):
+            if cancelled.is_set():
+                return None
+            index, (command, cwd) = item
             print(f"[{suite}] {' '.join(command)}", flush=True)
             log = output / f"command-{index:02d}.log"
             with log.open("w") as stream:
-                completed = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, check=False)
-            result["commands"].append({"argv": command, "exit_code": completed.returncode, "log": log.name})
-            if completed.returncode != 0:
-                print(log.read_text()[-12000:], file=sys.stderr)
-                raise ValueError(f"{suite}: command {index + 1} failed ({completed.returncode})")
-        if suite == "geospatial-integration" or suite == "tests" and not documentation_only(plan.get("changed_paths")):
+                if suite != "production-images":
+                    code = subprocess.run(command, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, check=False).returncode
+                else:
+                    with subprocess.Popen(command, cwd=cwd, env=environment, stdout=stream,
+                                          stderr=subprocess.STDOUT, start_new_session=True) as process:
+                        while process.poll() is None:
+                            if cancelled.wait(0.1):
+                                os.killpg(process.pid, signal.SIGTERM)
+                                try:
+                                    process.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    os.killpg(process.pid, signal.SIGKILL)
+                                break
+                        code = process.wait()
+                    if code:
+                        cancelled.set()
+            return {"argv": command, "exit_code": code, "log": log.name}
+
+        # Only independent image targets run concurrently. Policy/setup commands
+        # retain their serial, fail-fast ordering. Both paths keep one suite proof.
+        with ThreadPoolExecutor(max_workers=2) if suite == "production-images" else nullcontext() as executor:
+            commands = enumerate(suite_commands(suite, root, plan, output))
+            reports = (future.result() for future in as_completed([executor.submit(execute, item) for item in commands])) if executor else map(execute, commands)
+            try:
+                for report in reports:
+                    if report is None:
+                        continue
+                    result["commands"].append(report)
+                    if report["exit_code"] != 0:
+                        print((output / report["log"]).read_text()[-12000:], file=sys.stderr)
+                        raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
+            finally:
+                cancelled.set()
+        if suite == "geospatial-integration" or suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
-            if suite == "geospatial-integration":
-                check_results(output / "pytest.xml")
         if suite == "production-images":
-            manifest = json.loads((output / "images/manifest.json").read_text())
-            if set(validate_manifest(manifest, plan["tested_sha"])) != set(select_production_images(plan.get("changed_paths"))) & IMAGE_TARGETS:
-                raise ValueError("tested production-image set differs from validation selection")
+            manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
+            (output / "images").mkdir(exist_ok=True)
+            for target in [image_target] if image_target else planned_images(plan):
+                directory = output / target / "images"
+                images = validate_manifest(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
+                if set(images) != {target}:
+                    raise ValueError("tested production-image set differs from validation selection")
+                manifest["images"].update(images)
+                (directory / images[target]["archive"]).replace(output / "images" / images[target]["archive"])
+            write_json(output / "images/manifest.json", manifest)
             result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
@@ -637,16 +665,13 @@ def main() -> int:
     runner.add_argument("--plan", type=Path, required=True)
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
-    reuse = commands.add_parser("reuse-suite")
-    reuse.add_argument("--plan", type=Path, required=True)
-    reuse.add_argument("--suite", choices=SUITES, required=True)
-    reuse.add_argument("--output", type=Path, required=True)
-    reuse.add_argument("--github-output", type=Path, required=True)
+    runner.add_argument("--image-target")
     verifier = commands.add_parser("verify")
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
     verifier.add_argument("--jobs", type=Path)
     verifier.add_argument("--output", type=Path)
+    verifier.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     root = Path.cwd()
     try:
@@ -657,8 +682,7 @@ def main() -> int:
             write_json(args.output, plan)
             if args.github_output:
                 with args.github_output.open("a") as output:
-                    output.write("changed-paths=" + json.dumps(plan["changed_paths"]) + "\n")
-                    output.write("production-image-targets=" + json.dumps(select_production_images(plan["changed_paths"])) + "\n")
+                    output.write("production-image-targets=" + json.dumps(planned_images(plan)) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
                     for target in DEPLOYMENTS:
@@ -668,19 +692,12 @@ def main() -> int:
             return 0
         if args.command == "run-suite":
             plan = load_plan(args.plan)
-            return 0 if run_suite(root, plan, args.suite, args.output)["status"] == "success" else 1
-        if args.command == "reuse-suite":
-            reused = reuse_suite(root, load_plan(args.plan), args.suite, args.output)
-            with args.github_output.open("a") as output:
-                output.write(f"reused={'true' if reused else 'false'}\n")
-            return 0
+            return 0 if run_suite(root, plan, args.suite, args.output, image_target=args.image_target)["status"] == "success" else 1
         if args.command == "verify":
             run_id = os.environ.get("GITHUB_RUN_ID")
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
             plan = load_plan(args.plan)
             validate_checkout(root, plan)
-            if make_plan(root, plan["base"], "HEAD", original_head=plan["head"]) != {key: value for key, value in plan.items() if key != "source"}:
-                raise ValueError("selection plan does not match the current comparison")
             results = [json.loads(report.read_text()) for report in sorted(args.results.rglob("result.json"))]
             jobs = json.loads(args.jobs.read_text()) if args.jobs else None
             proofs = None
@@ -691,15 +708,8 @@ def main() -> int:
                 proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
                 if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
                     raise ValueError("selected plan has no successful source selection job")
-            def verify_reuse(result):
-                from scripts.ci_reuse import verify_source
-                from scripts.sdk_release_authorization import GitHub
-
-                return verify_source(GitHub(), os.environ["GITHUB_REPOSITORY"], plan, root,
-                                     result["suite"], result["reused_from"], main_source=result["source"])
-
             chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id,
-                                    run_attempt=current_attempt, reuse_verifier=verify_reuse)
+                                    run_attempt=current_attempt)
             if args.output:
                 evidence = {**plan, "status": "success"}
                 if run_id:
@@ -708,10 +718,10 @@ def main() -> int:
                         "plan_artifact": f"ci-validation-plan-attempt{plan['source']['run_attempt']}",
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
                     })
-                reused = {suite: result["reused_from"] for suite, result in chosen.items() if "reused_from" in result}
-                if reused:
-                    evidence["reused_suites"] = reused
                 write_json(args.output, evidence)
+            if args.github_output:
+                with args.github_output.open('a') as output:
+                    output.write('delivery=' + json.dumps(delivery_outputs(plan, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'])) + '\n')
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
         if not args.base or not args.head:

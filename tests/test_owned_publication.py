@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from copy import deepcopy
 import gzip
 import hashlib
 import json
@@ -9,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+import pytest
 
 from ingestion.common import publication as p, release_index
 from ingestion.common.identity_reset import CONTRACT_ID, IdentityResetCandidate
@@ -24,6 +27,14 @@ from test_wdpa_monthly import fake_asset_outputs as wdpa_outputs
 
 
 DATE = dt.date(2026, 10, 1)
+
+
+@pytest.fixture
+def one_seed_per_asset(monkeypatch):
+    seed = mock.Mock(wraps=fixture)
+    monkeypatch.setitem(globals(), 'fixture', seed)
+    yield
+    assert seed.call_count == len({call.args[0] for call in seed.call_args_list})
 
 
 def publisher_fixture(asset, *, execution="execution-1", store=None):
@@ -180,17 +191,19 @@ class OwnedPublicationTests(unittest.TestCase):
             expected["artifacts"] = [entry for entry in expected["artifacts"] if not entry["role"].startswith("extra-")]
             self.assertEqual(derive(parameters, results), p.canonical(expected))
 
+    @pytest.mark.usefixtures('one_seed_per_asset')
     def test_actual_publishers_resume_after_every_durable_write_without_rebuilding(self):
         for asset in (wdpa.ASSETS[0], sea_ice.ASSET):
             with publication_temp_directory() as temporary:
                 publisher, store = publisher_fixture(asset)
+                baseline = deepcopy(store)
                 outputs = outputs_fixture(Path(temporary), asset)
                 store.events.clear()
                 publish(publisher, asset, outputs)
                 writes = len(store.events)
                 for crash_after in range(1, writes + 1):
                     with self.subTest(asset=asset.slug, crash_after=crash_after):
-                        publisher, store = publisher_fixture(asset)
+                        publisher, store = publisher_fixture(asset, store=deepcopy(baseline))
                         store.events.clear()
                         store.fail_after = crash_after
                         with self.assertRaises(LostResponse):
@@ -407,14 +420,17 @@ class OwnedPublicationTests(unittest.TestCase):
             self.assertEqual(editor.publish_translation_update(asset=asset, plan=plan), record)
             self.assertEqual(store.events, before_retry)
 
+    @pytest.mark.usefixtures('one_seed_per_asset')
     def test_translation_edit_resumes_after_every_durable_write(self):
         asset = wdpa.ASSETS[0]
         with publication_temp_directory() as temporary:
             outputs = outputs_fixture(Path(temporary), asset)
+            publisher, baseline = publisher_fixture(asset)
+            publish(publisher, asset, outputs)
+            approved = translation_plan(baseline, asset)
+            baseline.events.clear()
             def setup():
-                publisher, store = publisher_fixture(asset)
-                publish(publisher, asset, outputs)
-                plan = translation_plan(store, asset)
+                store, plan = deepcopy(baseline), deepcopy(approved)
                 editor, _ = publisher_fixture(asset, execution="reviewed-edit", store=store)
                 store.events.clear()
                 return editor, store, plan

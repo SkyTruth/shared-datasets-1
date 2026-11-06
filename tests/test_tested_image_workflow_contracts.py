@@ -12,6 +12,8 @@ import pytest
 
 from scripts.ci_contract import ALWAYS, expected_tools, verify_results
 from scripts.tested_image_bundle import TARGETS as IMAGE_TARGETS
+from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS
+from scripts.deployment_receipt_contracts import expanded_steps
 from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow
 
@@ -21,8 +23,15 @@ TARGETS = ("wdpa-monthly", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily",
 
 def deployment_steps(target):
     value = load_workflow(ROOT / ".github/workflows" / f"{target}-deploy.yml")
-    return next(job["steps"] for job in value["jobs"].values()
-                if any("tested_image_authorization.py" in step.get("run", "") for step in job.get("steps", [])))
+    if value['jobs'].get('deploy', {}).get('uses') == './.github/workflows/ingestion-deploy.yml':
+        shared = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
+        config = INGESTION_CONFIGS[target]
+        steps = copy.deepcopy(list(expanded_steps(ROOT, shared['jobs']['prepare'])) + list(expanded_steps(ROOT, shared['jobs']['apply'])))
+        for step in steps:
+            if 'run' in step:
+                step['run'] = step['run'].replace('$WORKFLOW_FILE', config['workflow']).replace('$TARGET', target)
+        return steps
+    return [step for name in ('prepare', 'deploy') for step in expanded_steps(ROOT, value['jobs'][name])]
 
 
 def image_contract(steps, target):
@@ -33,9 +42,10 @@ def image_contract(steps, target):
     loaded = loaders[0]
     assert steps[loaded].get("id") == "tested-image"
     assert not steps[loaded].get("continue-on-error") and "||" not in runs[loaded], "loader cannot have a fallback"
-    for argument in (f"--workflow {target}-deploy.yml", f"--target {target}", '--executor-sha "$EXECUTOR_SHA"',
-                     '--source-run-id "$SOURCE_RUN_ID"', '--source-run-attempt "$SOURCE_RUN_ATTEMPT"'):
-        assert argument in runs[loaded], "retained image must bind exact workflow, target and tested source"
+    arguments = shlex.split(runs[loaded])
+    for flag, expected in (("--workflow", target + "-deploy.yml"), ("--target", target), ("--executor-sha", "$EXECUTOR_SHA"),
+                           ("--source-run-id", "$SOURCE_RUN_ID"), ("--source-run-attempt", "$SOURCE_RUN_ATTEMPT")):
+        assert arguments[arguments.index(flag) + 1] == expected, "retained image must bind exact workflow, target and tested source"
     assert steps[loaded].get("env", {}).get("GH_TOKEN") == "${{ github.token }}"
     assert any("deployment_revision.py verify --bootstrap" in run for run in runs[:loaded]), "trusted source proof must precede loading"
     assert any("deployment_revision.py check" in run for run in runs[:loaded]), "replay proof must precede loading"
@@ -46,7 +56,9 @@ def image_contract(steps, target):
     assert 'docker tag "$TESTED_IMAGE_ID"' in runs[tagged[0]], "only the verified daemon image reference may be tagged"
     if target == "catalog-viewer":
         assert tag_step.get("env", {}).get("TESTED_IMAGE_CONFIG") == "${{ steps.tested-image.outputs.config_digest }}"
-        assert "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}" in runs[tagged[0]], "viewer claim must bind canonical config bytes"
+        claim = next(step for step in steps if 'deployment_revision.py start --workflow catalog-viewer-deploy.yml' in step.get('run', ''))
+        assert claim['env']['CATALOG_VIEWER_LOCAL_DIGEST'] == '${{ steps.tested-image.outputs.config_digest }}', "viewer claim must bind canonical config bytes"
+        assert '--artifact "catalog-viewer-image@${CATALOG_VIEWER_LOCAL_DIGEST}"' in claim['run']
     pushed = [index for index, run in enumerate(runs) if re.search(r"\bdocker\s+push\s", run)]
     assert len(pushed) == 1 and pushed[0] > tagged[0]
     push = steps[pushed[0]]
@@ -76,7 +88,7 @@ def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, targ
 def image_results():
     selected = sorted(ALWAYS | {"production-images"})
     plan = {"schema_version": 1, "base": "a" * 40, "head": "b" * 40, "tested_sha": "c" * 40,
-            "tree": "d" * 40, "contract_digest": "e" * 64, "suites": selected}
+            "tree": "d" * 40, "contract_digest": "e" * 64, "suites": selected, "production_image_targets": sorted(IMAGE_TARGETS)}
     results = [{**{key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")},
                 "suite": suite, "status": "success", "tools": expected_tools(suite),
                 "commands": [{"argv": ["actual-small-image-fixtures"], "exit_code": 0}]} for suite in selected]
@@ -113,11 +125,11 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
 
 @pytest.mark.parametrize("paths,targets", [
     (["ingestion/eamlis_monthly/run.py"], {"eamlis-monthly"}),
-    (["ingestion/wdpa_monthly/run.py"], {"wdpa-monthly"}),
+    (["ingestion/wdpa_monthly/run.py"], {"catalog-viewer", "wdpa-monthly"}),
 ])
 def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets):
     plan, results, image_result = image_results()
-    plan["changed_paths"] = paths
+    plan.update(changed_paths=paths, production_image_targets=sorted(targets))
     all_images = image_result["production_images"]["images"]
     image_result["production_images"]["images"] = {target: all_images[target] for target in targets}
     verify_results(plan, results)
@@ -128,8 +140,8 @@ def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets)
     if targets:
         with pytest.raises(ValueError, match="differs from validation selection"):
             verify_results(plan, results)
-    plan["changed_paths"] = []
-    with pytest.raises(ValueError, match="differs from validation selection"):
+    plan["production_image_targets"] = []
+    with pytest.raises(ValueError, match="invalid resolved"):
         verify_results(plan, results)
 
 
@@ -142,92 +154,40 @@ def test_production_cache_keeps_deployment_artifacts():
     assert buildx < runtime < producer
     assert steps[producer]['env']['SHARED_DATASETS_GITHUB_IMAGE_CACHE'] == 'true'
     retained = next(step['with'] for step in steps if step.get('id') == 'retained-results')
-    assert retained['retention-days'] == "${{ github.event_name == 'pull_request' && 30 || 14 }}"
-    assert '!${{ runner.temp }}/ci-results/production-images/images/*.docker.tar' in retained['path'].splitlines()
+    assert retained['retention-days'] == 14
+    assert '!${{ runner.temp }}/ci-results/production-images/**/*.docker.tar' in retained['path'].splitlines()
 
 
-@pytest.mark.parametrize('suite', ['geospatial-integration', 'production-images', 'browser'])
-def test_reuse_precedes_and_skips_expensive_work_without_skipping_results(suite):
-    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs'][suite]
-    assert job['permissions'] == {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'}
-    steps = job['steps']
-    reuse = next(step for step in steps if step.get('id') == 'reuse')
-    assert reuse['if'] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    assert reuse['env'] == {'GH_TOKEN': '${{ github.token }}'}
-    assert f'--suite {suite}' in reuse['run'] and '--github-output "$GITHUB_OUTPUT"' in reuse['run']
-    for step in steps:
-        expensive = ('run-suite' in step.get('run', '') or step.get('uses', '').startswith(('docker/', './.github/actions/ci-tools'))
-                     or step.get('name') == 'Expose the ephemeral Actions cache runtime')
-        if expensive:
-            assert steps.index(reuse) < steps.index(step)
-            assert step['if'] == "steps.reuse.outputs.reused != 'true'"
-    retained = next(step for step in steps if step.get('id') == 'retained-results')
-    assert retained['if'] == 'always()'
-    assert retained['with']['if-no-files-found'] == 'error'
-
-
-def test_original_pr_proof_retention_preserves_main_recovery_window():
-    workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
-    for job_name, prefix in [('geospatial-changes', 'ci-validation-plan-'), ('ci-ready', 'ci-ready-evidence-')]:
-        retained = next(step for step in workflow['jobs'][job_name]['steps'] if step.get('with', {}).get('name', '').startswith(prefix))
-        assert retained['with']['retention-days'] == "${{ github.event_name == 'pull_request' && 30 || 14 }}"
-
-
-def image_retention_steps():
-    steps = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']['steps']
-    images = {}
-    for step in steps:
-        name = step.get('with', {}).get('name', '')
-        match = re.fullmatch(r'ci-image-(.+)-attempt\$\{\{ github\.run_attempt \}\}', name)
-        if match:
-            assert match[1] not in images, 'image target must have one immutable upload'
-            images[match[1]] = step
-    assert set(images) == IMAGE_TARGETS, 'all seven tested images must be retained'
-    return steps, images
-
-
-def test_each_image_upload_is_required_and_contains_only_its_tar():
-    steps, images = image_retention_steps()
-    producer = next(step for step in steps if step.get('name') == 'Test the actual production image recipes')
-    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
-    for target, step in images.items():
-        assert step['uses'] == 'actions/upload-artifact@v4'
-        assert step.get('id') and not step.get('continue-on-error')
-        assert step["if"] == f"steps.reuse.outputs.reused != 'true' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
-        assert step['with']['path'] == '${{ runner.temp }}/ci-results/production-images/images/' + target + '.docker.tar'
-        assert step['with']['if-no-files-found'] == 'error'
-        expected_retention = "${{ github.event_name == 'pull_request' && 30 || 14 }}" if target in {'mpatlas-monthly', 'eamlis-monthly', 'catalog-viewer', 'dataset-usage'} else 14
-        assert step['with']['retention-days'] == expected_retention
-        assert steps.index(producer) < steps.index(step) < steps.index(compact)
-    assert len({step['id'] for step in images.values()}) == len(IMAGE_TARGETS)
-
-
+@pytest.mark.parametrize('target', sorted(IMAGE_TARGETS))
 @pytest.mark.parametrize('outcome', ['success', 'failure', 'cancelled', 'skipped'])
-@pytest.mark.parametrize('selected', [IMAGE_TARGETS, {'eamlis-monthly'}, set()])
-@pytest.mark.parametrize('reused', [False, True])
-def test_compact_image_gate_result_requires_every_selected_upload_outcome(outcome, selected, reused):
-    steps, images = image_retention_steps()
-    small = next(step for step in steps if step.get('id') == 'retained-results')
-    compact = next(step for step in steps if step.get('with', {}).get('name') == 'ci-gate-result-production-images-attempt${{ github.run_attempt }}')
-    expression = compact['if'].removeprefix('${{').removesuffix('}}').strip()
-    uploads = [small, *images.values()]
-    for failed in uploads:
-        evaluated = ' '.join(expression.replace('always()', 'True').replace('steps.reuse.outputs.reused', repr('true' if reused else 'false')).split())
-        for target in images:
-            condition = f"contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), '{target}')"
-            evaluated = evaluated.replace(condition, repr(target in selected))
-        for step in uploads:
-            reference = f"steps.{step['id']}.outcome"
-            assert reference in expression, 'compact evidence must wait for every required upload'
-            evaluated = evaluated.replace(reference, repr(outcome if step is failed else 'success'))
-        required = failed is small or (not reused and failed['id'].removeprefix('retained-') in selected)
-        assert eval(evaluated.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not '), {'__builtins__': {}}) is (not required or outcome == 'success')
+def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, target, outcome):
+    from test_ci_gate_artifact_transport import package_upload
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
+    assert job['strategy']['fail-fast'] is True
+    assert job['strategy']['matrix']['target'] == '${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}'
+    steps = job['steps']
+    retained = next(step for step in steps if step.get('id') == 'retained-image')
+    path = tmp_path / 'ci-results/production-images/images' / (target + '.docker.tar')
+    path.parent.mkdir(parents=True)
+    path.write_bytes(target.encode())
+    name, archive = package_upload(retained, tmp_path, 'production-images-' + target, 1, tmp_path)
+    assert name == f'ci-image-{target}-attempt1'
+    import zipfile
+    with zipfile.ZipFile(archive) as bundle:
+        assert bundle.namelist() == [path.name]
+        assert bundle.read(path.name) == target.encode()
+    compact = next(step for step in steps if step.get('with', {}).get('name', '').startswith('ci-gate-result-'))
+    for failed in ('retained-image', 'retained-results'):
+        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True').replace('github.event_name', repr('push'))
+        for upload in ('retained-image', 'retained-results'):
+            expression = expression.replace('steps.' + upload + '.outcome', repr(outcome if upload == failed else 'success'))
+        assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (outcome == 'success')
 
 
 @pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])
 def test_successful_local_image_checks_cannot_hide_failed_hosted_retention(retention_outcome):
     plan, results, _ = image_results()
-    jobs = {name: {'result': 'success'} for name in ('geospatial-changes', 'lint', 'tests')}
+    jobs = {name: {'result': 'success'} for name in ('geospatial-changes', 'lint', 'tests', 'tests-control-plane')}
     jobs.update({name: {'result': 'skipped'} for name in ('geospatial-integration', 'browser', 'sdk-validation')})
     jobs['production-images'] = {'result': retention_outcome}
     with pytest.raises(ValueError, match='job production-images'):

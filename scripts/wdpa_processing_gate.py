@@ -44,7 +44,7 @@ def source_paths(inventory):
         "scripts/release_feature_model.py", "scripts/feature_metadata_translation_reuse.py",
         "scripts/feature_metadata_localization.py", "scripts/local_wdpa_sample.py",
         "scripts/local_ingestion_smoke.py", "docs/wdpa-processing-public-inputs.json",
-        "ingestion/sea_ice_daily/run.py", "scripts/translation_local_io.py",
+        "scripts/translation_local_io.py",
         "scripts/pmtiles_zoom.py", "scripts/vector_asset.py", "scripts/slack_notify.py",
         "scripts/wdpa_processing_gate.py",
     }

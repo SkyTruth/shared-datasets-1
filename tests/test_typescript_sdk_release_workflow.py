@@ -18,13 +18,12 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     assert workflow['name'] == 'SDK / Publish TypeScript'
     trigger = workflow_triggers(workflow)
-    assert set(trigger) == {'workflow_run', 'workflow_dispatch'}
-    assert trigger['workflow_run'] == {'workflows': ['CI / Validate and deliver', 'CI'], 'branches': ['main'], 'types': ['completed']}
+    assert set(trigger) == {'workflow_dispatch'}
     assert set(trigger['workflow_dispatch']['inputs']) == {'executor_sha', 'source_run_id', 'source_run_attempt'}
     for name, field in trigger['workflow_dispatch']['inputs'].items():
         assert field['required'] and field['type'] == 'string'
         assert '${{ inputs.' + name in workflow['env'][name.upper()]
-    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read'}
+    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read', 'pull-requests': 'read'}
     candidate, publish = workflow['jobs']['candidate'], workflow['jobs']['publish']
     assert 'id-token' not in candidate.get('permissions', {})
     assert publish['permissions']['id-token'] == 'write'
@@ -35,6 +34,26 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     assert publish['concurrency'] == {'group': 'publish-typescript-sdk', 'queue': 'max', 'cancel-in-progress': False}
 
 
+def test_ci_dispatch_transports_tested_identity_and_npm_rejects_ci_as_publisher(tmp_path):
+    caller = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['typescript-sdk']
+    gh = tmp_path / 'gh'
+    gh.write_text(f'#!{sys.executable}\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+    gh.chmod(0o755)
+    environment = {**os.environ, 'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
+                   'EXECUTOR_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2',
+                   'GITHUB_REF': 'refs/heads/main', 'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1'}
+    result = subprocess.run(['bash', '-e', '-c', caller['steps'][0]['run']], env=environment,
+                            capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == ['workflow', 'run', 'publish-typescript-sdk.yml', '--ref', 'main',
+        '-f', 'executor_sha=' + 'a' * 40, '-f', 'source_run_id=123', '-f', 'source_run_attempt=2']
+    workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
+    guard = workflow_steps_by_name(workflow, 'publish')['Require trusted main workflow']['run']
+    for filename in ('ci.yml', 'publish-typescript-sdk.yml'):
+        environment['GITHUB_WORKFLOW_REF'] = environment['GITHUB_REPOSITORY'] + '/.github/workflows/' + filename + '@refs/heads/main'
+        checked = subprocess.run(['bash', '-e', '-c', guard], env=environment)
+        assert (checked.returncode == 0) is (filename == 'publish-typescript-sdk.yml')
+
+
 def test_sdk_release_does_not_rebuild_and_registry_verifies_tested_bytes():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     steps = workflow_steps_by_name(workflow, 'publish')
@@ -42,8 +61,8 @@ def test_sdk_release_does_not_rebuild_and_registry_verifies_tested_bytes():
     for forbidden in ('npm ci', 'npm test', 'npm run test:pack', 'npm version', 'git push', 'git commit'):
         assert forbidden not in commands
     assert 'sdk_release_authorization.py' in steps['Verify tested SDK candidate and reviewed version']['run']
-    assert steps['Check out exact tested revision']['with']['ref'] == '${{ env.EXECUTOR_SHA }}'
-    assert not steps['Check out exact tested revision']['with']['persist-credentials']
+    assert steps['Check out repository']['with']['ref'] == '${{ env.EXECUTOR_SHA }}'
+    assert not steps['Check out repository']['with']['persist-credentials']
     publish = steps['Publish exact tested package']
     assert publish['env']['TARBALL'] == '${{ steps.candidate.outputs.tarball }}'
     assert '--ignore-scripts' in publish['run']
@@ -70,13 +89,13 @@ def test_completed_sdk_revision_skips_expiring_artifacts_before_publish_allocati
 
 def test_verified_nonready_ci_stops_before_strict_authorization_and_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
-    for job in ('candidate', 'publish'):
-        steps = workflow_steps_by_name(workflow, job)
-        names = list(steps)
-        assert names.index('Check out trusted deployment verifier') < names.index('Admit verified CI completion') < names.index('Verify trusted tested source authority')
-        assert '--admit-source' in steps['Admit verified CI completion']['run']
-        for name in ('Verify trusted tested source authority', 'Check out exact tested revision', 'Check already completed SDK publication'):
-            assert steps[name]['if'] == "steps.source.outputs.source_eligible == 'true'"
+    steps = workflow_steps_by_name(workflow, 'candidate')
+    names = list(steps)
+    assert names.index('Check out trusted deployment verifier') < names.index('Admit verified CI completion') < names.index('Verify executor before candidate checkout')
+    assert '--admit-source' in steps['Admit verified CI completion']['run']
+    for name in ('Verify executor before candidate checkout', 'Check out repository', 'Restore immutable receipt verifier after candidate checkout', 'Check already completed SDK publication'):
+        assert "steps.source.outputs.source_eligible == 'true'" in steps[name]['if']
+    assert workflow['jobs']['publish']['if'] == "needs.candidate.outputs.release_needed == 'true'"
     steps = workflow_steps_by_name(workflow, 'publish')
     for name in ('Check registry version and exact tarball integrity', 'Record serialized SDK deployment attempt'):
         assert "steps.candidate.outputs.release_needed == 'true'" in steps[name]['if']

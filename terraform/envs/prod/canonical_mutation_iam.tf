@@ -96,16 +96,11 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   description                        = "Restricts GitHub OIDC tokens to the shared-datasets repository and publish environment."
   disabled                           = false
 
-  attribute_mapping = {
-    "google.subject"             = "assertion.sub"
-    "attribute.actor"            = "assertion.actor"
-    "attribute.environment"      = "assertion.environment"
-    "attribute.repository"       = "assertion.repository"
-    "attribute.repository_owner" = "assertion.repository_owner"
-    "attribute.workflow"         = "assertion.workflow"
-  }
+  attribute_mapping = merge(local.github_identity_attributes, {
+    "google.subject" = "assertion.sub"
+  })
 
-  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.environment == '${var.github_publish_environment}'"
+  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.environment == '${var.github_publish_environment}' && assertion.ref == 'refs/heads/main'"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -125,7 +120,7 @@ module "shared_datasets_publisher_service_account" {
 resource "google_service_account_iam_member" "shared_datasets_publisher_github_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.publisher/allowed"
 }
 
 resource "google_project_iam_custom_role" "shared_datasets_publisher_object_lister" {
@@ -175,7 +170,7 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_folder_us
 }
 
 resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_publish_viewer" {
-  bucket = var.bucket_name
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
   role   = "roles/storage.objectViewer"
   member = module.shared_datasets_publisher_service_account.member
 
@@ -184,12 +179,10 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
     description = "Allow approved publisher reads from staged pending-publish objects and orphaned gcloud composite temp parts only."
     expression  = local.pending_publish_source_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_publish_cleanup_user" {
-  bucket = var.bucket_name
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
   role   = "roles/storage.objectUser"
   member = module.shared_datasets_publisher_service_account.member
 
@@ -198,8 +191,6 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
     description = "Allow approved publisher cleanup of pending-publish scratch objects, cleanup warning markers, and orphaned gcloud composite temp parts."
     expression  = local.pending_publish_cleanup_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "shared_bucket_scratch_writers" {

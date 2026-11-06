@@ -1,103 +1,68 @@
 name: Catalog / PMTiles CDN sync
-
-on:
+'on':
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision for selective recovery
-        required: true
-        type: string
-      source_run_id:
-        description: Main CI run that validated the executor
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {"description": "Exact tested main revision for selective recovery", "required": true, "type": "string"}
+      source_run_id: {"description": "Main CI run that validated the executor", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
   workflow_call:
     inputs:
-      executor_sha:
-        required: true
-        type: string
-      source_run_id:
-        required: true
-        type: string
-      source_run_attempt:
-        required: true
-        type: string
-
+      executor_sha: {required: true, type: string}
+      source_run_id: {required: true, type: string}
+      source_run_attempt: {required: true, type: string}
 permissions:
   contents: read
   actions: read
+  pull-requests: read
   deployments: write
   id-token: write
   attestations: write
-
+concurrency:
+  group: deployment-pmtiles-cdn
+  queue: max
+  cancel-in-progress: false
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
   SOURCE_RUN_ID: ${{ inputs.source_run_id }}
   SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
-  TF_IN_AUTOMATION: "1"
-  TF_INPUT: "0"
-  TERRAFORM_VERSION: "1.8.5"
+  TF_IN_AUTOMATION: '1'
+  TF_INPUT: '0'
+  TERRAFORM_VERSION: 1.8.5
   TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
 jobs:
   sync:
     name: Apply PMTiles CDN route sync
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: shared-datasets-production
     concurrency:
       group: prod-terraform-state
       queue: max
       cancel-in-progress: false
-
     steps:
       - name: Validate main ref
         run: |
-          set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
                 ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main" &&
-                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
-            echo "Execution must use this workflow or CI from main." >&2
-            exit 1
-          fi
-
-      - name: Check out trusted deployment verifier
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then exit 1; fi
+      - &trusted-checkout
+        name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
-
-
-      - name: Install pinned durable receipt verifier
-        run: python scripts/install_deployment_verifier.py
-      - name: Verify trusted tested source authority
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/deployment_revision.py verify --bootstrap --workflow pmtiles-cdn-sync.yml \
-            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - &trusted-bootstrap
+        name: Authorize tested executor and retain trusted receipt policy
+        uses: ./.github/actions/deployment-bootstrap
         with:
-          ref: ${{ inputs.executor_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify exact passing CI revision
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/deployment_revision.py verify --workflow pmtiles-cdn-sync.yml \
-            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
+          workflow: pmtiles-cdn-sync.yml
+          executor-sha: ${{ inputs.executor_sha }}
+          source-run-id: ${{ inputs.source_run_id }}
+          source-run-attempt: ${{ inputs.source_run_attempt }}
       - name: Check already completed deployment
         id: replay
         env:
@@ -105,49 +70,25 @@ jobs:
         run: |
           python scripts/deployment_revision.py check --workflow pmtiles-cdn-sync.yml --target pmtiles-cdn \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
-      - name: Validate Terraform auth configuration
+      - name: Authenticate protected deployer
+        uses: ./.github/actions/deployment-auth
         if: steps.replay.outputs.proceed == 'true'
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
-
-      - name: Authenticate to Google Cloud
-        if: steps.replay.outputs.proceed == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        if: steps.replay.outputs.proceed == 'true'
-        uses: google-github-actions/setup-gcloud@v2
-
       - name: Set up Terraform
         if: steps.replay.outputs.proceed == 'true'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-
       - name: Terraform init
         if: steps.replay.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod init -input=false
-
       - name: Verify existing PMTiles bootstrap authority
         if: steps.replay.outputs.proceed == 'true'
         run: python scripts/deployment_permissions.py --target pmtiles-cdn-bootstrap
-
       - name: Terraform plan PMTiles managed-folder IAM bootstrap
         if: steps.replay.outputs.proceed == 'true'
         run: |
+          image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+          image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
@@ -156,29 +97,22 @@ jobs:
             -target=google_project_iam_custom_role.pmtiles_managed_folder_sync \
             -target=google_project_iam_custom_role.pmtiles_url_map_sync \
             -target=google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync \
-            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
-            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
-            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
-
+            "${image_vars[@]}"
       - name: Export PMTiles managed-folder IAM bootstrap plan JSON
         if: steps.replay.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
-
       - name: Enforce PMTiles managed-folder IAM bootstrap allowlist
         if: steps.replay.outputs.proceed == 'true'
         run: python scripts/cdn_plan_readiness.py check-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
-
       - name: Verify permissions required by the saved CDN bootstrap plan
         if: steps.replay.outputs.proceed == 'true'
         run: python scripts/deployment_permissions.py --target pmtiles-cdn-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
-
       - name: Verify run-bound signing capability without mutation
         if: steps.replay.outputs.proceed == 'true'
         uses: ./.github/actions/deployment-receipt
         with:
           mode: rehearsal
           signer-workflow: pmtiles-cdn-sync.yml
-
       - name: Record serialized CDN deployment attempt
         if: steps.replay.outputs.proceed == 'true'
         id: deployment
@@ -189,7 +123,6 @@ jobs:
           python scripts/deployment_revision.py start --workflow pmtiles-cdn-sync.yml \
             --target pmtiles-cdn --artifact "$artifact" --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json" \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
-
       - name: Attest serialized deployment claim before mutation
         id: claim-receipt
         if: ${{ steps.deployment.outputs.proceed == 'true' }}
@@ -197,22 +130,17 @@ jobs:
         with:
           mode: receipt
           receipt-path: ${{ steps.deployment.outputs.receipt_path }}
-
       - name: Terraform apply PMTiles managed-folder IAM bootstrap
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"
-
-      - name: Wait for PMTiles managed-folder IAM propagation
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
-        run: sleep 30
-
       - name: Verify PMTiles managed-folder dependencies
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target pmtiles-cdn
-
       - name: Terraform plan
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
+          image_vars_text="$(python scripts/ingestion_targets.py image-vars)"
+          image_vars=(); while IFS= read -r variable; do image_vars+=("$variable"); done <<< "$image_vars_text"
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
@@ -221,238 +149,98 @@ jobs:
             -target=google_compute_url_map.pmtiles_cdn \
             -target=google_storage_managed_folder.shared_bucket_public_prefixes \
             -target=google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers \
-            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
-            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
-            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
-
+            "${image_vars[@]}"
       - name: Export Terraform plan JSON
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
-
       - name: Enforce PMTiles resource-change allowlist
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
-          import csv
           import json
-          import posixpath
           import sys
-
-          plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_storage_bucket.shared_bucket",
-              "google_compute_url_map.pmtiles_cdn",
-              "google_storage_managed_folder.shared_bucket_public_prefixes",
-              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-          }
+          from pathlib import Path
+          from scripts.cdn_plan_readiness import catalog_folders
+          from scripts.terraform_target_contracts import plan_scope
+          allowed_exact, allowed_patterns = plan_scope("pmtiles-cdn-sync.yml", "runtime")
           managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
-          allowed_for_each_prefixes = {
-              "google_storage_managed_folder.shared_bucket_public_prefixes",
-              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-          }
-
-          # Managed-folder deletes remove only the folder-level IAM anchor and
-          # never delete objects. A delete is legitimate only when the asset
-          # root has left the catalog, mirroring how the Terraform locals
-          # derive the managed-folder for_each set from catalog rows.
-          catalog_managed_folder_names = {"_catalog/"}
-          with open("catalog/shared-datasets-catalog.csv", newline="", encoding="utf-8") as handle:
-              for row in csv.DictReader(handle):
-                  canonical_path = (row.get("canonical_path") or "").strip()
-                  if not canonical_path.startswith("gs://"):
-                      continue
-                  object_name = canonical_path[len("gs://"):].partition("/")[2]
-                  folder = posixpath.dirname(posixpath.dirname(object_name))
-                  if folder:
-                      catalog_managed_folder_names.add(f"{folder}/")
-
-          def is_allowed_address(address):
-              if address in allowed_exact:
-                  return True
-              return any(address.startswith(f"{prefix}[") for prefix in allowed_for_each_prefixes)
-
-          def managed_folder_name(resource):
-              index = resource.get("index")
-              if isinstance(index, str) and index:
-                  return index
-              address = resource.get("address", "")
-              _, opener, rest = address.partition('["')
-              if not opener:
-                  return ""
-              return rest.rsplit('"]', 1)[0]
-
+          catalog_managed_folder_names = catalog_folders(Path("catalog/shared-datasets-catalog.csv").read_text())
           blocked = []
-          for resource in plan.get("resource_changes", []):
+          for resource in json.load(open(sys.argv[1])).get("resource_changes", []):
               actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
-                  continue
+              if actions in ([], ["no-op"], ["read"]): continue
               address = resource.get("address", "")
+              allowed = address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns)
               if address == "google_storage_bucket.shared_bucket" and "delete" in actions:
+                  allowed = False
+              if (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}[")) and "delete" in actions:
+                  # Folder-only deletion cannot delete objects. Keep active catalog anchors.
+                  index = resource.get("index")
+                  folder = index if isinstance(index, str) and index else address.partition('["')[2].rsplit('"]', 1)[0]
+                  allowed = actions == ["delete"] and address.startswith(f"{managed_folder_prefix}[") and bool(folder) and folder not in catalog_managed_folder_names
+              if not allowed:
                   blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              if (
-                  (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}["))
-                  and "delete" in actions
-              ):
-                  folder_name = managed_folder_name(resource)
-                  if (
-                      actions == ["delete"]
-                      and address.startswith(f"{managed_folder_prefix}[")
-                      and folder_name
-                      and folder_name not in catalog_managed_folder_names
-                  ):
-                      continue
-                  blocked.append(f"{'/'.join(actions)} {address}")
-                  continue
-              if is_allowed_address(address):
-                  continue
-              blocked.append(f"{'/'.join(actions)} {address}")
-
           if blocked:
-              print("Refusing automatic PMTiles CDN sync because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
+              print("Refusing non-allowlisted PMTiles changes: " + ", ".join(blocked))
               raise SystemExit(1)
           PY
-
       - name: Verify permissions required by the saved CDN plan
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target pmtiles-cdn --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
-
       - name: Terraform apply
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
-
+    outputs:
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+      claim_signed: ${{ steps.claim-receipt.outcome }}
+  verify:
+    name: Verify CDN outside Terraform state queue
+    needs: sync
+    if: ${{ always() && needs.sync.outputs.deployment_id != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: shared-datasets-production
+    steps:
+      - *trusted-checkout
+      - *trusted-bootstrap
+      - name: Require successful signed apply
+        env:
+          APPLY_RESULT: ${{ needs.sync.result }}
+          CLAIM_SIGNED: ${{ needs.sync.outputs.claim_signed }}
+        run: test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
+      - name: Authenticate protected observer
+        uses: ./.github/actions/deployment-auth
+        with:
+          service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
+      - name: Authenticate cache invalidator
+        uses: ./.github/actions/deployment-auth
+        with:
+          service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com
       - name: Invalidate catalog CDN cache
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
             --path="/_catalog/*" \
             --project="${GOOGLE_CLOUD_PROJECT}"
-
+      - name: Restore observer for route verification
+        uses: ./.github/actions/deployment-auth
+        with:
+          service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - name: Verify catalog CDN routes
-        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
-        run: |
-          set -euo pipefail
-
-          check_catalog_url() {
-            local url="$1"
-            local expected_content_type="$2"
-            local headers
-            local status
-            local content_type
-
-            for attempt in {1..12}; do
-              headers="$(mktemp)"
-              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
-                status="curl-error"
-              fi
-              content_type="$(awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
-
-              if [[ "$status" == "200" && "$content_type" == *"$expected_content_type"* ]]; then
-                echo "$url returned $status with $content_type"
-                rm -f "$headers"
-                return 0
-              fi
-
-              echo "Attempt ${attempt}: $url returned $status with ${content_type:-missing content-type}; expected 200 and ${expected_content_type}"
-              cat "$headers"
-              rm -f "$headers"
-              sleep 10
-            done
-
-            echo "Catalog CDN route verification failed for $url" >&2
-            return 1
-          }
-
-          check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
-
-          public_metadata_path="$(
-            python3 <<'PY'
-          import json
-          import urllib.request
-
-          release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"
-          with urllib.request.urlopen(release_index_url, timeout=30) as response:
-              release_index = json.load(response)
-
-          def canonical_metadata_path(release):
-              for file_entry in release.get("files") or []:
-                  file_path = str(file_entry.get("path") or "")
-                  file_format = str(file_entry.get("format") or "").lower()
-                  file_role = str(file_entry.get("role") or "").lower()
-                  if (
-                      (file_format == "metadata" or file_role == "metadata")
-                      and file_path.startswith("gs://skytruth-shared-datasets-1/")
-                      and file_path.endswith(".metadata.ndjson.gz")
-                  ):
-                      return file_path.removeprefix("gs://skytruth-shared-datasets-1/")
-              return None
-
-          candidate_releases = []
-          latest_release = release_index.get("latest_release") or {}
-          if latest_release:
-              candidate_releases.append(latest_release)
-          candidate_releases.extend(release_index.get("releases") or [])
-
-          for release in candidate_releases:
-              metadata_path = canonical_metadata_path(release)
-              if metadata_path:
-                  print(metadata_path)
-                  break
-          else:
-              raise SystemExit("WDPA marine release index does not include a canonical metadata sidecar in any release")
-          PY
-          )"
-
-          check_public_artifact_url() {
-            local url="$1"
-            local headers
-            local status
-            local location
-
-            for attempt in {1..12}; do
-              headers="$(mktemp)"
-              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
-                status="curl-error"
-              fi
-              location="$(awk 'BEGIN { IGNORECASE = 1 } /^location:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
-
-              if [[ "$status" == "200" && -z "$location" ]]; then
-                echo "$url returned $status without redirect"
-                rm -f "$headers"
-                return 0
-              fi
-
-              echo "Attempt ${attempt}: $url returned $status with ${location:-no redirect header}; expected 200 without redirect"
-              cat "$headers"
-              rm -f "$headers"
-              sleep 10
-            done
-
-            echo "Public metadata artifact route verification failed for $url" >&2
-            return 1
-          }
-
-          check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"
-
+        run: python -I -S scripts/cdn_plan_readiness.py verify-routes
       - name: Record terminal deployment outcome
         id: deployment-outcome
-        if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          DEPLOYMENT_ID: ${{ needs.sync.outputs.deployment_id }}
           JOB_STATUS: ${{ job.status }}
         run: |
           phase=failed
           if [[ "$JOB_STATUS" == success ]]; then phase=verified; fi
           python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
-
+        if: ${{ always() }}
       - name: Attest terminal deployment outcome
-        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
         uses: ./.github/actions/deployment-receipt
         with:
           mode: receipt
           receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}

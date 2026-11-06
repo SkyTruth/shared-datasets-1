@@ -106,7 +106,7 @@ protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
 protoPayload.status.code>0
 NOT (
-  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${google_service_account.github_job["runtime"].email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )
 EOT
@@ -421,4 +421,54 @@ EOT
     terraform_data.cron_alert_channel_configured,
     google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
+}
+
+# Only the dedicated safety workflow identity may emit the heartbeat.
+resource "google_project_iam_custom_role" "operational_safety_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalSafetyReader"
+  title       = "Shared datasets operational safety reader"
+  permissions = ["logging.logEntries.create"]
+}
+
+resource "google_project_iam_member" "operational_safety_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_safety_reader.name
+  member  = "serviceAccount:${google_service_account.github_job["heartbeat"].email}"
+}
+
+resource "google_logging_metric" "operational_safety_heartbeat" {
+  project = var.project_id
+  name    = "operational-safety-heartbeat"
+  filter  = "logName=\"projects/${var.project_id}/logs/operational-safety-heartbeat\" AND resource.type=\"global\" AND jsonPayload.workflow=\"operational-safety-check.yml\""
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+}
+
+resource "google_monitoring_alert_policy" "operational_safety_absent" {
+  project               = var.project_id
+  display_name          = "Shared datasets operational safety heartbeat missing"
+  combiner              = "OR"
+  enabled               = var.cron_alerts_enabled
+  notification_channels = local.cron_alert_notification_channels
+  conditions {
+    display_name = "No safety check completed for seven hours"
+    condition_absent {
+      filter   = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\" AND resource.type=\"global\""
+      duration = "25200s"
+      aggregations {
+        alignment_period   = "3600s"
+        per_series_aligner = "ALIGN_SUM"
+      }
+      trigger { count = 1 }
+    }
+  }
+  documentation {
+    content   = "No authenticated operational-safety-check.yml heartbeat for seven hours. Inspect GitHub scheduling, disabled workflows, authentication and the health-report upload. This policy is evaluated independently by Cloud Monitoring; enable it only after the first heartbeat has established its time series."
+    mime_type = "text/markdown"
+  }
+  alert_strategy { auto_close = "86400s" }
+  depends_on = [terraform_data.cron_alert_channel_configured, google_pubsub_topic_iam_member.monitoring_slack_publisher]
 }

@@ -11,8 +11,11 @@ import posixpath
 import re
 import subprocess
 import sys
+import time
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.terraform_target_contracts import plan_scope
 
 BUCKET = 'skytruth-shared-datasets-1'
 DELETE = 'storage.managedFolders.delete'
@@ -38,11 +41,8 @@ ORIGINAL_PERMISSIONS = frozenset({
     'compute.urlMaps.invalidateCache', 'compute.urlMaps.update', 'compute.urlMaps.validate',
 })
 ROLE_PERMISSIONS = ORIGINAL_PERMISSIONS | PROBE_PERMISSIONS
-BOOTSTRAP_EXACT = {
-    'google_project_iam_custom_role.pmtiles_managed_folder_sync',
-    'google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync',
-}
-BOOTSTRAP_UPDATE_ONLY = {'google_storage_bucket.shared_bucket', ROLE_ADDRESS}
+BOOTSTRAP_EXACT, _ = plan_scope('pmtiles-cdn-sync.yml', 'bootstrap')
+BOOTSTRAP_UPDATE_ONLY, _ = plan_scope('pmtiles-cdn-sync.yml', 'bootstrap-update-only')
 
 
 def require(condition, message):
@@ -203,21 +203,64 @@ def check_diff(root: Path, base: str, head: str) -> None:
     if not removed:
         return
     from scripts.release_contracts import role_permissions
-    declared = role_permissions(read(head, 'terraform/envs/prod/shared_bucket_public.tf'), 'pmtiles_managed_folder_sync')
+    declared = role_permissions(root, 'shared_bucket_public.tf', 'pmtiles_managed_folder_sync', revision=head)
     if DELETE not in declared:
         raise ValueError(f'catalog removes managed folders {sorted(removed)} but reviewed CDN role does not declare {DELETE}; retain catalog rows or establish reviewed removal authority first')
+
+
+BASE = "https://tiles.skytruth.org"
+BUCKET_URI = f"gs://{BUCKET}/"
+
+
+def check_route(url, content_type=None):
+    redirect = urllib.request.HTTPRedirectHandler()
+    redirect.redirect_request = lambda *args: None
+    opener = urllib.request.build_opener(redirect)
+    for attempt in range(12):
+        try:
+            with opener.open(url, timeout=30) as response:
+                if response.status != 200 or response.headers.get("Location") or (
+                    content_type and content_type not in response.headers.get("Content-Type", "")
+                ):
+                    raise ValueError(f"{url}: unexpected status or headers")
+            print(f"Verified {url}", flush=True)
+            return
+        except (OSError, ValueError):
+            if attempt == 11:
+                raise
+            time.sleep(10)
+
+
+def verify_routes():
+    for path, content_type in (("shared-datasets-catalog.csv", "text/csv"),
+                               ("web/catalog.json", "application/json"), ("web/index.html", "text/html")):
+        check_route(f"{BASE}/_catalog/{path}", content_type)
+    with urllib.request.urlopen(f"{BASE}/_catalog/releases/wdpa-marine.json", timeout=30) as response:
+        index = json.load(response)
+    for release in [index.get("latest_release") or {}, *(index.get("releases") or [])]:
+        for entry in release.get("files") or []:
+            path = str(entry.get("path") or "")
+            if ((str(entry.get("format") or "").lower() == "metadata" or str(entry.get("role") or "").lower() == "metadata")
+                    and path.startswith(BUCKET_URI) and path.endswith(".metadata.ndjson.gz")):
+                check_route(f"{BASE}/artifacts/{path.removeprefix(BUCKET_URI)}")
+                return
+    raise ValueError("WDPA marine release index has no canonical metadata sidecar")
+
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('verify-routes')
     diff = commands.add_parser('check-diff')
     diff.add_argument('--base', required=True)
     diff.add_argument('--head', required=True)
     bootstrap = commands.add_parser('check-bootstrap')
     bootstrap.add_argument('--plan-json', required=True, type=Path)
     args = parser.parse_args()
-    if args.command == 'check-bootstrap':
+    if args.command == 'verify-routes':
+        verify_routes()
+    elif args.command == 'check-bootstrap':
         check_bootstrap(json.loads(args.plan_json.read_text()))
         print('Exact existing CDN role adoption and bootstrap allowlist passed.')
     else:

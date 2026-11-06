@@ -19,6 +19,7 @@ concurrency:
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: shared-datasets-production
     env:
       CANDIDATE_ID: ${{ inputs.candidate_id }}
@@ -48,8 +49,8 @@ jobs:
       - name: Authenticate read of exact held production inputs
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
       - name: Download immutable candidate and published baseline
         run: uv run python scripts/eamlis_source_loss_review.py download-preview --candidate-id "$CANDIDATE_ID" --directory "$RUNNER_TEMP/held-preview"
       - name: Authenticate preview catalog publisher
@@ -89,5 +90,5 @@ jobs:
             echo "[Open the private staging catalog]($PREVIEW_URL) and select EAMLIS."
             echo 'The candidate and published baseline are available as separate versions.'
             echo 'After investigation, prepare the immutable approval PR with:'
-            echo '`uv run python scripts/eamlis_source_loss_review.py prepare-plan`'
+            printf '\140uv run python scripts/eamlis_source_loss_review.py prepare-plan\140\n'
           } >> "$GITHUB_STEP_SUMMARY"
