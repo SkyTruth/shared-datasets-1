@@ -253,7 +253,7 @@ def test_workflow_waits_for_transport_and_existing_review_authority():
     ci = load_workflow(Path(".github/workflows/ci.yml"))
     for name in ("mpatlas", "wdpa", "sea-ice", "eamlis", "identity-decision-reconcile"):
         assert "cron-alert-policy" in ci["jobs"][name]["needs"]
-        assert "needs.cron-alert-policy.result == 'success'" in ci["jobs"][name]["if"]
+        assert ci["jobs"][name]["if"] == ci_contract.delivery_condition(name)
     assert "cron_alert_policy" in ci_contract.select_deployments(["ingestion/common/decision_events.py"])
     terraform = Path("terraform/envs/prod/monitoring_slack.tf").read_text()
     assert 'name  = "IDENTITY_DECISION_PROTOCOL"' in terraform

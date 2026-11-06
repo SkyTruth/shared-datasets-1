@@ -26,11 +26,11 @@ def test_historical_record_targets_derive_live_workflows_from_the_registry(monke
     script = ROOT / 'scripts/deployment_revision.py'
     assert runpy.run_path(str(script))['TARGET_WORKFLOWS'] == expected
     original = contracts.registry
-    deployments = original(section='deployments')
-    records = original(section='record_workflows') | {'typescript-sdk': 'replacement-sdk.yml'}
-    deployments['catalog_viewer']['workflow'] = 'replacement-viewer.yml'
+    workflows = original(section='workflows')
+    workflows['replacement-sdk.yml'] = workflows.pop('publish-typescript-sdk.yml')
+    workflows['replacement-viewer.yml'] = workflows.pop('catalog-viewer-deploy.yml')
     monkeypatch.setattr(contracts, 'registry', lambda *args, section='targets', **kwargs:
-                        deployments if section == 'deployments' else records if section == 'record_workflows' else original(*args, section=section, **kwargs))
+                        workflows if section == 'workflows' else original(*args, section=section, **kwargs))
     assert runpy.run_path(str(script))['TARGET_WORKFLOWS'] == expected | {
         'catalog-viewer': 'replacement-viewer.yml', 'typescript-sdk': 'replacement-sdk.yml'}
 
@@ -76,7 +76,7 @@ def test_gate_eligibility_matches_every_post_gate_caller_and_cannot_escape_main(
     assert all(ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main').values())
     for event, ref in [('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main'), ('push', 'refs/heads/topic')]:
         assert not any(ci_contract.delivery_outputs(plan, event, ref).values())
-    assert jobs['ci-ready']['outputs']['delivery'] == "${{ job.status == 'success' && steps.verify.outputs.delivery || '{}' }}"
+    assert jobs['ci-ready']['outputs']['delivery'] == "${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}"
     verify = next(step for step in jobs['ci-ready']['steps'] if step.get('id') == 'verify')
     assert '--github-output "$GITHUB_OUTPUT"' in verify['run']
     for name in callers:

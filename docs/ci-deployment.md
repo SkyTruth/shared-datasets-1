@@ -1,14 +1,94 @@
-# Change or add an ingestion deployment
+# Change a production deployment
 
-Read [AGENTS.md](../AGENTS.md), the [deployment skill](../.claude/skills/deploy-scheduled-ingestion/SKILL.md), and, for Terraform, the [protected apply skill](../.claude/skills/protected-terraform-apply/SKILL.md). This procedure includes private usage telemetry; source behavior belongs in the owning job's README.
+Start here for ingestion, private usage telemetry, and Terraform/IAM changes. [AGENTS.md](../AGENTS.md)
+governs Git operations, asset admission and publication identity decisions. Production changes require
+`jonaraphael` review, merge to `main`, and a protected `shared-datasets-production` workflow. Local `fmt`,
+`validate`, `plan` and `show -json` provide review evidence; local production apply is prohibited outside an
+explicitly named break-glass emergency. Dataset files never belong in Terraform state. Source behavior belongs
+in the owning job's README. The linked contracts below provide reference detail; the change procedure is
+complete here.
 
-1. **Declare scope and ownership.** Name the target, resources and intended outcome. Follow [agent integration](agent-integration.md) for overlapping work and [publication readiness](publication-readiness.md) before expensive real-release work. New assets/pipelines require admission evidence and a feature identity decision under AGENTS.md.
-2. **Register the producer.** `DEPLOY_TARGETS` in [`ingestion_targets.py`](../scripts/ingestion_targets.py) owns resource scope, runtime window, canary policy and verification hook. Its constructor rejects incompatible policies; `TARGETS` excludes telemetry. Use a thin `<target>-deploy.yml` wrapper around `ingestion-deploy.yml`; keep shared publication claims and installed identity state intact.
-3. **Connect the deployment.** [`terraform-targets.json`](../.github/terraform-targets.json) owns deployment workflows/images, `terraform_prerequisites`, registered apply scopes and installed image checks. The same prerequisite graph must match CI callers' `needs` and conditional success gates; it orders selected owners without requesting unrelated mutations. Add resources using the [target-change procedure](terraform-reconciliation.md#change-a-terraform-or-iam-target). Selection follows workflows, nested actions, invoked scripts, Docker COPY and parsed Terraform ownership/modules. `selection_exceptions` owns reasoned traversal boundaries and input additions. Executor-only `exclude` entries replace inferred callers with explicit representative `deployments`: sea ice for ingestion, Artifact Registry IAM for shared Terraform, and the viewer/CDN's own executors. Validation remains mandatory. The Terraform registry and variables are deployment content and conservatively select all consumers. Content changes retain their actual consumers and images. Admission entrypoints stop traversal because their imports do not produce deployment content.
-4. **Exercise the boundary.** Run focused positive and refusal tests for selection, prerequisites, plan scope and runtime verification. Production recipes and Terraform image consumers determine image bindings; register probes under `image_checks`. Missing typed executor environment keys fail before authentication. Every selected deployment retains its image validation floor, including hold-only releases. Use complete synthetic runtime/serialization batches for publication-code changes without a real release, and the production conversion chain for native changes. Follow [image contracts](deployment-contracts.md#images-and-execution) for CPU, memory, timeout and scratch; installed probes have no network/source mounts and use memory-backed `/tmp`. WDPA's 13-hour task timeout retains at least 1.5 times its observed 8 h 21 m maximum. Release at most one held ingestion target per change.
-5. **Validate and review.** Follow [validation before push](ci-preflight.md#validate-before-push). Include expected actions, scope/permission coverage and unverified live prerequisites. Production mutations require `jonaraphael` review, merge to `main` and the protected `shared-datasets-production` workflow; local plans are review evidence. AGENTS.md still governs Git operations.
-6. **Observe the rollout.** Main `ci-ready` supplies exact tested images by digest; deployments never rebuild missing bytes. Finish registry/IAM bootstrap first. Follow [queue ownership](deployment-contracts.md#serialization-and-protected-execution): preparation and canaries stay outside the state queue. Usage holds one target queue through apply and canary verification. The `dataset-usage` caller owns its signed apply and canary. Ingestion/cleanup IAM read the existing bucket through a data source, so they cannot plan logging/CORS changes and can proceed independently of the usage canary. Other ingestion wrappers retain combined rollout. Recovery/dispatch requires `executor_sha`, `source_run_id` and `source_run_attempt` from the exact successful main-push CI attempt. Deferred verification is not completion.
-7. **Report the outcome.** Use the captured canary execution, verify its [terminal outcome](deployment-contracts.md#records-receipts-and-runtime-outcomes) and release/latest contracts (or private usage report/activation), and preserve [failure coverage](alert-routing.md#execution-and-delivery-verification). Report image digest, resource actions, execution/result, changed remote paths and uncertainty. Use [recovery](ci-recovery.md) for failures.
+1. **Declare scope and ownership.** Name the target, exact resources/actions, prerequisites, affected
+   consumers and intended outcome. Name one integration owner and resolve overlapping work before validation.
+   For real publication batches, finish [publication readiness](publication-readiness.md) before expensive
+   builds, CI or recovery; retain source pins, claims and checkpoints. New assets/pipelines require admission
+   evidence and the feature identity decision under AGENTS.md. Release at most one held ingestion target per
+   change.
+2. **Register the producer and exact scope.** [`ingestion_targets.py`](../scripts/ingestion_targets.py)
+   constructs `DEPLOY_TARGETS` for the five shared-executor callers: WDPA, MPAtlas, EAMLIS, sea ice and usage.
+   It owns resource scope, runtime window, canary policy, image-variable binding and verification hooks. Its
+   eleven-field constructor rejects incompatible policies; `TARGETS` exposes only the four publication
+   producers for release/freshness contracts. Telemetry requires neither a release index nor feature-ID
+   installation. Names derive workflow/image variables; plan policies are `update`, `install`, `wdpa` or
+   `usage`, canaries terminal or deferred. Keep claims and installed identity state intact. Thin
+   `<target>-deploy.yml` wrappers call `ingestion-deploy.yml`; usage delegates its scope/plan guard to
+   `dataset_usage_deploy.py`, preserving reader-first activation/removal. Recovery resolves original image
+   variables before checkout. In [the scope registry](../.github/terraform-targets.json), `targets` owns
+   stable synchronization names, exact resources, readiness probes, variables, deletion policy and optional
+   preparation; historical receipts hash these names. `plan_scopes` owns viewer/CDN/usage scopes. Callers
+   cannot widen them.
+3. **Connect prerequisites, selection and authority.** The registry's `workflows` table owns selection names,
+   images, deployment ordering, signed-record targets, historical publication job names and unattended events.
+   `terraform_prerequisites` must match CI callers' `needs`; ordering does not select unchanged owners. Each
+   narrow `targets` row declares managed `prerequisites` and optional `retired_resources`, matching its
+   wrapper's bootstrap `needs`. Missing declarations fail plan construction before fanout. `permission_probes`
+   owns named read-only checks; unknown targets fail closed. Extend resource/action coverage in
+   `terraform_plan_permissions.py` when introducing a resource class. A local operator's broader credentials
+   do not prove CI deployer readiness; metadata reads and mutation authority stay distinct. Thin IAM wrappers
+   call `prod-terraform-target-apply.yml` by synchronization name. Preserve caller identities/bootstrap order;
+   add a constrained protected path by PR if none covers the resource class. Selection follows
+   workflow/nested-action/script closure, Docker COPY and parsed Terraform ownership/modules.
+   `selection_exceptions` owns reasoned traversal boundaries/input additions. Executor-only exclusions replace
+   inferred callers with explicit representatives: sea ice, Artifact Registry IAM, viewer and CDN. Admission
+   imports stop traversal. Content, variables and registry changes retain all actual consumers;
+   validation/image selection remain independent.
+4. **Exercise the boundary and validate.** Run focused positive/refusal checks for selection, unmanaged
+   ancestors, realistic saved plans, unrelated changes, replacements, missing prerequisites, deletion policy
+   and runtime outcomes. Run `uv run python scripts/terraform_target_contracts.py` and `uv run python
+   scripts/release_contracts.py --target all`; initialize pinned providers first as described in [CI
+   tools](ci-preflight.md#isolation-and-tools). Recipes and Terraform consumers determine images; register
+   probes under `image_checks`. Missing typed executor inputs fail before authentication. Every selected
+   deployment retains its image validation floor, including holds. Use complete synthetic
+   runtime/serialization batches for publication-code changes without a release, and the actual conversion
+   chain for native changes. Size CPU/memory/timeout/scratch against full sources; fractional experiments
+   never publish sampled bytes. Installed probes run once in CI with production limits, no network/source
+   mounts and memory-backed `/tmp`. WDPA's 13-hour task timeout retains at least 1.5 times its observed
+   8 h 21 m maximum. Finish prerequisites/base integration, freeze a clean committed head and
+   follow [validation before push](ci-preflight.md#validate-before-push).
+5. **Review and authorize.** Include expected resource actions, allowlist and permission coverage, and
+   unresolved live prerequisites in the reviewed PR. Successful CI and environment review do not replace
+   dataset mutation approval or installed publication-state checks. See the acceptance/identity rules below.
+6. **Observe protected execution.** Successful main-push `ci-ready` supplies `executor_sha`, `source_run_id`
+   and `source_run_attempt` and exact tested images by digest. Manual entrypoints require the same source
+   triple; deployment never rebuilds missing bytes. The verifier checks repository/workflow IDs, main-push
+   event, exact revision and successful attempt through GitHub's API; automatic callers identify their current
+   attempt. Inputs, PR/fork revisions and fabricated completions cannot grant authority. Finish registry/IAM
+   bootstrap first. [Queue and saved-plan
+   contracts](deployment-contracts.md#serialization-and-protected-execution) keep image/credential preparation
+   and canaries outside the state queue, with guarded plan/claim/apply atomic inside it; propagation waits
+   stay unprivileged. Usage holds its target queue through signed apply/canary; other ingestion wrappers
+   retain combined rollout. Ingestion/cleanup IAM read bucket metadata through a data source, keeping
+   CORS/logging out and independent of usage canaries.
+7. **Verify and report completion.** Inspect captured exact-image canary execution, signed terminal outcomes
+   and release/latest contracts (or private usage report and activation), then verify effective live state and
+   [alert delivery](alert-routing.md#execution-and-delivery-verification). Report image digest, resource
+   actions, execution/result, changed remote paths and uncertainty. Deferred verification is incomplete. Use
+   [recovery](ci-recovery.md) after failures; maintain separate code-merged, operation-completed,
+   observer-verified and incident-reconciled milestones.
+
+## Caller scheduling
+
+Only successful main-push CI exposes delivery outputs. Every post-gate caller uses `!cancelled() &&
+!failure()` and its delivery lookup; mutation/catalog/alert callers also require their discovery output.
+`needs` retains all registered ordering edges. [GitHub
+documents](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#failure) that
+`failure()` includes failed ancestors. Explicit status functions override implicit `success()`, so skipped
+unselected prerequisites permit selected work; failed/cancelled ancestry blocks it. Uniform conditions make a
+selected Terraform prerequisite's unexplained skip unreachable: it runs, or an ancestor failed or the workflow
+was cancelled. The graph contract tests this invariant over every selection subset. Publication discovery
+still owns immutable mutation authority.
+
+## Acceptance and identities
 
 Deployment bootstrap requires the exact merged executor PR and `jonaraphael`'s effective approval of its final head, or restricted self-authored merge acceptance, before candidate checkout/authentication. Missing, ambiguous, stale, dismissed or unreadable acceptance fails closed; direct main pushes cannot authorize deployment. Reusable callers retain `pull-requests: read` through every layer. The credential-free PR check uses the same gate with an explicit PR number and expected head, including drafts. A draft cannot authorize deployment. After approving or marking a non-owner PR ready on an unchanged head, use **Re-run failed jobs**: only `owner-acceptance` and `ci-ready` rerun. `ready_for_review` does not rerun suites. CODEOWNERS routes Dependabot-touched paths to the owner. The ingestion plan guard installs the locked `ci-plan` parsers before authentication.
 

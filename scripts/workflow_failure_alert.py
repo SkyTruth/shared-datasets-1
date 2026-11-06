@@ -16,29 +16,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.slack_notify import build_slack_payload
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
-from scripts.deployment_revision import TARGET_WORKFLOWS, TERRAFORM_WORKFLOWS
 from scripts import deployment_revision as deployments
-from scripts.incident_verification_cache import timestamp
+from scripts.incident_health_artifacts import timestamp
+from scripts.terraform_target_contracts import registry
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
 API_ROOT = f"repos/{REPOSITORY}"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
-PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed feature-ID reset",
-                    "Detect reviewed PR mutation plans", "Build and publish catalog web",
-                    "Build image and apply", "Prepare publication image and apply",
-                    "Apply PMTiles CDN route sync", "Apply Scheduled ingestion deploy IAM sync",
-                    "Apply Translation notice secret IAM bootstrap")
+# Historical producer names remain routable after their workflow jobs are retired.
+PUBLICATION_JOBS = tuple(name for row in registry(section='workflows').values() for name in row.get('publication_jobs', []))
 VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-WORKFLOW_EVENTS = {
-    **dict.fromkeys(set((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS).values()) - {"dataset-usage-deploy.yml"} | {
-        "bucket-hygiene-audit.yml", "publish-dataset.yml", "scratch-cleanup-audit.yml",
-    }, {"schedule", "workflow_run"}),
-    "ci.yml": {"push"},
-    **dict.fromkeys(("deployment-recovery.yml", "deployment-verification.yml", "operational-safety-check.yml",
-                     "unattended-workflow-alert.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
-                     "publish-typescript-sdk.yml"), {"schedule", "workflow_run", "workflow_dispatch"}),
-}
+WORKFLOW_EVENTS = {filename: set(row['events']) for filename, row in registry(section='workflows').items() if 'events' in row}
 WORKFLOW_PATHS = {name: filename for filename in WORKFLOW_EVENTS for name in WORKFLOW_NAMES[filename]}
 
 

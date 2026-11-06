@@ -688,7 +688,7 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
     (["docs/new-tool.py"], set(SUITES), []),
     ([".claude/skills/new-tool.py"], set(SUITES), []),
-    (["terraform/iam-plan-prerequisites.json"], ALWAYS, []),
+    (["scripts/ci_source_proof.py"], ALWAYS, []),
     ([".github/workflows/ci.yml"], ALWAYS, []),
     (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
     ([], ALWAYS, []),
@@ -1075,7 +1075,7 @@ def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
 
 
 @pytest.mark.parametrize("path", ["scripts/ci_contract.py", "scripts/ci_preflight.py",
-                                 "terraform/iam-plan-prerequisites.json"])
+                                 "scripts/ci_source_proof.py"])
 def test_ci_administration_does_not_rebuild_production_images(path):
     assert set(resolve_selection([path])["suites"]) == ALWAYS
     assert resolve_selection([path])["production_image_targets"] == []

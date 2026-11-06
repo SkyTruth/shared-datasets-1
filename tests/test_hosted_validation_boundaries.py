@@ -24,7 +24,7 @@ def test_cron_failure_filter_runtime_identity_is_a_declared_prerequisite():
             continue
         graph.update({node: graph.get(node, set()) for node in contracts.declared(job['with']['targets'])
                       if job['with']['targets'] and node not in {
-                          row for rows in json.loads((ROOT / 'terraform/iam-plan-prerequisites.json').read_text())['retired_targets'].values()
+                          row for rows in (row.get('retired_resources', []) for row in json.loads((ROOT / '.github/terraform-targets.json').read_text())['targets'].values())
                           for row in rows}})
     assert 'google_service_account.github_job' in contracts.check_graph(ROOT, graph)['cron-alert-policy-sync.yml/sync']['managed_prerequisites']
 

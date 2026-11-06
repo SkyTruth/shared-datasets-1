@@ -7,6 +7,7 @@ import re
 import pytest
 
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
+from scripts.ci_contract import delivery_condition
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATION = {
@@ -60,8 +61,9 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
     selection = workflow['jobs']['dataset-mutation-selection']
     assert selection['needs'] == 'ci-ready'
-    assert "github.event_name == 'push'" in selection['if']
-    assert "github.ref == 'refs/heads/main'" in selection['if']
+    assert selection["if"] == delivery_condition("dataset-mutation-selection")
+    delivery = workflow["jobs"]["ci-ready"]["outputs"]["delivery"]
+    assert "github.event_name == 'push'" in delivery and "github.ref == 'refs/heads/main'" in delivery
     assert selection['outputs']['has_repo_alert'] == '${{ steps.repo_alert_selection.outputs.has_repo_alert }}'
     steps = workflow_steps_by_name(workflow, 'dataset-mutation-selection')
     checkout = next(step for step in selection['steps'] if step.get('uses') == 'actions/checkout@v4')
@@ -70,8 +72,7 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     assert scanner['env']['BASE_SHA'] == '${{ github.event.before }}'
     assert 'select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA"' in scanner['run']
     caller = workflow['jobs']['announce-repo-functionality']
-    for prerequisite in ("github.event_name == 'push'", "github.ref == 'refs/heads/main'", "fromJSON(needs.ci-ready.outputs.delivery || '{}').announce-repo-functionality", "needs.dataset-mutation-selection.outputs.has_repo_alert == 'true'"):
-        assert prerequisite in caller['if']
+    assert caller['if'] == delivery_condition('announce-repo-functionality')
     assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection'}
     assert caller['uses'] == './.github/workflows/repo-functionality-alert.yml'
     assert caller['with']['executor_sha'] == '${{ needs.ci-ready.outputs.tested_sha }}'
@@ -110,8 +111,8 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert catalog_selection['run'] == 'python scripts/catalog_web_changes.py'
     assert catalog_selection['if'] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
     caller = ci['jobs']['refresh-reviewed-catalog']
-    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'geospatial-changes', 'pmtiles-cdn'}
-    assert "(needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success')" in caller['if']
+    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'pmtiles-cdn'}
+    assert caller["if"] == delivery_condition("refresh-reviewed-catalog")
     assert caller['uses'] == './.github/workflows/catalog-web-deploy.yml'
     assert caller['with'] == {'executor_sha': '${{ needs.ci-ready.outputs.tested_sha }}',
                               'authorization_artifact_id': '', 'authorization_sha256': '',

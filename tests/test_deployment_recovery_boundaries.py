@@ -133,7 +133,7 @@ terraform_data:
     # declaring static ingestion targets.
     usage = contracts.registry(section='plan_scopes')['dataset-usage-deploy.yml']['runtime']
     scopes['dataset-usage'] = usage.get('exact', []) + usage.get('instances', [])
-    retired = {r for rows in json.loads((ROOT / 'terraform/iam-plan-prerequisites.json').read_text())['retired_targets'].values() for r in rows}
+    retired = {r for rows in (row.get('retired_resources', []) for row in json.loads((ROOT / '.github/terraform-targets.json').read_text())['targets'].values()) for r in rows}
     for name, targets in scopes.items():
         roots = {contracts.address(r) for r in targets}
         assert roots - graph.keys() <= retired

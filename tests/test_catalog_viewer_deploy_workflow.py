@@ -81,7 +81,7 @@ def test_actual_viewer_allowlists_preserve_exact_scope(tmp_path, bootstrap, fore
     (False, 'workflow_dispatch', 'success', True), (True, 'push', 'failure', False),
 ])
 def test_viewer_bootstrap_enters_state_queue_only_for_signed_iam_changes(sync, event, claim, expected):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     job = load_workflow(WORKFLOW)['jobs']['bootstrap']
     assert condition_result(job, {'needs.prepare.result': 'success', 'needs.prepare.outputs.proceed': 'true',
         'needs.prepare.outputs.claim_signed': claim, 'inputs.sync_iam': sync, 'github.event_name': event}) is expected
@@ -93,7 +93,7 @@ def test_viewer_bootstrap_enters_state_queue_only_for_signed_iam_changes(sync, e
     ('skipped', 'failure', 'success', False), ('skipped', 'success', 'failure', False),
 ])
 def test_viewer_readiness_accepts_intentional_bootstrap_skip_and_rejects_failure(bootstrap, prepare, claim, expected):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     workflow = load_workflow(WORKFLOW)
     assert condition_result(workflow['jobs']['ready'], {'needs.prepare.result': prepare,
         'needs.prepare.outputs.deployment_id': '42', 'needs.prepare.outputs.claim_signed': claim,
@@ -103,7 +103,7 @@ def test_viewer_readiness_accepts_intentional_bootstrap_skip_and_rejects_failure
 
 @pytest.mark.parametrize('sync,event', [(True, 'push'), (False, 'workflow_dispatch')])
 def test_viewer_required_bootstrap_cannot_be_bypassed_by_a_skipped_result(sync, event):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     job = load_workflow(WORKFLOW)['jobs']['ready']
     assert not condition_result(job, {'needs.prepare.result': 'success',
         'needs.prepare.outputs.deployment_id': '42', 'needs.prepare.outputs.claim_signed': 'success',

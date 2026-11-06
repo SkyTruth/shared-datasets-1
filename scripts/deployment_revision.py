@@ -22,10 +22,8 @@ from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
-TARGET_WORKFLOWS = registry(section="record_workflows") | {
-    row.get("record_target", row.get("image")): row["workflow"]
-    for row in registry(section="deployments").values() if "image" in row or "record_target" in row
-}
+TARGET_WORKFLOWS = {row['image'] if row['record'] is True else row['record']: filename
+                    for filename, row in registry(section='workflows').items() if row.get('record')}
 TERRAFORM_SYNCS = registry()
 TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: target["workflow"]

@@ -25,9 +25,8 @@ def test_deployment_prerequisites_match_ci_needs_and_conditions(name):
         assert jobs['dataset-usage']['if'] == job['if']
     expected = set(declarations[name].get('terraform_prerequisites', []))
     assert expected == {parent.replace('-', '_') for parent in job['needs'] if parent.replace('-', '_') in declarations}
-    for parent in expected:
-        clause = f"(needs.geospatial-changes.outputs.{parent} != 'true' || needs.{parent.replace('_', '-')}.result == 'success')"
-        assert clause in job['if']
+    from scripts.ci_contract import delivery_condition
+    assert job['if'] == delivery_condition(name.replace('_', '-'))
 
 
 @pytest.mark.parametrize('path', ['terraform/envs/preview/main.tf', 'terraform/envs/prod/.terraform.lock.hcl', 'terraform/new/unowned.tf', None])

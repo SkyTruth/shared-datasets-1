@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from scripts.terraform_target_contracts import production_image_limits, registry
+from scripts.ci_contract import delivery_condition
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,13 +33,12 @@ def test_every_specialized_phase_reuses_the_same_trusted_bootstrap(filename):
         assert all(step is steps[0] for step in steps)
 
 
-def test_deploy_callers_share_exact_source_mapping_and_keep_main_guards():
+def test_deploy_callers_share_exact_source_mapping_and_guarded_delivery():
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     mappings = []
     for target, row in registry(section='deployments').items():
         job, = [job for job in jobs.values() if job.get('uses') == './.github/workflows/' + row['workflow']]
-        assert "github.event_name == 'push'" in job['if']
-        assert "github.ref == 'refs/heads/main'" in job['if']
+        assert job["if"] == delivery_condition(target.replace("_", "-"))
         if 'sync_iam' not in job['with']:
             mappings.append(job['with'])
     assert all(mapping is mappings[0] for mapping in mappings)

@@ -174,3 +174,18 @@ def assert_target_apply_caller(
         testcase.assertNotIn(resource, newline_values(inputs["allowed_exact"]))
 
     return workflow
+
+
+def condition_result(job, values, *, cancelled=False):
+    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
+    # This is a required Actions scheduling contract, not a local reimplementation
+    # of its scheduler: without a status function GitHub injects success(), which
+    # propagates skipped ancestors even when the explicit condition is true.
+    assert "!cancelled()" in expression
+    expression = expression.replace("!cancelled()", repr(not cancelled))
+    expression = re.sub(r"(?:needs|github|inputs)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
+    expression = re.sub(r"!(?!=)", "not ", expression)
+    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
+    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or,
+                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.UnaryOp, ast.Not)) for node in ast.walk(tree))
+    return eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}})

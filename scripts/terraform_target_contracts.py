@@ -103,8 +103,10 @@ def production_image_limits(root=ROOT):
 def registry(root: Path = ROOT, *, section='targets') -> dict[str, dict]:
     """One reviewed resource scope per stable, historically signed sync name."""
     value = json.loads((root / '.github/terraform-targets.json').read_text())
-    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes', 'deployments', 'image_checks', 'pr_plan_exclusions', 'selection_exceptions', 'record_workflows'} or value['schema_version'] != 1:
+    if set(value) - {'schema_version', 'targets', 'plan_scopes', 'permission_probes', 'workflows', 'image_checks', 'pr_plan_exclusions', 'selection_exceptions'} or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('Unsupported Terraform target registry')
+    if section == 'deployments':
+        return {row['selection']: {'workflow': filename, **row} for filename, row in value.get('workflows', {}).items() if 'selection' in row}
     return value[section] if section == 'targets' else value.get(section, {})
 
 
@@ -134,7 +136,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         raise ValueError('Terraform target does not belong to its trusted caller')
     resources = item['resources']
     if (set(item) - {'workflow', 'readiness_target', 'resources', 'block_deletes', 'delete_only',
-                    'prepare_monitoring_slack', 'post_apply_wait_seconds', 'state_only', 'tf_vars', 'image_placeholder'}
+                    'prepare_monitoring_slack', 'post_apply_wait_seconds', 'state_only', 'tf_vars', 'image_placeholder', 'prerequisites', 'retired_resources'}
             or not isinstance(resources, list) or len(resources) != len(set(resources))
             or any(type(item[key]) is not bool for key in ('block_deletes', 'delete_only', 'prepare_monitoring_slack', 'state_only') if key in item)
             or bool(resources) == bool(item.get('state_only'))
@@ -145,7 +147,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
     if item.get('state_only') and item.get('prepare_monitoring_slack'):
         raise ValueError('state-only reconciliation cannot prepare external mutations')
     result = {key: value for key, value in item.items() if key not in {
-        'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars',
+        'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars', 'prerequisites', 'retired_resources',
     }}
     placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
     variables = [*item.get('tf_vars', []), *(name + '=' + placeholder for name in image_variables('', placeholder))]
@@ -249,29 +251,27 @@ def declared(values) -> set[str]:
 
 
 def check_graph(root: Path, graph: dict[str, set[str]]) -> dict:
-    policy = json.loads((root / 'terraform/iam-plan-prerequisites.json').read_text())
     jobs = callers(root)
-    if set(policy) != {'schema_version', 'jobs', 'retired_targets'} or type(policy['schema_version']) is not int or policy['schema_version'] != 1 or set(policy.get('jobs', {})) != set(jobs):
-        raise ValueError('IAM prerequisite policy must cover exactly every narrow caller job')
-    retired_by_job = policy.get('retired_targets', {})
-    if not isinstance(retired_by_job, dict) or not set(retired_by_job) <= set(jobs):
-        raise ValueError('Retired targets must belong to a registered narrow caller')
+    syncs = registry(root)
+    if len(jobs) != len(syncs) or {job['with']['sync_name'] for job in jobs.values()} != set(syncs) or any('prerequisites' not in row for row in syncs.values()):
+        raise ValueError('IAM prerequisites must cover exactly every registered narrow caller')
     results, errors = {}, []
     for key, job in jobs.items():
         inputs = job['with']
+        row = syncs[inputs['sync_name']]
+        prerequisites, retired = row['prerequisites'], row.get('retired_resources', [])
         if inputs['targets'] == inputs['allowed_exact'] == '':
             # No -target arguments produces a full plan. Its empty resource
             # allowlist rejects every mutation, so only state/outputs can change.
             # Image/secret preparation would violate that state-only boundary.
             if (inputs.get('allowed_patterns', '') or inputs.get('prepare_monitoring_slack', False)
-                    or policy['jobs'][key] != [] or retired_by_job.get(key, []) or job.get('needs')):
+                    or prerequisites != [] or retired or job.get('needs')):
                 raise ValueError(key + ': state-only reconciliation requires an empty mutation scope and no preparation or prerequisites')
             results[key] = {'targets': [], 'managed_prerequisites': [], 'state_only': True}
             continue
         targets, owned = declared(inputs['targets']), declared(inputs['allowed_exact'])
         if not targets <= owned or inputs.get('allowed_patterns', '').strip():
             raise ValueError(key + ': narrow targets require an exact mutation allowlist')
-        prerequisites = policy['jobs'][key]
         if not isinstance(prerequisites, list) or not all(isinstance(row, str) for row in prerequisites) or len(prerequisites) != len(set(prerequisites)) or any(address(row) != row for row in prerequisites):
             raise ValueError(key + ': invalid prerequisite identities')
         permitted = owned | set(prerequisites)
@@ -283,7 +283,6 @@ def check_graph(root: Path, graph: dict[str, set[str]]) -> dict:
             if parent not in jobs:
                 raise ValueError(key + ': bootstrap predecessor is not a narrow caller')
             permitted.update(declared(jobs[parent]['with']['allowed_exact']))
-        retired = retired_by_job.get(key, [])
         if not isinstance(retired, list) or not all(isinstance(node, str) for node in retired) or len(retired) != len(set(retired)) or any(address(node) != node or node not in targets or node not in owned or node in graph for node in retired):
             raise ValueError(key + ': retired target must remain absent and explicitly owned by this workflow')
         paths = {}

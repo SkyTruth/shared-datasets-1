@@ -607,7 +607,7 @@ def test_usage_window_does_not_require_broader_regional_inventory_permissions(tm
     ('success', False, 'workflow_dispatch', True), ('failure', False, 'workflow_dispatch', False),
 ])
 def test_usage_wrapper_preserves_iam_admission(bootstrap, sync, event, accepted):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     job = load_workflow(REPO_ROOT / '.github/workflows/dataset-usage-deploy.yml')['jobs']['deploy']
     assert condition_result(job, {
         'needs.bootstrap.result': bootstrap, 'inputs.sync_iam': sync,
