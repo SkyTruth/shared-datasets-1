@@ -33,7 +33,7 @@ def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(def
     import hashlib
     import io
     import zipfile
-    from scripts.incident_verification_cache import canonical, ArtifactError
+    from scripts.incident_health_artifacts import canonical, ArtifactError
     api = OperationalAPI()
     producer = api.source(101, 'operational-safety-check.yml')
     api.add_source(producer)

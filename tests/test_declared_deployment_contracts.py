@@ -16,7 +16,7 @@ import pytest
 from scripts import ci_contract as ci, ingestion_targets as ingestion, production_image_contracts as images
 from scripts.terraform_target_contracts import registry
 from workflow_helpers import load_workflow
-from test_ci_deployments import condition_result
+from workflow_helpers import condition_result
 from test_deployment_emission import IMAGE
 
 ROOT = Path(__file__).resolve().parents[1]

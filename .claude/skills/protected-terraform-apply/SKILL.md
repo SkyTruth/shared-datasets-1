@@ -5,8 +5,8 @@ description: Use before suggesting, planning, running, approving, or documenting
 
 # Protected Terraform Apply
 
-Follow [Change a Terraform or IAM target](../../../docs/terraform-reconciliation.md#change-a-terraform-or-iam-target)
-for the ordered procedure. That document also owns manual state reconciliation;
+Follow [Change a production deployment](../../../docs/ci-deployment.md)
+for the ordered procedure. [Terraform reconciliation](../../../docs/terraform-reconciliation.md) owns manual state reconciliation;
 [deployment contracts](../../../docs/deployment-contracts.md) own provenance,
 queues, saved-plan scope, permission checks and signed outcomes.
 

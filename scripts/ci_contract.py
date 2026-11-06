@@ -31,6 +31,13 @@ INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CO
 DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
+DELIVERY_FILTERS = {'refresh-reviewed-catalog': 'has_catalog_changes',
+                    'announce-repo-functionality': 'has_repo_alert', 'publish-reviewed-dataset': 'has_mutations'}
+
+
+def delivery_condition(caller):
+    selection = (" && needs.dataset-mutation-selection.outputs." + DELIVERY_FILTERS[caller] + " == 'true'") if caller in DELIVERY_FILTERS else ''
+    return "${{ !cancelled() && !failure() && fromJSON(needs.ci-ready.outputs.delivery || '{}')." + caller + selection + " }}"
 
 
 def delivery_outputs(plan, event, ref):
@@ -85,7 +92,7 @@ CONTRACT_FILES = tuple(sorted({
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
     ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
     ".github/workflows/pr-terraform-plan.yml",
-    ".github/terraform-targets.json", "terraform/iam-plan-prerequisites.json",
+    ".github/terraform-targets.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
 }))
@@ -284,9 +291,8 @@ def deployment_paths(root=None):
                 edges[name] = set()
     sources = {name for path, rows in resource_index(root).items()
                if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
-    policy = json.loads((root / "terraform/iam-plan-prerequisites.json").read_text())
-    for job, prerequisites in policy["jobs"].items():
-        for resource in prerequisites:
+    for job, row in syncs.items():
+        for resource in row['prerequisites']:
             if not any(resource == name or resource.startswith(name + ".") for name in sources):
                 raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
     paths = {}

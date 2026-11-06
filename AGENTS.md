@@ -146,7 +146,8 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Operational alert routing and notification configuration | [alert routing](docs/alert-routing.md) |
 | Slack incident recovery, setup, and reconciliation | [Slack incidents](docs/slack-incidents.md) |
 | Change or add an ingestion deployment | [deployment procedure](docs/ci-deployment.md) |
-| Change Terraform/IAM targets or reconcile state | [Terraform procedure](docs/terraform-reconciliation.md) |
+| Change Terraform/IAM targets | [Deployment procedure](docs/ci-deployment.md) |
+| Reconcile Terraform state | [State reconciliation](docs/terraform-reconciliation.md#manual-state-only-reconciliation) |
 | Recover a failed deployment or incident | [recovery procedure](docs/ci-recovery.md) |
 | Complete validation before pushing | [CI preflight](docs/ci-preflight.md) |
 | Complete decision discovery before expensive builds or CI | [publication readiness](docs/publication-readiness.md) |

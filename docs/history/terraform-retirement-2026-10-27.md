@@ -72,7 +72,7 @@ pure-delete scope, for thirty total. This preserves the historical status object
 all dataset files and the active worker. Tests feed both fixtures' serialized
 bytes through the actual workflow shell guard and the saved-plan permission
 derivation, including empty/partial plans and negative controls.
-`terraform/iam-plan-prerequisites.json` records the absent declarations behind
+The `retired_resources` declarations in [the target registry](../../.github/terraform-targets.json) record the absent declarations behind
 the 30 instances; it does not expand the exact instance-level mutation allowlist.
 
 ## Approved temporary authority

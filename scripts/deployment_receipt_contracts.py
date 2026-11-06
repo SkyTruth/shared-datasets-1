@@ -364,6 +364,7 @@ def permissions(root):
     This checks repository declarations. It cannot revoke a malicious contributor's
     independently configured GitHub authority or prevent administrator deletion.
     """
+    from scripts.ci_contract import delivery_condition
     errors = []
     for path in sorted((root / ".github/workflows").glob("*.yml")):
         value = yaml.safe_load(path.read_text())
@@ -380,6 +381,9 @@ def permissions(root):
             caller = str(job.get("uses", "")).startswith("./.github/workflows/")
             condition = str(job.get("if", ""))
             main_only = "github.ref == 'refs/heads/main'" in condition and "github.event_name == 'push'" in condition
+            delivery = value['jobs'].get('ci-ready', {}).get('outputs', {}).get('delivery', '')
+            main_only |= (path.name == 'ci.yml' and condition == delivery_condition(identifier)
+                          and 'ci-ready' in job.get('needs', []) and delivery == "${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}")
             notification = notification_boundary(path.name, identifier, value, job)
             if not (protected or notification or caller and (main_only or "pull_request" not in trigger and "pull_request_target" not in trigger)):
                 errors.append(f"{path.name}/{identifier}: deployment/signing write token requires a protected production job or main-only reusable caller")

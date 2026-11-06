@@ -1,9 +1,9 @@
-import ast
 import json
 import re
 import shutil
 import subprocess
 from graphlib import TopologicalSorter
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -32,9 +32,9 @@ def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_hol
     *[(path, {'sea_ice', 'artifact_registry_iam', 'catalog_viewer', 'pmtiles_cdn'}) for path in (
         'scripts/deployment_revision.py', 'scripts/deployment_emission.py', 'scripts/tested_image_bundle.py',
         '.github/actions/deployment-auth/action.yml', '.github/actions/deployment-bootstrap/action.yml',
-        '.github/actions/deployment-bootstrap/approval.py', '.github/actions/deployment-receipt/action.yml',
+        '.github/actions/deployment-receipt/action.yml',
         'scripts/terraform_target_contracts.py',
-        'scripts/terraform_plan_allowlist.py', '.github/actions/deployment-bootstrap/restore.py',
+        'scripts/terraform_plan_allowlist.py',
         'scripts/install_deployment_verifier.py')],
     ('scripts/tested_image_authorization.py', {'sea_ice', 'catalog_viewer', 'cron_alert_policy'}),
     ('.github/workflows/ingestion-deploy.yml', {'sea_ice'}),
@@ -277,7 +277,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
     for target in DEPLOYMENTS:
         job = jobs[target.replace("_", "-")]
         assert "ci-ready" in job["needs"]
-        assert "github.event_name == 'push'" in job["if"]
+        assert "!failure()" in job["if"]
         assert "fromJSON(needs.ci-ready.outputs.delivery || '{}')." in job["if"]
         assert job["with"]["executor_sha"] == "${{ needs.ci-ready.outputs.tested_sha }}"
         assert "concurrency" not in job  # Mutating leaf owns the one production state lock.
@@ -291,8 +291,7 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
     publisher = jobs["publish-reviewed-dataset"]
     assert "pmtiles-cdn" in publisher["needs"]
     assert "fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset" in publisher["if"]
-    assert "needs.pmtiles-cdn.result == 'success'" in publisher["if"]
-    assert "needs.geospatial-changes.outputs.pmtiles_cdn != 'true'" in publisher["if"]
+    assert "!failure()" in publisher["if"]
 
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
@@ -327,7 +326,7 @@ def test_sdk_caller_consumes_emitted_plan_selection_after_the_gate(tmp_path, sdk
     suite = re.fullmatch(r"\$\{\{ steps.plan.outputs.([\w-]+) }}", selector)[1]
     assert (outputs[suite] == "true") is ("sdk-node24" in plan["suites"]) is sdk_selected
     caller = workflow["jobs"]["typescript-sdk"]
-    assert caller["needs"] == ["ci-ready", "geospatial-changes"]
+    assert caller["needs"] == "ci-ready"
     assert "uses" not in caller and "id-token" not in caller["permissions"]
     assert caller["permissions"]["actions"] == "write"
     step = caller["steps"][0]
@@ -371,77 +370,75 @@ MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
 ]
 
 
+@cache
+def delivery_jobs():
+    return load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
+
+
 def condition_result(job, values, *, cancelled=False):
-    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
-    # This is a required Actions scheduling contract, not a local reimplementation
-    # of its scheduler: without a status function GitHub injects success(), which
-    # propagates skipped ancestors even when the explicit condition is true.
-    assert "!cancelled()" in expression
-    if "fromJSON(needs.ci-ready.outputs.delivery" in expression:
-        from scripts.ci_contract import delivery_outputs
-        plan = {'deployments': [target for target in DEPLOYMENTS if values.get(f'needs.geospatial-changes.outputs.{target}') == 'true'],
-                'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else []}
-        delivery = delivery_outputs(plan, values['github.event_name'], values['github.ref']) if values['needs.ci-ready.result'] == 'success' else {}
-        expression = re.sub(r"fromJSON\(needs.ci-ready.outputs.delivery \|\| '{}'\).([\w-]+)", lambda match: repr(delivery.get(match[1], False)), expression)
-    expression = expression.replace("!cancelled()", repr(not cancelled))
-    expression = re.sub(r"(?:needs|github|inputs)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
-    expression = re.sub(r"!(?!=)", "not ", expression)
-    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
-    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or,
-                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.UnaryOp, ast.Not)) for node in ast.walk(tree))
-    return eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}})
+    """Evaluate the fixed three-part scheduling contract, with no expression parser.
+
+    Exact expression equality below binds the truth table to the checked-in job.
+    GitHub failure() covers transitive ancestors; skipped jobs are not failures.
+    """
+    from scripts.ci_contract import delivery_outputs, delivery_condition, DELIVERY_FILTERS
+    jobs = delivery_jobs()
+    caller, = [name for name, row in jobs.items() if row == job]
+    assert job["if"] == delivery_condition(caller)
+    plan = {'deployments': [target for target in DEPLOYMENTS if values.get(f'needs.geospatial-changes.outputs.{target}') == 'true'],
+            'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else []}
+    delivery = json.loads(json.dumps(delivery_outputs(plan, values['github.event_name'], values['github.ref'])))
+    ancestors = set()
+    pending = [caller]
+    while pending:
+        needs = jobs[pending.pop()].get('needs', [])
+        for parent in ([needs] if isinstance(needs, str) else needs):
+            if parent not in ancestors:
+                ancestors.add(parent)
+                pending.append(parent)
+    results = {values.get(f'needs.{parent}.result', 'success') for parent in ancestors}
+    selected = caller not in DELIVERY_FILTERS or values.get('needs.dataset-mutation-selection.outputs.' + DELIVERY_FILTERS[caller]) == 'true'
+    return bool(not cancelled and not results & {'failure', 'cancelled'}
+                and values['needs.ci-ready.result'] == 'success' and delivery[caller] and selected)
 
 
 @pytest.mark.parametrize("job_id", MAIN_CALLERS)
 def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests):
-    job = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][job_id]
+    jobs = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
+    job = jobs[job_id]
     needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
     from scripts.terraform_target_contracts import registry
     declarations = registry(section="deployments")
-    selection_name = next((name for name, row in declarations.items()
-                           if job.get("uses") == "./.github/workflows/" + row["workflow"]), job_id.replace("-", "_"))
-    optional = ([name.replace("_", "-") for name in declarations[selection_name]["terraform_prerequisites"]]
-                if selection_name in declarations else [name for name in needs if name.replace("-", "_") in declarations])
-    assert set(optional) == {name for name in needs if name.replace("-", "_") in declarations}
-    assert set(optional) <= set(needs)
+    name = job_id.replace('-', '_')
+    optional = [parent.replace('_', '-') for parent in declarations[name]['terraform_prerequisites']] if name in declarations else [parent for parent in needs if parent.replace('-', '_') in declarations]
+    assert set(optional) == {parent for parent in needs if parent.replace('-', '_') in declarations}
     values = {
         "github.event_name": "push", "github.ref": "refs/heads/main",
-        **{f"needs.{name}.result": "success" for name in needs},
+        **{f"needs.{parent}.result": "success" for parent in needs},
         **{f"needs.geospatial-changes.outputs.{target}": "true" for target in DEPLOYMENTS},
         "needs.dataset-mutation-selection.outputs.has_repo_alert": "true",
         "needs.dataset-mutation-selection.outputs.has_mutations": "true",
         "needs.dataset-mutation-selection.outputs.has_catalog_changes": "true",
     }
-    assert condition_result(job, values) is True
+    for event, ref in [('push', 'refs/heads/main'), ('push', 'refs/heads/topic'),
+                       ('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main')]:
+        for selected in (True, False):
+            for result in ('success', 'failure', 'skipped'):
+                with subtests.test(event=event, selected=selected, result=result):
+                    case = values | {'github.event_name': event, 'github.ref': ref,
+                                     **{f'needs.geospatial-changes.outputs.{parent.replace("-", "_")}': str(selected).lower() for parent in optional},
+                                     **{f'needs.{parent}.result': result for parent in optional}}
+                    assert condition_result(job, case) is (event == 'push' and ref == 'refs/heads/main' and (not optional or result != 'failure'))
     assert condition_result(job, values, cancelled=True) is False
-    selection = {
-        "announce-repo-functionality": "needs.dataset-mutation-selection.outputs.has_repo_alert",
-        "publish-reviewed-dataset": "needs.dataset-mutation-selection.outputs.has_mutations",
-        "refresh-reviewed-catalog": "needs.dataset-mutation-selection.outputs.has_catalog_changes",
-    }.get(job_id, f"needs.geospatial-changes.outputs.{selection_name}")
-    if job_id != "dataset-mutation-selection":
-        with subtests.test(selection="unselected"):
-            assert condition_result(job, {**values, selection: "false"}) is False
-    for event, ref in [("pull_request", "refs/heads/main"), ("workflow_dispatch", "refs/heads/main"),
-                       ("push", "refs/heads/topic")]:
-        with subtests.test(event=event, ref=ref):
-            assert condition_result(job, {**values, "github.event_name": event, "github.ref": ref}) is False
-    for dependency in set(needs) - {"geospatial-changes"}:
-        for result in ("failure", "cancelled", "skipped"):
+    for dependency in set(needs) - {'geospatial-changes'}:
+        for result in ('failure', 'cancelled'):
             with subtests.test(dependency=dependency, result=result):
-                assert condition_result(job, {**values, f"needs.{dependency}.result": result}) is False
-    for dependency in optional:
-        with subtests.test(unselected_dependency=dependency):
-            assert condition_result(job, {
-                **values, f"needs.{dependency}.result": "skipped",
-                f"needs.geospatial-changes.outputs.{dependency.replace('-', '_')}": "false",
-            }) is True
-    if optional:
-        with subtests.test(all_optional_dependencies="unselected"):
-            assert condition_result(job, {
-                **values, **{f"needs.{name}.result": "skipped" for name in optional},
-                **{f"needs.geospatial-changes.outputs.{name.replace('-', '_')}": "false" for name in optional},
-            }) is True
+                assert condition_result(job, values | {f'needs.{dependency}.result': result}) is False
+    selection = {'announce-repo-functionality': 'needs.dataset-mutation-selection.outputs.has_repo_alert',
+                 'publish-reviewed-dataset': 'needs.dataset-mutation-selection.outputs.has_mutations',
+                 'refresh-reviewed-catalog': 'needs.dataset-mutation-selection.outputs.has_catalog_changes'}.get(job_id, f'needs.geospatial-changes.outputs.{name}')
+    if job_id != 'dataset-mutation-selection':
+        assert condition_result(job, values | {selection: 'false'}) is False
 
 
 @pytest.mark.parametrize("paths,expected", [
@@ -521,7 +518,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
 def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][target]
-    assert caller["with"]["sync_iam"] == "${{ needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}"
+    assert caller["with"]["sync_iam"] == "${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam }}"
     workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
     assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}
     if target == "catalog-viewer":
@@ -533,31 +530,15 @@ def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
         assert "(github.event_name == 'workflow_dispatch' || inputs.sync_iam)" in workflow['jobs']['bootstrap']['if']
         assert all('if' not in step for step in steps[start:end])
         return
-    jobs = workflow["jobs"]
-    values = {"github.event_name": "push", "github.ref": "refs/heads/main", "inputs.sync_iam": False,
-              "needs.bootstrap.result": "skipped", "needs.resources.result": "skipped"}
-    assert condition_result(jobs["bootstrap"], values) is False
-    consumer = jobs["deploy" if target == "dataset-usage" else "sync"]
-    assert condition_result(consumer, values) is True
-    values["inputs.sync_iam"] = True
-    assert condition_result(jobs["bootstrap"], values) is True
-    assert condition_result(consumer, values) is False
-    values.update({"needs.bootstrap.result": "success", "needs.resources.result": "success"})
-    assert condition_result(consumer, values) is True
-    manual = {**values, "github.event_name": "workflow_dispatch", "inputs.sync_iam": False}
-    assert condition_result(jobs["bootstrap"], manual) is True
-    assert condition_result(consumer, {**manual, "needs.bootstrap.result": "skipped"}) is False
-    for dependency in consumer["needs"] if isinstance(consumer["needs"], list) else [consumer["needs"]]:
-        assert condition_result(consumer, {**values, f"needs.{dependency}.result": "failure"}) is False
+    from scripts import deployment_receipt_contracts
+    assert deployment_receipt_contracts.boundaries(ROOT) == []
 
 
 @pytest.mark.parametrize("has_mutations", ["true", "false"])
 def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutations):
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
     step = next(step for step in jobs['dataset-mutation-selection']['steps'] if step.get('id') == 'catalog')
-    expression = step['if'].removeprefix('${{').removesuffix('}}').strip()
-    expression = expression.replace('steps.discover.outputs.has_mutations', repr(has_mutations))
-    assert eval(expression, {"__builtins__": {}}) is (has_mutations == 'false')
+    assert step["if"] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
     values = {"github.event_name": "push", "github.ref": "refs/heads/main",
               "needs.ci-ready.result": "success", "needs.dataset-mutation-selection.result": "success",
               "needs.geospatial-changes.outputs.pmtiles_cdn": "false", "needs.pmtiles-cdn.result": "skipped",
@@ -578,9 +559,8 @@ def test_plan_rejects_an_iam_prerequisite_without_its_declaration(tmp_path, monk
     prod = tmp_path / "terraform/envs/prod"
     prod.mkdir(parents=True)
     (prod / "iam.tf").write_text('resource "google_project_iam_custom_role" "reader" {}' if declared else '')
-    (tmp_path / "terraform/iam-plan-prerequisites.json").write_text(json.dumps({"jobs": {"sync/prepare": ["google_project_iam_custom_role.reader"]}}))
     (tmp_path / ".github").mkdir()
-    (tmp_path / ".github/terraform-targets.json").write_text(json.dumps({"schema_version": 1, "targets": {}}))
+    (tmp_path / ".github/terraform-targets.json").write_text(json.dumps({"schema_version": 1, "targets": {"sync/prepare": {"prerequisites": ["google_project_iam_custom_role.reader"]}}}))
     monkeypatch.setattr(contract, "ROOT", tmp_path)
     contract.deployment_paths.cache_clear()
     try:

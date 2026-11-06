@@ -56,6 +56,9 @@ def write_workflow(root, workflow, filename='owned.yml'):
                 item[key] = inputs[key]
         registry['targets'][sync] = item
         job['with'] = {'sync_name': sync, 'caller_workflow': filename}
+    if path.exists():
+        for sync, row in registry['targets'].items():
+            row.update({key: value for key, value in json.loads(path.read_text())['targets'].get(sync, {}).items() if key in {'prerequisites', 'retired_resources'}})
     path.write_text(json.dumps(registry))
     (root / '.github/workflows' / filename).write_text(yaml.safe_dump(document))
 
@@ -71,12 +74,22 @@ def policy(tmp_path):
     write_workflow(tmp_path, workflow)
     (tmp_path / 'terraform').mkdir()
     value = {'schema_version': 1, 'jobs': {'owned.yml/bootstrap': [], 'owned.yml/sync': [SHARED]}, 'retired_targets': {}}
-    (tmp_path / 'terraform/iam-plan-prerequisites.json').write_text(json.dumps(value))
+    write_policy(tmp_path, value)
     return tmp_path, value, workflow
 
 
 def write_policy(root, value):
-    (root / 'terraform/iam-plan-prerequisites.json').write_text(json.dumps(value))
+    path = root / '.github/terraform-targets.json'
+    document = json.loads(path.read_text())
+    for sync, row in document['targets'].items():
+        row.pop('prerequisites', None)
+        row.pop('retired_resources', None)
+    for sync, prerequisites in value['jobs'].items():
+        # Tests intentionally include orphan policy entries to prove exact coverage.
+        document['targets'].setdefault(sync, {'workflow': sync.split('/')[0], 'resources': []})['prerequisites'] = prerequisites
+    for sync, retired in value['retired_targets'].items():
+        document['targets'].setdefault(sync, {'workflow': sync.split('/')[0], 'resources': []})['retired_resources'] = retired
+    path.write_text(json.dumps(document))
 
 
 def test_transitive_managed_ancestor_must_have_an_explicit_owner(policy):
@@ -273,3 +286,24 @@ def test_historical_negative_control_is_exact_failed_source_not_a_cached_graph()
     # Graphs are produced from the active configuration and both failed-source
     # variants by the shared lint command, rather than replayed as a DOT fixture.
     assert not list(directory.glob('*.dot'))
+
+
+def test_narrow_sync_has_exactly_one_caller_and_cannot_share_implicit_policy(policy):
+    root, _, _ = policy
+    path = root / '.github/terraform-targets.json'
+    document = json.loads(path.read_text())
+    del document['targets']['owned.yml/sync']
+    path.write_text(json.dumps(document))
+    path = root / '.github/workflows/owned.yml'
+    workflow = yaml.safe_load(path.read_text())
+    workflow['jobs']['sync']['with']['sync_name'] = 'owned.yml/bootstrap'
+    path.write_text(yaml.safe_dump(workflow))
+    with pytest.raises(ValueError, match='exactly every'):
+        contracts.check_graph(root, {ROLE: set()})
+
+
+def test_registry_schema_version_rejects_boolean(tmp_path):
+    (tmp_path / '.github').mkdir()
+    (tmp_path / '.github/terraform-targets.json').write_text('{"schema_version":true,"targets":{}}')
+    with pytest.raises(ValueError, match='Unsupported'):
+        contracts.registry(tmp_path)

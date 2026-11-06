@@ -1,15 +1,7 @@
 # Tested production deployment contracts
 
-Use [the ingestion procedure](ci-deployment.md) or
-[the Terraform target procedure](terraform-reconciliation.md#change-a-terraform-or-iam-target)
-for ordered steps. This document owns shared execution and evidence contracts.
-
-Main-push CI supplies `executor_sha`, `source_run_id` and `source_run_attempt`
-after successful `ci-ready`. Manual main entrypoints require the same three
-inputs. The trusted verifier checks repository/workflow IDs, main-push event,
-exact revision and successful CI attempt through GitHub's API. Automatic callers
-must identify their current attempt; supplied inputs alone grant no authority.
-A PR/fork revision or fabricated upstream completion cannot pass these checks.
+[The production deployment procedure](ci-deployment.md) is the entry point for
+all changes. This reference owns shared execution and evidence contracts.
 
 `uv run python scripts/release_contracts.py --target all` checks declared
 permissions, bootstrap ordering, immutable reset plans, runtime limits and
@@ -28,36 +20,6 @@ hashes. Deployment loads those bytes from the successful source attempt without
 rebuilding. Docker-save normalization preserves config/rootfs bytes; the pushed
 registry manifest must retain the tested config ID before Terraform receives
 its immutable digest. Missing, expired or mismatched evidence fails closed.
-
-## Target registries
-
-[`scripts/ingestion_targets.py`](../scripts/ingestion_targets.py) exposes two
-resolved views. `DEPLOY_TARGETS` contains the five shared-executor callers:
-WDPA, MPAtlas, EAMLIS, sea ice and dataset usage. Execution, image-variable
-binding, CI selection and replay use this view. `TARGETS` contains the four
-publication producers; publication rollout/freshness and asset
-contracts use that narrower view. Telemetry has no release-index or feature-ID
-installation requirement.
-
-The eleven-field constructor validates publication/telemetry combinations once.
-Workflow and image-variable names derive from target names. Plan policies are
-`update`, `install`, `wdpa` or `usage`; canaries are terminal or deferred. Release
-checks follow the asset root, and scheduler resume is a reviewed verification
-hook. Each job resolves flat environment values from the trusted registry.
-Installed-image checks run once in CI before image retention.
-The usage target delegates its computed scope and special plan guard to
-[`dataset_usage_deploy.py`](../scripts/dataset_usage_deploy.py), preserving its
-reader-first activation and removal checks. Recovery resolves image variables
-before candidate checkout, including the original `dataset_usage_image`.
-
-[`.github/terraform-targets.json`](../.github/terraform-targets.json) owns stable
-synchronization names, exact IAM target scopes, viewer/CDN/usage `plan_scopes` and
-named read-only `permission_probes`. Unknown permission targets fail closed.
-Execution, offline dependency checks, saved-plan guards and recovery read that
-same registry; names preserve historical signed hash identities. CI derives
-Terraform source consumers from these scopes. The registry’s `selection_exceptions` table owns traversal boundaries, excluded validators and reasoned per-deployment input additions. Excluded executor machinery selects its explicit representative `deployments`, after removing inferred workflow/Terraform/image callers. Content changes retain actual consumers; test selection and image validation remain separate. WDPA processing limits come from the same parsed HCL index.
-The [resolved CI plan](ci-preflight.md#selection-and-offline-checks) carries the
-resulting suites and required `production_image_targets` unchanged to consumers.
 
 ## Serialization and protected execution
 

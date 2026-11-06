@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize('active', [False, True])
 @pytest.mark.parametrize('missing', [None, 'PROVIDER', 'PLANNER', 'PRODUCTION_TERRAFORM_SERVICE_ACCOUNT'])
 def test_reviewed_activation_never_silently_disappears(active, missing):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     workflow = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())
     declaration = workflow[True]['workflow_call']['inputs']['active']
     assert declaration['type'] == 'boolean' and declaration['default'] is False
@@ -58,7 +58,7 @@ def test_reviewed_activation_never_silently_disappears(active, missing):
 @pytest.mark.parametrize('event,fork', [('pull_request', True), ('push', False), ('workflow_dispatch', False)])
 @pytest.mark.parametrize('active', [False, True])
 def test_activation_does_not_admit_forks_or_non_pr_events(event, fork, active):
-    from test_ci_deployments import condition_result
+    from workflow_helpers import condition_result
     leaf = yaml.safe_load((ROOT / '.github/workflows/pr-terraform-plan.yml').read_text())['jobs']
     values = {'github.event_name': event, 'github.event.pull_request.head.repo.full_name': 'other/fork' if fork else pr.REPOSITORY,
               'github.repository': pr.REPOSITORY, 'inputs.active': active}
@@ -79,7 +79,7 @@ def test_exclusions_equal_exact_secret_refresh_dependency_closures(tmp_path):
         assert 'google_storage_bucket.shared_bucket' not in ancestors
     all_scopes = pr.scopes({'deployments': list(contracts.registry(section='deployments')),
                            'changed_paths': [p.relative_to(ROOT).as_posix() for p in (ROOT / 'terraform/envs/prod').glob('*.tf')]})
-    retired = {r for rows in json.loads((ROOT / 'terraform/iam-plan-prerequisites.json').read_text())['retired_targets'].values() for r in rows}
+    retired = {r for rows in (row.get('retired_resources', []) for row in json.loads((ROOT / '.github/terraform-targets.json').read_text())['targets'].values()) for r in rows}
     secret_scopes = set()
     for scope in all_scopes:
         roots = {contracts.address(r) for r in scope['resources']}

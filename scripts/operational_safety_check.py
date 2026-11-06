@@ -20,7 +20,7 @@ WORKFLOW = ".github/workflows/operational-safety-check.yml"
 JOB = "Check for operational work"
 HEALTH_SCOPE = "health:operational-safety-check"
 
-from scripts import incident_verification_cache as native
+from scripts import incident_health_artifacts as native
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
 from scripts.dataset_mutation_authorization import GitHub
