@@ -263,6 +263,48 @@ os.execvp(real, [real, *sys.argv[1:]])
         self.run_cleanup("--apply", success=False)
         self.assertEqual(self.git("rev-parse", "topic"), advance)
 
+    def integration(self):
+        """Merge a local-only worker branch into a pushed integration branch with an open PR."""
+        self.git("switch", "-qc", "integration")
+        self.commit("integration", "integration")
+        self.git("switch", "-qc", "worker")
+        worker = self.commit("worker", "worker")
+        self.git("switch", "-q", "integration")
+        self.git("merge", "--no-ff", "-qm", "merge worker", "worker")
+        self.git("push", "-qu", "origin", "integration")
+        self.git("switch", "-q", "main")
+        self.data["prs"].append({
+            "number": 1, "state": "open", "merged_at": None, "merge_commit_sha": None,
+            "head": {"ref": "integration", "sha": self.git("rev-parse", "integration"),
+                     "repo": {"full_name": "fixture/repo"}},
+            "base": {"ref": "main", "repo": {"full_name": "fixture/repo"}},
+        })
+        return worker
+
+    def test_worker_branch_inside_pushed_integration_branch_is_deleted(self):
+        worker = self.integration()
+        self.git("branch", "fresh")
+        self.git("switch", "-qc", "ahead", "worker")
+        self.commit("ahead", "unmerged")
+        self.git("switch", "-q", "main")
+        self.git("worktree", "add", "-q", "-b", "checked-out", str(self.root / "checked-out"), "worker")
+        self.run_cleanup("--apply")
+        self.assertIn("worker", self.local_names())
+        self.run_cleanup("--apply", "--contained-in", "integration")
+        self.assertEqual(self.local_names(), ["ahead", "checked-out", "fresh", "integration", "main"])
+        self.assertEqual(self.remote_names(), ["integration", "main"])
+        bundle = next((self.root / "reports").rglob("*.bundle"))
+        self.assertIn(worker, self.git("bundle", "list-heads", str(bundle)))
+
+    def test_contained_branch_is_kept_when_the_container_is_unpushed_or_moves(self):
+        self.integration()
+        self.git("branch", "local-integration", "integration")
+        self.run_cleanup("--contained-in", "local-integration", success=False)
+        self.data["advance"] = ["integration", self.git("rev-parse", "main")]
+        result = self.run_cleanup("--apply", "--contained-in", "integration", success=False)
+        self.assertIn("containing branch changed", result.stderr)
+        self.assertIn("worker", self.local_names())
+
     def test_missing_worktree_is_preserved(self):
         self.topic()
         wt = self.root / "missing"

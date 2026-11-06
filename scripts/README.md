@@ -22,7 +22,7 @@ evidence contract.
 
 ## Branch cleanup
 
-`tidy_branches.sh` previews verified merged-branch cleanup and retains a recovery report/bundle before authorized deletion. Use it without concurrent Git writers; preview fetches/prunes refs. Interface: `bash scripts/tidy_branches.sh --help`.
+`tidy_branches.sh` previews verified merged-branch cleanup and retains a recovery report/bundle before authorized deletion. `--contained-in BRANCH` adds local worker branches already inside that pushed integration branch. Use it without concurrent Git writers; preview fetches/prunes refs. Interface: `bash scripts/tidy_branches.sh --help`.
 
 ## Dataset operations
 
