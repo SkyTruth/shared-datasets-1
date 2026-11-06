@@ -135,57 +135,32 @@ recovery](slack-incidents.md) for polling, signing and uncertain-delivery contra
 
 ## Scheduled freshness and capacity
 
-Every three-hour safety probe reads generation-pinned release indexes and each
-known ingestion Scheduler job. Daily assets need a successful release or meaningful
-unchanged-source check-in within two days; monthly assets within 45 days (monthly jobs run on day 2;
-WDPA checks days 1–10, allowing 31 days plus source/retry grace). Missing-source/decision skips do not reset data
-freshness. An old publication with a recent confirmed unchanged-source skip is
-healthy. Metadata-only index rewrites cannot reset the check-in date. The weekly
-bucket audit uses the same freshness rule. The safety health report also requires
-a successful main completion of both `bucket-hygiene-audit.yml` and
-`scratch-cleanup-audit.yml` within nine days (weekly cadence plus two days of grace).
-Missing/failed audits cannot reset that clock; API failures remain visible.
-An ingestion target's live image differing from its latest signed, accepted main
-deployment for over 72 hours raises a finding unless its rollout hold is active.
-Failed reads/unverified records fail health. Pre-start failures remain covered by
-workflow failures and weekly audit freshness.
+Every three-hour probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
+monthly assets within 38 days (31-day cadence plus seven days of grace). Monthly jobs run on day 2; WDPA checks days 1–10. An old release with a recent confirmed unchanged check is healthy.
+Missing-source/decision skips and metadata-only rewrites cannot reset freshness. The weekly bucket audit uses the same rule.
+Both `bucket-hygiene-audit.yml` and `scratch-cleanup-audit.yml` require authenticated successful main completion within nine days (weekly cadence plus two days); missing/failed audits cannot reset that clock.
+API failures and unverified records remain findings. Pre-start failures remain covered by workflow failures and weekly audit freshness.
 
-A Scheduler state other than `ENABLED` for at least 72 hours since
-`userUpdateTime` fails health unless `.github/scheduler-pauses.json` contains a
-reviewed CODEOWNER, reason and future timezone-aware `expires_at`. Deployment
-holds in `.github/ingestion-rollout-holds.json` use those same fields and do not
-authorize Scheduler pauses. Missing jobs/failed reads fail visibly. Approved
-pauses suppress absence checks until expiry, including the internal dataset-usage
-collector's pre-activation pause while `gcs_usage.verified_at` is null. Holds/pauses
-warn at least 72 hours before expiry and alert afterward. Expired holds still block
-deployment, allowing CI selection and `ci-ready`; lint rejects malformed entries
-and changed holds that are already expired.
+An ingestion target trailing its latest signed accepted main image for over 72 hours raises a finding unless its rollout hold is active.
+Recovery readiness requires signed successful manual identity provisioning; missing/failed provisioning or the latest recovery authentication failure remains a health finding. These reads grant no IAM authority.
 
-Disabled incidents or a missing activation timestamp/bot token skip incident
-discovery and appear in the health report; catalog and execution checks continue.
-Setup/probe failures and health-read exceptions share one retained report with
-change-plus-daily reminders. The health reporter runs without installed probe
-dependencies or the pinned verifier. Native setup/probe failures remain red;
-an authenticated report suppresses duplicate replay. Failed delivery, upload or
-dispatch remains visible. Identical findings cannot advance stall escalation.
+Scheduler states other than `ENABLED` for >=72 hours since `userUpdateTime` fail health unless `.github/scheduler-pauses.json` names a reviewed CODEOWNER, reason and future timezone-aware `expires_at`.
+Deployment holds in `.github/ingestion-rollout-holds.json` require the same fields but cannot authorize pauses. Missing jobs/failed reads fail visibly.
+Approved pauses suppress freshness until expiry, including telemetry's pre-activation pause while `gcs_usage.verified_at` is null. Three-hour probes warn >=72 hours before expiry and alert afterward.
+Expired holds still block deployment while permitting selection and `ci-ready`; lint rejects malformed entries and changed holds that are already expired.
 
-Before relying on the checks, use the protected monitoring sync to provision
-the workflow identities and `google_project_iam_custom_role.operational_safety_reader`.
-Only `shared-datasets-heartbeat` receives its `logging.logEntries.create` grant;
-its separate read role permits the safety probes, including heartbeat series reads. The publisher cannot emit
-heartbeats. The resources scope provisions these identities before cron-sync adds
-`google_logging_metric.operational_safety_heartbeat`
-and `google_monitoring_alert_policy.operational_safety_absent`.
+Disabled incidents or missing activation timestamp/bot token skip incident discovery; catalog/execution checks continue and health reports include configuration findings.
+Setup, probe and reader failures share one retained report with change-plus-daily reminders. Health reporting works without probe dependencies or the pinned verifier.
+Setup/probe failures stay red; authenticated reports suppress duplicate replay. Delivery, upload and dispatch failures remain visible. Unchanged findings cannot advance stall escalation.
 
-A completed health read writes the authenticated `operational-safety-heartbeat`
-log only after successful health-report delivery (or its deduplicated no-send).
-A webhook failure emits no heartbeat. Its metric feeds an independent absence policy
-with a seven-hour (`25200s`) window, covering missed/disabled GitHub safety runs.
-Health queries the metric's recent time series and warns when none exists;
-a log write alone cannot establish absence detection before the first series.
-The policy follows `cron_alerts_enabled` and the configured cron notification
-channels. A health-read failure remains in the deduplicated report and emits no
-success heartbeat. Local tests cannot prove deployed IAM or alert delivery.
+Protected monitoring sync provisions workflow identities and `google_project_iam_custom_role.operational_safety_reader` before cron-sync adds
+`google_logging_metric.operational_safety_heartbeat` and `google_monitoring_alert_policy.operational_safety_absent`.
+Only `shared-datasets-heartbeat` gets `logging.logEntries.create`; its separate read role permits probes and time-series reads. The publisher cannot emit heartbeats.
+
+After successful discovery and health-report delivery (or a deduplicated no-send), the authenticated `operational-safety-heartbeat` log confirms reporting is alive.
+Reader failures remain in the delivered health report; they still permit that heartbeat. Failed discovery or report delivery emits none.
+The independent seven-hour (`25200s`) absence policy covers missed/disabled safety runs, follows `cron_alerts_enabled` and uses cron notification channels.
+Health warns when no recent metric series exists: a log write alone cannot establish absence detection. Local tests cannot prove deployed IAM or alert delivery.
 
 Read-only Monitoring evidence (2026-10-06 through 2026-11-05) bounded the highest
 occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:

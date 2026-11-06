@@ -71,7 +71,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         image = "registry/wdpa@sha256:" + "a" * 64
         config = "sha256:" + "b" * 64
         after = {"template": [{"template": [{
-            "timeout": "43200s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
+            "timeout": "46800s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
             "containers": [{"image": image, "resources": [{"limits": {"cpu": "4", "memory": "8Gi"}}],
                 "volume_mounts": [{"name": "work", "mount_path": "/work"}],
                 "env": [{"name": "TMPDIR", "value": "/work/tmp"}, {"name": "SHARED_DATASETS_WORKDIR", "value": "/work/shared-datasets-1"},
@@ -333,7 +333,7 @@ def test_shared_allowlist_executes_real_guard_and_rejects_unauthorized_changes(t
     config_digest = 'sha256:' + 'b' * 64
     if target == 'wdpa-monthly':
         task = plan['resource_changes'][0]['change']['after']['template'][0]['template'][0]
-        task.update(timeout='43200s', volumes=[{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}])
+        task.update(timeout='46800s', volumes=[{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}])
         task['containers'][0].update(resources=[{'limits': {'cpu': '4', 'memory': '8Gi'}}],
             volume_mounts=[{'name': 'work', 'mount_path': '/work'}], env=[
                 {'name': 'TMPDIR', 'value': '/work/tmp'}, {'name': 'SHARED_DATASETS_WORKDIR', 'value': '/work/shared-datasets-1'},

@@ -83,7 +83,8 @@ def test_no_change_apply_retains_scope_through_failed_canary_and_reconciliation(
     api = fixture.api
     address = 'module.wdpa_monthly_job.google_cloud_run_v2_job.this'
     plan = tmp_path / 'plan.json'
-    plan.write_text(json.dumps({'resource_changes': [{'address': address, 'change': {'actions': actions}}]}))
+    plan.write_text(json.dumps({'variables': {'wdpa_monthly_image_config_digest': {'value': 'sha256:' + 'e' * 64}},
+        'resource_changes': [{'address': address, 'change': {'actions': actions}}]}))
     args = SimpleNamespace(target='wdpa-monthly', workflow='wdpa-monthly-deploy.yml', executor_sha=CURRENT,
         source_run_id=13, source_run_attempt=2, artifact=IMAGE, plan_json=str(plan), plan_scope=None,
         deferred=False, command='reconcile', deployment_id=42, executor_dir=None)
@@ -119,7 +120,7 @@ def test_no_change_apply_retains_scope_through_failed_canary_and_reconciliation(
     assert saved[-1] == phase
     monkeypatch.setattr(deployment, 'git_ancestor', lambda *_: True)
     responses = [CURRENT, json.dumps({'spec': {'template': {'spec': {'template': {'spec': {'containers': [{'image': IMAGE}]}}}}}}),
-        json.dumps([{'spec': {'template': {'spec': {'containers': [{'image': IMAGE}]}}},
+        json.dumps([{'metadata': {'name': 'wdpa-monthly-abcde'}, 'spec': {'template': {'spec': {'containers': [{'image': IMAGE}]}}},
                      'status': {'completionTime': 'now', 'succeededCount': 1}}])]
     monkeypatch.setattr(deployment.subprocess, 'check_output', Mock(side_effect=responses))
     deployment.recover(args, api)

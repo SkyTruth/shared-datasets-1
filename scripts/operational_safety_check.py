@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -34,7 +35,7 @@ with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
 CRON_ASSETS = {job: tuple(slug for slug in CATALOG if slug == config["asset_slug"] or
                (not config["asset_slug"] and slug.startswith(config["selection"] + "-")))
                for job, config in TARGETS.items()} | {"dataset-usage": ()}
-FRESHNESS_DAYS = {"daily": 2, "monthly": 45}
+FRESHNESS_DAYS = {"daily": 2, "monthly": 31 + 7}
 UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already published",
                      "latest available source already published"}
 
@@ -126,6 +127,7 @@ def dry_reconciliation(api, run, identity, source_runs, start, end, directory):
 
 
 def verification_due(api, sources, pending, *, now):
+    from scripts.deployment_revision import execution_name
     checks = [item for item in sources if item.get("path") == ".github/workflows/deployment-verification.yml"]
     if any(item.get("status") != "completed" for item in checks):
         return False
@@ -135,9 +137,7 @@ def verification_due(api, sources, pending, *, now):
     # Live hints wake the observer; signed exact-image proof still gates completion.
     statuses = [api.pages(f"{API_ROOT}/deployments/{identifier}/statuses?per_page=100")[0] for identifier in pending]
     for status in statuses:
-        match = re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/(wdpa-monthly-[a-z0-9]{5})\?project=shared-datasets-1", status["environment_url"])
-        require(match, "pending deployment lacks exact execution identity")
-        execution = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "describe", match[1],
+        execution = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "executions", "describe", execution_name(status["environment_url"]),
             "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
@@ -274,6 +274,25 @@ def audit_freshness(api, *, now):
     return problems
 
 
+def recovery_identity(api):
+    """Missing signed manual provisioning and failed recovery auth stay visible."""
+    from scripts import deployment_revision as deployments
+    target = "terraform-" + hashlib.sha256(b"PR plan identity provisioning").hexdigest()[:16]
+    records = api.pages(f"{API_ROOT}/deployments?environment=production-{target}&per_page=100")
+    require(records, "Recovery identity readiness unproven: complete the protected manual PR plan identity provisioning scope")
+    record = max(records, key=lambda row: row["id"])
+    require(deployments.verify_record(api, REPOSITORY, record)["target"] == target, "recovery provisioning target mismatch")
+    statuses = deployments.verified_statuses(api, REPOSITORY, record)
+    require(statuses and (statuses[0].get("state"), statuses[0].get("description")) == ("success", "applied"),
+            "Recovery identity provisioning has no signed successful apply")
+    runs = api.pages(f"{API_ROOT}/actions/workflows/deployment-recovery.yml/runs?branch=main&status=completed&per_page=1", field="workflow_runs")
+    if runs and alerts.verify_source_event(api, runs[0]):
+        require(not any(step.get("name") == "Authenticate read-only recovery" and step.get("conclusion") == "failure"
+            for job in api.pages(f"{API_ROOT}/actions/runs/{runs[0]['id']}/attempts/{runs[0]['run_attempt']}/jobs?per_page=100", field="jobs")
+            for step in job.get("steps", [])), "Recovery authentication failed: " + deployments.emissions.invocation(REPOSITORY, runs[0]['id'], runs[0]['run_attempt']))
+    return []
+
+
 def previous_health(api, run):
     query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     prior = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
@@ -364,6 +383,7 @@ def main():
             ("audit_freshness", lambda: ([], audit_freshness(api, now=now))),
             ("deployed_image_lag", lambda: ([], deployed_image_lag(api, now=now))),
             ("freshness", lambda: ([], dataset_freshness())),
+            ("recovery_identity", lambda: ([], recovery_identity(api))),
         ]
         if probe_outcome == "success":
             readers += [("reconciliation", lambda: ([], reconciliation_problems())),

@@ -299,7 +299,9 @@ class EmissionTests(unittest.TestCase):
     def test_new_claim_rehearses_the_same_shared_leaf_as_receipt_verification(self):
         self.emitter = {**run(), "referenced_workflows": [{"path": f"{REPO}/{d.INGESTION_SIGNER}@{SHA}", "ref": "refs/heads/main", "sha": SHA}]}
         self.api.post.return_value = record()
-        args = SimpleNamespace(target="wdpa-monthly", artifact=IMAGE, executor_sha=SHA, source_run_id=13, source_run_attempt=2, plan_json=None)
+        plan = self.output.parent / "plan.json"
+        plan.write_text(json.dumps({"variables": {"wdpa_monthly_image_config_digest": {"value": "sha256:" + "b" * 64}}}))
+        args = SimpleNamespace(target="wdpa-monthly", artifact=IMAGE, executor_sha=SHA, source_run_id=13, source_run_attempt=2, plan_json=str(plan))
         with patch.object(d, "check", return_value={"proceed": "true"}), patch.object(e, "verify_rehearsal") as rehearsal, patch.object(d, "post_status"):
             d.start(args, self.api)
         rehearsal.assert_called_once_with(self.api, REPO, d.INGESTION_SIGNER)

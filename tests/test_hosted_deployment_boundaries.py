@@ -72,12 +72,12 @@ def test_wdpa_hcl_index_accepts_valid_indentation_and_comments(tmp_path, monkeyp
     source = "../../modules/cloud_run_job"
     cpu = "4"
     memory = "8Gi"
-    timeout = "43200s"
+    timeout = "46800s"
   }
 ''')
     monkeypatch.setattr(allowlist, 'ROOT', tmp_path)
     monkeypatch.setattr(allowlist, 'WDPA_MODULE', path, raising=False)
-    task = {'timeout': '43200s', 'containers': [{'resources': [{'limits': {'cpu': '4', 'memory': '8Gi'}}]}]}
+    task = {'timeout': '46800s', 'containers': [{'resources': [{'limits': {'cpu': '4', 'memory': '8Gi'}}]}]}
     assert 'unexpected WDPA processing limits' not in allowlist.wdpa_errors({'template': [{'template': [task]}]}, 'image', 'config')
 
 
@@ -133,7 +133,7 @@ def test_hosted_wdpa_allowlist_executes_with_only_its_locked_declared_dependenci
     sync = next(i for i, item in enumerate(steps) if item.get('run') == 'uv sync --locked --only-group ci-plan')
     assert sync < next(i for i, item in enumerate(steps) if item.get('uses') == './.github/actions/deployment-auth')
     image, config = 'image@sha256:' + 'a' * 64, 'sha256:' + 'b' * 64
-    task = {'timeout': '43200s', 'volumes': [{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}],
+    task = {'timeout': '46800s', 'volumes': [{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}],
             'containers': [{'image': image, 'resources': [{'limits': {'cpu': '4', 'memory': '8Gi'}}],
                             'env': [{'name': k, 'value': v} for k, v in {
                                 'WDPA_BUILD_IMAGE': image, 'WDPA_BUILD_IMAGE_CONFIG_DIGEST': config,

@@ -190,7 +190,7 @@ def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_te
                                          'containers': [{'image': image}]}]}]}
     task = value['template'][0]['template'][0]
     if config['plan_guard'] == 'wdpa':
-        task.update(timeout='43200s', volumes=[{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}])
+        task.update(timeout='46800s', volumes=[{'name': 'work', 'empty_dir': [{'medium': 'DISK', 'size_limit': '100Gi'}]}])
         task['containers'][0].update(resources=[{'limits': {'cpu': '4', 'memory': '8Gi'}}],
             volume_mounts=[{'name': 'work', 'mount_path': '/work'}], env=[
                 {'name': 'TMPDIR', 'value': '/work/tmp'}, {'name': 'SHARED_DATASETS_WORKDIR', 'value': '/work/shared-datasets-1'},
@@ -211,6 +211,8 @@ def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_te
                 'schedule': '0 9 * * *', 'time_zone': 'UTC', 'retry_config': [{'retry_count': 0}]}}})
     if defect == 'allowlist':
         plan['resource_changes'][0]['address'] = 'google_storage_bucket.unrelated'
+    if target == 'wdpa-monthly':
+        plan['variables'] = {'wdpa_monthly_image_config_digest': {'value': retained['config_digest']}}
     plan_path = directory / 'ingestion.tfplan.json'
     plan_path.write_text(json.dumps(plan))
     if target == 'dataset-usage':
