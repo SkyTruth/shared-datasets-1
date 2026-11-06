@@ -48,13 +48,8 @@ def require_ready(api, repository, job, read_execution):
     deployment.require(statuses and statuses[0].get("state") == "success"
                        and statuses[0].get("description") == "verified",
                        "latest WDPA deployment has no signed verified canary outcome")
-    match = re.fullmatch(
-        r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/"
-        r"([a-z][a-z0-9-]{0,62})\?project=shared-datasets-1",
-        statuses[0].get("environment_url", ""),
-    )
-    deployment.require(match is not None, "verified WDPA deployment lacks its exact canary execution")
-    deployment.require(deployment.terminal_execution(read_execution(match[1]), image) == "verified",
+    name = deployment.execution_name(statuses[0].get("environment_url", ""))
+    deployment.require(deployment.terminal_execution(read_execution(name), image) == "verified",
                        "WDPA canary has not completed successfully")
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from functools import cache
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,10 +36,17 @@ def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(safety, "audit_freshness", mock.Mock(return_value=[]))
     monkeypatch.setattr(safety.subprocess, "check_call", mock.Mock())
     monkeypatch.setattr(safety, "heartbeat_series", mock.Mock(return_value=[]))
+    monkeypatch.setattr(safety, "recovery_identity", mock.Mock(return_value=[]))
 
 
 def stamp(value):
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@cache
+def repository_head():
+    return deployments.subprocess.check_output(["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[1], text=True).strip()
 
 
 class OperationalAPI:
@@ -50,8 +58,7 @@ class OperationalAPI:
                                      ("catalog-web-deploy.yml", 14), ("bucket-hygiene-audit.yml", 15),
                                      ("deployment-verification.yml", 16))
         }
-        self.head = deployments.subprocess.check_output(["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[1], text=True).strip()
+        self.head = repository_head()
         self.current = self.source(300, "operational-safety-check.yml", status="in_progress", conclusion=None)
         self.emitter = emitter_run(identifier=11, attempt=1, path=incidents.WORKFLOW, event="workflow_run")
         self.runs = {300: self.current, 11: self.emitter}
@@ -493,7 +500,7 @@ def test_uncertain_claim_waits_for_owner_and_health_cli_bounds_its_age(probe_inp
     assert api.posts == []
 
 
-@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',45)])
+@pytest.mark.parametrize('cadence,days', [('daily',2),('monthly',38)])
 @pytest.mark.parametrize('status,reason', [('success',''), ('skipped','source fingerprint unchanged'), ('skipped','source unavailable')])
 def test_freshness_separates_unchanged_source_from_missing_data(cadence, days, status, reason):
     payload = {'latest_release':{'date':stamp(NOW-timedelta(days=365))[:10]},

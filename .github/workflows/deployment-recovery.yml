@@ -56,7 +56,8 @@ jobs:
         if: steps.original.outputs.kind == 'sdk'
         with:
           node-version: "24.14.0"
-      - uses: google-github-actions/auth@v2
+      - name: Authenticate read-only recovery
+        uses: google-github-actions/auth@v2
         if: steps.original.outputs.kind != 'sdk'
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}

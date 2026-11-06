@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Read-only permission probes for the authenticated protected deployer.
-
-Only trusted main runs this code. A grant declared in Terraform is not live
-readiness. Safe permission reads may retry for propagation; mutations never do.
-"""
+"""Probe live protected-deployer authority; retry only idempotent permission reads."""
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 import subprocess
+import ssl
 import sys
 import time
 import urllib.error
@@ -45,33 +42,38 @@ PROJECT_PERMISSIONS = checks("job-runtime")[0][1]
 SECRET_PERMISSIONS = checks("translation-bootstrap")[0][1]
 
 
+def read_json(req, *, timeout):
+    """Bounded retries for idempotent Google reads, including permission POSTs."""
+    if req.get_method() not in {"GET", "HEAD"} and not req.full_url.endswith((":testIamPermissions", "/testIamPermissions", ":troubleshoot")):
+        raise ValueError("Deployment read retries cannot execute a mutation")
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.load(response)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError) as error:
+            cause = error.reason if isinstance(error, urllib.error.URLError) else error
+            if attempt == 2 or isinstance(cause, ssl.SSLCertVerificationError) or (
+                    isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600):
+                raise
+            time.sleep(5 * (attempt + 1))
+
+
 def request(url, permissions, token):
     raw = json.dumps({"permissions": list(permissions)}).encode()
     req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
     try:
-        for attempt in range(3):
-            try:
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    payload = json.load(response)
-                break
-            except (urllib.error.URLError, TimeoutError) as error:
-                if attempt == 2 or isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600:
-                    raise
-                time.sleep(5 * (attempt + 1))
+        payload = read_json(req, timeout=30)
     except urllib.error.HTTPError as error:
-        # Capture structured Google error diagnostics, never request headers or
-        # an incomplete body that might contain a truncated credential value.
+        # Bound diagnostics to structured Google fields and redact credentials.
         body = error.read(16 * 1024 + 1)
         diagnostic = 'response body unavailable, unstructured or over 16 KiB'
-        if len(body) <= 16 * 1024:
-            try:
-                vendor = json.loads(body)
-            except (ValueError, UnicodeDecodeError):
-                vendor = None
-            if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
-                safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
-                encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
-                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]')[:4096]
+        try:
+            vendor = json.loads(body) if len(body) <= 16 * 1024 else None
+        except ValueError:
+            vendor = None
+        if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
+            safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
+            diagnostic = json.dumps(safe, ensure_ascii=True).replace(json.dumps(token, ensure_ascii=True)[1:-1], '[REDACTED]')[:4096]
         raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
     actual = payload.get("permissions", [])
     if not isinstance(actual, list) or not all(isinstance(value, str) for value in actual):
@@ -80,13 +82,10 @@ def request(url, permissions, token):
 
 
 def verify_checks(required, probe, *, attempts=7, pause=time.sleep):
-    # Calling Compute testIamPermissions without its list prerequisite returns
-    # 403 before it can report the actual resource-operation permissions. Keep
-    # these phases ordered; success in the first phase cannot satisfy the second.
+    # Probe-call prerequisites must pass before independent resource-operation permission checks.
     for phase, checks in (("permission-probe call", probe_call_checks(required)), ("resource operation", required)):
         for attempt in range(attempts):
-            missing = [(url, probe(url, permissions)) for url, permissions in checks]
-            missing = [(url, permissions) for url, permissions in missing if permissions]
+            missing = [(url, missing) for url, permissions in checks if (missing := probe(url, permissions))]
             if not missing:
                 break
             if attempt + 1 < attempts:
@@ -126,10 +125,8 @@ def main():
     if not token:
         parser.error("authenticated deployment identity has no access token")
     verify_checks(required, lambda url, permissions: request(url, permissions, token))
-    if args.plan_json:
-        print("Saved-plan mutation permissions and declared post-apply operations verified.")
-    else:
-        print(f"{args.target}: deployment permission prerequisites verified.")
+    print("Saved-plan mutation permissions and declared post-apply operations verified." if args.plan_json
+          else f"{args.target}: deployment permission prerequisites verified.")
 
 
 if __name__ == "__main__":

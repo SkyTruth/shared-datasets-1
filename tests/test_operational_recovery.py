@@ -68,6 +68,7 @@ def health_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(safety, "freshness", lambda *_a, **_k: [])
     monkeypatch.setattr(safety, "previous_health", lambda *_: {"problems": [], "warnings": [], "notified_at": None})
     monkeypatch.setattr(safety, "heartbeat_series", lambda *_: [])
+    monkeypatch.setattr(safety, "recovery_identity", lambda *_: [])
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(NOW))
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-token")
@@ -97,11 +98,11 @@ def test_heartbeat_follows_health_delivery(tmp_path, monkeypatch, delivered):
         assert events == ["delivery"]
 
 
-@pytest.mark.parametrize('failed', ['policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series'])
+@pytest.mark.parametrize('failed', ['policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series', 'recovery_identity'])
 def test_health_reader_failure_preserves_other_reads_and_delivered_heartbeat(tmp_path, monkeypatch, failed):
     health_cli(tmp_path, monkeypatch)
     readers = {}
-    for name in ('policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series'):
+    for name in ('policy_warnings', 'audit_freshness', 'deployed_image_lag', 'freshness', 'heartbeat_series', 'recovery_identity'):
         readers[name] = mock.Mock(side_effect=RuntimeError('reader unavailable') if name == failed else None,
                                   return_value=([], []) if name == 'policy_warnings' else [])
         monkeypatch.setattr(safety, name, readers[name])

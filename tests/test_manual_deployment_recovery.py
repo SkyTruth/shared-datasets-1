@@ -161,11 +161,11 @@ class IngestionTargetRecoveryTests(unittest.TestCase):
                 image = 'registry/job@sha256:' + 'a' * 64
                 args = SimpleNamespace(command='recovery-inputs')
                 with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_OUTPUT': str(output)}), \
-                     patch.object(deployment, 'recovery_record', return_value=({'sha': SHA}, {'target': target, 'artifact': image, 'targets': targets})):
+                     patch.object(deployment, 'recovery_record', return_value=({'sha': SHA}, {'target': target, 'artifact': image, 'targets': targets, 'image_config_digest': 'sha256:' + 'b' * 64})):
                     deployment.recover(args, Mock())
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 variables = json.loads(values['image_variables'])
-                self.assertEqual(set(variables), {t['image_variable'] for t in DEPLOY_TARGETS.values()})
+                self.assertEqual(set(variables), {t['image_variable'] for t in DEPLOY_TARGETS.values()} | ({'wdpa_monthly_image_config_digest'} if target == 'wdpa-monthly' else set()))
                 self.assertEqual([k for k, v in variables.items() if v == image], [TARGETS[target]['image_variable']] if target in TARGETS else ['dataset_usage_image'] if target == 'dataset-usage' else [])
                 log = Path(directory) / 'args'
                 recorder = 'terraform() { :; }\nbash() { printf "%s\\n" "$@" > "$ARGS"; }\n'

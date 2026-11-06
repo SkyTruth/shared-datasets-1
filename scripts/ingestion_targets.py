@@ -52,13 +52,17 @@ DEPLOY_TARGETS = {
         after_verify="resume_published_scheduler"),
     "dataset-usage": target("dataset-usage", selection="dataset_usage", plan_guard="usage"),
 }
-# Telemetry does not acquire publication requirements.
 TARGETS = {name: config for name, config in DEPLOY_TARGETS.items() if config["plan_guard"] != "usage"}
 
 
-def image_variables(target, image):
-    return {config["image_variable"]: image if name == target else "unused-by-reconciliation"
-            for name, config in DEPLOY_TARGETS.items()}
+def image_variables(target, image, config_digest=""):
+    variables = {config["image_variable"]: image if name == target else "unused-by-reconciliation"
+                 for name, config in DEPLOY_TARGETS.items()}
+    if target == "wdpa-monthly":
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", config_digest):
+            raise ValueError("WDPA requires its original tested image configuration digest")
+        variables["wdpa_monthly_image_config_digest"] = config_digest
+    return variables
 
 
 def plan(name, image, config_digest):
@@ -68,9 +72,7 @@ def plan(name, image, config_digest):
         targets = subprocess.check_output(["uv", "run", "--no-sync", "python", "scripts/dataset_usage_deploy.py", "--targets"], text=True).splitlines()
     if not targets:
         raise ValueError("Ingestion plan requires a nonempty resource scope")
-    variables = image_variables(name, image)
-    if config["plan_guard"] == "wdpa":
-        variables[config["image_variable"] + "_config_digest"] = config_digest
+    variables = image_variables(name, image, config_digest)
     subprocess.run(["bash", str(Path(os.environ["GITHUB_WORKSPACE"]) / "scripts/terraform_retry.sh"),
         "-chdir=terraform/envs/prod", "plan", "-input=false", "-out=" + os.environ["RUNNER_TEMP"] + "/ingestion.tfplan",
         *("-target=" + item for item in targets), *(f"-var={key}={value}" for key, value in variables.items())], check=True)
@@ -103,7 +105,6 @@ def after_verify(name):
 
 
 if __name__ == "__main__":
-    # Placeholder variables are generated for every registered ingestion image.
     if sys.argv[1:] == ["image-vars"]:
         print("\n".join(f"-var={key}={value}" for key, value in image_variables("", "unused-by-reconciliation").items()))
         sys.exit(0)

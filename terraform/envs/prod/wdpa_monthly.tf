@@ -51,7 +51,7 @@ module "wdpa_monthly_job" {
   cpu                   = "4"
   memory                = "8Gi"
   ephemeral_disk_size   = "100Gi"
-  timeout               = "43200s" # 12 h: 3 h 39 m above the observed 8 h 21 m maximum.
+  timeout               = "46800s" # 13 h: at least 1.5 times the observed 8 h 21 m maximum.
   max_retries           = 0
 
   secret_env = {

@@ -11,13 +11,12 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 from urllib.parse import urlsplit, unquote
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_toolchain import TOOLCHAIN
-from scripts.deployment_permissions import checks
+from scripts.deployment_permissions import checks, read_json
 from scripts.ingestion_targets import DEPLOY_TARGETS
 from scripts.terraform_plan_allowlist import blocked_changes
 from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, plan_checks, probe_call_checks, require
@@ -139,15 +138,11 @@ class PolicyReader:
     def read(self, url, body=None):
         request = urllib.request.Request(url, data=body.encode() if body is not None else None,
                                          headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
-        for attempt in range(3):
-            try:
-                with urllib.request.urlopen(request, timeout=60) as response:
-                    return json.load(response)
-            except (urllib.error.URLError, TimeoutError) as error:
-                if attempt == 2 or isinstance(error, urllib.error.HTTPError) and not 500 <= error.code < 600:
-                    detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else "transport timeout/unavailable"
-                    raise PlanFailure("policy read " + detail + ": " + url) from None
-                time.sleep(5 * (attempt + 1))
+        try:
+            return read_json(request, timeout=60)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as error:
+            detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else "transport timeout/unavailable"
+            raise PlanFailure("policy read " + detail + ": " + url) from None
 
     def verify(self, required, deployer, project_number):
         for url, permissions in required:

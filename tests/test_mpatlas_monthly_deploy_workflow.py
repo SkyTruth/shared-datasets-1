@@ -71,7 +71,7 @@ def test_monitoring_and_bootstrap_register_only_owned_mpatlas_identity():
     assert len(re.findall(r'module\.mpatlas_job_service_account\.email', canonical)) == 2
 
 
-@pytest.mark.parametrize('slug,seconds', [('mpatlas_monthly', '3600s'), ('eamlis_monthly', '3600s'), ('sea_ice_daily', '3600s'), ('wdpa_monthly', '43200s')])
+@pytest.mark.parametrize('slug,seconds', [('mpatlas_monthly', '3600s'), ('eamlis_monthly', '3600s'), ('sea_ice_daily', '3600s'), ('wdpa_monthly', '46800s')])
 def test_task_timeout_bounds_preserve_wdpa_batch_window(slug, seconds):
     import hcl2
     with (ROOT / 'terraform/envs/prod' / (slug + '.tf')).open() as stream:

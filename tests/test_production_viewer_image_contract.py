@@ -311,8 +311,8 @@ def test_wdpa_timeout_keeps_margin_above_observed_maximum():
     modules = hcl2.loads((ROOT / 'terraform/envs/prod/wdpa_monthly.tf').read_text(),
                         serialization_options=SerializationOptions(strip_string_quotes=True))['module']
     job = next(row['wdpa_monthly_job'] for row in modules if 'wdpa_monthly_job' in row)
-    assert job['timeout'] == '43200s'
-    assert 43200 - (8 * 3600 + 21 * 60) == 3 * 3600 + 39 * 60
+    assert job['timeout'] == '46800s'
+    assert 46800 - (8 * 3600 + 21 * 60) == 4 * 3600 + 39 * 60
 
 
 @pytest.mark.parametrize('target', ['eamlis-monthly', 'mpatlas-monthly'])
