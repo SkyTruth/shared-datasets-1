@@ -64,8 +64,7 @@ def request(url, permissions, token):
     try:
         payload = read_json(req, timeout=30)
     except urllib.error.HTTPError as error:
-        # Capture structured Google error diagnostics, never request headers or
-        # an incomplete body that might contain a truncated credential value.
+        # Bound diagnostics to structured Google fields and redact credentials.
         body = error.read(16 * 1024 + 1)
         diagnostic = 'response body unavailable, unstructured or over 16 KiB'
         try:
