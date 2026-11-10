@@ -370,7 +370,7 @@ def start(args, api):
     window = getattr(args, "propagation_window", None)
     deadline = None
     if window is not None and not getattr(args, "deferred", False):
-        # Every fallible read and parse happens before the claim exists.
+        # History reads and their timestamp parsing finish before the claim exists.
         previous = previous_attempt_statuses(api, repository, args.target) if window > 0 and not plan_changes(plan) else None
         deadline = propagation_deadline(plan, window, previous)
     record = api.post(f"repos/{repository}/deployments", {

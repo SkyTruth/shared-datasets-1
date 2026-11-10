@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import unittest
 import json
-from datetime import datetime, timezone
 
 import pytest
 from unittest.mock import Mock, patch
