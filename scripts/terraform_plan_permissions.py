@@ -26,6 +26,35 @@ COMPUTE_PROBE_PERMISSIONS = {
     ("regions", "backendBuckets"): "compute.regionBackendBuckets.list",
     ("regions", "backendServices"): "compute.regionBackendServices.list",
 }
+# Project-scoped APIs share one operation/identity contract. Resource-scoped
+# probes stay in plan_checks so parent authority cannot substitute for them.
+# kind: (permission prefix or fixed permissions, identity fields, allowed actions)
+PROJECT_OPERATIONS = {
+    "google_project_iam_custom_role": ("iam.roles", ("role_id",), {"create", "update", "delete"}),
+    "google_project_iam_audit_config": (("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"), (), {"create", "update", "delete"}),
+    "google_project_iam_member": (("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"), (), {"create", "update", "delete"}),
+    "google_iam_workload_identity_pool_provider": ("iam.workloadIdentityPoolProviders", ("workload_identity_pool_id", "workload_identity_pool_provider_id"), {"update", "delete"}),
+    "google_logging_project_sink": ("logging.sinks", (), {"create", "update", "delete"}),
+    "google_logging_project_exclusion": ("logging.exclusions", ("name",), {"create", "update", "delete"}),
+    "google_logging_metric": ("logging.logMetrics", ("name",), {"create", "update", "delete"}),
+    "google_secret_manager_secret": ("secretmanager.secrets", ("secret_id",), {"create"}),
+    "google_monitoring_notification_channel": ("monitoring.notificationChannels", (), {"create", "update"}),
+}
+# Phase 1 permits additive SA IAM members only; authoritative role bindings
+# could remove the unmanaged legacy Terraform subject grant.
+# plan_checks owns operation and identity validation.
+RESOURCE_KINDS = PROJECT_OPERATIONS.keys() | frozenset('''
+google_logging_log_view google_monitoring_metric_descriptor
+google_service_account google_service_account_iam_member
+google_storage_bucket google_storage_bucket_iam_member google_storage_managed_folder
+google_storage_managed_folder_iam_member google_secret_manager_secret_iam_member
+google_artifact_registry_repository_iam_member google_cloud_run_v2_job google_cloud_run_v2_service
+google_cloud_run_v2_job_iam_member google_cloud_run_v2_service_iam_member google_cloud_scheduler_job
+google_iap_web_cloud_run_service_iam_member google_compute_url_map terraform_data
+google_project_service
+google_pubsub_topic_iam_member google_pubsub_topic google_pubsub_subscription google_monitoring_alert_policy
+google_iam_workload_identity_pool
+'''.split())
 
 
 def require(condition, message):
@@ -123,12 +152,8 @@ def plan_checks(plan, *, project_number, target=None):
                 created[kind].add(bucket_name(value.get("name")))
             elif kind == "google_service_account":
                 created[kind].add(text(value.get("account_id"), "account_id") + f"@{PROJECT}.iam.gserviceaccount.com")
-            elif kind == "google_cloud_run_v2_service":
-                created[kind].add(text(value.get("name"), "service name"))
-            elif kind == "google_cloud_run_v2_job":
-                created[kind].add(text(value.get("name"), "job name"))
-            elif kind in {"google_pubsub_topic", "google_pubsub_subscription"}:
-                created[kind].add(text(value.get("name"), "Pub/Sub resource name"))
+            elif kind in {"google_cloud_run_v2_service", "google_cloud_run_v2_job", "google_pubsub_topic", "google_pubsub_subscription"}:
+                created[kind].add(text(value.get("name"), "resource name"))
             elif kind == "google_storage_managed_folder":
                 created[kind].add((bucket_name(value.get("bucket")), value.get("name")))
 
@@ -140,6 +165,13 @@ def plan_checks(plan, *, project_number, target=None):
 
     def region(value):
         require(value.get("location", value.get("region")) == REGION, "mutation region is missing or outside production")
+
+    def resource_name(raw, collection, label):
+        if isinstance(raw, str) and raw.startswith("projects/"):
+            match = re.fullmatch(r"projects/([^/]+)/" + re.escape(collection) + r"/([^/]+)", raw)
+            require(match and match[1] in {PROJECT, str(project_number)}, "foreign or malformed " + label)
+            raw = match[2]
+        return text(raw, label)
 
     def future_unknown(row, kind):
         refs = configured_references(plan, row["address"])
@@ -155,11 +187,7 @@ def plan_checks(plan, *, project_number, target=None):
             require(future_unknown(row, "google_service_account"), "unknown service account lacks an explicit creation dependency")
             add(PROJECT_URL, permissions)
             return
-        require(isinstance(raw, str), "invalid service account identity")
-        if raw.startswith("projects/"):
-            match = re.fullmatch(r"projects/([^/]+)/serviceAccounts/([^/]+)", raw)
-            require(match and match[1] in {PROJECT, str(project_number)}, "foreign service account")
-            raw = match[2]
+        raw = resource_name(raw, "serviceAccounts", "service account")
         require(re.fullmatch(r"[a-z0-9-]+@" + re.escape(PROJECT) + r"\.iam\.gserviceaccount\.com", raw), "foreign or unknown service account")
         if raw in created["google_service_account"]:
             add(PROJECT_URL, permissions)
@@ -172,20 +200,12 @@ def plan_checks(plan, *, project_number, target=None):
         name = value.get("name")
         # Google persists IAM-member job/service names as full resource paths.
         # Normalize that provider representation only after checking its scope.
-        if isinstance(name, str) and name.startswith("projects/"):
-            match = re.fullmatch(r"projects/([^/]+)/locations/([^/]+)/" + collection + r"/([^/]+)", name)
-            require(match and match[1] in {PROJECT, str(project_number)} and match[2] == REGION,
-                    "foreign or malformed Cloud Run resource name")
-            name = match[3]
+        if name is not None:
+            name = resource_name(name, "locations/" + REGION + "/" + collection, "Cloud Run resource name")
         kind = "google_cloud_run_v2_" + ("service" if collection == "services" else "job")
         if name is None:
             require(future_unknown(row, kind), "unknown Cloud Run resource lacks creation dependency")
-            add(PROJECT_URL, permissions)
-        elif name in created[kind]:
-            add(PROJECT_URL, permissions)
-        else:
-            text(name, "Cloud Run resource name")
-            add(f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/{collection}/{name}:testIamPermissions", permissions)
+        add(PROJECT_URL if name is None or name in created[kind] else f"https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/{collection}/{name}:testIamPermissions", permissions)
 
     def runtime_identity(value, row, kind):
         block = value.get("template", [])
@@ -245,19 +265,20 @@ def plan_checks(plan, *, project_number, target=None):
             current = (change.get("before") if action == "delete" else change.get("after")) or {}
             # Some deletion providers retain all identity fields only in before.
             require(isinstance(current, dict) and current, "mutation values unavailable")
-            if kind == "google_project_iam_custom_role":
+            if kind in {"google_iam_workload_identity_pool", "google_iam_workload_identity_pool_provider"} and current.get("workload_identity_pool_id") == "github-pr-plan":
                 project(current)
-                text(current.get("role_id"), "role_id")
-                add(PROJECT_URL, ("iam.roles." + action, "iam.roles.get"))
-            elif kind == "google_project_iam_audit_config":
+                if kind.endswith("_provider"):
+                    require(current.get("workload_identity_pool_provider_id") == "ci-pr-plan", "unexpected PR provider identity")
+                prefix = "iam.workloadIdentityPoolProviders" if kind.endswith("_provider") else "iam.workloadIdentityPools"
+                require(action in {"create", "update"}, "PR plan identity deletion is not authorized")
+                add(PROJECT_URL, (prefix + ".get", prefix + "." + action))
+            elif kind in PROJECT_OPERATIONS:
                 project(current)
-                add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
-            elif kind == "google_iam_workload_identity_pool_provider":
-                project(current)
-                require(action == "delete", "only retired identity provider deletion is supported")
-                text(current.get("workload_identity_pool_id"), "workload identity pool")
-                text(current.get("workload_identity_pool_provider_id"), "workload identity provider")
-                add(PROJECT_URL, ("iam.workloadIdentityPoolProviders.get", "iam.workloadIdentityPoolProviders.delete"))
+                operations, fields, allowed = PROJECT_OPERATIONS[kind]
+                require(action in allowed, "unsupported " + kind + " action: " + action)
+                for field in fields:
+                    text(current.get(field), field)
+                add(PROJECT_URL, (operations + ".get", operations + "." + action) if isinstance(operations, str) else operations)
             elif kind == "google_logging_log_view":
                 require(action == "delete", "only retired log view deletion is supported")
                 require(re.fullmatch(r"projects/(?:" + PROJECT + "|" + str(project_number)
@@ -270,16 +291,6 @@ def plan_checks(plan, *, project_number, target=None):
                 require(re.fullmatch(r"custom\.googleapis\.com/[A-Za-z0-9_/.-]+", str(current.get("type", "")))
                         and ".." not in current["type"].split("/"), "foreign or malformed custom metric")
                 add(PROJECT_URL, ("monitoring.metricDescriptors.get", "monitoring.metricDescriptors.delete"))
-            elif kind == "google_logging_project_sink":
-                project(current)
-                add(PROJECT_URL, ("logging.sinks.get", "logging.sinks." + action))
-            elif kind == "google_logging_project_exclusion":
-                project(current)
-                text(current.get("name"), "logging exclusion name")
-                add(PROJECT_URL, ("logging.exclusions.get", "logging.exclusions." + action))
-            elif kind == "google_project_iam_member":
-                project(current)
-                add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
             elif kind == "google_service_account":
                 project(current)
                 account = text(current.get("account_id"), "account_id") + f"@{PROJECT}.iam.gserviceaccount.com"
@@ -315,12 +326,7 @@ def plan_checks(plan, *, project_number, target=None):
                 add(storage_url(bucket, needed, None if future else folder), needed)
             elif kind == "google_secret_manager_secret_iam_member":
                 project(current)
-                secret = current.get("secret_id")
-                if isinstance(secret, str) and secret.startswith("projects/"):
-                    match = re.fullmatch(r"projects/([^/]+)/secrets/([^/]+)", secret)
-                    require(match and match[1] in {PROJECT, str(project_number)}, "foreign secret")
-                    secret = match[2]
-                secret = text(secret, "secret_id")
+                secret = resource_name(current.get("secret_id"), "secrets", "secret_id")
                 add(f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{secret}:testIamPermissions", ("secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy"))
             elif kind == "google_artifact_registry_repository_iam_member":
                 project(current)
@@ -359,16 +365,13 @@ def plan_checks(plan, *, project_number, target=None):
                 project(current)
                 region(current)
                 name = current.get("cloud_run_service_name")
-                if isinstance(name, str) and name.startswith("projects/"):
-                    match = re.fullmatch(r"projects/([^/]+)/iap_web/cloud_run-([^/]+)/services/([^/]+)", name)
-                    require(match and match[1] in {PROJECT, str(project_number)} and match[2] == REGION, "foreign IAP service")
-                    name = match[3]
+                if name is not None:
+                    name = resource_name(name, "iap_web/cloud_run-" + REGION + "/services", "IAP service")
                 needed = ("iap.webServices.getIamPolicy", "iap.webServices.setIamPolicy")
                 if name is None or name in created["google_cloud_run_v2_service"]:
                     require(name is not None or future_unknown(row, "google_cloud_run_v2_service"), "unknown IAP service lacks creation dependency")
                     add(PROJECT_URL, needed)
                 else:
-                    name = text(name, "IAP Cloud Run service")
                     add(f"https://iap.googleapis.com/v1/projects/{project_number}/iap_web/cloud_run-{REGION}/services/{name}:testIamPermissions", needed)
             elif kind == "google_compute_url_map":
                 project(current)
@@ -384,25 +387,11 @@ def plan_checks(plan, *, project_number, target=None):
                 # This guard changes Terraform state only; it makes no GCP call.
             elif kind == "google_project_service":
                 project(current)
-                require(action == "create" and current.get("service") == "pubsub.googleapis.com", "unsupported API enablement mutation")
+                require(action == "create" and current.get("service") in {"pubsub.googleapis.com", "policytroubleshooter.googleapis.com"}, "unsupported API enablement mutation")
                 add(PROJECT_URL, ("serviceusage.services.enable", "serviceusage.services.get", "serviceusage.operations.get"))
-            elif kind == "google_secret_manager_secret":
-                project(current)
-                require(action == "create", "secret replacement/deletion requires separate authorization")
-                text(current.get("secret_id"), "secret_id")
-                add(PROJECT_URL, ("secretmanager.secrets.create", "secretmanager.secrets.get"))
-            elif kind == "google_monitoring_notification_channel":
-                project(current)
-                require(action in {"create", "update"}, "notification channel deletion is not authorized")
-                add(PROJECT_URL, ("monitoring.notificationChannels." + action, "monitoring.notificationChannels.get"))
             elif kind == "google_pubsub_topic_iam_member":
                 project(current)
-                topic = current.get("topic")
-                if isinstance(topic, str) and topic.startswith("projects/"):
-                    match = re.fullmatch(r"projects/([^/]+)/topics/([^/]+)", topic)
-                    require(match and match[1] in {PROJECT, str(project_number)}, "foreign Pub/Sub topic")
-                    topic = match[2]
-                topic = text(topic, "Pub/Sub topic name")
+                topic = resource_name(current.get("topic"), "topics", "Pub/Sub topic name")
                 needed = ("pubsub.topics.getIamPolicy", "pubsub.topics.setIamPolicy")
                 add(PROJECT_URL if topic in created["google_pubsub_topic"] else f"https://pubsub.googleapis.com/v1/projects/{PROJECT}/topics/{topic}:testIamPermissions", needed)
             elif kind in {"google_pubsub_topic", "google_pubsub_subscription"}:
@@ -436,3 +425,66 @@ def plan_checks(plan, *, project_number, target=None):
                 raise ValueError("PLAN_PERMISSION_CONTRACT: unsupported mutation class " + kind)
     require(target != "pmtiles-cdn" or found_map, "CDN post-apply cache target missing from saved plan")
     return [(url, tuple(sorted(permissions))) for url, permissions in sorted(probes.items())]
+
+
+def static_checks(root, base, head):
+    """Check declaration coverage, never evaluate a plan or claim live IAM access.
+
+    HCL identifies changed declarations (including local-module instances).
+    Apply scopes come from registered executors, including manual-only targets.
+    Unknown resource kinds and removed probe-manifest permissions fail closed.
+    Runtime values, instance keys and effective IAM still need the saved plan.
+    """
+    import posixpath
+    import yaml
+    from scripts import deployment_permissions as permissions
+    from scripts import terraform_target_contracts as terraform_targets
+    from scripts.terraform_target_contracts import address as declaration
+    from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+
+    def declarations(revision):
+        modules = {'terraform/envs/prod': {}}
+        for path, rows in terraform_targets.resource_index(root, revision).items():
+            modules.setdefault(posixpath.dirname(path), {}).update(rows)
+        result = {}
+        def walk(directory, prefix='', ancestry=(), visiting=()):
+            require(directory in modules and directory not in visiting, 'missing or cyclic local Terraform module: ' + directory)
+            for name, body in modules[directory].items():
+                if name.startswith('module.'):
+                    source = body['source']
+                    require(source.startswith('./') or source.startswith('../'), 'static check requires local module sources')
+                    walk(posixpath.normpath(posixpath.join(directory, source)), prefix + name + '.',
+                         (*ancestry, body), (*visiting, directory))
+                elif not name.startswith('data.'):
+                    result[prefix + name] = (body, ancestry)
+        walk('terraform/envs/prod')
+        return result
+
+    before, after = declarations(base), declarations(head)
+    changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
+    exact = {declaration(row) for item in terraform_targets.registry(root).values() for row in item['resources']}
+    exact.update(declaration(row) for item in TARGETS.values() for row in item['targets'])
+    for path in (root / '.github/workflows').glob('*.yml'):
+        for job in yaml.safe_load(path.read_text())['jobs'].values():
+            exact.update(declaration(row) for row in job.get('with', {}).get('allowed_exact', '').splitlines() if row.strip())
+    for scopes in terraform_targets.registry(root, section='plan_scopes').values():
+        for item in scopes.values():
+            exact.update(declaration(row) for row in item.get('exact', []) + item.get('instances', []))
+            exact.update(prefix + '.' + child for prefix, child in item.get('modules', {}).items())
+    probe_targets = {item['readiness_target'] for item in terraform_targets.registry(root).values()} | set(TARGETS)
+    probe_targets.update({'artifact-registry-images', 'monitoring-slack-secret', 'catalog-viewer', 'pmtiles-cdn', 'pmtiles-cdn-bootstrap'})
+    manifest = {permission for target in probe_targets for _, required in permissions.checks(target) for permission in required}
+    errors = []
+    for key in sorted(changed):
+        kind = key.rsplit('.', 2)[-2]
+        if key not in exact:
+            errors.append(key + ': absent from registered deployment apply allowlists')
+        if kind not in RESOURCE_KINDS:
+            errors.append(key + ': no saved-plan permission validator')
+        if kind == 'google_project_iam_custom_role' and key in before:
+            removed = set(before[key][0].get('permissions', [])) - set(after.get(key, ({},))[0].get('permissions', []))
+            missing = removed & manifest
+            if missing:
+                errors.append(key + ': removed probe-manifest permissions ' + ', '.join(sorted(missing)))
+    require(not errors, 'STATIC_IAC_CONTRACT:\n' + '\n'.join(errors))
+    return sorted(changed)

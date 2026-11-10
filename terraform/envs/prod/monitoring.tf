@@ -106,7 +106,7 @@ protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
 protoPayload.status.code>0
 NOT (
-  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${google_service_account.github_job["runtime"].email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )
 EOT
@@ -421,4 +421,52 @@ EOT
     terraform_data.cron_alert_channel_configured,
     google_pubsub_topic_iam_member.monitoring_slack_publisher,
   ]
+}
+
+# Only the dedicated safety workflow identity may emit the heartbeat.
+resource "google_project_iam_custom_role" "operational_safety_reader" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsOperationalSafetyReader"
+  title       = "Shared datasets operational safety reader"
+  permissions = ["logging.logEntries.create"]
+}
+
+resource "google_project_iam_member" "operational_safety_reader" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.operational_safety_reader.name
+  member  = "serviceAccount:${google_service_account.github_job["heartbeat"].email}"
+}
+
+resource "google_logging_metric" "operational_safety_heartbeat" {
+  project = var.project_id
+  name    = "operational-safety-heartbeat"
+  filter  = "logName=\"projects/${var.project_id}/logs/operational-safety-heartbeat\" AND resource.type=\"global\" AND jsonPayload.workflow=\"operational-safety-check.yml\""
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+  }
+}
+
+resource "google_monitoring_alert_policy" "operational_safety_absent" {
+  project               = var.project_id
+  display_name          = "Shared datasets operational safety heartbeat missing"
+  combiner              = "OR"
+  enabled               = var.cron_alerts_enabled && var.operational_safety_absent_enabled
+  notification_channels = local.cron_alert_notification_channels
+  conditions {
+    display_name = "No safety check completed for 49 hours"
+    # User log-based metrics are limited to 25 hours in PromQL alerts. The
+    # system log counter supports two daily intervals plus one hour of grace.
+    condition_prometheus_query_language {
+      query               = "(sum(sum_over_time({__name__=\"logging.googleapis.com/log_entry_count\", monitored_resource=\"global\", log=\"operational-safety-heartbeat\", project_id=\"${var.project_id}\"}[49h])) == 0) or absent_over_time({__name__=\"logging.googleapis.com/log_entry_count\", monitored_resource=\"global\", log=\"operational-safety-heartbeat\", project_id=\"${var.project_id}\"}[49h])"
+      duration            = "0s"
+      evaluation_interval = "300s"
+    }
+  }
+  documentation {
+    content   = "No authenticated operational-safety-check.yml heartbeat for 49 hours (two daily intervals plus one hour of grace). One missed run stays quiet; two missed runs alert within 49 hours 5 minutes of the last heartbeat, plus metric ingestion delay. Inspect GitHub scheduling, disabled workflows, authentication and the health-report upload. This independent PromQL policy also detects an unestablished series; enable it after the first verified heartbeat."
+    mime_type = "text/markdown"
+  }
+  alert_strategy { auto_close = "86400s" }
+  depends_on = [terraform_data.cron_alert_channel_configured, google_pubsub_topic_iam_member.monitoring_slack_publisher]
 }

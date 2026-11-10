@@ -1,25 +1,15 @@
 name: Deployments / Completion check
-run-name: "${{ inputs.safety_run_id && format('Operational follow-up: safety {0}/{1}', inputs.safety_run_id, inputs.safety_run_attempt) || 'Deployment completion check' }}"
-
 on:
   workflow_dispatch:
-    inputs:
-      safety_run_id:
-        description: Optional exact safety workflow to observe after it finishes
-        type: string
-      safety_run_attempt:
-        description: Exact attempt of the safety workflow
-        type: string
-
 permissions:
   contents: read
   actions: read
   deployments: read
   attestations: read
-
 jobs:
   pending:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       records: ${{ steps.pending.outputs.records }}
     steps:
@@ -35,17 +25,10 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
-
-      - name: Wait for the safety handoff to finish
-        if: ${{ inputs.safety_run_id != '' || inputs.safety_run_attempt != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/operational_safety_check.py --wait-for-safety
       - id: pending
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/deployment_revision.py pending
-
   verify:
     needs: pending
     if: ${{ needs.pending.outputs.records != '[]' }}
@@ -67,34 +50,26 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
-      - name: Require trusted main workflow
-        run: |
-          set -euo pipefail
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
-                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-verification.yml@refs/heads/main" ]]; then
-            echo "Execution must use this workflow from main." >&2
-            exit 1
-          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
-
       - name: Install pinned durable receipt verifier
         run: python scripts/install_deployment_verifier.py
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          service_account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          skip_install: true
       - name: Verify exact execution terminal outcome
         id: deployment-outcome
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOYMENT_ID: ${{ matrix.record }}
         run: python scripts/deployment_revision.py observe --deployment-id "$DEPLOYMENT_ID"
-
       - name: Attest verified execution outcome
         if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
         uses: ./.github/actions/deployment-receipt

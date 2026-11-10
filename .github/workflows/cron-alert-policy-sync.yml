@@ -1,45 +1,25 @@
 name: Infrastructure / Cron alert policy sync
-
 on:
   workflow_call:
     inputs:
       sync_iam:
         required: true
         type: boolean
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {description: Exact tested main revision, required: true, type: string}
+      source_run_id: {description: Main-push CI run that tested executor_sha, required: true, type: string}
+      source_run_attempt: {description: Exact successful ci-ready attempt, required: true, type: string}
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
-
+      executor_sha: {description: Exact tested main revision, required: true, type: string}
+      source_run_id: {description: Main-push CI run that tested executor_sha, required: true, type: string}
+      source_run_attempt: {description: Exact successful ci-ready attempt, required: true, type: string}
 permissions:
   actions: read
+  pull-requests: read
   deployments: write
   contents: read
   id-token: write
   attestations: write
-
 jobs:
   bootstrap:
     name: Apply Monitoring alert policy IAM bootstrap
@@ -47,31 +27,10 @@ jobs:
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml
+      sync_name: Monitoring alert policy IAM bootstrap
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
-      block_deletes: true
-      sync_name: Monitoring alert policy IAM bootstrap
-      refusal_prefix: Refusing automatic Monitoring alert policy IAM bootstrap
-      # Wait for the role grant to propagate before the policies are applied.
-      post_apply_wait_seconds: 30
-      targets: |
-        google_project_service.monitoring_slack_pubsub
-        google_project_iam_custom_role.monitoring_alert_policy_manager
-        google_project_iam_member.github_actions_monitoring_alert_policy_manager
-        google_project_iam_custom_role.monitoring_incident_reader
-      allowed_exact: |
-        google_project_service.monitoring_slack_pubsub
-        google_project_iam_custom_role.monitoring_alert_policy_manager
-        google_project_iam_member.github_actions_monitoring_alert_policy_manager
-        google_project_iam_custom_role.monitoring_incident_reader
-      tf_vars: |
-        wdpa_monthly_image=unused-by-cron-alert-policy-sync
-        sea_ice_daily_image=unused-by-cron-alert-policy-sync
-        eamlis_monthly_image=unused-by-cron-alert-policy-sync
-
-
   resources:
     name: Provision private Monitoring Slack transport resources
     needs: bootstrap
@@ -79,99 +38,21 @@ jobs:
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml
+      sync_name: Monitoring Slack transport resources
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
-      sync_name: Monitoring Slack transport resources
-      refusal_prefix: Refusing Monitoring Slack resource provisioning
-      block_deletes: true
-      targets: |
-        google_service_account.monitoring_slack
-        google_service_account.monitoring_slack_push
-        google_service_account_iam_member.monitoring_slack_deployer["runtime"]
-        google_service_account_iam_member.monitoring_slack_deployer["push"]
-        google_storage_bucket.monitoring_slack
-        google_storage_bucket_iam_member.monitoring_slack_state
-        google_storage_bucket_iam_member.monitoring_slack_recovery
-        google_secret_manager_secret.monitoring_slack
-        google_project_iam_member.monitoring_slack_token
-        google_project_iam_member.monitoring_slack_token_writer
-        google_project_iam_member.monitoring_slack_token_version_writer
-        google_pubsub_topic.monitoring_slack
-        google_pubsub_topic.identity_decision_events
-        google_project_iam_member.monitoring_slack_incident_reader
-        google_pubsub_topic_iam_member.identity_decision_publisher["wdpa"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["sea_ice"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["eamlis"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["mpatlas"]
-      allowed_exact: |
-        google_service_account.monitoring_slack
-        google_service_account.monitoring_slack_push
-        google_service_account_iam_member.monitoring_slack_deployer["runtime"]
-        google_service_account_iam_member.monitoring_slack_deployer["push"]
-        google_storage_bucket.monitoring_slack
-        google_storage_bucket_iam_member.monitoring_slack_state
-        google_storage_bucket_iam_member.monitoring_slack_recovery
-        google_secret_manager_secret.monitoring_slack
-        google_project_iam_member.monitoring_slack_token
-        google_project_iam_member.monitoring_slack_token_writer
-        google_project_iam_member.monitoring_slack_token_version_writer
-        google_pubsub_topic.monitoring_slack
-        google_pubsub_topic.identity_decision_events
-        google_project_iam_member.monitoring_slack_incident_reader
-        google_pubsub_topic_iam_member.identity_decision_publisher["wdpa"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["sea_ice"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["eamlis"]
-        google_pubsub_topic_iam_member.identity_decision_publisher["mpatlas"]
-      tf_vars: |
-        wdpa_monthly_image=unused-by-monitoring-slack-resources
-        sea_ice_daily_image=unused-by-monitoring-slack-resources
-        eamlis_monthly_image=unused-by-monitoring-slack-resources
-
   sync:
     name: Apply cron alert policy sync
-    needs: [bootstrap, resources]
+    needs:
+    - bootstrap
+    - resources
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && ((github.event_name == 'push' && !inputs.sync_iam) || (needs.bootstrap.result == 'success' && needs.resources.result == 'success')) }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     secrets: inherit
     with:
       caller_workflow: cron-alert-policy-sync.yml
+      sync_name: Cron alert policy sync
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      prepare_monitoring_slack: true
-      block_deletes: true
-      readiness_target: monitoring-alerts
-      sync_name: Cron alert policy sync
-      refusal_prefix: Refusing automatic cron alert policy sync
-      targets: |
-        google_cloud_run_v2_service.monitoring_slack
-        google_cloud_run_v2_service_iam_member.monitoring_slack_push
-        google_pubsub_subscription.monitoring_slack
-        google_pubsub_subscription.identity_decision_events
-        google_monitoring_notification_channel.monitoring_slack
-        google_pubsub_topic_iam_member.monitoring_slack_publisher
-        google_monitoring_alert_policy.dataset_object_deleted
-        terraform_data.cron_alert_channel_configured
-        google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
-        google_monitoring_alert_policy.release_awaiting_identity_decision
-        google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
-        google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
-      allowed_exact: |
-        google_cloud_run_v2_service.monitoring_slack
-        google_cloud_run_v2_service_iam_member.monitoring_slack_push
-        google_pubsub_subscription.monitoring_slack
-        google_pubsub_subscription.identity_decision_events
-        google_monitoring_notification_channel.monitoring_slack
-        google_pubsub_topic_iam_member.monitoring_slack_publisher
-        google_monitoring_alert_policy.dataset_object_deleted
-        terraform_data.cron_alert_channel_configured
-        google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
-        google_monitoring_alert_policy.release_awaiting_identity_decision
-        google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
-        google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal
-      tf_vars: |
-        wdpa_monthly_image=unused-by-cron-alert-policy-sync
-        sea_ice_daily_image=unused-by-cron-alert-policy-sync
-        eamlis_monthly_image=unused-by-cron-alert-policy-sync

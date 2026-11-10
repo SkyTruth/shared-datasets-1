@@ -1,0 +1,375 @@
+name: Ingestion / Shared deploy
+'on':
+  workflow_call:
+    inputs:
+      target: {required: true, type: string}
+      executor_sha: {"description": "Exact tested main revision", "required": true, "type": "string"}
+      source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
+      source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
+      cancel_running_canary: {"type": "boolean", "default": false}
+      canary_run_date: {"type": "string", "default": ""}
+      resume_scheduler: {"type": "boolean", "default": false}
+permissions:
+  actions: read
+  pull-requests: read
+  deployments: write
+  contents: read
+  id-token: write
+  attestations: write
+env:
+  TARGET: ${{ inputs.target }}
+  WORKFLOW_FILE: ${{ format('{0}-deploy.yml', inputs.target) }}
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  BUCKET: skytruth-shared-datasets-1
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+  CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+  TF_IN_AUTOMATION: '1'
+  TF_INPUT: '0'
+jobs:
+  prepare:
+    name: Prepare tested image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: shared-datasets-production
+    outputs:
+      ready: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+      image: ${{ steps.image.outputs.image }}
+      config_digest: ${{ steps.tested-image.outputs.config_digest }}
+    steps:
+    - &trusted-checkout
+      name: Check out trusted verifier
+      uses: actions/checkout@v4
+      with: {ref: "${{ github.workflow_sha }}", fetch-depth: 0, persist-credentials: false}
+    - &trusted-bootstrap
+      name: Authorize tested executor and retain trusted receipt policy
+      uses: ./.github/actions/deployment-bootstrap
+      with:
+        workflow: ${{ env.WORKFLOW_FILE }}
+        executor-sha: ${{ inputs.executor_sha }}
+        source-run-id: ${{ inputs.source_run_id }}
+        source-run-attempt: ${{ inputs.source_run_attempt }}
+    - &target-policy
+      name: Resolve registered ingestion target
+      id: target
+      run: python scripts/ingestion_targets.py ROLLOUT_GATE ASSET_ROOT PLAN_GUARD AFTER_VERIFY CANARY_ATTEMPTS CANARY_TIMEOUT_PHASE CANARY_RUN_URL
+    - name: Check prior deployment before preparing image
+      id: replay
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py check --target "$TARGET" --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+    - name: Authenticate protected runtime
+      uses: ./.github/actions/deployment-auth
+      with: {service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com}
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Verify feature-ID publication state
+      if: steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'
+      run: |
+        uv run --frozen --no-dev python scripts/publication_rollout_gate.py --job "$TARGET"
+    - name: Verify Artifact Registry image permissions
+      run: python scripts/deployment_permissions.py --target artifact-registry-images
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Verify run-bound signing capability without mutation
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: rehearsal, signer-workflow: ingestion-deploy.yml}
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Load exact tested image
+      id: tested-image
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        python scripts/tested_image_authorization.py --workflow "$WORKFLOW_FILE" --target "$TARGET" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+          --output "$RUNNER_TEMP/tested-$TARGET"
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Tag the exact tested image
+      env:
+        TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+      run: |
+        set -euo pipefail
+        image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${TARGET}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
+        docker tag "$TESTED_IMAGE_ID" "$image_tag"
+        echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Push tested image and verify registry config
+      env:
+        TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
+      run: |
+        set -euo pipefail
+        docker push "${IMAGE_TAG}"
+        docker buildx imagetools inspect --raw "${IMAGE_TAG}" > "$RUNNER_TEMP/$TARGET-manifest.json"
+        python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_CONFIG"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/$TARGET-manifest.json"
+        image_digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+        if [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "Could not resolve immutable image digest for ${IMAGE_TAG}" >&2
+          exit 1
+        fi
+        image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${TARGET}@${image_digest}"
+        echo "image=${image_ref}" >> "$GITHUB_OUTPUT"
+        echo "IMAGE=${image_ref}" >> "$GITHUB_ENV"
+      id: image
+      if: steps.replay.outputs.proceed == 'true'
+    - name: Check runtime verification window
+      id: window
+      run: &window-command |
+        set -euo pipefail
+        python scripts/deployment_revision.py window --target "$TARGET" \
+          --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+      if: steps.replay.outputs.proceed == 'true'
+    - &defer
+      name: Record deferred tested deployment
+      id: deferred
+      if: steps.window.outputs.ready == 'false'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py start --deferred --target "$TARGET" --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" --artifact "$IMAGE"
+    - &defer-receipt
+      name: Attest deferred deployment
+      id: deferred-receipt
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: receipt, receipt-path: "${{ steps.deferred.outputs.receipt_path }}"}
+      if: ${{ always() && steps.deferred.outputs.receipt_path != '' }}
+  apply:
+    name: Apply ingestion Terraform
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      TESTED_IMAGE_CONFIG: ${{ needs.prepare.outputs.config_digest }}
+    outputs:
+      deployment_id: ${{ steps.revision.outputs.deployment_id }}
+      claim_signed: ${{ steps.claim-receipt.outcome }}
+    steps:
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *target-policy
+    - name: Set up uv for plan validation
+      uses: astral-sh/setup-uv@v5
+      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+    - name: Install locked plan parsers before authentication
+      run: |
+        if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
+        uv sync --locked --only-group ci-plan
+    - name: Authenticate protected deployer
+      uses: ./.github/actions/deployment-auth
+    - name: Verify run-bound signing capability without mutation
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: rehearsal, signer-workflow: ingestion-deploy.yml}
+    - name: Check runtime verification window
+      id: window
+      run: *window-command
+    - *defer
+    - *defer-receipt
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with: {terraform_version: 1.8.5}
+      if: steps.window.outputs.ready == 'true'
+    - name: Terraform init
+      run: terraform -chdir=terraform/envs/prod init -input=false
+      if: steps.window.outputs.ready == 'true'
+    - name: Terraform plan
+      run: |
+        if [[ "$PLAN_GUARD" == usage ]]; then uv sync --locked --no-dev; fi
+        python scripts/ingestion_targets.py plan
+        terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/ingestion.tfplan" > "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Enforce ingestion resource-change allowlist
+      run: |
+        uv run --frozen --only-group ci-plan python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/ingestion.tfplan.json" --block-deletes \
+          --job-image-target "$TARGET" --expected-image "$IMAGE" --expected-config "$TESTED_IMAGE_CONFIG" \
+          --refusal-prefix "Refusing $TARGET deploy"
+      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD != 'usage'
+    - name: Enforce usage telemetry, activation and cost boundaries
+      if: steps.window.outputs.ready == 'true' && env.PLAN_GUARD == 'usage'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        retirement_args=()
+        if [[ ! -f terraform/envs/prod/dataset_usage_legacy.tf ]]; then retirement_args+=(--retire-legacy); fi
+        uv run --frozen --no-dev python scripts/dataset_usage_deploy.py --plan-json "$RUNNER_TEMP/ingestion.tfplan.json" --image "$IMAGE" "${retirement_args[@]}"
+    - name: Verify complete saved-plan mutation permissions
+      run: |
+        python scripts/deployment_permissions.py --target "$TARGET" --plan-json "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Claim tested deployment revision
+      id: revision
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python scripts/deployment_revision.py start --target "$TARGET" --workflow "$WORKFLOW_FILE" \
+          --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+          --artifact "$IMAGE" --plan-json "$RUNNER_TEMP/ingestion.tfplan.json"
+      if: steps.window.outputs.ready == 'true'
+    - name: Attest serialized deployment claim before mutation
+      id: claim-receipt
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: receipt, receipt-path: "${{ steps.revision.outputs.receipt_path }}"}
+      if: steps.revision.outputs.proceed == 'true'
+    - name: Terraform apply
+      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+      run: |
+        bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
+    - name: Record applied deployment
+      id: applied
+      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase applied
+    - name: Attest applied deployment
+      if: ${{ always() && steps.applied.outputs.receipt_path != '' }}
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: receipt, receipt-path: "${{ steps.applied.outputs.receipt_path }}"}
+  verify:
+    name: Verify ingestion canary
+    needs:
+    - prepare
+    - apply
+    if: ${{ always() && needs.apply.outputs.deployment_id != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: shared-datasets-production
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+    steps:
+    - *trusted-checkout
+    - *trusted-bootstrap
+    - *target-policy
+    - name: Require successful signed apply
+      env:
+        APPLY_RESULT: ${{ needs.apply.result }}
+        CLAIM_SIGNED: ${{ needs.apply.outputs.claim_signed }}
+        GH_TOKEN: ${{ github.token }}
+      run: test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success
+    - name: Authenticate protected observer
+      uses: ./.github/actions/deployment-auth
+      with: {service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com}
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+    - name: Confirm deployed digest
+      run: |
+        set -euo pipefail
+        deployed_image="$(gcloud run jobs describe "${TARGET}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+        echo "Deployed image: ${deployed_image}"
+        if [[ "${deployed_image}" != "${IMAGE}" ]]; then
+          echo "Cloud Run job image does not match expected digest." >&2
+          exit 1
+        fi
+    - name: Authenticate canary runner
+      uses: ./.github/actions/deployment-auth
+      with: {service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com}
+    - name: Check runtime verification window
+      id: window
+      run: |
+        set -euo pipefail
+        python scripts/deployment_revision.py window --target "$TARGET" \
+          --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE" --wait-seconds 3750
+    - name: Require runtime verification window
+      env:
+        READY: ${{ steps.window.outputs.ready }}
+      run: |
+        if [[ "$READY" != true ]]; then
+          echo "Canary unavailable after apply; deployment requires reconciliation." >&2
+          exit 1
+        fi
+    - name: Execute ingestion canary
+      run: |
+        set -euo pipefail
+        if [[ -n "$CANARY_RUN_DATE" && ! "$CANARY_RUN_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          echo 'canary_run_date must be YYYY-MM-DD' >&2
+          exit 1
+        fi
+        args=("$TARGET" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --async --format='value(metadata.name)')
+        execution_env=""
+        if [[ "$CANARY_RUN_URL" == true ]]; then
+          execution_env="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
+        fi
+        if [[ -n "$CANARY_RUN_DATE" ]]; then execution_env="${execution_env:+$execution_env,}RUN_DATE=$CANARY_RUN_DATE"; fi
+        if [[ -n "$execution_env" ]]; then args+=("--update-env-vars=$execution_env"); fi
+        execution="$(gcloud run jobs execute "${args[@]}")"
+        if [[ -z "$execution" ]]; then echo 'Canary returned no execution identity.' >&2; exit 1; fi
+        echo "CANARY_EXECUTION=$execution" >> "$GITHUB_ENV"
+    - name: Restore observer for canary reads
+      uses: ./.github/actions/deployment-auth
+      with: {service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com}
+    - name: Watch ingestion canary
+      run: |
+        set -euo pipefail
+        for ((attempt=0; attempt<CANARY_ATTEMPTS; attempt++)); do
+          phase="$(gcloud run jobs executions describe "$CANARY_EXECUTION" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json | python -c 'import json,os,sys; from scripts.deployment_revision import terminal_execution; print(terminal_execution(json.load(sys.stdin), os.environ["IMAGE"]))')"
+          case "$phase" in
+            verified) echo 'DEPLOYMENT_PHASE=verified' >> "$GITHUB_ENV"; exit 0 ;;
+            failed|unknown) echo "DEPLOYMENT_PHASE=$phase" >> "$GITHUB_ENV"; exit 1 ;;
+            verification_pending) ;;
+            *) echo "Invalid canary verification phase: $phase" >&2; exit 1 ;;
+          esac
+          sleep 30
+        done
+        if [[ "$CANARY_TIMEOUT_PHASE" == verification_pending ]]; then
+          echo 'DEPLOYMENT_PHASE=verification_pending' >> "$GITHUB_ENV"
+        else
+          echo 'Short-job canary did not reach terminal success within 62.5 minutes.' >&2
+          exit 1
+        fi
+    - name: Validate latest release contract
+      if: env.ASSET_ROOT != ''
+      run: uv run --frozen --no-dev python scripts/ingestion_verification.py
+    - name: Run asset bucket hygiene audit
+      if: env.ASSET_ROOT != ''
+      run: |
+        uv run --frozen --no-dev python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
+          --bucket "$BUCKET" --prefix "$ASSET_ROOT/" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
+        uv run --frozen --no-dev python scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"
+    - name: Verify usage scheduler
+      if: env.PLAN_GUARD == 'usage'
+      run: gcloud scheduler jobs describe "$TARGET" --location="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(state,schedule,timeZone)'
+    - name: Authenticate scheduler controller
+      if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
+      uses: ./.github/actions/deployment-auth
+      with: {service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com}
+    - name: Resume verified ingestion scheduler
+      if: env.AFTER_VERIFY != '' && inputs.resume_scheduler
+      run: uv run --frozen --no-dev python scripts/ingestion_targets.py after-verify
+    - name: Record deployment outcome
+      id: deployment-outcome
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DEPLOYMENT_ID: ${{ needs.apply.outputs.deployment_id }}
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        phase="${DEPLOYMENT_PHASE:-unknown}"
+        if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+        args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+        if [[ -n "${CANARY_EXECUTION:-}" ]]; then args+=(--execution "${CANARY_EXECUTION##*/}"); fi
+        python scripts/deployment_revision.py "${args[@]}"
+      if: ${{ always() }}
+    - name: Attest terminal deployment outcome
+      uses: ./.github/actions/deployment-receipt
+      with: {mode: receipt, receipt-path: "${{ steps.deployment-outcome.outputs.receipt_path }}"}
+      if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}

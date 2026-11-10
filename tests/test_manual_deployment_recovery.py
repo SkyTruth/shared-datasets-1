@@ -36,7 +36,8 @@ class ManualWorkflowTests(unittest.TestCase):
                 for key, source in (("EXECUTOR_SHA", "executor_sha"), ("SOURCE_RUN_ID", "source_run_id"), ("SOURCE_RUN_ATTEMPT", "source_run_attempt")):
                     self.assertIn("inputs." + source, env[key])
                 job = value["jobs"]["publish" if filename == "publish-typescript-sdk.yml" else "sync" if filename == "pmtiles-cdn-sync.yml" else "deploy"]
-                steps = job["steps"]
+                from scripts.deployment_receipt_contracts import expanded_steps
+                steps = list(expanded_steps(ROOT, job))
                 bootstrap = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") == "${{ github.workflow_sha }}")
                 candidate = next(i for i, step in enumerate(steps) if step.get("with", {}).get("ref") in {"${{ inputs.executor_sha }}", "${{ env.EXECUTOR_SHA }}"})
                 proofs = [i for i, step in enumerate(steps) if "--bootstrap" in step.get("run", "") and "deployment_revision.py verify" in step["run"]]
@@ -44,12 +45,11 @@ class ManualWorkflowTests(unittest.TestCase):
                 self.assertLess(bootstrap, proofs[0])
                 self.assertLess(proofs[0], candidate)
                 if filename == "publish-typescript-sdk.yml":
-                    # Verified obsolete CI events finish as no-ops; candidate
-                    # checkout must have exactly the same admission gate.
-                    self.assertEqual(steps[proofs[0]]["if"], "steps.source.outputs.source_eligible == 'true'")
-                    self.assertEqual(steps[candidate]["if"], steps[proofs[0]]["if"])
+                    self.assertEqual(steps[proofs[0]]['if'], "${{ (steps.source.outputs.source_eligible == 'true') && (true) }}")
+                    self.assertEqual(job['if'], "needs.candidate.outputs.release_needed == 'true'")
                 else:
                     self.assertNotIn("if", steps[proofs[0]])
+
 
     def test_missing_optional_or_wrongly_typed_manual_identity_cannot_pass(self):
         complete = {"on": {"workflow_dispatch": {"inputs": {name: {"required": True, "type": "string"} for name in ("executor_sha", "source_run_id", "source_run_attempt")}}}}
@@ -144,3 +144,36 @@ class ManualAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(deployment.DeploymentError, "incomplete or failed"):
             deployment.replay_decision([record], SHA, lambda older, newer: True, lambda value: [{"state": "failure", "description": "failed"}])
         self.api.post.assert_not_called()
+
+
+class IngestionTargetRecoveryTests(unittest.TestCase):
+    def test_every_registered_target_reaches_refresh_with_original_image_variables(self):
+        import json
+        import subprocess
+        import tempfile
+        from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
+        steps = yaml.safe_load((ROOT / '.github/workflows/deployment-recovery.yml').read_text())['jobs']['reconcile']['steps']
+        refresh = next(s for s in steps if s.get('name') == 'Refresh original target scope without applying')['run']
+        for target in (*TARGETS, "dataset-usage", next(iter(deployment.TERRAFORM_WORKFLOWS))):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / 'outputs'
+                targets = TARGETS[target]['targets'] if target in TARGETS else ['resource.reviewed']
+                image = 'registry/job@sha256:' + 'a' * 64
+                args = SimpleNamespace(command='recovery-inputs')
+                with patch.dict(os.environ, {'GITHUB_REPOSITORY': REPO, 'GITHUB_OUTPUT': str(output)}), \
+                     patch.object(deployment, 'recovery_record', return_value=({'sha': SHA}, {'target': target, 'artifact': image, 'targets': targets, 'image_config_digest': 'sha256:' + 'b' * 64})):
+                    deployment.recover(args, Mock())
+                values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                variables = json.loads(values['image_variables'])
+                self.assertEqual(set(variables), {t['image_variable'] for t in DEPLOY_TARGETS.values()} | ({'wdpa_monthly_image_config_digest'} if target == 'wdpa-monthly' else set()))
+                self.assertEqual([k for k, v in variables.items() if v == image], [TARGETS[target]['image_variable']] if target in TARGETS else ['dataset_usage_image'] if target == 'dataset-usage' else [])
+                log = Path(directory) / 'args'
+                recorder = 'terraform() { :; }\nbash() { printf "%s\\n" "$@" > "$ARGS"; }\n'
+                result = subprocess.run(['bash', '-c', recorder + refresh], cwd=ROOT, capture_output=True, text=True,
+                    env={**os.environ, 'IMAGE_VARIABLES': values['image_variables'], 'TARGETS_JSON': values['targets'], 'ARGS': str(log), 'RUNNER_TEMP': directory, 'GITHUB_WORKSPACE': str(ROOT)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual = log.read_text().splitlines()
+                self.assertIn('plan', actual)
+                self.assertNotIn('apply', actual)
+                self.assertEqual({a.removeprefix('-target=') for a in actual if a.startswith('-target=')}, set(targets))
+                self.assertEqual(dict(a.removeprefix('-var=').split('=', 1) for a in actual if a.startswith('-var=')), variables)

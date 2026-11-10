@@ -7,10 +7,11 @@ import re
 import pytest
 
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
+from scripts.ci_contract import delivery_condition
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATION = {
-    'geospatial-changes', 'lint', 'tests', 'geospatial-integration',
+    'geospatial-changes', 'lint', 'tests', 'tests-control-plane', 'geospatial-integration',
     'production-images', 'sdk-validation', 'browser', 'ci-ready',
 }
 
@@ -34,10 +35,55 @@ def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sour
     for name in VALIDATION:
         assert 'concurrency' not in workflow['jobs'][name]
     assert workflow['jobs']['ci-ready']['if'] == 'always()'
-    assert workflow['jobs']['sdk-validation']['strategy']['matrix']['node'] == ['22', '24']
+    assert [step['with']['node'] for step in workflow['jobs']['sdk-validation']['steps'] if step.get('uses') == './.github/actions/ci-tools'] == ['22']
     for name, job in workflow['jobs'].items():
         if name not in VALIDATION:
             assert not job.get('concurrency', {}).get('cancel-in-progress', False)
+
+
+def test_no_job_initializes_setup_uv_twice_through_local_composites():
+    def setups(steps):
+        count = 0
+        for step in steps:
+            action = step.get('uses', '')
+            if action.startswith('astral-sh/setup-uv@'):
+                count += 1
+            elif action.startswith('./.github/actions/'):
+                composite = load_workflow(ROOT / action / 'action.yml')
+                count += setups(composite['runs'].get('steps', []))
+        return count
+
+    for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+        for name, job in load_workflow(path)['jobs'].items():
+            assert setups(job.get('steps', [])) <= 1, (path.name, name)
+
+
+@pytest.mark.parametrize('node22', ['success', 'failure', 'skipped'])
+def test_node24_runs_after_node22_failure_and_skipped_legs_do_not_upload_missing_paths(node22):
+    steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows/ci.yml'), 'sdk-validation')
+    install = steps['Install Node 24']
+    validate = steps['Validate SDK on Node 24']
+    assert 'ci_install_tools.py' in install['run'] and ' node24' in install['run']
+    assert 'CI_NODE24_BIN=' in install['run']
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['sdk-validation']
+    uploads = {step['id']: step for step in job['steps'] if step.get('id', '').startswith('retained-results-')}
+    state = {'sdk-tools': {'outcome': 'success'}, 'node24': {'outcome': 'success'},
+             'sdk-node22': {'outcome': node22}, 'sdk-node24': {'outcome': 'skipped'}}
+    def evaluate(expression):
+        # Execute the actual Actions expressions, preserving hyphenated step IDs.
+        expression = re.sub(r'steps\.([\w-]+)', r'steps["\1"]', expression[3:-2])
+        import json
+        result = subprocess.run(['node', '-e', "console.log(Function('steps', 'cancelled', 'always', 'return ' + process.argv[1])(JSON.parse(process.argv[2]), () => false, () => true))",
+                                 expression, json.dumps(state)], capture_output=True, text=True, check=True)
+        return result.stdout.strip() == 'true'
+    assert evaluate(install['if'])
+    assert evaluate(validate['if'])
+    assert evaluate(uploads['retained-results-22']['if']) == (node22 != 'skipped')
+    assert not evaluate(uploads['retained-results-24']['if'])
+
+
+def test_main_push_run_name_keeps_the_commit_message():
+    assert 'github.event.head_commit.message' in load_workflow(ROOT / '.github/workflows/ci.yml')['run-name']
 
 
 @pytest.mark.parametrize('filename', [
@@ -60,8 +106,9 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
     selection = workflow['jobs']['dataset-mutation-selection']
     assert selection['needs'] == 'ci-ready'
-    assert "github.event_name == 'push'" in selection['if']
-    assert "github.ref == 'refs/heads/main'" in selection['if']
+    assert selection["if"] == delivery_condition("dataset-mutation-selection")
+    delivery = workflow["jobs"]["ci-ready"]["outputs"]["delivery"]
+    assert "github.event_name == 'push'" in delivery and "github.ref == 'refs/heads/main'" in delivery
     assert selection['outputs']['has_repo_alert'] == '${{ steps.repo_alert_selection.outputs.has_repo_alert }}'
     steps = workflow_steps_by_name(workflow, 'dataset-mutation-selection')
     checkout = next(step for step in selection['steps'] if step.get('uses') == 'actions/checkout@v4')
@@ -70,8 +117,7 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     assert scanner['env']['BASE_SHA'] == '${{ github.event.before }}'
     assert 'select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA"' in scanner['run']
     caller = workflow['jobs']['announce-repo-functionality']
-    for prerequisite in ("github.event_name == 'push'", "github.ref == 'refs/heads/main'", "needs.ci-ready.result == 'success'", "needs.dataset-mutation-selection.outputs.has_repo_alert == 'true'"):
-        assert prerequisite in caller['if']
+    assert caller['if'] == delivery_condition('announce-repo-functionality')
     assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection'}
     assert caller['uses'] == './.github/workflows/repo-functionality-alert.yml'
     assert caller['with']['executor_sha'] == '${{ needs.ci-ready.outputs.tested_sha }}'
@@ -82,7 +128,8 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
 
 def test_successful_or_skipped_upstream_events_cannot_allocate_failure_alert_worker():
     workflow = load_workflow(ROOT / '.github/workflows/unattended-workflow-alert.yml')
-    condition = workflow['jobs']['notify']['if']
+    assert set(workflow['jobs']) == {'incidents'}
+    condition = workflow['jobs']['incidents']['if']
     match = re.search(r"contains\(fromJSON\('([^']+)'\), github.event.workflow_run.conclusion\)", condition)
     assert match is not None
     import json
@@ -109,8 +156,8 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert catalog_selection['run'] == 'python scripts/catalog_web_changes.py'
     assert catalog_selection['if'] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
     caller = ci['jobs']['refresh-reviewed-catalog']
-    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'geospatial-changes', 'pmtiles-cdn'}
-    assert "(needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success')" in caller['if']
+    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'pmtiles-cdn', 'artifact-registry-iam'}
+    assert caller["if"] == delivery_condition("refresh-reviewed-catalog")
     assert caller['uses'] == './.github/workflows/catalog-web-deploy.yml'
     assert caller['with'] == {'executor_sha': '${{ needs.ci-ready.outputs.tested_sha }}',
                               'authorization_artifact_id': '', 'authorization_sha256': '',

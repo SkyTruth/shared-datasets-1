@@ -106,7 +106,7 @@ It owns complete bundles, preview URI validation, upload metadata and verificati
 uv run python scripts/publishing_concierge.py start "$SOURCE" --category "$CATEGORY" --subcategory "$SUBCATEGORY" --request-classification preview-only --proposal-id "$PROPOSAL_ID" --release-date "$RELEASE_DATE" --preview-ref "$PREVIEW_REF" --access-tier private
 uv run python scripts/publishing_concierge.py next --state-file "$STATE_FILE" --json
 uv run python scripts/publishing_concierge.py confirm --state-file "$STATE_FILE" --step "$STEP_ID" --evidence-json "$EVIDENCE_JSON"
-gh workflow run feature-preview-deploy.yml --ref "$PREVIEW_REF" -f preview_data_mode=preserve
+gh workflow run feature-preview-deploy.yml --ref main -f source_ref="$PREVIEW_REF" -f preview_data_mode=preserve
 uv run python scripts/publishing_concierge.py validate --state-file "$STATE_FILE"
 uv run python scripts/publishing_concierge.py render-report --state-file "$STATE_FILE"
 ```

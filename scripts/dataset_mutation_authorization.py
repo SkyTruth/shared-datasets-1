@@ -54,23 +54,24 @@ def positive_int(value: Any) -> int:
 
 class GitHub:
     """Thin gh transport. --paginate follows every Link; --slurp preserves pages."""
+    require = staticmethod(require)
 
     def get(self, path: str) -> Any:
         return plans.strict_json_loads(read(path))
 
     def pages(self, path: str, *, field: str | None = None) -> list[dict[str, Any]]:
         pages = plans.strict_json_loads(read(path, paginate=True))
-        require(isinstance(pages, list) and bool(pages), "missing paginated API response")
+        self.require(isinstance(pages, list) and bool(pages), "missing paginated API response")
         total = None
         if field is not None:
-            require(all(isinstance(page, dict) for page in pages), "invalid named API pages")
+            self.require(all(isinstance(page, dict) for page in pages), "invalid named API pages")
             total = pages[0].get("total_count")
-            require(type(total) is int and all(page.get("total_count") == total for page in pages), "inconsistent API total_count")
+            self.require(type(total) is int and all(page.get("total_count") == total for page in pages), "inconsistent API total_count")
             pages = [page.get(field) for page in pages]
-        require(all(isinstance(page, list) for page in pages), "invalid API pages")
+        self.require(all(isinstance(page, list) for page in pages), "invalid API pages")
         rows = [row for page in pages for row in page]
-        require(all(isinstance(row, dict) for row in rows), "invalid API page entry")
-        require(total is None or len(rows) == total, "incomplete API enumeration")
+        self.require(all(isinstance(row, dict) for row in rows), "invalid API page entry")
+        self.require(total is None or len(rows) == total, "incomplete API enumeration")
         return rows
 
     def archive(self, repository: str, artifact_id: int) -> bytes:
@@ -380,40 +381,16 @@ def workflow_run(
 
 
 def validate_envelope(envelope: Any) -> None:
-    fields = {
-        "outcome",
-        "authorization_version",
-        "repository",
-        "pr_number",
-        "head_sha",
-        "merge_sha",
-        "plan_path",
-        "plan_blob_sha",
-        "normalized_plan_sha256",
-        "document",
-        "acceptance",
-        "trusted_executor_sha",
-        "source_run",
-        "proposal_key",
-        "execution_contract_sha256",
-    }
     require(isinstance(envelope, dict), "authorization must be an object")
     require(
         envelope.get("outcome") in {"mutation", "no_mutation"},
         "invalid authorization outcome",
     )
-    if envelope["outcome"] == "no_mutation":
-        fields = {
-            "outcome",
-            "authorization_version",
-            "repository",
-            "pr_number",
-            "head_sha",
-            "merge_sha",
-            "trusted_executor_sha",
-            "source_run",
-        }
-    plans.require_fields(envelope, fields, label="authorization envelope")
+    fields = {"outcome", "authorization_version", "repository", "pr_number",
+              "head_sha", "merge_sha", "trusted_executor_sha", "source_run"}
+    if envelope["outcome"] == "mutation":
+        fields |= {"plan_path", "plan_blob_sha", "normalized_plan_sha256", "document",
+                   "acceptance", "proposal_key", "execution_contract_sha256"}
     require(
         set(envelope) == fields
         and type(envelope["authorization_version"]) is int
@@ -472,8 +449,7 @@ def validate_envelope(envelope: Any) -> None:
         "plan digest mismatch",
     )
     require(envelope["plan_path"] == plans.document_path(document), "plan path mismatch")
-    for key in ("head_sha", "merge_sha", "plan_blob_sha", "trusted_executor_sha"):
-        sha(envelope[key])
+    sha(envelope["plan_blob_sha"])
     require(
         all(envelope[k] == v for k, v in identity_digests(envelope).items()),
         "execution identity digest mismatch",
@@ -817,6 +793,24 @@ def verified_envelope(api: GitHub, directory: Path, expected_sha256: str, env: d
         )
     revalidate(api, envelope)
     return envelope
+
+
+def executor_acceptance(api, repository, executor, number=None):
+    """Bind pre-merge or merged acceptance to the exact executor before credentials."""
+    executor = sha(executor)
+    context = repository_context({"repository": api.get(f"repos/{repository}")})
+    require(context["full_name"] == repository, "repository mismatch")
+    merged = number is None
+    if merged:
+        matches = [pr for pr in api.pages(f"repos/{repository}/commits/{executor}/pulls?per_page=100")
+                   if pr.get("merged_at") and pr.get("merge_commit_sha") == executor]
+        require(len(matches) == 1, "expected one merged executor PR")
+        number = matches[0]["number"]
+    pr = api.get(f"repos/{repository}/pulls/{number}")
+    validate_pr(pr, context, number, merged=merged)
+    require((pr["merge_commit_sha"] if merged else pr["head"]["sha"]) == executor, "PR executor mismatch")
+    reviews = api.pages(f"repos/{repository}/pulls/{number}/reviews?per_page=100")
+    return {"executor_sha": executor, "pr_number": number, "acceptance": effective_acceptance(pr, reviews, repository)}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -21,7 +21,7 @@ module "mpatlas_scheduler_service_account" {
 }
 
 resource "google_storage_bucket_iam_member" "mpatlas_job_object_user" {
-  bucket = var.bucket_name
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
   role   = "roles/storage.objectUser"
   member = module.mpatlas_job_service_account.member
 
@@ -35,8 +35,6 @@ resource "google_storage_bucket_iam_member" "mpatlas_job_object_user" {
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')",
     ])
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 module "mpatlas_monthly_job" {
@@ -48,8 +46,8 @@ module "mpatlas_monthly_job" {
   image                 = var.mpatlas_monthly_image
   service_account_email = module.mpatlas_job_service_account.email
   cpu                   = "4"
-  memory                = "16Gi"
-  timeout               = "14400s"
+  memory                = "8Gi"
+  timeout               = "3600s"
   max_retries           = 0
 
   env = {

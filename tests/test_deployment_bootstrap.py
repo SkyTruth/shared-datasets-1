@@ -1,0 +1,89 @@
+"""Explicit composite inputs survive transport without ambient caller settings."""
+import os
+from pathlib import Path
+import subprocess
+
+import pytest
+import yaml
+
+from scripts import terraform_target_contracts as contracts
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('ref,workflow,allowed', [
+    ('refs/heads/main', 'artifact-registry-iam-sync.yml@refs/heads/main', True),
+    ('refs/heads/main', 'ci.yml@refs/heads/main', True),
+    ('refs/heads/topic', 'ci.yml@refs/heads/main', False),
+    ('refs/heads/main', 'ci.yml@refs/heads/topic', False),
+    ('refs/heads/main', 'foreign.yml@refs/heads/main', False),
+    ('refs/heads/topic', 'foreign.yml@refs/heads/topic', False),
+])
+def test_main_ref_guard_reports_expected_and_actual_refs_before_rejecting(ref, workflow, allowed):
+    action = yaml.safe_load((ROOT / '.github/actions/deployment-bootstrap/action.yml').read_text())
+    guard = next(step for step in action['runs']['steps'] if step.get('name') == 'Validate main ref')
+    repository = 'SkyTruth/shared-datasets-1'
+    actual_workflow = f'{repository}/.github/workflows/{workflow}'
+    result = subprocess.run(['bash', '-eu', '-c', guard['run']], capture_output=True, text=True,
+                            env={**os.environ, 'WORKFLOW_FILE': 'artifact-registry-iam-sync.yml',
+                                 'GITHUB_REPOSITORY': repository, 'GITHUB_REF': ref,
+                                 'GITHUB_WORKFLOW_REF': actual_workflow})
+    assert (result.returncode == 0) is allowed
+    if allowed:
+        assert not result.stdout and not result.stderr
+    else:
+        assert result.returncode == 1
+        diagnostic = result.stdout + result.stderr
+        assert '::error::' in diagnostic
+        assert 'expected GITHUB_REF=refs/heads/main' in diagnostic
+        assert f'GITHUB_WORKFLOW_REF={repository}/.github/workflows/artifact-registry-iam-sync.yml@refs/heads/main' in diagnostic
+        assert f'{repository}/.github/workflows/ci.yml@refs/heads/main' in diagnostic
+        assert f'actual GITHUB_REF={ref}' in diagnostic
+        assert f'GITHUB_WORKFLOW_REF={actual_workflow}' in diagnostic
+
+
+def test_terraform_bootstrap_declares_caller_inputs_and_ignores_conflicting_ambient_values(tmp_path):
+    from scripts.deployment_receipt_contracts import expanded_steps
+    value = contracts.workflow(ROOT, 'prod-terraform-target-apply.yml')
+    for name in ('prepare', 'sync'):
+        caller = next(s for s in value['jobs'][name]['steps'] if s.get('uses') == './.github/actions/deployment-bootstrap/terraform')
+        assert caller['with']['sync-name'] == '${{ inputs.sync_name }}'
+        assert caller['with']['workload-identity-provider'] == '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}'
+        assert caller['with']['service-account'] == '${{ env.TERRAFORM_SERVICE_ACCOUNT }}'
+    inputs = {'workflow': 'artifact-registry-iam-sync.yml', 'sync-name': 'Artifact Registry writer binding sync',
+              'executor-sha': 'a' * 40, 'source-run-id': '13', 'source-run-attempt': '2',
+              'workload-identity-provider': 'reviewed-provider', 'service-account': 'reviewed-account'}
+    steps = list(expanded_steps(ROOT, {'steps': [{'uses': caller['uses'], 'with': inputs}]}))
+    auth = next(s for s in steps if str(s.get('uses', '')).startswith('google-github-actions/auth@'))
+    assert auth['with'] == {'workload_identity_provider': '${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}',
+                           'service_account': '${{ inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT }}'}
+    from workflow_helpers import load_workflow
+    bootstrap = load_workflow(ROOT / '.github/actions/deployment-bootstrap/terraform/action.yml')
+    scoped = next(s for s in bootstrap['runs']['steps'] if s.get('uses') == './.github/actions/deployment-auth')
+    # Explicit composite inputs outrank a caller's conflicting ambient settings.
+    assert scoped['env']['TERRAFORM_WORKLOAD_IDENTITY_PROVIDER'] == '${{ inputs.workload-identity-provider }}'
+    assert scoped['with']['service-account'] == '${{ inputs.service-account }}'
+    resolve = next(s for s in steps if s.get('name') == 'Resolve registered Terraform target')
+    result = subprocess.run(['bash', '-eu', '-c', resolve['run']], cwd=ROOT, capture_output=True, text=True,
+        env={**os.environ, 'GITHUB_ENV': str(tmp_path / 'env'), 'SYNC_NAME': 'foreign', 'CALLER_WORKFLOW': 'foreign.yml', **resolve['env']})
+    assert result.returncode == 0, result.stderr
+    assert 'google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer' in (tmp_path / 'env').read_text()
+
+
+def test_same_revision_avoids_second_checkout_but_other_executors_restore_before_credentials():
+    import yaml
+    action = yaml.safe_load((ROOT / '.github/actions/deployment-bootstrap/action.yml').read_text())
+    steps = action['runs']['steps']
+    guards = {step['name']: step for step in steps}
+    assert 'if' not in guards['Verify owner acceptance before candidate checkout']
+    assert 'if' not in guards['Install pinned durable receipt verifier']
+    assert 'if' not in guards['Verify executor before candidate checkout']
+    assert '--bootstrap' in guards['Verify executor before candidate checkout']['run']
+    skipped = ['Snapshot trusted verifier import closure', 'Check out repository',
+               'Restore immutable receipt verifier after candidate checkout', 'Verify tested main revision']
+    for name in skipped:
+        assert guards[name]['if'] == 'inputs.executor-sha != github.workflow_sha'
+    assert [step['name'] for step in steps if step['name'] in skipped] == skipped
+    assert all(not step.get('uses', '').startswith('google-github-actions/') for step in steps)
+    assert guards['Check out repository']['with']['ref'] == '${{ inputs.executor-sha }}'
+    assert guards['Check out repository']['with']['persist-credentials'] is False

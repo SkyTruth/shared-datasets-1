@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from scripts.terraform_plan_permissions import plan_checks
-from workflow_helpers import load_workflow
+from workflow_helpers import load_workflow, terraform_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/terraform_targets/operational-retirement.json'
@@ -27,6 +27,31 @@ def retirement_plan():
 
 def retirement_jobs():
     return load_workflow(ROOT / '.github/workflows/scratch-cleanup-iam-sync.yml')['jobs']
+
+
+def retirement_condition(job, *, event='workflow_dispatch', ref='refs/heads/main', actor='jonaraphael', grant='success', retirement='success'):
+    expression = job['if'].removeprefix('${{').removesuffix('}}').strip()
+    for original, value in {
+        'always()': 'True', 'github.ref': repr(ref), 'github.event_name': repr(event), 'github.actor': repr(actor),
+        'needs.operational-retirement-grant.result': repr(grant),
+        'needs.retire-operational-infrastructure.result': repr(retirement),
+    }.items():
+        expression = expression.replace(original, value)
+    return eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}})
+
+
+@pytest.mark.parametrize('name', ['retirement-bootstrap', 'retire-wdpa-validation', 'operational-retirement-bootstrap',
+                                 'operational-retirement-grant', 'retire-operational-infrastructure', 'revoke-operational-retirement'])
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch', 'workflow_call', 'workflow_run'])
+@pytest.mark.parametrize('ref', ['refs/heads/main', 'refs/heads/feature'])
+@pytest.mark.parametrize('actor', ['jonaraphael', 'other-maintainer'])
+def test_retirement_requires_owner_dispatch_on_main(name, event, ref, actor):
+    assert retirement_condition(retirement_jobs()[name], event=event, ref=ref, actor=actor) is (
+        event == 'workflow_dispatch' and ref == 'refs/heads/main' and actor == 'jonaraphael')
+
+
+def test_nonretirement_cleanup_sync_still_runs_from_main_ci_delivery():
+    assert retirement_condition(retirement_jobs()['sync'], event='push', actor='other-maintainer')
 
 
 def test_workflow_scope_matches_the_independent_audited_resource_inventory():
@@ -45,7 +70,7 @@ def guard(tmp_path, plan):
     shell = next(step['run'] for step in steps if step.get('name') == 'Enforce resource-change allowlist')
     shell = shell.replace('${{ inputs.delete_only }}', str(inputs['delete_only']).lower())
     (tmp_path / 'target-apply.tfplan.json').write_text(json.dumps(plan))
-    environment = {**os.environ, 'RUNNER_TEMP': str(tmp_path), 'ALLOWED_EXACT': inputs['allowed_exact'],
+    environment = {**terraform_environment(tmp_path, inputs), 'RUNNER_TEMP': str(tmp_path), 'ALLOWED_EXACT': inputs['allowed_exact'],
                    'ALLOWED_PATTERNS': inputs.get('allowed_patterns', ''), 'BLOCK_DELETES': 'false',
                    'REFUSAL_PREFIX': inputs['refusal_prefix'],
                    'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH']}
@@ -135,8 +160,9 @@ def test_retirement_permission_reads_reject_foreign_identity_and_non_deletion(ki
     with pytest.raises(ValueError, match='foreign|outside production'):
         plan_checks({'format_version': '1.2', 'resource_changes': [row]}, project_number=NUMBER)
     row = copy.deepcopy(next(row for row in json.loads(FIXTURE.read_text())['resource_changes'] if row['type'] == kind))
-    row['change'].update(actions=['update'], after=row['change']['before'])
-    with pytest.raises(ValueError, match='only retired'):
+    action = 'create' if kind == 'google_iam_workload_identity_pool_provider' else 'update'
+    row['change'].update(actions=[action], after=row['change']['before'])
+    with pytest.raises(ValueError, match='only retired|unsupported google_iam_workload_identity_pool_provider action: create'):
         plan_checks({'format_version': '1.2', 'resource_changes': [row]}, project_number=NUMBER)
 
 
@@ -145,13 +171,6 @@ def test_retirement_permission_reads_reject_foreign_identity_and_non_deletion(ki
 def test_revocation_runs_after_any_grant_attempt_including_partial_failure(grant, retirement):
     job = retirement_jobs()['revoke-operational-retirement']
     assert set(job['needs']) == {'operational-retirement-grant', 'retire-operational-infrastructure'}
-    expression = job['if'].removeprefix('${{').removesuffix('}}').strip()
-    for original, value in {
-        'always()': 'True', 'github.ref': repr('refs/heads/main'), 'github.event_name': repr('push'),
-        'needs.operational-retirement-grant.result': repr(grant),
-        'needs.retire-operational-infrastructure.result': repr(retirement),
-    }.items():
-        expression = expression.replace(original, value)
-    assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (grant != 'skipped')
+    assert retirement_condition(job, grant=grant, retirement=retirement) is (grant != 'skipped')
     assert job['with']['delete_only'] is True
     assert 'operational_retirement_authority_enabled=false' in job['with']['tf_vars']

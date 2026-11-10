@@ -23,7 +23,8 @@ def test_preview_downloads_production_then_switches_to_preview_writer():
     assert checkout["with"]["ref"] == "${{ github.workflow_sha }}"
     auth = [(n, step["with"]["service_account"]) for n, step in enumerate(steps)
             if step.get("uses", "").startswith("google-github-actions/auth@")]
-    assert auth[0][1] == "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com"
+    assert auth[0][1] == "${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}"
+    assert steps[auth[0][0]]["with"]["workload_identity_provider"] == "${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}"
     assert auth[1][1] == "feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com"
     download = next(n for n, step in enumerate(steps) if " download-preview " in step.get("run", ""))
     upload = next(n for n, step in enumerate(steps) if " upload-preview " in step.get("run", ""))

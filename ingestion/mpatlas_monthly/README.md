@@ -72,7 +72,10 @@ sidecars or translation-source contract.
 Entrypoint: `python -m ingestion.mpatlas_monthly.run`. Configuration:
 `GOOGLE_CLOUD_PROJECT`, `SHARED_DATASETS_BUCKET`, optional execution-only
 `RUN_DATE`, and optional `SHARED_DATASETS_WORKDIR` for temporary files. The
-production job uses 4 CPUs, 16 GiB RAM, a four-hour timeout and no task retries.
+production job uses 4 CPUs, 8 GiB RAM, a one-hour timeout and no task retries.
+The one-hour limit leaves over six times the observed 8.6-minute maximum across
+MPAtlas, EAMLIS and sea-ice executions (October–November 2026), while bounding
+stalled executions. WDPA retains its separate multi-hour processing limit.
 The pinned container includes GDAL 3.6.2, Tippecanoe 2.52.0 and PMTiles 1.30.1.
 Its PMTiles build retains Go's checksum-verified module cache and a
 target-specific compiler cache, and embeds the CLI version in one compilation.

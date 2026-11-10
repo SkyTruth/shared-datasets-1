@@ -58,6 +58,7 @@ def test_crashed_or_cancelled_owner_releases_without_deleting_file(tmp_path, mon
     )
     with child(tmp_path, program, stdout=subprocess.PIPE) as process:
         try:
+            assert process.stdout.readline().startswith("Preflight slot wait:")
             assert process.stdout.readline().strip() == "locked"
             with pytest.raises(ValueError, match="another local preflight"):
                 with ci_preflight.local_preflight_slot(ROOT, "base", "next-head"):

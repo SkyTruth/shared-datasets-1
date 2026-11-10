@@ -4,6 +4,8 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import sys
 from unittest import mock
 
 import pytest
@@ -20,6 +22,47 @@ SHARED = 'google_storage_bucket.shared'
 RAW = 'google_storage_bucket.telemetry'
 
 
+@pytest.mark.parametrize('filename,scope,item', [
+    (filename, scope, item) for filename, scopes in contracts.registry(section='plan_scopes').items()
+    for scope, item in scopes.items()])
+def test_registered_scopes_pass_real_saved_plan_guard_and_foreign_resources_fail(tmp_path, filename, scope, item):
+    resources = set(item.get('exact', []) + item.get('instances', []))
+    resources.update(prefix + '.' + child for prefix, child in item.get('modules', {}).items())
+    for resource in sorted(resources | {'google_storage_bucket.foreign'}):
+        address = resource + '["fixture"]' if resource.endswith('catalog_viewer_accessors') else resource
+        plan = {'resource_changes': [{'address': address, 'change': {'actions': ['update']}}]}
+        path = tmp_path / 'saved-plan.json'
+        path.write_text(json.dumps(plan))
+        result = subprocess.run([sys.executable, 'scripts/terraform_plan_allowlist.py', str(path),
+            '--registered-scope', filename, scope, '--refusal-prefix', 'Refusing fixture'], cwd=ROOT, capture_output=True)
+        assert result.returncode == (0 if resource in resources else 1), (resource, result.stderr)
+
+
+def write_workflow(root, workflow, filename='owned.yml'):
+    document = copy.deepcopy(workflow)
+    path = root / '.github/terraform-targets.json'
+    registry = json.loads(path.read_text()) if path.exists() else {'schema_version': 1, 'targets': {}}
+    for name, job in document['jobs'].items():
+        inputs = job['with']
+        sync = filename + '/' + name
+        resources = inputs['targets'].splitlines()
+        item = {'workflow': filename, 'readiness_target': 'iam-bootstrap', 'resources': resources}
+        if not resources and not inputs['allowed_exact']:
+            item['state_only'] = True
+        if inputs['targets'] != inputs['allowed_exact']:
+            item['invalid_allowed_exact'] = inputs['allowed_exact']
+        for key in ('allowed_patterns', 'prepare_monitoring_slack'):
+            if inputs.get(key):
+                item[key] = inputs[key]
+        registry['targets'][sync] = item
+        job['with'] = {'sync_name': sync, 'caller_workflow': filename}
+    if path.exists():
+        for sync, row in registry['targets'].items():
+            row.update({key: value for key, value in json.loads(path.read_text())['targets'].get(sync, {}).items() if key in {'prerequisites', 'retired_resources'}})
+    path.write_text(json.dumps(registry))
+    (root / '.github/workflows' / filename).write_text(yaml.safe_dump(document))
+
+
 @pytest.fixture
 def policy(tmp_path):
     directory = tmp_path / '.github/workflows'
@@ -28,15 +71,25 @@ def policy(tmp_path):
         'bootstrap': {'uses': contracts.CALLER, 'with': {'targets': ROLE, 'allowed_exact': ROLE}},
         'sync': {'uses': contracts.CALLER, 'needs': 'bootstrap', 'with': {'targets': OWNER, 'allowed_exact': OWNER}},
     }}
-    (directory / 'owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(tmp_path, workflow)
     (tmp_path / 'terraform').mkdir()
     value = {'schema_version': 1, 'jobs': {'owned.yml/bootstrap': [], 'owned.yml/sync': [SHARED]}, 'retired_targets': {}}
-    (tmp_path / 'terraform/iam-plan-prerequisites.json').write_text(json.dumps(value))
+    write_policy(tmp_path, value)
     return tmp_path, value, workflow
 
 
 def write_policy(root, value):
-    (root / 'terraform/iam-plan-prerequisites.json').write_text(json.dumps(value))
+    path = root / '.github/terraform-targets.json'
+    document = json.loads(path.read_text())
+    for sync, row in document['targets'].items():
+        row.pop('prerequisites', None)
+        row.pop('retired_resources', None)
+    for sync, prerequisites in value['jobs'].items():
+        # Tests intentionally include orphan policy entries to prove exact coverage.
+        document['targets'].setdefault(sync, {'workflow': sync.split('/')[0], 'resources': []})['prerequisites'] = prerequisites
+    for sync, retired in value['retired_targets'].items():
+        document['targets'].setdefault(sync, {'workflow': sync.split('/')[0], 'resources': []})['retired_resources'] = retired
+    path.write_text(json.dumps(document))
 
 
 def test_transitive_managed_ancestor_must_have_an_explicit_owner(policy):
@@ -55,7 +108,7 @@ def test_shared_bad_dependency_reports_every_target_path(policy):
     other = 'google_storage_bucket_iam_member.mpatlas'
     for key in ('targets', 'allowed_exact'):
         workflow['jobs']['sync']['with'][key] += '\n' + other
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     graph = {OWNER: {ROLE, SHARED}, other: {SHARED}, ROLE: set(), SHARED: {RAW}, RAW: set()}
     with pytest.raises(ValueError) as failure:
         contracts.check_graph(root, graph)
@@ -91,7 +144,7 @@ def test_unknown_caller_removed_policy_and_scope_expansion_fail(policy):
         contracts.check_graph(root, graph)
     write_policy(root, value)
     workflow['jobs']['sync']['with']['allowed_patterns'] = 'google_storage_bucket.*'
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='exact mutation allowlist'):
         contracts.check_graph(root, graph)
 
@@ -128,7 +181,7 @@ def test_retirement_cannot_name_an_unknown_job(policy):
 
 def test_yaml_narrow_callers_cannot_bypass_policy_enumeration(policy):
     root, _, workflow = policy
-    (root / '.github/workflows/unregistered.yaml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow, 'unregistered.yaml')
     assert 'unregistered.yaml/sync' in contracts.callers(root)
     with pytest.raises(ValueError, match='exactly every'):
         contracts.check_graph(root, {OWNER: {ROLE}, ROLE: set()})
@@ -144,7 +197,7 @@ def state_only_job(policy):
 
 def test_paired_empty_scope_has_no_managed_mutation_dependencies(policy):
     root, _, workflow = state_only_job(policy)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     graph = {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()}
     assert contracts.check_graph(root, graph)['owned.yml/state'] == {
         'targets': [], 'managed_prerequisites': [], 'state_only': True,
@@ -158,7 +211,7 @@ def test_paired_empty_scope_has_no_managed_mutation_dependencies(policy):
 def test_state_only_cannot_acquire_resource_scope_or_prepare_external_mutations(policy, change):
     root, _, workflow = state_only_job(policy)
     workflow['jobs']['state']['with'].update(change)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='state-only|nonempty'):
         contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
 
@@ -173,7 +226,7 @@ def test_state_only_has_no_hidden_ownership_or_bootstrap_edges(policy, kind):
     else:
         workflow['jobs']['state']['needs'] = 'bootstrap'
     write_policy(root, value)
-    (root / '.github/workflows/owned.yml').write_text(yaml.safe_dump(workflow))
+    write_workflow(root, workflow)
     with pytest.raises(ValueError, match='state-only'):
         contracts.check_graph(root, {OWNER: {ROLE, SHARED}, ROLE: set(), SHARED: set()})
 
@@ -233,3 +286,24 @@ def test_historical_negative_control_is_exact_failed_source_not_a_cached_graph()
     # Graphs are produced from the active configuration and both failed-source
     # variants by the shared lint command, rather than replayed as a DOT fixture.
     assert not list(directory.glob('*.dot'))
+
+
+def test_narrow_sync_has_exactly_one_caller_and_cannot_share_implicit_policy(policy):
+    root, _, _ = policy
+    path = root / '.github/terraform-targets.json'
+    document = json.loads(path.read_text())
+    del document['targets']['owned.yml/sync']
+    path.write_text(json.dumps(document))
+    path = root / '.github/workflows/owned.yml'
+    workflow = yaml.safe_load(path.read_text())
+    workflow['jobs']['sync']['with']['sync_name'] = 'owned.yml/bootstrap'
+    path.write_text(yaml.safe_dump(workflow))
+    with pytest.raises(ValueError, match='exactly every'):
+        contracts.check_graph(root, {ROLE: set()})
+
+
+def test_registry_schema_version_rejects_boolean(tmp_path):
+    (tmp_path / '.github').mkdir()
+    (tmp_path / '.github/terraform-targets.json').write_text('{"schema_version":true,"targets":{}}')
+    with pytest.raises(ValueError, match='Unsupported'):
+        contracts.registry(tmp_path)

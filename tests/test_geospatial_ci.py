@@ -11,7 +11,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_results
-from scripts.ci_contract import NATIVE_TESTS, select_suites
+from scripts.ci_contract import NATIVE_TESTS, resolve_selection
 from scripts.ci_preflight import suite_commands
 
 from workflow_helpers import load_workflow, workflow_steps_by_name
@@ -43,7 +43,7 @@ class GeospatialCiTests(unittest.TestCase):
     def test_geospatial_job_runs_shared_native_contract(self):
         job = self.workflow['jobs']['geospatial-integration']
         self.assertEqual(job['needs'], 'geospatial-changes')
-        self.assertEqual(job['if'], "needs.geospatial-changes.outputs.should_run == 'true'")
+        self.assertEqual(job['if'], "needs.geospatial-changes.outputs.should_run == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'")
         run = workflow_steps_by_name(self.workflow, 'geospatial-integration')['Run shared native validation']['run']
         self.assertIn('scripts/ci_preflight.py run-suite', run)
         self.assertIn('--suite geospatial-integration', run)
@@ -56,10 +56,10 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIn(['gdal_calc.py', '--help'], [args for args, _ in commands])
 
     def test_shared_change_classifier_covers_native_dependencies(self):
-        for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', '.github/workflows/ci.yml', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
+        for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
             with self.subTest(path=path):
-                self.assertIn('geospatial-integration', select_suites([path])[0])
-        self.assertNotIn('geospatial-integration', select_suites(['docs/assets/wdpa-marine.md'])[0])
+                self.assertIn('geospatial-integration', resolve_selection([path])["suites"])
+        self.assertNotIn('geospatial-integration', resolve_selection(['docs/assets/wdpa-marine.md'])["suites"])
 
 
 class GeospatialResultTests(unittest.TestCase):

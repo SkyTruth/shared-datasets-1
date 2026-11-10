@@ -7,9 +7,15 @@ import os
 import urllib.request
 
 
+def image_group(target: str) -> str:
+    return "wdpa" if target == "wdpa-monthly" else "short"
+
+
 def job_name(suite: str) -> str:
+    if suite.startswith("production-images-"):
+        return f"production-images ({image_group(suite.removeprefix('production-images-'))})"
     if suite in {"sdk-node22", "sdk-node24"}:
-        return f"sdk-validation (Node {suite.removeprefix('sdk-node')})"
+        return "sdk-validation"
     return suite
 
 
@@ -75,7 +81,9 @@ def select_plan(candidates: list[dict], *, run_id: str, attempt: int) -> dict:
             raise ValueError("duplicate plan attempt")
         identities.add(source_attempt)
     selected = max(candidates, key=lambda candidate: candidate["source"]["run_attempt"])
-    comparable = {key: value for key, value in selected.items() if key != "source"}
-    if any({key: value for key, value in candidate.items() if key != "source"} != comparable for candidate in candidates):
+    # Reuse belongs to one successful selector execution. A new all-job attempt
+    # can replace it with fresh execution while retaining the same selection.
+    comparable = {key: value for key, value in selected.items() if key not in {"source", "main_reuse"}}
+    if any({key: value for key, value in candidate.items() if key not in {"source", "main_reuse"}} != comparable for candidate in candidates):
         raise ValueError("source attempt plans disagree about the validation contract")
     return selected

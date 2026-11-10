@@ -130,6 +130,15 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertNotIn("extract publish", text)
         self.assertIn("GCP_READONLY_SERVICE_ACCOUNT", text)
 
+    def test_advisory_runs_only_for_prs_containing_immutable_mutation_plans(self):
+        from fnmatch import fnmatchcase
+        workflow = load_workflow(ROOT / ".github/workflows/dataset-breaking-change-alert.yml")
+        trigger = workflow_triggers(workflow)["pull_request"]
+        self.assertIn("edited", trigger["types"])
+        for path, expected in ((".github/dataset-plans/pr-123.json", True),
+                               ("docs/assets/example.md", False), ("scripts/example.py", False)):
+            self.assertEqual(any(fnmatchcase(path, pattern) for pattern in trigger["paths"]), expected)
+
     def test_mutation_routing_has_no_checkout_or_elevated_permissions(self):
         workflow = load_workflow(ROOT / ".github/workflows/dataset-breaking-change-alert.yml")
         route, alert = (workflow["jobs"][name] for name in ("route", "alert"))

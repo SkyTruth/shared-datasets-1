@@ -122,8 +122,9 @@ class AlertPolicyTests(unittest.TestCase):
         permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.DOTALL)
         self.assertIsNotNone(permissions)
         self.assertEqual(
-            set(re.findall(r'^\s*"([^"]+)"', permissions.group(1), re.MULTILINE)),
+            set(re.findall(r'"([^"]+)"', permissions.group(1))),
             {
+                "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update",
                 "logging.notificationRules.create",
                 "logging.notificationRules.delete",
                 "monitoring.alertPolicies.create",
@@ -172,6 +173,8 @@ class AlertPolicyTests(unittest.TestCase):
 
     def test_alert_policies_have_a_protected_apply_path(self):
         policies = {
+            "google_logging_metric.operational_safety_heartbeat",
+            "google_monitoring_alert_policy.operational_safety_absent",
             "google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure",
             "google_monitoring_alert_policy.release_awaiting_identity_decision",
             "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",

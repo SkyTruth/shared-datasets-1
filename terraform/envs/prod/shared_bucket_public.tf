@@ -1,3 +1,9 @@
+# IAM-only plans verify the existing canonical bucket without scheduling its
+# logging/CORS configuration or pulling unrelated usage resources into scope.
+data "google_storage_bucket" "shared_bucket_iam" {
+  name = var.bucket_name
+}
+
 import {
   to = google_storage_bucket.shared_bucket
   id = var.bucket_name

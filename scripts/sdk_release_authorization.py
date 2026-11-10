@@ -16,83 +16,32 @@ import sys
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.workflow_identity import WORKFLOW_NAMES
 from scripts.ci_contract import contract_digest, expected_tools
+from scripts.ci_source_proof import job_name
 from scripts.dataset_mutation_authorization import GitHub as ArtifactGitHub
 from scripts.deployment_revision import DeploymentError, require, verify_ci, verify_context
 
 class GitHub(ArtifactGitHub):
+    """Adapt CI's positional page API to the archive transport."""
     def pages(self, path, field=None):
         return super().pages(path, field=field)
-
 
 MAX_ARCHIVE = 100 * 1024 * 1024
 IDENTITY = ("schema_version", "base", "head", "tested_sha", "tree", "contract_digest")
 
 
 def admit_source(api, repository, run_id, attempt, sha, event):
-    """Filter verified CI completions before strict deployment authorization."""
-    require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0
-            and re.fullmatch(r"[0-9a-f]{40}", sha), "invalid SDK source identity")
-    repo = api.get(f"repos/{repository}")
-    workflow = api.get(f"repos/{repository}/actions/workflows/ci.yml")
-    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository,
-            "SDK repository identity mismatch")
-    require(type(workflow.get("id")) is int and workflow["id"] > 0 and workflow.get("path") == ".github/workflows/ci.yml",
-            "SDK source workflow identity mismatch")
-    source = event.get("workflow_run", {})
-    current = api.get(f"repos/{repository}/actions/runs/{run_id}")
-    original = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
-    for run in (source, current, original):
-        require(run.get("id") == run_id and run.get("head_sha") == sha
-                and run.get("name") in WORKFLOW_NAMES["ci.yml"] and run.get("path") == workflow["path"]
-                and run.get("workflow_id") == workflow["id"] and run.get("event") == "push"
-                and run.get("head_branch") == "main"
-                and all(run.get(key, {}).get("id") == repo["id"] and run.get(key, {}).get("full_name") == repository
-                        for key in ("repository", "head_repository")), "SDK event does not identify trusted main CI")
-    require(event.get("repository", {}).get("id") == repo["id"] and event["repository"].get("full_name") == repository,
+    """npm must see this top-level workflow for automatic and recovery releases."""
+    from scripts.workflow_failure_alert import context
+    current = context(api, workflow=".github/workflows/publish-typescript-sdk.yml")
+    require(os.environ.get("GITHUB_EVENT_NAME") == current["event"] == "workflow_dispatch", "SDK publishing requires dispatch")
+    source = verify_ci(api, repository, sha, run_id, attempt)
+    require(all(event.get("repository", {}).get(key) == source["repository"][key] for key in ("id", "full_name")),
             "SDK event repository mismatch")
-    require(source.get("run_attempt") == attempt and original.get("run_attempt") == attempt
-            and source.get("status") == original.get("status") == "completed"
-            and source.get("conclusion") == original.get("conclusion"), "SDK source completion differs from its attempt")
-    require(original.get("conclusion") in {"success", "failure", "cancelled", "timed_out", "action_required", "stale", "startup_failure", "skipped", "neutral"},
-            "SDK source has no terminal conclusion")
-    require(type(current.get("run_attempt")) is int and current["run_attempt"] >= attempt,
-            "SDK source has an invalid current attempt")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
-    ready = [job for job in jobs if job.get("name") == "ci-ready"]
-    require(len(ready) <= 1, "ambiguous ci-ready source job")
-    if current["run_attempt"] > attempt or original["conclusion"] == "cancelled":
-        return False
-    require(current.get("status") == "completed" and current.get("conclusion") == original["conclusion"],
-            "SDK source no longer identifies the completed attempt")
-    return bool(ready and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success")
-
-
-def admit_manual_source(api, repository, run_id, attempt, sha, event):
-    require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-            and os.environ.get("GITHUB_REF") == "refs/heads/main"
-            and os.environ.get("GITHUB_WORKFLOW_REF") == f"{repository}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main",
-            "manual SDK recovery must use the trusted main workflow")
-    current_id = os.environ.get("GITHUB_RUN_ID", "")
-    current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
-    require(re.fullmatch(r"[1-9][0-9]*", current_id) and re.fullmatch(r"[1-9][0-9]*", current_attempt),
-            "manual SDK recovery lacks current run identity")
-    repo = api.get(f"repos/{repository}")
-    workflow = api.get(f"repos/{repository}/actions/workflows/publish-typescript-sdk.yml")
-    current = api.get(f"repos/{repository}/actions/runs/{current_id}/attempts/{current_attempt}")
-    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository
-            and event.get("repository", {}).get("id") == repo["id"]
-            and event["repository"].get("full_name") == repository, "manual SDK repository mismatch")
-    require(type(workflow.get("id")) is int and workflow["id"] > 0
-            and workflow.get("path") == ".github/workflows/publish-typescript-sdk.yml"
-            and current.get("id") == int(current_id) and current.get("run_attempt") == int(current_attempt)
-            and current.get("workflow_id") == workflow["id"] and current.get("path") == workflow["path"]
-            and current.get("event") == "workflow_dispatch" and current.get("head_branch") == "main"
-            and all(current.get(key, {}).get("id") == repo["id"] and current.get(key, {}).get("full_name") == repository
-                    for key in ("repository", "head_repository")), "manual SDK execution identity mismatch")
-    verify_ci(api, repository, sha, run_id, attempt)
-    return True
+    sdk = [job for job in jobs if job.get("name") == job_name("sdk-node24")]
+    require(len(sdk) <= 1, "ambiguous SDK validation source job")
+    return bool(sdk and sdk[0].get("status") == "completed" and sdk[0].get("conclusion") == "success")
 
 
 def artifact_files(api, repository, run_id, artifacts, name):
@@ -192,7 +141,7 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     require(result.get("source") == {"run_id": str(run_id), "run_attempt": suite_attempt} and result.get("suite") == "sdk-node24" and result.get("status") == "success", "SDK result source or status mismatch")
     require(all(result.get(key) == plan.get(key) for key in IDENTITY), "SDK result differs from tested plan")
     require(result.get("tools") == expected_tools("sdk-node24") and result.get("commands") and all(command.get("exit_code") == 0 for command in result["commands"]), "SDK validation was skipped, failed or used another toolchain")
-    producing_job(api, repository, run_id, suite_attempt, sha, "sdk-validation (Node 24)", run["workflow_id"], run["repository"]["id"])
+    producing_job(api, repository, run_id, suite_attempt, sha, job_name("sdk-node24"), run["workflow_id"], run["repository"]["id"])
     candidate = json.loads(files["package/candidate.json"])
     require(result.get("package") == candidate, "candidate differs from the recorded tested package")
     package = files.get("package/" + str(candidate.get("tarball")))
@@ -221,16 +170,13 @@ def main():
     try:
         api = GitHub()
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-        admission = admit_manual_source if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else admit_source
-        eligible = admission(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, event)
+        eligible = admit_source(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, event)
         if not eligible:
-            print("Verified CI source is obsolete, cancelled, or lacks passing ci-ready; no SDK release is authorized.")
+            print("CI did not select successful SDK validation; no SDK release is authorized.")
             outputs = {"source_eligible": "false", "release_needed": "false"}
         elif args.admit_source:
             outputs = {"source_eligible": "true"}
         else:
-            # Transport variants share the same strict boundary; named artifact
-            # pagination additionally needs the keyword-only field argument.
             from scripts.deployment_revision import GitHub as DeploymentGitHub
             verify_context(args, DeploymentGitHub())
             outputs = download(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, args.output, Path.cwd())

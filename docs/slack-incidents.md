@@ -1,528 +1,151 @@
 # Slack incident lifecycle
 
-GitHub operational failures have one searchable incident ID (`SD-` plus twelve hex
-characters). The first failure creates an **Open** parent message. Additional
-failed attempts update that parent's count and latest evidence; the worker
-creates no automatic per-attempt replies.
-Verified recovery edits the original parent to green **Resolved**, retaining the
-original failure and recovery evidence. It creates no reply or new channel
-message. Healthy runs stay quiet. There is no live synthetic notification test.
+Follow [CI/deployment recovery](ci-recovery.md) for the ordered response. This
+reference owns incident identity, persistence, verification and Slack configuration.
 
-Parents include **Impact**, **Mutation state**, **Owner**, and **Required action**.
-Consumer impact and unverified mutations are explicitly unknown. `jonaraphael`
-owns triage; the operation owner is marked unknown because existing incident
-records do not identify the originating agent. Triage assigns that owner and
-checks the exact failed attempt and authoritative mutation records before replay.
-Signed terminal deployment success and verified publication-receipt repair receive
-specific outcome text. A successful job/workflow alone does not establish
-published-data state. These fields use existing evidence without changing the
-checkpoint schema or recovery authorization.
+Operational failures share a stable `SD-` plus twelve hex characters incident ID.
+The first failure creates an **Open** parent; further attempts update its count and
+evidence. Verified recovery edits that parent green, without recovery parents or
+automatic replies. Triage (`jonaraphael`) assigns an owner and checks the exact
+attempt and mutation records. Unknown impact remains unknown.
 
-Detached worker failures use the [shared execution parent](alert-routing.md#editable-monitoring-messages)
-owned by the existing Monitoring receiver. Its exact project/job/execution key
-joins failure, review and typed identity evidence. A completion check that
-successfully attests that exact execution's signed failed outcome adds no
-GitHub incident parent; it remains a failed GitHub check. Missing, invalid or
-unknown outcome evidence and actual verifier/signing failures retain Slack
-coverage. Decision acceptance never establishes worker or publication recovery.
+## Admission and cadence
 
-The existing parent-view acknowledgement causes eligible GitHub parents to
-receive the new rendering on their next reconciliation. Historical reply records
-remain readable and uncertain sends retain their owner-reconciliation barrier.
-Confirming an old reply was not delivered never authorizes a replacement reply.
+`unattended-workflow-alert.yml` receives failed native completions, including
+main-push CI delivery jobs and the top-level SDK publisher. Healthy events
+allocate no worker except the terminal observer, which also reconciles recovery.
+The daily safety probe discovers GITHUB_TOKEN-dispatched failures, including
+notification batches, for which GitHub emits no `workflow_run` event. Its rolling
+72-hour replay window dispatches only actionable transitions. Three actual
+consecutive reconciliation dispatches fail health; unchanged health findings never
+enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
+owns scoped non-red reports, deduplication, reminders and missing-run detection.
+Failed discovery uses the same retained, change-plus-daily health report.
+Infrastructure failures that prevent reporting retain a direct webhook signal.
 
-The `Alerts / Workflow health and Slack reconciliation` workflow runs on both successful
-and failed workflow completions. Its presence in Actions does not mean a failure
-occurred or a Slack message was sent. `Operations / Safety check` is the single
-hourly timer for catalog freshness and incident/completion catch-up. It requests
-`Deployments / Completion check` only when reconciliation is needed;
-that completion triggers the incident replay described below. Historical
-runs under its former name, `Deployment terminal verification`, remain recognized
-under the same workflow and incident identity. Pending discovery only reads
-GitHub deployment metadata; the protected observer retains the pinned receipt
-verifier and verifies signatures before observing an execution or writing status.
+Each safety probe cheaply inspects the exact pending WDPA execution for terminal
+status before completion-observer backoff. Pending verification backs off at most
+24 hours after an unchanged successful observer; failed checks stay eligible
+and active observers are not duplicated. This live hint only requests protected
+verification; it cannot authorize a terminal result. Freshness/hold/pause checks and
+72-hour expiry warnings follow [alert routing](alert-routing.md#scheduled-freshness-and-capacity).
+Failed reads or evidence never certify idle. Catalog refresh rechecks live inputs
+and exact passing main CI; pending CI defers it. A failed input probe with a proven
+skipped publisher stays in Actions; publisher failures alert.
 
-Repo-triggered catalog refreshes run as reusable jobs in the existing main CI
-run, selected after passing `ci-ready`. They no longer create a separate catalog
-completion event after every successful main CI. The parent CI completion still
-reports publisher failures against `deployment:catalog-web`; recovery still
-requires its signed terminal deployment record. Release-index rebuild follow-ups
-remain immediate. The safety timer requests the existing catalog workflow only
-when its live comparison finds work; neither catalog nor completion has its own
-cron trigger.
-
-The catalog input probe is read-only. An unchanged comparison skips the
-catalog deployment job. If only that probe fails (for example, an unavailable
-credential service) and authoritative same-attempt jobs prove the publisher was
-skipped, it remains a failed Actions check without opening or resolving a Slack
-incident. An allocated publisher failure still alerts. Historical catalog runs
-without this probe retain their original failure and recovery evidence.
-
-A successful automatic catalog probe with no incident observations also skips
-global incident reconciliation. The worker first verifies the source workflow,
-repository and attempt, then reads its authoritative jobs to prove the publisher
-was skipped. An obsolete source attempt is already a no-op. The short worker
-still appears in Actions; it does not load notification checkpoints or probe
-unrelated deployments. Publisher completions and failed probes retain normal
-reconciliation. The safety timer retains hourly detection of missed events,
-pending deliveries and recovery evidence, with the full 24-hour catch-up in the
-existing incident worker when needed.
-
-When inputs changed, the dispatched probe also checks passing main CI for its
-exact revision before selecting the publisher. Pending CI defers the refresh
-until a later hourly probe, with a job summary and no deployment incident.
-Missing or invalid CI evidence and failed API reads still fail the probe; the
-publisher retains its own full source authorization checks.
+WIF observers retain `shared-datasets-production` and their service accounts with
+normal environment references. GitHub documents [deployment opt-out](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments#using-environments-without-deployments)
+and [environment OIDC claims](https://docs.github.com/en/actions/reference/security/oidc#custom-claims-provided-by-github)
+but does not explicitly confirm their combination. Signed receipts remain separate
+from automatic deployment records. Batches bind the exact successful safety discovery
+attempt/revision and cannot acknowledge sends or authorize mutation. Later main
+consumers accept ancestral successful hints only after rechecking live inputs.
 
 ## Recovery contract
 
-The scope includes the exact deployment target, or exact workflow and job when
-there is no registered deployment contract. IAM bootstrap and dependent sync
-are distinct targets. A bootstrap success cannot resolve a failed dependent
-sync. Job paths are derived from the checked-in reusable caller graph, including
-the original reviewed PR number for dataset mutation jobs. Unknown job paths
-remain separate incidents instead of guessing a target.
+Scopes identify exact deployment targets, workflow/jobs or publication PR/phases.
+Job paths come from the immutable source `head_sha` caller graph via YAML `git show`,
+never executed source code. IAM bootstrap and dependent sync remain distinct;
+unknown jobs keep exact scopes. Missing history fails visibly; use full history.
 
-The TypeScript SDK's read-only `candidate` job has its own exact-job scope;
-`publish` retains the deployment scope below. Candidate recovery requires the
-package-verification step to have actually succeeded. Successful wrappers that
-skip verification for obsolete or ineligible CI do not recover a candidate
-incident. A verified candidate with no release needed can recover it without
-publishing a package.
+Deployment recovery needs the latest signed terminal record, exact tested artifact
+and executor, ancestry covering every failure and later completion. Runtime targets
+require `verified`; other registered targets allow `applied`/`verified`. Newer
+pending/failed attempts block older healthy evidence. Skips or validation success
+cannot recover deployments. Workflow/startup recovery requires the same workflow;
+job recovery requires the same job. Historical completion-worker recovery instead
+requires its exact signed failed-worker proof and newer signed success for that
+runtime target. Legacy resolution uses the same verifier. Invalid signatures,
+unknown outcomes and mixed unresolved failures retain alerts.
 
-WDPA's read-only `readiness` job also has an exact-job scope. Recovery requires
-the `Report readiness for the next scheduler window` step to succeed. The
-existing `--allow-paused` policy accepts a deliberately paused publisher while
-continuing to report an unapproved month as `ready: false`; this does not mean
-the month's data was built or published. The `build` job retains its deployment
-scope and signed terminal-receipt requirement.
-
-Existing open SDK candidate-only and WDPA readiness-only deployment episodes are
-reclassified after their checkpoint signature and every historical job are
-verified, including that each mutating sibling job was skipped. The original incident
-ID, parent, delivery claims and failure identities are retained; signed source
-checkpoints remain audit history. Canonical checkpoints must preserve the same
-parent and history. A later read-only episode requires a signed resolved
-checkpoint for the migrated predecessor. Mixed mutation episodes or conflicting
-parents fail visibly. During this rollout, pause notification-workflow admission,
-drain existing workers before merging, then re-enable it on the new main revision.
-
-Deployment recovery requires the existing cryptographically verified terminal
-record for that production target, its tested executor SHA and artifact. Runtime
-targets require `verified`; an asynchronous start or `applied` without terminal
-runtime acceptance is insufficient. Other targets retain their existing
-accepted `applied`/`verified` phases. A newer attempted deployment that is pending
-or failed prevents an older successful record from closing the incident.
-
-Success must cover every retained failed revision by ancestry. Same-revision
-recovery must follow the failed attempt. A signed deployment of a later revision
-supersedes an older execution that finishes late. Signed healthy evidence keeps
-advancing after recovery without sending more recovery messages. Skips,
-validation-only CI success, unrelated deployments and an observer that has no
-matching terminal record cannot resolve a deployment incident.
-
-Audit/workflow startup incidents use successful completion of the same trusted
-workflow. Other job incidents require the same exact job within that workflow.
-Historical `deployment-verification.yml` completion-job incidents also accept a
-newer signed WDPA runtime recovery when the exact original job successfully
-attested a signed failed WDPA execution. The resolver verifies every retained
-failure, the failed deployment revisions and their ancestry to the latest
-`verified` WDPA deployment. It retains the original incident ID, scope, parent,
-failure history and delivery claims in the signed ledger. Verification errors,
-failed attestation and mixed unresolved failures retain their alerts. The normal
-notification workflow performs this reconciliation using existing evidence.
-Publication apply/reset incidents retain the original PR and phase; manual reset
-recovery derives its PR only from the complete same-attempt apply job identity.
-Publisher authorization and immutable plan rechecks remain owned by the existing
-publisher. The notification registry never grants deployment or publication
-authority.
-
-### A completed publication with a failed PR receipt
-
-When promotion, metadata finalization and index rebuild succeeded but the live
-breaking-change PR comment failed with GitHub's integration-permission 403, do
-not rerun the mutation. `Data / Approved mutation` has an owner-only,
-protected receipt recovery: supply the original `pr_number`,
-`receipt_recovery_run_id` and `receipt_recovery_attempt` on tested `main`.
-Leave `authorization_rehearsal` false. The ordinary mutation jobs are excluded.
-
-Recovery rechecks the original immutable authorization artifact, exact-head
-acceptance, completed publication steps and failed comment command. It rejects
-incomplete publications, other failures and the webhook's failed-delivery
-diagnostic. It restores only that comment's exact deduplication marker, or
-reuses an existing trusted receipt. It has no GCP authentication or Slack send
-and leaves retained staging objects for the normal scratch cleanup process.
-
-The observer requires the repair step to have succeeded. Its green parent
-update covers only the original PR's apply run and attempt named by the recovery
-job; it cannot clear another failed attempt or feature-ID reset. Verify the
-original Slack parent after completion. A successful workflow wrapper alone is
-insufficient.
+SDK `candidate`/retired WDPA `readiness` require the actual read-only verification
+step. Migration verifies all historical failures and skipped mutating siblings while
+preserving ID, parent, claims and history. A completed publication with failed PR
+receipt uses protected owner-only recovery with original PR/run/attempt, tested main
+and rehearsal false. It rechecks immutable authority/completion and repairs only
+comment/deduplication state, without Slack/GCP mutation. Proof never covers another
+PR/attempt or reset.
 
 ## Persistence and delivery
 
-Notification checkpoints use GitHub deployment records with task
-`slack-incident`, environment `slack-incidents`, `production_environment=false`,
-`auto_merge=false`, empty required contexts, and `auto_inactive=false`. These
-are notification bookkeeping, not production deployments. The application
-appends snapshots rather than rewriting them. GitHub records can be deleted by
-privileged users; they are not an undeletable audit store.
+Append-only signed deployment checkpoints use task `slack-incident`, environment
+`slack-incidents`, `production_environment=false`, `auto_merge=false`, empty required
+contexts and `auto_inactive=false`. They bind exact main revision/run/attempt and
+are bookkeeping, not production authority or undeletable audit storage. Notification
+batches may have several subjects; production retains its single-subject policy.
 
-Each checkpoint is bound to its exact main workflow revision/run/attempt by the
-existing Sigstore receipt mechanism. Notification batches permit multiple signed
-subjects; production receipt verification keeps its single-subject default.
-Incident/deployment and reviewed-dataset authorization JSON reads, including
-paginated enumeration, use at most three attempts
-for HTTP 500/502/503/504, the CLI's confirmed GitHub connection failure, or a
-60-second command timeout, waiting 5 then 15 seconds. Each attempt repeats the
-same explicit GET; failed or partial output is discarded. Authentication,
-authorization, rate-limit responses and unknown CLI errors fail immediately.
-Successful responses still pass all existing JSON, enumeration and provenance
-checks. This transport policy never retries writes or uncertain Slack posts.
-The read-only verifier retries the exact GitHub attestation-service HTTP 503 for
-the same repository and receipt digest at most three times, waiting 5 then 15
-seconds. Every attempt uses the same bytes and signer/source policy. Exhausted
-outages, unavailable signatures, invalid evidence and all other errors remain
-failures; no production mutation or Slack delivery is retried by this helper.
-Unsigned/forged snapshots cannot choose a parent timestamp or suppress alerts.
-Signed state retains the workspace, bot, channel, parent timestamp/permalink,
-failed attempts, original recovery evidence, latest healthy evidence, deferred
-events and delivery claims/acknowledgements. Version 2 introduced the hash of
-the last acknowledged parent view. A changed view remains pending until Slack
-acknowledges its update; an interrupted update safely retries the same parent.
-Version 4 adds the terminal-validation fingerprints described below. Version 1
-and version 2 snapshots are signature-verified before migration. Existing timestamps
-and historical recovery replies remain audit evidence and are never sent again.
-Retired version 3 snapshots are also signature-verified before reading their
-incident core. Only historical IDs through the reviewed retirement boundary are
-accepted; a newly emitted retired-format checkpoint fails as a state downgrade.
-Only a single scope with all failure and recovery evidence
-represented in that core is accepted. Original parents and delivery claims stay
-intact; their old view acknowledgements are cleared so the current bot updates
-the same messages. Proven-empty registrations with released supervision have no
-incident to carry forward. Original signed snapshots remain audit history;
-unknown fields, merged scopes, active empty registrations and unrepresented
-evidence fail closed. New checkpoints use version 4; migrated historical
-checkpoints start without reusable terminal-validation evidence.
-Newer observations cannot replace a resolved incident until its original
-parent's green update is acknowledged. They remain in the signed deferred queue
-and replay on a later reconciliation, preserving both incident parents.
+Persist/sign claims before non-idempotent posts. Acknowledge/sign valid channel and
+string timestamp responses even if a later send fails; timeouts, invalid responses
+and HTTP 200 without `ok:true` never acknowledge. Pace posts; acknowledged updates
+may repeat. Permalink retries reuse the parent timestamp. Changed views remain
+pending until acknowledged; new episodes wait for the original green update.
 
-The serialized worker uses `queue: max` and never cancels an active send.
-GitHub's queue is bounded and completion order can vary. Completions of the
-on-demand terminal verifier also reconcile the last 24 hours of main runs,
-starting no earlier than the explicit activation timestamp. Complete API
-enumeration and authoritative source-attempt checks are required. Longer
-GitHub outages require reviewed replay of the missing interval; blanket
-production retries are never a notification recovery mechanism.
-For the owner-reviewed cutover, dispatch the same main workflow with
-`delivery_result=replay-window`, `incident_id=workflow-bot-cutover`,
-`operation=replay:START..END` (exact UTC timestamps), and no `message_ts`.
-The closed past interval is limited to seven days and enumerated in daily
-windows. This reads authoritative source attempts and uses the existing signed
-checkpoint, recovery and delivery gates. It does not rerun a source workflow.
+Never blindly resend or replace uncertain claims through webhooks. Retain new
+observations without blocking other scopes. Claims cannot create idle snapshots;
+unchanged claims fail health after 24 hours from the latest signed checkpoint.
+Owner inspection is required; recovery does not imply confirmed delivery.
 
-Before posting, the worker persists and signs the claim. After Slack returns a
-valid channel and message timestamp, it persists an acknowledgement; confirmed
-delivery checkpoints are attested even if a later send fails. Posting is paced
-to the channel limit. Updating an acknowledged parent can repeat safely.
+Verify v1/v2/v3 signatures before v4 migration; rollback retains those readers.
+Retired v3 IDs must precede retirement and contain complete incident cores. Reject
+unknown/merged scopes, active empty registrations and omitted failures. Preserve
+parents/replies/claims; clear old acknowledgements/fingerprints. Before incompatible
+writers pause admission, drain without cancelling sends, merge and resume within
+24 hours. Activation changes do not drain workers; longer gaps need reviewed replay.
 
-Delivery rereads each prepared deployment claim and requires the same worker
-invocation and exact record fields except GitHub's `updated_at`, which can
-advance when its checkpoint status is posted. The current record still needs
-full ledger identity and signed-receipt verification before any Slack write.
-Payload, timestamps within incident state and all other API fields must match.
+## Verification
 
-Permalink lookup uses Slack's documented `chat.getPermalink` GET request with
-the exact string timestamp and fixed channel in query parameters. Posting and
-updating retain JSON POST requests. A rejected permalink lookup fails the worker
-after preserving acknowledged posts. A later worker signs a metadata-only
-prepared record and resumes the lookup without posting the parent or acknowledged
-thread replies again. Permalinks always identify the top-level incident parent;
-this client does not request links to threaded replies.
+Every safety probe compares the catalog and traverses live source runs/jobs,
+incident records/statuses and recovery evidence. Notification workers and probes
+verify ledger signatures in each invocation; there is no persisted verification
+transcript or catalog snapshot. This repeats read and verification work instead
+of maintaining a second persisted state model. Batch signature statements and
+repository/workflow identities are reused only within an invocation. Terminal
+fingerprints still cover complete status history and verifier. Malformed evidence
+and failed reads fail visibly. Health reminder artifacts bind the exact producer,
+successful upload, creation interval, archive digest and sole bounded member.
+GET transport/5xx and
+recognized attestation 503 failures retry at most three times after 5 then 15 seconds
+with identical bytes/signer. Authentication, authorization, rate limits and invalid
+proofs fail immediately; this mechanism never retries writes or uncertain sends.
 
-An HTTP 200 without Slack `ok:true`, missing message identity, timeout or other
-unconfirmed delivery cannot acknowledge a post. A claimed post is never blindly
-resent, and the worker never falls back to a webhook after an uncertain bot send.
-Known blocked scopes retain new observations for later replay; they do not
-prevent unrelated scopes from posting. The first failed send remains failed in
-GitHub. Subsequent read-only observations report **Action required** in their
-summaries without attempting that send again. Operational recovery and Slack
-delivery completion are separate states. A known open parent continues tracking
-failed attempts while a retry's delivery is uncertain. Recovery must cover all
-recorded and deferred failures before that parent can turn green; the uncertain
-retry remains blocked and is never resent automatically. An unconfirmed original
-parent still requires owner inspection before any parent update or new send.
+## Configure and reconcile
 
-## Incremental verification
+Install/invite a bot with `chat:write`; no history/search/public-post scope is needed.
+Set secret `SHARED_DATASETS_SLACK_BOT_TOKEN`, exact channel variable
+`SHARED_DATASETS_SLACK_CHANNEL_ID`, UTC activation `SHARED_DATASETS_SLACK_INCIDENTS_SINCE`
+and `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED=true` to admit incident workers.
+Never log/commit tokens or put them in arguments. The bot is the sole workflow
+incident transport; disabling admission does not switch to webhooks. Retain the
+incoming webhook for safety findings and other operational summaries. Missing bot
+configuration fails visibly.
+Workspace/bot/channel changes require registry migration. Observe real recovery;
+never fail production or post synthetic production messages to test delivery.
 
-The safety timer can remain idle only after the real incident preparation logic
-has completed without requesting a ledger write, with no pending WDPA records,
-deferred observations, uncertain posts or parent repairs. It records the exact
-API read transcript from that settled dry run in a bounded native Actions
-artifact. It never posts Slack messages, writes checkpoints or publishes data.
+For an uncertain send, inspect Slack and the latest signed checkpoint/first claimed
+operation. Owner-only main dispatch confirms `delivered` with the exact matching
+string timestamp, or `not-delivered` with empty timestamp only after proving absence.
+Derive timestamps from permalinks by inserting a decimal before the final six digits;
+never use floats or another incident's timestamp. Confirm each operation separately.
+A recovered undelivered parent retires quietly; old replies are never replaced.
+Workers recheck proof and retained observations without retrying production.
 
-Each later check freshly enumerates monitored main runs and all WDPA deployment
-records/statuses, reads release-index and published catalog generations, and
-rereads every recorded API input, including source jobs. Reuse requires the same
-code revision, pinned verifier, activation timestamp and Slack identity, plus an
-authenticated successful same-main snapshot producer. Changed inputs or missing
-retention run the full comparison; failed reads and malformed selected proof
-fail visibly. A rolling 24-hour source window also invalidates proof as old runs
-age out, so adoption and active periods cost more than stable idle periods.
+Unsigned interrupted checkpoints use reviewed `seal-checkpoint`, incident ID and
+`checkpoint:RECORD_ID:PAYLOAD_SHA256` over canonical bytes. Recheck historical
+recovery/status IDs, signatures and ancestry; sign a new checkpoint without sending.
+Claims still require inspection. Catch-up uses `replay-window`, incident
+`workflow-bot-cutover`, `replay:START..END` and no timestamp. Enumerate closed past
+UTC windows daily, at most seven days; never rerun source workflows.
 
-A failed check requests the existing completion/reconciliation path as its last
-step. The follow-up waits for the exact parent attempt to finish, so replay sees
-its outcome. The next hourly census catches a runner lost before that handoff.
-Normal production failure/recovery subscriptions remain immediate. Healthy
-safety checks have no unconditional completion subscription, avoiding a new
-empty alert run every hour. The timer uses job-scoped `actions: write` for the
-two fixed main workflow dispatches in its checked-in code; existing
-publisher/observer authorization and signed terminal evidence remain mandatory.
-Legacy webhook mode keeps completion polling and forwards verified safety
-failures without requiring a Slack bot; it does not use the idle certificate.
-Its 24-hour census also catches failed safety attempts with no admitted native
-completion handoff. An already admitted handoff is never resent merely because
-its webhook outcome is uncertain.
-
-Except for the verified empty successful catalog probes described above, every
-admitted incident event loads and authenticates all current notification checkpoints, processes
-unrelated deferred and pending delivery work, and inspects every eligible
-deployment target. Routine preparation can reuse a notification checkpoint's
-previous successful signature verification only when its complete current record,
-complete status history, Slack identity and freshly read emitter, repository and
-workflow metadata are identical. Every other checkpoint receives full verification.
-Incident serialization and the 24-hour replay remain unchanged. There is no
-external worker or new production permission.
-
-Successful notification workers retain a small verification artifact for one day.
-Reuse independently checks the exact trusted-main producer revision, run and
-attempt, successful incident job and upload step, artifact creation interval,
-archive digest and sole bounded JSON member. Both the entire code revision and
-pinned verifier version must match. Missing or expired artifacts run ordinary
-verification; malformed selected proof or failed live reads fail visibly.
-Only exact checkpoints verified during that invocation are exported. A result
-covering several signed subjects never grants reuse to an unchecked checkpoint.
-
-This explicitly permits an unchanged, previously authenticated notification fact
-to remain usable when its original signature service is unavailable. It does not
-permit missing or changed checkpoint/status/emitter evidence. Source replay,
-pending deployment observation, deferred recovery and uncertain-send barriers
-remain unchanged. Owner reconciliation, delivery of newly signed claims and the
-final checkpoint verification retain their fresh verification path. Production
-authorization never uses the notification cache. This cache reduces verification
-inside admitted workers; the safety timer separately avoids idle worker starts.
-
-Each worker invocation reads a repository or workflow identity once and reuses
-that response for its remaining checks. Only those exact identity endpoints are
-eligible; source runs, exact run attempts, jobs, deployment records and status
-histories are always read afresh. Each consumer still validates its expected
-repository and workflow against the identity response. Failed reads are not
-retained, and each invocation starts empty. This removes duplicate API requests
-without keeping state between workers or shortening the replay window.
-
-A deployment state's `terminal_validation` is either null or exactly two SHA-256
-fingerprints: the complete production record and status history, and the verifier
-source contract. The latter includes the incident, deployment, emission, workflow
-identity, alert-routing, API-read and pinned-verifier installer code. The running
-GitHub CLI must match the installer's pinned version. The fingerprints are signed
-as part of the existing notification checkpoint and apply only to that state's
-exact healthy observation.
-
-Each probe freshly enumerates the target's deployment records and the newest
-record's complete status history. Reuse requires identical evidence, identical
-verifier policy and the same independently reconstructed terminal observation.
-Any new record, changed status history, changed policy or absent fingerprint
-requires full CI, source and receipt verification. Cold validation rereads the
-status history afterward and fails if it changed during verification. Pending or
-failed newer attempts never fall back to older healthy evidence. Failed reads,
-invalid signatures and malformed checkpoint fields remain failures.
-
-This deliberately permits an already authenticated historical fact to remain
-usable when its original CI or production attestation is later unavailable,
-provided the complete current evidence and policy still match. The current
-notification checkpoint must still pass its own authentication, including the
-exact unchanged-evidence reuse above, and the live deployment/status
-enumerations must succeed. These fingerprints have no
-production authorization role. Changed health clears them; owner checkpoint
-sealing also clears them and cannot manufacture reusable validation evidence.
-
-Within one ledger invocation, an already cryptographically verified multi-subject
-statement can cover another exact notification receipt. Every use still checks
-the live emitter, invocation-local repository and workflow identities, certificate
-policy and exact subject digest. This in-memory reuse never crosses invocations;
-production workflows retain their independent verification defaults.
-
-Before the first version 4 writer is merged, pause admission of the notification
-workflow and drain all admitted workers without cancelling active sends. Merge
-the reviewed change, confirm the main revision, then resume admission within
-24 hours so the existing hourly replay covers the gap. A longer pause requires
-the existing owner-reviewed replay window. Keep the bot activation setting
-unchanged; switching to the legacy notifier is not an admission pause. Version 2
-workers cannot read version 4 checkpoints, so a later rollback must retain the
-version 4 reader. No historical checkpoint deletion is required.
-
-The first probe of each migrated target performs full verification and signs its
-new fingerprints. Subsequent unchanged probes avoid repeated CI and production
-signature checks. Measure cold and steady-state runs separately, including job
-rounding, replay work and notification checkpoint verification; an improvement
-in the target probe alone is not the whole workflow's savings.
-
-## Configure and activate
-
-Use the existing Shared Dataset Alerts app if appropriate, or a dedicated bot.
-Add the bot scope `chat:write`, install/reinstall it, and invite the bot into the
-alert channel. Normal operation needs no channel-history, search or public-channel
-posting scopes. The bot can update only its own messages. Cloud Monitoring and
-older webhook messages are not automatically adopted or rewritten.
-
-Configure these repository settings before activation:
-
-| Setting | Type | Value |
-| --- | --- | --- |
-| `SHARED_DATASETS_SLACK_BOT_TOKEN` | Actions secret | Installed app's bot token |
-| `SHARED_DATASETS_SLACK_CHANNEL_ID` | Actions variable | Exact `C...` or `G...` channel ID |
-| `SHARED_DATASETS_SLACK_INCIDENTS_SINCE` | Actions variable | Activation time, UTC `YYYY-MM-DDTHH:MM:SSZ` |
-| `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED` | Actions variable | `true`, set last |
-
-Use the normal secret-setting interface; never commit, log or place the token in
-a command argument. The incoming webhook secret remains in place for disabled
-mode and other existing notifications. Enabled mode fails visibly on missing or
-invalid configuration rather than silently choosing another transport.
-
-Observe the next real failure/recovery sequence: one parent, a parent update
-if another attempt fails, that same parent edited green, matching SHA/artifact,
-and incident permalink in the notification run summary. Tests exercise the
-actual HTTP request construction offline, including negative controls for
-broadcasts, duplicate posts and false recovery. Do not create synthetic channel
-messages or deliberately fail a deployment to validate notification delivery.
-
-Disabling incident mode returns future failures to the existing webhook. Existing
-incident messages and checkpoints remain available; changing bot/channel/workspace
-identity while retaining a registry requires an explicit migration.
-
-For the v1-to-v2 rollout, pause admission by disabling
-`unattended-workflow-alert.yml` immediately before the approved merge. Completely
-enumerate its existing nonterminal runs and let them finish without cancelling
-an active send. Merge only after they have drained, verify the new main revision,
-then re-enable the workflow. Already-created workers check out their original
-workflow revision; a newer merge cannot upgrade them. Keep the pause within
-24 hours so the next hourly safety check requests reconciliation of missed
-main events. A longer pause requires the reviewed missing-interval replay
-described above. Changing the incident-mode variable alone does not prevent
-old workflow admissions and is insufficient for this schema transition.
-Do not rerun old v1 notification workers after v2 checkpoints have been written;
-use the current main worker's owner reconciliation for uncertain delivery.
-
-## Reconcile an uncertain send
-
-Use the notification workflow's main-only dispatch as the repository owner.
-Inspect the incident in Slack before confirming its delivery. No history-reading
-permission is added just to automate this exceptional decision.
-
-1. Read the latest signed notification checkpoint for the exact incident ID.
-2. Choose its first active `claimed` operation: `parent` or `attempt:...`.
-   Historical recovery claims are audit-only and cannot send a message.
-3. If the message exists and matches the incident/operation, choose `delivered`
-   and supply its exact string timestamp. A parent timestamp can be obtained
-   from its permalink's `p` value by inserting the decimal before its final six
-   digits. Do not use a float or another incident's message.
-4. If inspection confirms the message was not posted, choose `not-delivered`
-   with an empty timestamp. This explicitly authorizes the pending failure send.
-   If verified recovery already covers an undelivered parent, it is retired
-   quietly rather than posted as a new green message.
-
-The workflow confirms only that exact first uncertain operation. Other uncertain
-operations still require separate inspection. Once they are cleared, it rechecks
-terminal evidence and replays retained observations before preparing any new
-failure send. Events waiting for a green parent update replay after that update
-is acknowledged. Real recovery never retries a production mutation.
-
-If a runner stopped after a checkpoint write but before attestation, the latest
-checkpoint fails signature verification. Do not skip it and resend. Inspect the
-exact deployment record and all recorded Slack acknowledgements, compute
-SHA-256 of its payload using `deployment_emission.canonical`, then dispatch
-`seal-checkpoint` with the exact incident ID and operation
-`checkpoint:RECORD_ID:PAYLOAD_SHA256`. This is explicit owner acceptance of the
-reviewed notification bookkeeping. It creates a new signed checkpoint and sends
-no Slack messages; claimed posts still need the separate confirmation above.
-Deployment recovery evidence is independently rechecked before sealing.
-Original recovery and newer healthy evidence are reverified by their exact
-deployment/status IDs, including signatures and revision ancestry. A newer
-healthy deployment does not invalidate the original recovery history.
-
-## Implementation and validation
-
-- `scripts/slack_incident_api.py` owns fixed routing and strict Slack responses.
-- `scripts/slack_incidents.py` owns correlation, transitions, signed checkpoints
-  and delivery reconciliation.
-- `unattended-workflow-alert.yml` owns trusted main execution, serialization,
-  claim signing and delivery signing.
-- `scripts/deployment_receipt_contracts.py` admits only this main notification
-  job's fixed checkout, commands, permissions and signing sequence. Negative
-  controls retain the rejection of PR-capable or production mutation writers.
-- `tests/test_slack_incidents.py` covers the actual preview/CDN job identities,
-  wrong targets/revisions, stale events, skips, forged state, uncertain delivery,
-  deferred events, owner reconciliation, production-registry separation,
-  method-specific HTTP request contracts and permalink-only resumption after
-  acknowledged delivery.
-- `tests/test_slack_incident_api.py` exercises a complete real-client request
-  sequence offline, including explicit thread routing without broadcast. The
-  incident lifecycle test exercises parent, permalink, repeated-failure update
-  and green parent update through serialized state and the real Slack client.
-  No production channel test is needed.
-
-Invariant enforced: real open incidents may create one parent; further failures
-and verified recovery only update it. Exact scope/revision evidence and signed
-claims remain required. Boundary changed: fixed thread routing and a versioned,
-signed acknowledgement of the parent view. Code removed: the live synthetic
-workflow, script and tests, automatic reply generation and broadcast option.
-Internal handling removed: reply posts no longer participate in the active
-outbox. Fallbacks added: none. Fallbacks rejected: broadcast replies, new green
-messages, blind reposts and inferred recovery. Deletion candidates left in place:
-historical snapshots and replies retain persisted audit evidence; the
-existing webhook supports disabled mode and established ingestion notifications.
-Remaining uncertainty: actual delivery depends on Slack availability and bot
-configuration; ambiguous non-idempotent sends still require owner inspection.
-
-
-### Closing a legacy webhook parent
-
-Webhook alerts sent while incident management is disabled have no managed message
-record. After recovery, the owner may dispatch `Alerts / Legacy workflow resolution`
-from `main` with the original failed run ID and its inspected Slack parent
-`message_ts`. The action uses read-only GitHub permissions to verify every failed job maps to a
-registered deployment and that each latest signed terminal success is newer and
-covers the failed revision. Runtime targets, including dataset usage, require
-`verified`, not merely `applied`. It updates only the supplied original parent;
-it never posts a replacement or reply. Unsupported failures remain unresolved.
-This action does not enable incident management or reinterpret retained incident
-records from other protocol versions.
-The same signed WDPA recovery proof also covers historical completion jobs that
-reported an attested worker failure. Managed incident parents use the normal
-notification workflow so closure is retained in their signed ledger.
-
-
-## Feature identity decision replies
-
-The failure incident outbox above keeps its no-reply contract. Feature identity
-review is a separate typed lifecycle: its original decision thread receives the
-accepted choice, decision maker, recommendation rationale and exact reviewed PR.
-The parent retains the original request, case summaries, context and links;
-review status is a separate marker, not a replacement for that body. The
-reconciler can restore an older shortened bot-owned request from its retained
-event without posting another decision reply.
-See [identity decision alert routing](alert-routing.md#identity-decision-threads).
-A reviewed decision closes only matching review requests; actual dataset
-publication, deployment acceptance and native Monitoring closure retain their
-own evidence requirements.
-
-The protected main-only `identity-decision-reconcile.yml` workflow runs after
-successful `ci-ready` and any selected transport deployment. Owner dispatches
-supply the exact tested current-main SHA and source CI run/attempt. It validates
-same-repository merged PRs, final-head maintainer acceptance, immutable decision
-bytes and runtime identity legality before updating the private approved index.
-The existing authenticated receiver uses that index for late events. All cases
-in the captured event must have confirmed decision replies before linked
-Monitoring review parents become green; partial decisions leave them open.
-Uncertain Slack posts retain their claims and cannot automatically send again.
+Legacy posting was removed after read-only confirmation of active bot admission
+(`true`, 2026-11-05). Keep closure: owner resolver job `resolve` still failed at
+run `41756725199` on 2026-11-04; this is no evidence that all historical parents
+are closed. Pinned historical caller-graph fixtures remain required.
+For legacy webhook closure, owner main dispatch supplies original failed run ID
+and inspected parent timestamp. Every failure requires registered signed recovery
+or exact historical worker proof; runtime targets require `verified`. Update only
+that parent, without replacement/reply/activation/mutation. Managed parents retain
+normal signed closure. Native incidents supply only `monitoring_incident_id` after
+[authoritative closure](alert-routing.md#editable-monitoring-messages).
+Feature decisions follow [their typed lifecycle](alert-routing.md#identity-decision-threads):
+preserve requests and reply in the original thread without broadcast. Acceptance
+cannot establish publication, execution or Monitoring recovery.

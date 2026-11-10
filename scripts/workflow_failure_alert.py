@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Notify only for failed unattended GitHub runs; never execute their artifacts."""
+"""Classify trusted unattended runs and close owner-identified legacy parents."""
 
 from __future__ import annotations
 
 import argparse
-import json
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 import os
 import re
 from pathlib import Path
@@ -12,52 +13,27 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.slack_notify import build_slack_payload, notify
+from scripts.slack_notify import build_slack_payload
 from scripts.dataset_mutation_authorization import GitHub
 from scripts.workflow_identity import WORKFLOW_NAMES
+from scripts import deployment_revision as deployments
+from scripts.incident_health_artifacts import timestamp
+from scripts.terraform_target_contracts import registry
 
 REPOSITORY = "SkyTruth/shared-datasets-1"
+API_ROOT = f"repos/{REPOSITORY}"
 FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
-PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed feature-ID reset",
-                    "Detect reviewed PR mutation plans", "Build and publish catalog web",
-                    "Build image and apply", "Prepare publication image and apply",
-                    "Apply PMTiles CDN route sync", "Apply Scheduled ingestion deploy IAM sync",
-                    "Apply Translation notice secret IAM bootstrap")
-VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
+# Historical producer names remain routable after their workflow jobs are retired.
+PUBLICATION_JOBS = tuple(name for row in registry(section='workflows').values() for name in row.get('publication_jobs', []))
+VALIDATION_JOBS = {"lint", "tests", "tests-control-plane", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
+                   "sdk-validation", "production-images (short)", "production-images (wdpa)",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
-MONITORED_WORKFLOWS = {
-    "artifact-registry-iam-sync.yml",
-    "bucket-hygiene-audit.yml",
-    "catalog-viewer-deploy.yml",
-    "catalog-web-deploy.yml",
-    "ci.yml",
-    "cron-alert-policy-sync.yml",
-    "deployment-recovery.yml",
-    "deployment-verification.yml",
-    "eamlis-monthly-deploy.yml",
-    "mpatlas-monthly-deploy.yml",
-    "operational-safety-check.yml",
-    "pmtiles-cdn-sync.yml",
-    "preview-terraform-iam-sync.yml",
-    "prod-terraform-state-reconcile.yml",
-    "publish-dataset.yml",
-    "publish-typescript-sdk.yml",
-    "scheduled-ingestion-deploy-iam-sync.yml",
-    "scratch-cleanup-audit.yml",
-    "scratch-cleanup-iam-sync.yml",
-    "sea-ice-daily-deploy.yml",
-    "terraform-state-read-iam-sync.yml",
-    "wdpa-monthly-deploy.yml",
-    "wdpa-monthly-build.yml",
-}
-WORKFLOW_PATHS = {name: filename for filename in MONITORED_WORKFLOWS for name in WORKFLOW_NAMES[filename]}
-# A successful idle safety check must not start a notification workflow. Its
-# failures and recoveries remain in the existing hourly authoritative replay.
-REPLAY_ONLY_WORKFLOWS = {"operational-safety-check.yml"}
-OBSERVER_WORKFLOWS = {name for filename in ("deployment-verification.yml", "deployment-recovery.yml") for name in WORKFLOW_NAMES[filename]}
-UNATTENDED_DISPATCH_WORKFLOWS = OBSERVER_WORKFLOWS | {
-    name for path in REPLAY_ONLY_WORKFLOWS | {"catalog-web-deploy.yml"} for name in WORKFLOW_NAMES[path]
-}
+WORKFLOW_EVENTS = {filename: set(row['events']) for filename, row in registry(section='workflows').items() if 'events' in row}
+WORKFLOW_PATHS = {name: filename for filename in WORKFLOW_EVENTS for name in WORKFLOW_NAMES[filename]}
+
+
+def unattended(run):
+    return run["event"] in WORKFLOW_EVENTS.get(WORKFLOW_PATHS.get(run["name"]), set())
 
 
 def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
@@ -81,14 +57,29 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
             and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
 
 
+def safety_health_only(run, jobs):
+    if run["name"] not in WORKFLOW_NAMES["operational-safety-check.yml"]:
+        return False
+    # Retained reports own setup/probe findings; dispatch and delivery still alert.
+    for job in jobs:
+        steps = job.get("steps", [])
+        probe = next((index for index, step in enumerate(steps) if step["name"] == "Check operational work"), 0)
+        covered = {step["name"] for step in steps[:probe]} | {"Check operational work", "Check freshness and stalled operations"}
+        failed = {step["name"] for step in steps if step.get("conclusion") in FAILED_CONCLUSIONS}
+        if (failed and failed <= covered
+                and any(step.get("name") == "Retain safety health report" and step.get("conclusion") == "success" for step in steps)
+                and (failed == {"Check freshness and stalled operations"} or any(step.get("name") == "Check freshness and stalled operations"
+                     and step.get("conclusion") == "success" for step in steps))):
+            return True
+    return False
+
+
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
     run = event["workflow_run"]
     # Maintenance and automatic follow-ups are unattended. CI's main-push
     # publication jobs share that coverage; other supervised checks stay in GitHub.
     if (
-        not (run["event"] in {"schedule", "workflow_run"}
-             or (run["event"] == "push" and run["name"] in WORKFLOW_NAMES["ci.yml"])
-             or (run["event"] == "workflow_dispatch" and run["name"] in UNATTENDED_DISPATCH_WORKFLOWS))
+        not unattended(run)
         or run["conclusion"] not in FAILED_CONCLUSIONS
         or run["status"] != "completed"
         or run["head_branch"] != "main"
@@ -96,8 +87,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         or event["repository"]["full_name"] != REPOSITORY
     ):
         return None
-    run_id = run["id"]
-    if type(run_id) is not int or run_id <= 0:
+    if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
     if catalog_probe_only(run, jobs or []):
         return None
@@ -111,36 +101,65 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         "title": "Unattended GitHub workflow failed",
         "body": f"{name} finished with {run['conclusion']}.\n"
                 f"Trigger: {run['event']}.\n"
-                f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Open workflow run>",
+                f"<https://github.com/{REPOSITORY}/actions/runs/{run['id']}|Open workflow run>",
         "status": "error",
     }
 
 
-def verify_source_event(api: GitHub, run: dict) -> bool:
-    """Verify every source identity before notification; obsolete attempts are no-ops."""
-    run_id = run["id"]
-    if type(run_id) is not int or run_id <= 0:
+def context(api, environment=os.environ, *, workflow, events=("schedule", "workflow_dispatch")):
+    deployments.require(environment.get("GITHUB_REPOSITORY") == REPOSITORY and environment.get("GITHUB_REF") == "refs/heads/main"
+            and environment.get("GITHUB_WORKFLOW_REF") == REPOSITORY + "/" + workflow + "@refs/heads/main",
+            "require exact trusted main workflow")
+    identifier, attempt = int(environment["GITHUB_RUN_ID"]), int(environment["GITHUB_RUN_ATTEMPT"])
+    run = api.get(f"{API_ROOT}/actions/runs/{identifier}/attempts/{attempt}")
+    deployments.require(run.get("id") == identifier and run.get("run_attempt") == attempt
+            and run["event"] in events
+            and run["path"] == workflow, "invalid execution provenance")
+    definition = api.get(f"{API_ROOT}/actions/workflows/{workflow.rsplit('/', 1)[-1]}")
+    source_identity(api, run, workflow, definition)
+    return run
+
+
+def source_inventory(api, run, since, *, now=None):
+    now = now or datetime.now(timezone.utc)
+    # Three daily intervals cover a skipped probe plus one full interval of overlap.
+    start = max(timestamp(since), now - timedelta(hours=72))
+    query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
+                       + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    rows = api.pages(f"{API_ROOT}/actions/runs?{query}", field="workflow_runs")
+    return [item for item in rows if (run is None or item.get("id") != run["id"])
+                and item.get("name") in WORKFLOW_PATHS and item.get("head_branch") == "main"
+                and item.get("head_repository", {}).get("full_name") == REPOSITORY], start, now
+
+
+def source_identity(api: GitHub, run: dict, path: str, workflow: dict) -> None:
+    """Authenticate an API run against its declared main workflow path."""
+    if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
     if type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0 or not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha"))):
         raise ValueError("invalid source attempt or revision")
-    if run.get("name") not in WORKFLOW_PATHS:
-        raise ValueError("unknown unattended workflow identity")
-    authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run_id}")
-    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{authoritative['workflow_id']}")
     repository = api.get(f"repos/{REPOSITORY}")
-    if (workflow.get("id") != authoritative["workflow_id"]
-            or workflow.get("path") != ".github/workflows/" + WORKFLOW_PATHS[run["name"]]
-            or authoritative.get("path") != workflow.get("path")
-            or authoritative.get("id") != run_id
-            or authoritative.get("name") != run["name"]
-            or authoritative.get("head_sha") != run["head_sha"]
-            or authoritative.get("event") != run["event"]
-            or authoritative.get("head_branch") != "main"
-            or any(authoritative.get(key, {}).get("id") != repository.get("id")
-                   or authoritative.get(key, {}).get("full_name") != REPOSITORY
+    if (workflow.get("id") != run["workflow_id"]
+            or workflow.get("path") != path or run.get("path") != path
+            or run.get("head_branch") != "main"
+            or any(run.get(key, {}).get("id") != repository.get("id")
+                   or run.get(key, {}).get("full_name") != REPOSITORY
                    for key in ("repository", "head_repository"))
             or repository.get("full_name") != REPOSITORY
             or type(repository.get("id")) is not int or repository["id"] <= 0):
+        raise ValueError("failure event does not identify a trusted main source workflow")
+
+
+def verify_source_event(api: GitHub, run: dict) -> bool:
+    """Verify every source identity before notification; obsolete attempts are no-ops."""
+    if type(run.get("id")) is not int or run["id"] <= 0 or type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0:
+        raise ValueError("invalid source run or attempt")
+    if run.get("name") not in WORKFLOW_PATHS:
+        raise ValueError("unknown unattended workflow identity")
+    authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
+    workflow = api.get(f"repos/{REPOSITORY}/actions/workflows/{authoritative['workflow_id']}")
+    source_identity(api, authoritative, ".github/workflows/" + WORKFLOW_PATHS[run["name"]], workflow)
+    if any(authoritative.get(key) != run.get(key) for key in ("id", "name", "head_sha", "event")):
         raise ValueError("failure event does not identify a trusted main source workflow")
     if authoritative["run_attempt"] > run["run_attempt"]:
         return False
@@ -171,21 +190,14 @@ def resolve_legacy(api, slack, run_id, message_ts):
     event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
     incidents.require(jobs is not None and alert_for_run(event, jobs=jobs) is not None,
                       "source is not a current unattended failure")
-    targets = incidents.job_targets()
+    targets = incidents.job_targets(revision=run["head_sha"], workflow=WORKFLOW_PATHS[run["name"]])
     failures = [incidents.from_job(run, job, targets) for job in jobs
                 if job["conclusion"] in FAILED_CONCLUSIONS]
     incidents.require(failures, "source has no failed jobs")
     links = []
     for failure in failures:
-        if failure["kind"] == "deployment":
-            recovery, _ = incidents.terminal_success(api, failure["scope"])
-            incidents.require(recovery is not None
-                              and incidents.deployments.git_ancestor(failure["sha"], recovery["sha"])
-                              and incidents.instant(recovery["time"]) > incidents.instant(failure["time"]),
-                              "failed target has no newer verified recovery")
-        else:
-            recovery = incidents.observer_runtime_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
-            incidents.require(recovery is not None, "failed job has no registered verified runtime recovery")
+        recovery = incidents.verified_recovery(api, [failure], ancestor=incidents.deployments.git_ancestor)
+        incidents.require(recovery is not None, "failed target has no newer verified recovery")
         links.append(f"<{incidents.emissions.invocation(REPOSITORY, recovery['run_id'], recovery['attempt'])}|Verified {failure['label']} recovery>")
     payload = build_slack_payload(title="Unattended GitHub workflow resolved", status="success",
                                  body=f"<https://github.com/{REPOSITORY}/actions/runs/{run_id}|Original failed run>\n" + "\n".join(dict.fromkeys(links)))
@@ -194,53 +206,14 @@ def resolve_legacy(api, slack, run_id, message_ts):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--event-path", type=Path)
-    parser.add_argument("--resolve-run-id", type=int)
-    parser.add_argument("--message-ts")
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resolve-run-id", type=int, required=True)
+    parser.add_argument("--message-ts", required=True)
     args = parser.parse_args()
-    if args.resolve_run_id is not None:
-        if args.event_path or args.dry_run or not args.message_ts:
-            parser.error("resolution requires only --resolve-run-id and --message-ts")
-        from scripts.slack_incident_api import Slack
-        from scripts.deployment_revision import GitHub as DeploymentGitHub
-        resolve_legacy(DeploymentGitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
-                                      os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
-                       args.resolve_run_id, args.message_ts)
-        return
-    if not args.event_path or args.message_ts:
-        parser.error("notification requires --event-path")
-    event = json.loads(args.event_path.read_text())
-    run = event["workflow_run"]
-    if (run.get("name") in WORKFLOW_NAMES["deployment-verification.yml"] and run.get("event") == "workflow_dispatch"
-            and run.get("conclusion") == "success"):
-        api = GitHub()
-        if verify_source_event(api, run):
-            authoritative = api.get(f"repos/{REPOSITORY}/actions/runs/{run['id']}")
-            match = re.fullmatch(r"Operational follow-up: safety ([1-9][0-9]*)/([1-9][0-9]*)", authoritative.get("display_title", ""))
-            if match:
-                from scripts.operational_safety_check import safety_parent
-                run = safety_parent(api, int(match[1]), int(match[2]))
-                event = {"repository": {"full_name": REPOSITORY}, "workflow_run": run}
-    jobs = None
-    alert = alert_for_run(event)
-    # Both CI publication and scheduled catalog activity need exact job evidence.
-    needs_jobs = ((run["name"] in WORKFLOW_NAMES["ci.yml"] and run["event"] == "push"
-                   or run["name"] in WORKFLOW_NAMES["catalog-web-deploy.yml"] and run["event"] in {"schedule", "workflow_dispatch"})
-                   and run["conclusion"] in FAILED_CONCLUSIONS and run["status"] == "completed"
-                   and run["head_branch"] == "main" and run["head_repository"]["full_name"] == REPOSITORY
-                   and event["repository"]["full_name"] == REPOSITORY)
-    if needs_jobs:
-        jobs = jobs_for_event(GitHub(), run)
-        alert = None if jobs is None else alert_for_run(event, jobs=jobs)
-    elif alert is not None and not verify_source_event(GitHub(), run):
-        alert = None
-    if alert is None:
-        print("No unattended workflow failure to announce.")
-    elif args.dry_run:
-        print(json.dumps(alert, indent=2))
-    else:
-        notify(**alert, strict=True)
+    from scripts.slack_incident_api import Slack
+    from scripts.deployment_revision import GitHub as DeploymentGitHub
+    resolve_legacy(DeploymentGitHub(), Slack(os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", ""),
+                                   os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")),
+                   args.resolve_run_id, args.message_ts)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Strict, streamed Docker-save image boundary shared by CI and deployment."""
 from __future__ import annotations
 
+import ast
+from contextlib import contextmanager
 import hashlib
 import gzip
 import io
@@ -9,11 +11,118 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
 from time import perf_counter
 
-TARGETS = frozenset({"wdpa-monthly", "monitoring-slack", "mpatlas-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def repository_files(revision, root):
+    with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(["git", "archive", revision], cwd=root))) as archive:
+        return {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+
+
+def dependency_graph(files, *, disabled_conditions=()):
+    """Local imports, package initializers and literal executor/data references."""
+    modules = {name.removeprefix("api/python/src/").removesuffix(".py").replace("/", "."): name
+               for name in files if name.endswith(".py")}
+    modules.update({Path(name).stem: name for name in files if name.startswith("tests/") and name.count("/") == 1})
+    edges = {}
+    for name, source_text in files.items():
+        if name.endswith(('.yml', '.yaml', '.sh')):
+            text = source_text.decode() if isinstance(source_text, bytes) else source_text
+            if disabled_conditions and name.endswith(('.yml', '.yaml')):
+                import yaml
+                def prune(value):
+                    if isinstance(value, list):
+                        return [prune(row) for row in value if not isinstance(row, dict)
+                                or not any(condition in row.get('if', '') for condition in disabled_conditions)]
+                    return {key: prune(row) for key, row in value.items()} if isinstance(value, dict) else value
+                text = yaml.safe_dump(prune(yaml.safe_load(text)))
+            paths = set(re.findall(r'(?:\.github/[^\s\x22\x27]+\.(?:py|mjs)|(?:scripts|api)/[\w/.-]+\.(?:py|sh|mjs))', text))
+            for local in re.findall(r'uses:\s*\./([^\s]+)', text):
+                paths.add(local if local.endswith(('.yml', '.yaml')) else local + '/action.yml')
+            edges[name] = paths & files.keys()
+        if not name.endswith(".py"):
+            continue
+        dependencies = set()
+        package = name.removeprefix("api/python/src/").split("/")[:-1]
+        for node in ast.walk(ast.parse(source_text, filename=name)):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
+                module = ".".join(filter(None, (prefix, node.module)))
+                names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+            elif (isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in files
+                  and not node.value.endswith((".py", ".yml", ".yaml"))):
+                dependencies.add(node.value)
+            elif isinstance(node, ast.Call):
+                function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if function in {"run", "run_command", "Popen", "check_output", "check_call"}:
+                    dependencies.update(item.value for arg in node.args for item in ast.walk(arg)
+                                        if isinstance(item, ast.Constant) and isinstance(item.value, str) and item.value in files)
+                elif function == "import_module" and node.args and isinstance(node.args[0], ast.Constant):
+                    names = [node.args[0].value]
+            for module in names:
+                parts = module.split(".")
+                for index in range(1, len(parts) + 1):
+                    prefix = ".".join(parts[:index])
+                    dependencies.update(modules[key] for key in (prefix, prefix + ".__init__") if key in modules)
+        dependencies.update(str(parent / "__init__.py") for parent in Path(name).parents
+                            if str(parent / "__init__.py") in files)
+        edges[name] = dependencies
+
+    return edges
+
+
+def dependency_closure(edges, roots):
+    seen, pending = set(), list(roots)
+    while pending:
+        name = pending.pop()
+        if name not in seen:
+            seen.add(name)
+            pending.extend(edges.get(name, ()))
+    return seen
+
+
+def image_recipes(root=ROOT):
+    """Production Terraform image consumers, never a second target list."""
+    recipes = {}
+    for recipe in (*root.glob("services/*/Dockerfile"), *root.glob("ingestion/*/Dockerfile")):
+        package = recipe.parent.name
+        configuration = root / f"terraform/envs/prod/{package}.tf"
+        if configuration.is_file() and re.search(rf"\bimage\s*=\s*var\.{package}_image\b", configuration.read_text()):
+            recipes[package.replace("_", "-")] = recipe.relative_to(root).as_posix()
+    return recipes
+
+
+def image_consumers(root=ROOT):
+    """Resolve Terraform image variables to their actual job/service addresses."""
+    from scripts.terraform_target_contracts import resource_index
+    index = resource_index(root)
+    consumers = {}
+    for recipe in image_recipes(root).values():
+        package = Path(recipe).parent.name
+        path = f'terraform/envs/prod/{package}.tf'
+        for name, body in index[path].items():
+            if name.startswith('module.') and body.get('image') == '${var.' + package + '_image}':
+                source = (root / path).parent / body['source']
+                children = {child for file, rows in index.items() if (root / file).parent.resolve() == source.resolve()
+                            for child in rows if child.startswith('google_cloud_run_v2_job.')}
+                if len(children) != 1:
+                    raise ValueError(name + ': image consumer must contain one Cloud Run job')
+                consumers[name + '.' + children.pop()] = package + '_image'
+            elif name.startswith('google_cloud_run_v2_service.') and package + '_image' in json.dumps(body):
+                consumers[name] = package + '_image'
+    return consumers
+
+
+RECIPES = image_recipes()
+TARGETS = frozenset(RECIPES)
 BUILD_TARGETS = tuple(sorted(TARGETS))
 MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2
@@ -84,56 +193,82 @@ def validate_manifest(manifest, sha):
     return images
 
 
-def verify_archive(path, image):
-    """Never extract image TAR members to the host; verify config and every rootfs layer."""
-    path = Path(path)
-    require(path.stat().st_size == image["archive_size"] <= MAX_IMAGE
-            and hash_file(path) == image["archive_sha256"], "retained image archive digest or size mismatch")
+def validate_local_manifest(manifest, sha):
+    """Local daemon IDs prove installed probes, never a deployable TAR handoff."""
+    require(isinstance(manifest, dict) and set(manifest) == {"schema_version", "transport", "tested_sha", "images"}
+            and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1
+            and manifest["transport"] == "local-daemon" and manifest["tested_sha"] == sha
+            and SHA.fullmatch(sha), "invalid local image manifest identity")
+    images = manifest["images"]
+    require(isinstance(images, dict) and set(images) <= TARGETS, "invalid local image selection")
+    for target, image in images.items():
+        require(isinstance(image, dict) and set(image) == {"image_id", "source_tag", "platform"}
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(image["image_id"]))
+                and image["source_tag"] == source_tag(target, sha)
+                and image["platform"] == "linux/amd64", "invalid local tested image identity or platform")
+    return images
+
+
+@contextmanager
+def saved_image(path, *, canonical=False):
+    """One bounded TAR/JSON parser for Docker exports and retained archives."""
+    require(Path(path).stat().st_size <= MAX_IMAGE, "saved image exceeds limit")
     with tarfile.open(path, mode="r:") as archive:
         members = archive.getmembers()
-        require(len(members) <= 2048, "too many Docker-save members")
         names = [member.name for member in members]
-        require(len(names) == len(set(names)), "duplicate Docker-save member")
+        require(len(members) <= 2048 and len(names) == len(set(names)), "duplicate or excessive Docker-save members")
         require(all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
-                    and "\\" not in name and name == str(PurePosixPath(name)) for name in names), "unsafe Docker-save member")
+                    and "\\" not in name and (not canonical or name == str(PurePosixPath(name)))
+                    and (member.isfile() or member.isdir()) for name, member in zip(names, members)), "unsafe Docker-save member or link")
         by_name = {member.name: member for member in members}
 
         def metadata(name):
             require(name in by_name and by_name[name].isfile() and by_name[name].size <= MAX_JSON,
                     "missing or invalid Docker-save metadata: " + name)
-            return read_json(archive.extractfile(by_name[name]).read())
+            return archive.extractfile(by_name[name]).read()
 
-        manifest = metadata("manifest.json")
+        manifest = read_json(metadata("manifest.json"))
+        fields = {"Config", "RepoTags", "Layers"}
         require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict)
-                and set(manifest[0]) == {"Config", "RepoTags", "Layers"}, "Docker-save must contain exactly one image")
+                and fields <= set(manifest[0]) <= fields | (set() if canonical else {"LayerSources", "Parent"}),
+                "Docker-save must contain exactly one supported image")
         saved = manifest[0]
+        config_bytes = metadata(saved["Config"])
+        config = read_json(config_bytes)
+        layers, diff_ids = saved["Layers"], config.get("rootfs", {}).get("diff_ids")
+        require(config.get("os") == "linux" and config.get("architecture") == "amd64", "Docker-save config platform mismatch")
+        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list) and layers
+                and isinstance(diff_ids, list) and len(layers) == len(diff_ids)
+                and all(isinstance(name, str) and name in by_name and by_name[name].isfile() for name in layers)
+                and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) for digest in diff_ids), "invalid Docker-save rootfs")
+        yield archive, by_name, saved, config_bytes, diff_ids
+
+
+def verify_archive(path, image):
+    """Never extract image TAR members to the host; verify config and every rootfs layer."""
+    path = Path(path)
+    require(path.stat().st_size == image["archive_size"] <= MAX_IMAGE
+            and hash_file(path) == image["archive_sha256"], "retained image archive digest or size mismatch")
+    with saved_image(path, canonical=True) as (archive, by_name, saved, config_bytes, diff_ids):
         config_name = image["config_digest"].removeprefix("sha256:") + ".json"
         require(saved["Config"] == config_name and saved["RepoTags"] == [image["source_tag"]],
                 "Docker-save config or tag differs from tested image")
-        config = metadata(config_name)
-        require(hash_stream(archive.extractfile(by_name[config_name])) == image["config_digest"].removeprefix("sha256:")
-                and config.get("os") == "linux" and config.get("architecture") == "amd64", "Docker-save config identity or platform mismatch")
+        require(hashlib.sha256(config_bytes).hexdigest() == image["config_digest"].removeprefix("sha256:"), "Docker-save config identity mismatch")
         layers = saved["Layers"]
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list)
-                and layers and isinstance(diff_ids, list) and len(layers) == len(diff_ids),
-                "Docker-save rootfs contract mismatch")
         allowed = {"manifest.json", config_name}
         for name, diff_id in zip(layers, diff_ids):
-            require(isinstance(name, str) and re.fullmatch(r"[0-9a-f]{64}/layer\.tar", name)
-                    and re.fullmatch(r"sha256:[0-9a-f]{64}", str(diff_id))
-                    and name in by_name and by_name[name].isfile(), "invalid Docker-save rootfs layer")
+            require(re.fullmatch(r"[0-9a-f]{64}/layer\.tar", name), "invalid Docker-save rootfs layer")
             require("sha256:" + hash_stream(archive.extractfile(by_name[name])) == diff_id, "Docker-save rootfs layer digest mismatch")
             directory = name.partition("/")[0]
             allowed.update({name, directory, directory + "/VERSION", directory + "/json"})
         if "repositories" in by_name:
             repository, _, tag = image["source_tag"].partition(":")
-            require(metadata("repositories") == {repository: {tag: layers[-1].partition("/")[0]}}, "Docker-save contains extra repository tags")
+            require(by_name["repositories"].isfile() and by_name["repositories"].size <= MAX_JSON
+                    and read_json(archive.extractfile("repositories").read()) == {repository: {tag: layers[-1].partition("/")[0]}}, "Docker-save contains extra repository tags")
             allowed.add("repositories")
-        require(set(names) <= allowed and all(member.isfile() or member.isdir() for member in members),
-                "unexpected Docker-save member or link")
+        require(set(by_name) <= allowed, "unexpected Docker-save member or link")
         require(all((member.isdir() and member.name in {layer.partition('/')[0] for layer in layers})
-                    or (member.isfile() and (member.name in layers or member.size <= MAX_JSON)) for member in members),
+                    or (member.isfile() and (member.name in layers or member.size <= MAX_JSON)) for member in by_name.values()),
                 "invalid Docker-save member type or size")
 
 
@@ -144,40 +279,13 @@ def canonicalize_archive(raw_path, destination, config_digest, tag, *, untagged=
     layers. Only the single tested config and its ordered rootfs are retained;
     unused exporter metadata is never fed to Docker by the consumer.
     """
-    require(Path(raw_path).stat().st_size <= MAX_IMAGE, "raw saved image exceeds limit")
     require(config_digest is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(config_digest)), "invalid saved config digest")
-    with tarfile.open(raw_path, mode="r:") as saved:
-        members = saved.getmembers()
-        names = [member.name for member in members]
-        require(len(members) <= 2048 and len(names) == len(set(names)), "duplicate or excessive raw Docker-save members")
-        require(all(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts
-                    and "\\" not in name and (member.isfile() or member.isdir()) for name, member in zip(names, members)),
-                "unsafe raw Docker-save member or link")
-        entries = {member.name: member for member in members}
-
-        def small_member(name):
-            require(name in entries and entries[name].isfile() and entries[name].size <= MAX_JSON,
-                    "missing or oversized raw Docker-save metadata")
-            return saved.extractfile(entries[name]).read()
-
-        manifest = read_json(small_member("manifest.json"))
-        require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict)
-                and {"Config", "RepoTags", "Layers"} <= set(manifest[0]) <= {"Config", "RepoTags", "Layers", "LayerSources", "Parent"},
-                "raw Docker-save must contain exactly one supported image")
-        image = manifest[0]
+    with saved_image(raw_path) as (saved, entries, image, config_bytes, diff_ids):
         require(image["RepoTags"] in (None, []) if untagged else image["RepoTags"] == [tag],
                 "raw saved image has another or additional tag")
-        config_bytes = small_member(image["Config"])
-        config = read_json(config_bytes)
         saved_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
-        require((config_digest is None or saved_digest == config_digest)
-                and config.get("os") == "linux" and config.get("architecture") == "amd64", "raw saved config differs from tested image")
+        require(config_digest is None or saved_digest == config_digest, "raw saved config differs from tested image")
         layers = image["Layers"]
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        require(config.get("rootfs", {}).get("type") == "layers" and isinstance(layers, list) and layers
-                and isinstance(diff_ids, list) and len(layers) == len(diff_ids)
-                and all(isinstance(name, str) and name in entries and entries[name].isfile() for name in layers)
-                and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) for digest in diff_ids), "invalid raw saved rootfs")
         config_name = saved_digest.removeprefix("sha256:") + ".json"
         canonical_layers = [digest.removeprefix("sha256:") + "/layer.tar" for digest in diff_ids]
         total = 0
@@ -296,3 +404,28 @@ def verify_local_config(reference, config_digest, *, require_manifest=False, dir
     require(inspect_image(reference)["Id"] == image_id
             and inspect_image(image_id)["Id"] == image_id, "loaded image tag or immutable identity changed during verification")
     return image_id
+
+
+ENTRYPOINTS = ("scripts/deployment_revision.py", "scripts/terraform_plan_allowlist.py", "scripts/install_deployment_verifier.py")
+
+
+def snapshot_trusted(revision, destination, *, root=ROOT):
+    tracked = repository_files(revision, root)
+    selected = dependency_closure(dependency_graph(tracked), ENTRYPOINTS)
+    selected.update(path for path in tracked if path.startswith((".github/actions/deployment-receipt/", ".github/actions/deployment-auth/", "scripts/cdn_plan_readiness.py")))
+    selected.add(".github/terraform-targets.json")
+    files = {path: tracked[path] for path in selected}
+    # Absent trusted initializers must overwrite candidate package injections.
+    for path in selected:
+        for parent in list(Path(path).parents)[:-1]:
+            initializer = str(parent / "__init__.py")
+            files[initializer] = tracked.get(initializer, b"")
+    with tarfile.open(destination, "w") as archive:
+        for path, raw in sorted(files.items()):
+            entry = tarfile.TarInfo(path)
+            entry.size, entry.mode = len(raw), 0o644
+            archive.addfile(entry, io.BytesIO(raw))
+
+
+if __name__ == "__main__":
+    snapshot_trusted(*sys.argv[1:])

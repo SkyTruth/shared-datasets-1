@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
 COPY scripts/ci_install_tools.py scripts/ci_toolchain.py /opt/ci-source/scripts/
 RUN cd /opt/ci-source && python scripts/ci_install_tools.py --destination /opt/ci \
-    node22 node24 terraform gitleaks actionlint
+    node22 node24 terraform gitleaks actionlint shellcheck
 
 # Lockfile-dependent wheels, including native builds, survive across fresh suite
 # containers. Each suite still installs its own environment with locked sync.
@@ -32,5 +32,13 @@ ENV PATH="/opt/ci/node22/bin:/opt/ci/bin:${PATH}" \
     GODEBUG="asyncpreemptoff=1" \
     SHARED_DATASETS_WORKDIR="/work/shared-datasets-1" \
     PYTHONUNBUFFERED="1"
+
+# The package lock pins the browser revision; suite containers reuse these
+# binaries while retaining their own npm dependencies and test evidence.
+ENV PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
+COPY tests/browser/package.json tests/browser/package-lock.json /opt/ci-browser/
+RUN cd /opt/ci-browser && npm ci --ignore-scripts \
+    && npx --no-install playwright install chromium \
+    && rm -rf /opt/ci-browser
 
 WORKDIR /workspace

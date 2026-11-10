@@ -11,7 +11,7 @@ def plan(attempt=1):
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
         "tested_sha": "c" * 40, "tree": "d" * 40, "contract_digest": "e" * 64,
-        "suites": list(SUITES), "source": {"run_id": "123", "run_attempt": attempt},
+        "suites": list(SUITES), "production_image_targets": sorted(production_images("c" * 40)["images"]), "source": {"run_id": "123", "run_attempt": attempt},
     }
 
 
@@ -129,3 +129,34 @@ def test_ambiguous_or_incomplete_api_job_enumeration_fails(monkeypatch, defect):
     monkeypatch.setattr(proof, "api", api)
     with pytest.raises(ValueError):
         proof.prove_attempts("SkyTruth/shared-datasets-1", "123", {1}, plan())
+
+
+@pytest.mark.parametrize('defect', [None, 'missing', 'duplicate', 'wrong-image', 'new-failure', 'unproven'])
+def test_image_matrix_gate_requires_each_exact_producer_and_its_latest_attempt(defect):
+    validation = plan()
+    ordinary = [result(validation, suite) for suite in SUITES if suite != 'production-images']
+    images = []
+    for target, image in production_images(validation['tested_sha'])['images'].items():
+        produced = result(validation, 'production-images')
+        produced.update(image_target=target)
+        produced['production_images']['images'] = {target: image}
+        images.append(produced)
+    proofs = {1: {proof.job_name(value['suite'] + '-' + value['image_target']) for value in images}
+                 | {proof.job_name(value['suite']) for value in ordinary}, 2: set()}
+    if defect == 'missing':
+        images.pop()
+    elif defect == 'duplicate':
+        images.append(copy.deepcopy(images[0]))
+    elif defect == 'wrong-image':
+        images[0]['production_images']['images'] = images[1]['production_images']['images']
+    elif defect == 'new-failure':
+        images.append(copy.deepcopy(images[0]))
+        images[-1].update(status='failure', source={'run_id': '123', 'run_attempt': 2})
+    elif defect == 'unproven':
+        proofs[1].remove(proof.job_name('production-images-' + images[0]['image_target']))
+    if defect:
+        with pytest.raises(ValueError):
+            verify_results(validation, ordinary + images, source_proofs=proofs, run_id='123', run_attempt=2)
+    else:
+        chosen = verify_results(validation, ordinary + images, source_proofs=proofs, run_id='123', run_attempt=2)
+        assert len(chosen) == len(ordinary) + len(images)

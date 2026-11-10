@@ -1,42 +1,22 @@
 name: Infrastructure / Ingestion deploy IAM sync
-
 on:
   workflow_dispatch:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
+      executor_sha: {description: Exact tested main revision, required: true, type: string}
+      source_run_id: {description: Main-push CI run that tested executor_sha, required: true, type: string}
+      source_run_attempt: {description: Exact successful ci-ready attempt, required: true, type: string}
   workflow_call:
     inputs:
-      executor_sha:
-        description: Exact tested main revision
-        required: true
-        type: string
-      source_run_id:
-        description: Main-push CI run that tested executor_sha
-        required: true
-        type: string
-      source_run_attempt:
-        description: Exact successful ci-ready attempt
-        required: true
-        type: string
-
+      executor_sha: {description: Exact tested main revision, required: true, type: string}
+      source_run_id: {description: Main-push CI run that tested executor_sha, required: true, type: string}
+      source_run_attempt: {description: Exact successful ci-ready attempt, required: true, type: string}
 permissions:
   actions: read
+  pull-requests: read
   deployments: write
   contents: read
   id-token: write
   attestations: write
-
 jobs:
   bootstrap:
     name: Bootstrap translation notice and EAMLIS quality IAM
@@ -44,28 +24,10 @@ jobs:
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scheduled-ingestion-deploy-iam-sync.yml
+      sync_name: Translation notice secret IAM bootstrap
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: iam-bootstrap
-      sync_name: Translation notice secret IAM bootstrap
-      refusal_prefix: Refusing automatic translation notice secret IAM bootstrap
-      post_apply_wait_seconds: 30
-      targets: |
-        google_project_iam_custom_role.translation_notice_iam_manager
-        google_project_iam_member.github_actions_translation_notice_iam_manager
-        google_project_iam_custom_role.eamlis_quality_iam_manager
-        google_project_iam_member.github_actions_eamlis_quality_iam_manager
-      allowed_exact: |
-        google_project_iam_custom_role.translation_notice_iam_manager
-        google_project_iam_member.github_actions_translation_notice_iam_manager
-        google_project_iam_custom_role.eamlis_quality_iam_manager
-        google_project_iam_member.github_actions_eamlis_quality_iam_manager
-      tf_vars: |
-        wdpa_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync
-        sea_ice_daily_image=unused-by-scheduled-ingestion-deploy-iam-sync
-        eamlis_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync
-
   sync:
     name: Apply scheduled ingestion deploy IAM sync
     needs: bootstrap
@@ -73,59 +35,7 @@ jobs:
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scheduled-ingestion-deploy-iam-sync.yml
+      sync_name: Scheduled ingestion deploy IAM sync
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: ingestion-iam
-      sync_name: Scheduled ingestion deploy IAM sync
-      refusal_prefix: Refusing automatic scheduled ingestion deploy IAM sync
-      targets: |
-        google_project_iam_custom_role.scheduled_ingestion_deployer
-        google_project_iam_member.github_actions_scheduled_ingestion_deployer
-        module.wdpa_builder_service_account.google_service_account.this
-        google_project_iam_custom_role.wdpa_monthly_build_stager
-        google_storage_bucket_iam_member.wdpa_monthly_build_stager
-        google_storage_bucket_iam_member.wdpa_automatic_build_stager
-        google_storage_bucket_iam_member.wdpa_monthly_build_inputs
-        google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader
-        google_service_account_iam_member.wdpa_builder_deployer
-        google_storage_bucket_iam_member.wdpa_reset_translation_reader
-        google_secret_manager_secret_iam_member.translation_notice["wdpa"]
-        google_secret_manager_secret_iam_member.translation_notice["eamlis"]
-        google_storage_bucket_iam_member.translation_debt_writer["wdpa"]
-        google_storage_bucket_iam_member.translation_debt_writer["eamlis"]
-        google_storage_bucket_iam_member.publisher_translation_debt_writer
-        google_storage_bucket_iam_member.eamlis_job_object_user
-        google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader
-        module.mpatlas_job_service_account.google_service_account.this
-        module.mpatlas_scheduler_service_account.google_service_account.this
-        google_storage_bucket_iam_member.mpatlas_job_object_user
-        google_service_account_iam_member.mpatlas_deployer_act_as["job"]
-        google_service_account_iam_member.mpatlas_deployer_act_as["scheduler"]
-      allowed_exact: |
-        google_project_iam_custom_role.scheduled_ingestion_deployer
-        google_project_iam_member.github_actions_scheduled_ingestion_deployer
-        module.wdpa_builder_service_account.google_service_account.this
-        google_project_iam_custom_role.wdpa_monthly_build_stager
-        google_storage_bucket_iam_member.wdpa_monthly_build_stager
-        google_storage_bucket_iam_member.wdpa_automatic_build_stager
-        google_storage_bucket_iam_member.wdpa_monthly_build_inputs
-        google_storage_bucket_iam_member.wdpa_monthly_build_evidence_reader
-        google_service_account_iam_member.wdpa_builder_deployer
-        google_storage_bucket_iam_member.wdpa_reset_translation_reader
-        google_secret_manager_secret_iam_member.translation_notice["wdpa"]
-        google_secret_manager_secret_iam_member.translation_notice["eamlis"]
-        google_storage_bucket_iam_member.translation_debt_writer["wdpa"]
-        google_storage_bucket_iam_member.translation_debt_writer["eamlis"]
-        google_storage_bucket_iam_member.publisher_translation_debt_writer
-        google_storage_bucket_iam_member.eamlis_job_object_user
-        google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader
-        module.mpatlas_job_service_account.google_service_account.this
-        module.mpatlas_scheduler_service_account.google_service_account.this
-        google_storage_bucket_iam_member.mpatlas_job_object_user
-        google_service_account_iam_member.mpatlas_deployer_act_as["job"]
-        google_service_account_iam_member.mpatlas_deployer_act_as["scheduler"]
-      tf_vars: |
-        wdpa_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync
-        sea_ice_daily_image=unused-by-scheduled-ingestion-deploy-iam-sync
-        eamlis_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync

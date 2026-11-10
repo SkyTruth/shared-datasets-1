@@ -1,0 +1,498 @@
+{
+  "main_revision": "7bd972e6150a01ca3be538d1ca33bc543d6aa6f8",
+  "grants": {
+    "google_service_account_iam_member.shared_datasets_publisher_github_wif": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${module.shared_datasets_publisher_service_account.email}",
+        "role": "roles/iam.workloadIdentityUser",
+        "member": "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+      }
+    },
+    "google_storage_bucket_iam_member.shared_datasets_publisher_object_lister": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "${google_project_iam_custom_role.shared_datasets_publisher_object_lister.name}",
+        "member": "${module.shared_datasets_publisher_service_account.member}"
+      }
+    },
+    "google_storage_bucket_iam_member.shared_datasets_publisher_object_user": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.shared_datasets_publisher_service_account.member}",
+        "condition": [
+          {
+            "title": "canonical_publish_prefixes",
+            "description": "Allow approved publisher writes to canonical shared-datasets objects, excluding _scratch/.",
+            "expression": "${local.canonical_mutation_publisher_condition}"
+          }
+        ]
+      }
+    },
+    "google_storage_bucket_iam_member.shared_datasets_publisher_folder_user": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.shared_datasets_publisher_service_account.member}",
+        "condition": [
+          {
+            "title": "canonical_publish_folders",
+            "description": "Allow approved publisher folder operations under canonical shared-datasets prefixes.",
+            "expression": "${local.canonical_mutation_publisher_folder_condition}"
+          }
+        ]
+      }
+    },
+    "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectViewer",
+        "member": "${module.shared_datasets_publisher_service_account.member}",
+        "condition": [
+          {
+            "title": "pending_publish_sources_read_only",
+            "description": "Allow approved publisher reads from staged pending-publish objects and orphaned gcloud composite temp parts only.",
+            "expression": "${local.pending_publish_source_condition}"
+          }
+        ]
+      }
+    },
+    "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.shared_datasets_publisher_service_account.member}",
+        "condition": [
+          {
+            "title": "pending_publish_cleanup",
+            "description": "Allow approved publisher cleanup of pending-publish scratch objects, cleanup warning markers, and orphaned gcloud composite temp parts.",
+            "expression": "${local.pending_publish_cleanup_condition}"
+          }
+        ]
+      }
+    },
+    "google_storage_bucket_iam_member.shared_bucket_scratch_writers": {
+      "file": "terraform/envs/prod/canonical_mutation_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${each.value}",
+        "condition": [
+          {
+            "title": "scratch_only",
+            "description": "Allow noncanonical staging writes only under _scratch/.",
+            "expression": "${local.scratch_writer_condition}"
+          }
+        ],
+        "for_each": "${var.scratch_writer_members}"
+      }
+    },
+    "google_storage_bucket_iam_member.eamlis_job_object_user": {
+      "file": "terraform/envs/prod/eamlis_monthly.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.eamlis_job_service_account.member}",
+        "condition": [
+          {
+            "title": "eamlis_owned_dataset_objects",
+            "description": "Restrict EAMLIS writes to its dataset, index, quality control and held candidates.",
+            "expression": "${join(\" || \", [\"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/eamlis-abandoned-mine-land-inventory.json'\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/ingestion-holds/eamlis-abandoned-mine-land-inventory.json'\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/ingestion-holds/')\", \"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/source-loss-')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/')\"])}"
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader": {
+      "file": "terraform/envs/prod/eamlis_monthly.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.viewer",
+        "member": "${module.eamlis_job_service_account.member}"
+      }
+    },
+    "google_project_iam_member.github_actions_eamlis_quality_iam_manager": {
+      "file": "terraform/envs/prod/eamlis_monthly.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "${google_project_iam_custom_role.eamlis_quality_iam_manager.name}",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}",
+        "condition": [
+          {
+            "title": "eamlis_quality_job_only",
+            "description": "Limit policy management to the existing EAMLIS Cloud Run job.",
+            "expression": "${join(\" || \", [\"resource.name == 'projects/${var.project_id}/locations/${var.region}/jobs/eamlis-monthly'\", \"resource.name == 'projects/${data.google_project.current.number}/locations/${var.region}/jobs/eamlis-monthly'\"])}"
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_job_iam_member.eamlis_scheduler_invoker": {
+      "file": "terraform/envs/prod/eamlis_monthly.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.invoker",
+        "member": "${module.eamlis_scheduler_service_account.member}"
+      }
+    },
+    "google_service_account_iam_member.github_readonly_wif": {
+      "file": "terraform/envs/prod/github_readonly_iam.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${module.github_readonly_service_account.email}",
+        "role": "roles/iam.workloadIdentityUser",
+        "member": "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+      }
+    },
+    "google_storage_bucket_iam_member.github_readonly_object_viewer": {
+      "file": "terraform/envs/prod/github_readonly_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectViewer",
+        "member": "${module.github_readonly_service_account.member}"
+      }
+    },
+    "google_secret_manager_secret_iam_member.slack_webhook_accessors": {
+      "file": "terraform/envs/prod/monitoring.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/secretmanager.secretAccessor",
+        "member": "${each.value}",
+        "for_each": "${var.slack_webhook_secret_accessors}"
+      }
+    },
+    "google_project_iam_member.github_actions_monitoring_alert_policy_manager": {
+      "file": "terraform/envs/prod/monitoring_alert_policy_iam.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "${google_project_iam_custom_role.monitoring_alert_policy_manager.name}",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}"
+      }
+    },
+    "google_project_iam_member.monitoring_slack_incident_reader": {
+      "file": "terraform/envs/prod/monitoring_alert_policy_iam.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "${google_project_iam_custom_role.monitoring_incident_reader.name}",
+        "member": "serviceAccount:${google_service_account.monitoring_slack.email}"
+      }
+    },
+    "google_service_account_iam_member.monitoring_slack_deployer": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${each.value}@${var.project_id}.iam.gserviceaccount.com",
+        "role": "roles/iam.serviceAccountUser",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}",
+        "for_each": {
+          "runtime": "${google_service_account.monitoring_slack.account_id}",
+          "push": "${google_service_account.monitoring_slack_push.account_id}"
+        }
+      }
+    },
+    "google_storage_bucket_iam_member.monitoring_slack_state": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "bucket": "${google_storage_bucket.monitoring_slack.name}",
+        "role": "roles/storage.objectUser",
+        "member": "serviceAccount:${google_service_account.monitoring_slack.email}"
+      }
+    },
+    "google_storage_bucket_iam_member.monitoring_slack_recovery": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "bucket": "${google_storage_bucket.monitoring_slack.name}",
+        "role": "roles/storage.objectUser",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}"
+      }
+    },
+    "google_project_iam_member.monitoring_slack_token": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/secretmanager.secretAccessor",
+        "member": "serviceAccount:${google_service_account.monitoring_slack.email}",
+        "condition": [
+          {
+            "title": "monitoring_slack_token_only",
+            "expression": "resource.name.startsWith('projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token/versions/')"
+          }
+        ]
+      }
+    },
+    "google_project_iam_member.monitoring_slack_token_writer": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/secretmanager.secretVersionAdder",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}",
+        "condition": [
+          {
+            "title": "monitoring_slack_token_versions_only",
+            "expression": "resource.name == 'projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token'"
+          }
+        ]
+      }
+    },
+    "google_project_iam_member.monitoring_slack_token_version_writer": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/secretmanager.secretVersionAdder",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}",
+        "condition": [
+          {
+            "title": "monitoring_slack_token_version_creation_only",
+            "expression": "resource.name.startsWith('projects/${data.google_project.current.number}/secrets/shared-datasets-slack-bot-token/versions/')"
+          }
+        ]
+      }
+    },
+    "google_pubsub_topic_iam_member.identity_decision_publisher": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/pubsub.publisher",
+        "member": "${each.value}",
+        "for_each": {
+          "wdpa": "${module.wdpa_job_service_account.member}",
+          "sea_ice": "${module.sea_ice_job_service_account.member}",
+          "eamlis": "${module.eamlis_job_service_account.member}",
+          "mpatlas": "${module.mpatlas_job_service_account.member}"
+        }
+      }
+    },
+    "google_cloud_run_v2_service_iam_member.monitoring_slack_push": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.invoker",
+        "member": "serviceAccount:${google_service_account.monitoring_slack_push.email}"
+      }
+    },
+    "google_pubsub_topic_iam_member.monitoring_slack_publisher": {
+      "file": "terraform/envs/prod/monitoring_slack.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/pubsub.publisher",
+        "member": "serviceAccount:service-${data.google_project.current.number}@gcp-sa-monitoring-notification.iam.gserviceaccount.com"
+      }
+    },
+    "google_storage_bucket_iam_member.mpatlas_job_object_user": {
+      "file": "terraform/envs/prod/mpatlas_monthly.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.mpatlas_job_service_account.member}",
+        "condition": [
+          {
+            "title": "mpatlas_owned_dataset_objects",
+            "description": "Restrict MPAtlas monthly job writes to its asset root and release index.",
+            "expression": "${join(\" || \", [\"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/')\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/mpatlas-zone-assessments.json'\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')\"])}"
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_job_iam_member.mpatlas_scheduler_invoker": {
+      "file": "terraform/envs/prod/mpatlas_monthly.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.invoker",
+        "member": "${module.mpatlas_scheduler_service_account.member}"
+      }
+    },
+    "google_service_account_iam_member.mpatlas_deployer_act_as": {
+      "file": "terraform/envs/prod/mpatlas_monthly.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${each.value}",
+        "role": "roles/iam.serviceAccountUser",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}",
+        "for_each": {
+          "job": "${module.mpatlas_job_service_account.email}",
+          "scheduler": "${module.mpatlas_scheduler_service_account.email}"
+        }
+      }
+    },
+    "google_project_iam_member.github_actions_preview_terraform": {
+      "file": "terraform/envs/prod/preview_terraform_iam.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "${google_project_iam_custom_role.preview_terraform.name}",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}"
+      }
+    },
+    "google_service_account_iam_member.feature_preview_loader_github_wif": {
+      "file": "terraform/envs/prod/preview_terraform_iam.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}",
+        "role": "roles/iam.workloadIdentityUser",
+        "member": "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+      }
+    },
+    "google_service_account_iam_member.feature_preview_service_self_sign_blob": {
+      "file": "terraform/envs/prod/preview_terraform_iam.tf",
+      "policy": {
+        "service_account_id": "projects/${var.project_id}/serviceAccounts/${module.feature_preview_service_account.email}",
+        "role": "${google_project_iam_custom_role.catalog_viewer_sign_blob.name}",
+        "member": "${module.feature_preview_service_account.member}"
+      }
+    },
+    "google_storage_bucket_iam_member.feature_preview_published_reader": {
+      "file": "terraform/envs/prod/preview_terraform_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectViewer",
+        "member": "${module.feature_preview_service_account.member}",
+        "condition": [
+          {
+            "title": "preview_published_catalog_read",
+            "description": "Read published catalog and dataset artifacts for authenticated preview comparisons.",
+            "expression": "${local.catalog_viewer_object_viewer_condition}"
+          }
+        ]
+      }
+    },
+    "google_storage_bucket_iam_member.sea_ice_job_object_user": {
+      "file": "terraform/envs/prod/sea_ice_daily.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.sea_ice_job_service_account.member}",
+        "condition": [
+          {
+            "title": "sea_ice_owned_dataset_objects",
+            "description": "Restrict sea ice daily job writes to its asset root and release index.",
+            "expression": "${join(\" || \", [\"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}200-imagery-derived/250-weather-climate/ims-sea-ice-extent/')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}200-imagery-derived/250-weather-climate/ims-sea-ice-extent/')\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/ims-sea-ice-extent.json'\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')\"])}"
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_job_iam_member.sea_ice_scheduler_invoker": {
+      "file": "terraform/envs/prod/sea_ice_daily.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.invoker",
+        "member": "${module.sea_ice_scheduler_service_account.member}"
+      }
+    },
+    "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync": {
+      "file": "terraform/envs/prod/shared_bucket_public.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "${google_project_iam_custom_role.pmtiles_managed_folder_sync.name}",
+        "member": "serviceAccount:${var.github_actions_terraform_service_account_email}"
+      }
+    },
+    "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers": {
+      "file": "terraform/envs/prod/shared_bucket_public.tf",
+      "policy": {
+        "bucket": "${each.value.bucket}",
+        "role": "roles/storage.objectViewer",
+        "member": "allUsers",
+        "for_each": "${{for name, folder in google_storage_managed_folder.shared_bucket_public_prefixes : name => folder if contains(local.shared_bucket_public_managed_folder_names, name)}}"
+      }
+    },
+    "google_storage_bucket_iam_member.shared_bucket_public_object_viewer": {
+      "file": "terraform/envs/prod/shared_bucket_public.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectViewer",
+        "member": "allUsers",
+        "count": "${var.shared_bucket_public_object_viewer_enabled ? 1 : 0}"
+      }
+    },
+    "google_storage_bucket_iam_member.wdpa_job_object_user": {
+      "file": "terraform/envs/prod/wdpa_monthly.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectUser",
+        "member": "${module.wdpa_job_service_account.member}",
+        "condition": [
+          {
+            "title": "wdpa_owned_dataset_objects",
+            "description": "Restrict WDPA monthly job writes to its asset roots and release indexes.",
+            "expression": "${join(\" || \", [\"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-marine/')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-marine/')\", \"resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-terrestrial/')\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-terrestrial/')\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/wdpa-marine.json'\", \"resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/wdpa-terrestrial.json'\", \"resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')\"])}"
+          }
+        ]
+      }
+    },
+    "google_cloud_run_v2_job_iam_member.scheduler_invoker": {
+      "file": "terraform/envs/prod/wdpa_monthly.tf",
+      "policy": {
+        "project": "${var.project_id}",
+        "role": "roles/run.invoker",
+        "member": "${module.wdpa_scheduler_service_account.member}"
+      }
+    },
+    "google_storage_bucket_iam_member.wdpa_reset_translation_reader": {
+      "file": "terraform/envs/prod/wdpa_reset_iam.tf",
+      "policy": {
+        "bucket": "${var.bucket_name}",
+        "role": "roles/storage.objectViewer",
+        "member": "${module.wdpa_job_service_account.member}",
+        "condition": [
+          {
+            "title": "wdpa_approved_reset_translation_input",
+            "description": "Read only the approved WDPA reset supplement; no scratch-prefix access.",
+            "expression": "resource.name == '${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/wdpa-feature-id-reset/pr-154-20260930/gap-supplement.ndjson'"
+          }
+        ]
+      }
+    }
+  },
+  "providers": {
+    "github": {
+      "attribute_mapping": {
+        "google.subject": "assertion.sub",
+        "attribute.actor": "assertion.actor",
+        "attribute.environment": "assertion.environment",
+        "attribute.repository": "assertion.repository",
+        "attribute.repository_owner": "assertion.repository_owner",
+        "attribute.workflow": "assertion.workflow"
+      },
+      "attribute_condition": "assertion.repository == '${var.github_repository}' && assertion.environment == '${var.github_publish_environment}'"
+    },
+    "github_readonly": {
+      "attribute_mapping": {
+        "google.subject": "assertion.sub",
+        "attribute.actor": "assertion.actor",
+        "attribute.repository": "assertion.repository",
+        "attribute.repository_owner": "assertion.repository_owner",
+        "attribute.workflow": "assertion.workflow"
+      },
+      "attribute_condition": "${join(\" && \", [\"assertion.repository == '${var.github_repository}'\", \"(assertion.workflow == 'Catalog drift guard' || assertion.workflow == 'Bucket hygiene audit' || assertion.workflow == 'Dataset breaking change alert')\"])}"
+    }
+  },
+  "custom_roles": {
+    "google_project_iam_custom_role.monitoring_alert_policy_manager": [
+      "logging.notificationRules.create",
+      "logging.notificationRules.delete",
+      "monitoring.alertPolicies.create",
+      "monitoring.alertPolicies.delete",
+      "monitoring.alerts.get",
+      "monitoring.alertPolicies.get",
+      "monitoring.alertPolicies.list",
+      "monitoring.alertPolicies.update",
+      "monitoring.notificationChannels.create",
+      "monitoring.notificationChannels.update",
+      "pubsub.topics.create",
+      "pubsub.topics.get",
+      "pubsub.topics.getIamPolicy",
+      "pubsub.topics.setIamPolicy",
+      "pubsub.subscriptions.create",
+      "pubsub.subscriptions.get",
+      "pubsub.subscriptions.update",
+      "pubsub.topics.attachSubscription",
+      "secretmanager.secrets.create",
+      "secretmanager.secrets.get",
+      "monitoring.notificationChannels.get",
+      "monitoring.notificationChannels.list"
+    ],
+    "google_project_iam_custom_role.monitoring_incident_reader": [
+      "monitoring.alerts.get",
+      "logging.logEntries.list"
+    ]
+  }
+}

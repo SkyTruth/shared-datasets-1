@@ -1,0 +1,25 @@
+name: Authenticate protected deployer
+description: Authenticate a registered protected identity after trusted bootstrap
+inputs:
+  service-account:
+    description: Fixed registered observer or runtime identity; defaults to the deployer
+    required: false
+runs:
+  using: composite
+  steps:
+  - name: Require a configured protected identity
+    shell: bash
+    env:
+      ACCOUNT: ${{ inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT }}
+      PROVIDER: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+    run: test -n "$ACCOUNT" && test -n "$PROVIDER"
+  - name: Authenticate to Google Cloud
+    uses: google-github-actions/auth@v2
+    with:
+      workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+      service_account: ${{ inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT }}
+  - name: Set up gcloud
+    uses: google-github-actions/setup-gcloud@v2
+    with:
+      # Hosted Ubuntu supplies every GA command used by these callers.
+      skip_install: true

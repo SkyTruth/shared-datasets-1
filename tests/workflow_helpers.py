@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from scripts.terraform_target_contracts import registry, workflow as resolved_workflow
+from scripts.deployment_receipt_contracts import expanded_steps
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
+    if (path.parents[2] / '.github/terraform-targets.json').is_file():
+        return resolved_workflow(path.parents[2], path.name)
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
@@ -17,13 +25,49 @@ def workflow_triggers(workflow: dict[str, Any]) -> dict[str, Any]:
     return workflow.get("on") or workflow.get(True) or {}
 
 
+def identity_sync_needs(root: Path) -> dict[str, set[str]]:
+    """Derive first-run ordering from created identities and reusable callers."""
+    sync = registry(root)['Artifact Registry writer binding sync']
+    inventory = json.loads((root / 'terraform/envs/prod/github-workflow-identities.json').read_text())
+    consumers = {workflow for identity, workflows in inventory.items()
+                 if f'google_service_account.github_job["{identity}"]' in sync['resources']
+                 for workflow in workflows}
+    directory = root / '.github/workflows'
+    jobs = yaml.safe_load((directory / 'ci.yml').read_text())['jobs']
+    prefix = './.github/workflows/'
+    creator, = [name for name, job in jobs.items() if job.get('uses') == prefix + sync['workflow']]
+
+    def workflow_closure(filename):
+        seen, pending = set(), [filename]
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            workflow = yaml.safe_load((directory / current).read_text())
+            pending.extend(job['uses'].removeprefix(prefix) for job in workflow['jobs'].values()
+                           if job.get('uses', '').startswith(prefix))
+        return seen
+
+    return {name: {creator} for name, job in jobs.items()
+            if job.get('uses', '').startswith(prefix)
+            and consumers & workflow_closure(job['uses'].removeprefix(prefix))}
+
+
+def deployment_prerequisites(root: Path) -> dict[str, set[str]]:
+    identities = identity_sync_needs(root)
+    return {name: set(row['terraform_prerequisites']) | {
+                parent.replace('-', '_') for parent in identities.get(name.replace('_', '-'), set())}
+            for name, row in registry(root, section='deployments').items()}
+
+
 def workflow_steps_by_name(
     workflow: dict[str, Any],
     job_name: str,
 ) -> dict[str, dict[str, Any]]:
     return {
         step["name"]: step
-        for step in workflow["jobs"][job_name]["steps"]
+        for step in expanded_steps(Path(__file__).resolve().parents[1], workflow["jobs"][job_name])
         if "name" in step
     }
 
@@ -62,6 +106,28 @@ TARGET_APPLY_WORKFLOW_USES = "./.github/workflows/prod-terraform-target-apply.ym
 
 def newline_values(value: Any) -> set[str]:
     return {line.strip() for line in str(value or "").splitlines() if line.strip()}
+
+
+def terraform_environment(directory: Path, inputs: dict) -> dict[str, str]:
+    """Run the real target producer and read its GitHub environment transport."""
+    root = Path(__file__).resolve().parents[1]
+    destination = directory / 'github-env'
+    destination.write_text('')
+    environment = {**os.environ, 'GITHUB_ENV': str(destination),
+                   'INPUT_TF_VARS': inputs.get('tf_vars', ''), 'DELETE_ONLY': 'false', 'BLOCK_DELETES': 'false'}
+    subprocess.run([sys.executable, str(root / 'scripts/terraform_target_contracts.py'),
+                    '--sync-name', inputs['sync_name'], '--workflow', inputs['caller_workflow']],
+                   check=True, env=environment, capture_output=True, text=True)
+    lines = iter(destination.read_text().splitlines())
+    for line in lines:
+        key, delimiter = line.split('<<', 1)
+        values = []
+        for value in lines:
+            if value == delimiter:
+                break
+            values.append(value)
+        environment[key] = '\n'.join(values)
+    return environment
 
 
 def assert_target_apply_caller(
@@ -105,7 +171,7 @@ def assert_target_apply_caller(
     testcase.assertNotIn("pull_request", trigger)
     expected_permissions = {"contents": "read", "id-token": "write"}
     if push_paths is None:
-        expected_permissions.update({"actions": "read", "deployments": "write", "attestations": "write"})
+        expected_permissions.update({"actions": "read", "deployments": "write", "attestations": "write", "pull-requests": "read"})
     testcase.assertEqual(workflow["permissions"], expected_permissions)
     testcase.assertEqual(job["uses"], TARGET_APPLY_WORKFLOW_USES)
     if expected_job_if is None:
@@ -118,7 +184,6 @@ def assert_target_apply_caller(
         testcase.assertEqual(job["needs"], expected_needs)
 
     testcase.assertEqual(inputs["sync_name"], sync_name)
-    testcase.assertEqual(inputs["refusal_prefix"], refusal_prefix)
     testcase.assertEqual(newline_values(inputs["targets"]), expected_targets)
     testcase.assertEqual(
         newline_values(inputs["allowed_exact"]),
@@ -146,3 +211,18 @@ def assert_target_apply_caller(
         testcase.assertNotIn(resource, newline_values(inputs["allowed_exact"]))
 
     return workflow
+
+
+def condition_result(job, values, *, cancelled=False):
+    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
+    # This is a required Actions scheduling contract, not a local reimplementation
+    # of its scheduler: without a status function GitHub injects success(), which
+    # propagates skipped ancestors even when the explicit condition is true.
+    assert "!cancelled()" in expression
+    expression = expression.replace("!cancelled()", repr(not cancelled))
+    expression = re.sub(r"(?:needs|github|inputs)\.[\w.-]+", lambda match: repr(values[match[0]]), expression)
+    expression = re.sub(r"!(?!=)", "not ", expression)
+    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
+    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or,
+                                 ast.Compare, ast.Eq, ast.NotEq, ast.Constant, ast.UnaryOp, ast.Not)) for node in ast.walk(tree))
+    return eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}})

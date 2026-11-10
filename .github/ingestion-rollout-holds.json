@@ -1,6 +1,27 @@
-[
-  "mpatlas",
-  "eamlis",
-  "wdpa",
-  "sea_ice"
-]
+{
+  "dataset_usage": {
+    "owner": "jonaraphael",
+    "reason": "Keep merge-push receipts verifiable after a plain revert: old main trusts dataset-usage-deploy.yml, not the new ingestion-deploy.yml signer. Release through a reviewed PR after the rollback window.",
+    "expires_at": "2026-11-19T00:00:00Z"
+  },
+  "mpatlas": {
+    "owner": "jonaraphael",
+    "reason": "Existing rollout hold; maintainer must review production readiness before release.",
+    "expires_at": "2026-11-12T23:59:59Z"
+  },
+  "eamlis": {
+    "owner": "jonaraphael",
+    "reason": "Existing rollout hold; maintainer must review production readiness before release.",
+    "expires_at": "2026-11-12T23:59:59Z"
+  },
+  "wdpa": {
+    "owner": "jonaraphael",
+    "reason": "Existing rollout hold; maintainer must review production readiness before release.",
+    "expires_at": "2026-11-12T23:59:59Z"
+  },
+  "sea_ice": {
+    "owner": "jonaraphael",
+    "reason": "Existing rollout hold; maintainer must review production readiness before release.",
+    "expires_at": "2026-11-12T23:59:59Z"
+  }
+}

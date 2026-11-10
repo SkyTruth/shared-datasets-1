@@ -11,24 +11,17 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.tested_image_bundle import BUILD_TARGETS, TARGETS, load_image, pack_image
+from scripts.terraform_target_contracts import registry, production_image_limits
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, inspect_image, load_image, pack_image, source_tag, validate_local_manifest
 
-REUSABLE_IMAGE_TARGETS = frozenset({"mpatlas-monthly", "eamlis-monthly", "catalog-viewer", "dataset-usage"})
-
-
-def verify_tree_bound_image(image_id, executor):
-    environment = json.loads(subprocess.check_output(
-        ["docker", "image", "inspect", "--format", "{{json .Config.Env}}", image_id], text=True))
-    if not isinstance(environment, list) or any(
-        not isinstance(value, str) or value.partition("=")[0] in {"SHARED_DATASETS_EXECUTOR_SHA", "GITHUB_SHA"}
-        or executor in value for value in environment
-    ):
-        raise ValueError("tree-bound image contains revision-dependent runtime environment")
+HOST_PROBE_FILES = dict(usage_probe="scripts/dataset_usage_cold_start.py",
+    fixture_script="scripts/installed_ingestion_fixture.py", smoke="scripts/local_ingestion_smoke.py")
 
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
@@ -88,6 +81,42 @@ else:
 '''
 
 
+MONITORING_PROBE = r'''import base64, json
+from types import SimpleNamespace
+from services.monitoring_slack import run as receiver
+incident = {"incident_id": "installed-probe", "scoping_project_id": receiver.PROJECT,
+            "state": "open", "policy_name": "Installed receiver <probe>"}
+def envelope(subscription):
+    return json.dumps({"subscription": subscription, "message": {"data": base64.b64encode(
+        json.dumps({"version": "1.2", "incident": incident}).encode()).decode()}})
+assert receiver.event(envelope(receiver.SUBSCRIPTION)) == incident
+assert "&lt;probe&gt;" in receiver.message(incident, False)["text"]
+assert "separate verification" in receiver.message(incident, True)["text"]
+try:
+    receiver.event(envelope("projects/foreign/subscriptions/foreign"))
+except ValueError:
+    pass
+else:
+    raise AssertionError("Installed receiver accepted a foreign subscription")
+state = SimpleNamespace(raw=None, generation=0, posts=[], updates=[])
+def save(key, record, generation):
+    assert key == incident["incident_id"] and generation == state.generation
+    state.raw, state.generation = json.dumps(record), generation + 1
+    return state.generation
+def post(payload):
+    assert json.loads(state.raw)["ts"] is None, "Receipt claim must precede delivery"
+    state.posts.append(payload)
+    return "1792830681.000001"
+store = SimpleNamespace(load=lambda key: (json.loads(state.raw) if state.raw else None, state.generation), save=save)
+slack = SimpleNamespace(post=post, update=lambda ts, payload: state.updates.append((ts, payload)))
+identity = {"channel": "C12345678", "team": "T12345678", "user": "U12345678"}
+for value in (incident, incident, {**incident, "state": "closed"}, incident):
+    receiver.deliver(value, store, slack, identity)
+assert len(state.posts) == 1 and len(state.updates) == 2
+assert json.loads(state.raw)["closed"] and state.updates[-1][0] == "1792830681.000001"
+'''
+
+
 def resolve_image(image):
     """Bind every installed-code check to one local immutable image identity."""
     image_id = subprocess.check_output(
@@ -98,12 +127,12 @@ def resolve_image(image):
     return image_id
 
 
-def verify_viewer_image(image):
+def verify_viewer_image(image, limits=None):
     """Start the actual default CMD with no network or credentials, then check health."""
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
     try:
-        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
+        subprocess.run(["docker", "run", *container_options(), "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer", limits), "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -112,50 +141,44 @@ def verify_viewer_image(image):
         subprocess.run(["docker", "rm", "--force", name], check=False)
 
 
-def commands(target, executor, *, image_id=None):
+def resource_limits(target, limits=None):
+    """The hosted runner consumes the plan's caps without importing HCL parsers."""
+    return production_image_limits(ROOT)[target] if limits is None else limits
+
+
+def container_options():
+    run_id = os.environ.get("SHARED_DATASETS_PREFLIGHT_RUN")
+    label = f"shared-datasets-preflight-driver={run_id}" if run_id else f"shared-datasets-preflight=standalone-{os.getpid()}"
+    return ["--init", "--label", label]
+
+
+def commands(target, executor, *, image_id=None, limits=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
-    if target == "monitoring-slack":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "services/monitoring_slack/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "/app/.venv/bin/python", tested_image, "-c", Path("tests/test_monitoring_slack.py").read_text()],
-        ]
-    if target == "catalog-viewer":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "services/catalog_viewer/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run, comparison_store; assert callable(run.main) and callable(comparison_store.restore_comparison)"],
-            [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image],
-        ]
-    if target == "dataset-usage":
-        return [
-            ["docker", "build", "--platform", "linux/amd64", "-f", "ingestion/dataset_usage/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", tested_image, "--print-policy-hash"],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", "--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()],
-        ]
-    package = target.replace("-", "_")
-    build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", tested_image]
-    checks = [
-        run + ["python", "-c", f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"],
-        run + ["python", "-c", INTERPRETER_PROBE],
-        run + ["python", "-c", NATIVE_VERSION_PROBE],
-    ]
-    if target == "wdpa-monthly":
-        checks += [run + ["python", "-c", "import ingestion.wdpa_monthly.build, ingestion.wdpa_monthly.automatic"]]
-        checks += [run + ["python", "scripts/wdpa_input_memory_probe.py", "--help"], run + ["python", "scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
-    if target == "eamlis-monthly":
-        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import source_quality; assert 0 <= source_quality.policy() < 100"]]
-        checks += [run + ["python", "-c", "from ingestion.eamlis_monthly import identity, identity_installation, identity_translations; import json; assert identity.Ledger.parse(json.loads(identity.encoded(identity.Ledger.genesis()))).next_feature_id == 1"]]
-    return [build, *checks]
+    build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
+             f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
+    limits = resource_limits(target, limits)
+    run = ["docker", "run", *container_options(), "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *limits]
+    checks = registry(section="image_checks")[target]
+    if not checks or set(checks) - {"host", "container"} or any(not rows or any(not args for args in rows) for rows in checks.values()):
+        raise ValueError("Invalid registered installed image checks")
+    values = dict(python=sys.executable, image=tested_image, interpreter_probe=INTERPRETER_PROBE,
+                  native_probe=NATIVE_VERSION_PROBE, monitoring_probe=MONITORING_PROBE, limits=json.dumps(limits))
+    fixture = ROOT / f"tests/fixtures/production_images/{target}.json"
+    if any("{fixture}" in args for rows in checks.values() for args in rows):
+        values["fixture"] = fixture.read_text()
+    values.update({key: (ROOT / path).read_text() for key, path in HOST_PROBE_FILES.items()
+                   if any("{" + key + "}" in args for rows in checks.values() for args in rows)})
+    return [build, *[({"container": run, "host": []}[mode]) + [arg.format_map(values) for arg in args]
+                    for mode, rows in checks.items() for args in rows]]
 
 
 def cached_build(command, target):
     """Reuse build layers in Actions; checks and retained images always run anew."""
     if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true":
         return command
-    # These small Python recipes rebuild cheaply; remote cache reads have stalled.
     if target in {"catalog-viewer", "monitoring-slack"}:
-        return ["docker", "buildx", "build", "--load", *command[2:]]
+        return [*command[:2], "--builder", "default", *command[2:]]
     cache = f"type=gha,version=2,scope=production-{target}"
     return ["docker", "buildx", "build", "--load", "--cache-from", cache,
             "--cache-to", cache + ",mode=max,ignore-error=true", *command[2:]]
@@ -166,35 +189,45 @@ def main():
     parser.add_argument("--target", action="append", choices=BUILD_TARGETS)
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
+    parser.add_argument("--limits", type=json.loads, help="Serialized production caps from the validation plan")
+    parser.add_argument("--local-images", action="store_true", help="Record local immutable IDs without exporting or loading TARs")
     args = parser.parse_args()
+    if args.local_images and (not args.output or os.environ.get("GITHUB_RUN_ID")):
+        parser.error("local image receipts require local output and cannot be used in Actions")
     if args.viewer_image:
         if args.target or args.output:
             parser.error("viewer-image cannot be combined with build targets")
-        verify_viewer_image(args.viewer_image)
+        verify_viewer_image(args.viewer_image, args.limits)
         return
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
     for target in args.target or BUILD_TARGETS:
-        subprocess.run(cached_build(commands(target, executor)[0], target), check=True)
+        subprocess.run(cached_build(commands(target, executor, limits=args.limits)[0], target), check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
-        if target in REUSABLE_IMAGE_TARGETS:
-            verify_tree_bound_image(image_id, executor)
         print(f"[{target}] testing immutable image {image_id}", flush=True)
-        for command in commands(target, executor, image_id=image_id)[1:]:
+        for command in commands(target, executor, image_id=image_id, limits=args.limits)[1:]:
             subprocess.run(command, check=True)
-        if args.output and target in TARGETS:
-            retained[target] = pack_image(target, executor, image_id, args.output / "images")
-            # Exercise the deployment loader on this CI daemon before admitting
-            # the handoff. Docker's exporter/store representation can differ
-            # from the locally tested image's identity.
-            load_image(args.output / "images" / retained[target]["archive"], retained[target])
+        if args.output:
+            if args.local_images:
+                tag = source_tag(target, executor)
+                inspected = inspect_image(tag)
+                if inspected["Id"] != image_id or tag not in inspected.get("RepoTags", []):
+                    raise ValueError("local tested image tag changed during installed probes")
+                retained[target] = {"image_id": image_id, "source_tag": tag, "platform": "linux/amd64"}
+            else:
+                retained[target] = pack_image(target, executor, image_id, args.output / "images")
+                # Hosted runs exercise the exact deployment TAR loader.
+                load_image(args.output / "images" / retained[target]["archive"], retained[target])
     if args.output:
+        manifest = {"schema_version": 1, "tested_sha": executor, "images": retained}
+        if args.local_images:
+            manifest["transport"] = "local-daemon"
+            validate_local_manifest(manifest, executor)
         (args.output / "images").mkdir(parents=True, exist_ok=True)
-        (args.output / "images/manifest.json").write_text(json.dumps(
-            {"schema_version": 1, "tested_sha": executor, "images": retained}, sort_keys=True
-        ) + "\n")
+        (args.output / "images/manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     main()

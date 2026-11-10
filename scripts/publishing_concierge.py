@@ -386,6 +386,22 @@ def current_git_branch() -> str | None:
     return branch or None
 
 
+def preview_source_ref(value: str | None) -> str:
+    ref = value or "refs/heads/PREVIEW_REF"
+    if not PREVIEW_REF_RE.fullmatch(ref):
+        raise WorkflowError("preview source ref contains unsupported characters")
+    if ref.startswith("refs/"):
+        if not ref.startswith(("refs/heads/", "refs/tags/")):
+            raise WorkflowError("preview source ref must name a branch or tag")
+        return ref
+    return "refs/heads/" + ref
+
+
+def preview_dispatch(value: str | None) -> str:
+    return ("gh workflow run feature-preview-deploy.yml --ref main "
+            f"-f source_ref={preview_source_ref(value)} -f preview_data_mode=preserve")
+
+
 def read_json_file(path: Path, *, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text())
@@ -712,8 +728,7 @@ def workflow_state_payload(
             f"Use the preview-upload workflow step to upload the release bundle under {release_prefix}.",
             f"Use the preview-upload workflow step to upload gs://{PREVIEW_BUCKET}/_catalog/releases/{plan.asset_slug}.json and the run record.",
             (
-                f"After upload, run `gh workflow run feature-preview-deploy.yml --ref {ref_text} "
-                "-f preview_data_mode=preserve` and verify the refreshed viewer catalog. "
+                f"After upload, run `{preview_dispatch(preview_ref)}` and verify the refreshed viewer catalog. "
                 "The production catalog-web-deploy.yml automation runs from the reviewed "
                 "post-merge mutation/localization chain, but preview-only bucket uploads "
                 "do not trigger it."
@@ -932,14 +947,13 @@ def uploaded_preview_objects_by_role(state: dict[str, Any]) -> dict[str, dict[st
 
 
 def commands_for_preview_catalog_refresh(state: dict[str, Any]) -> list[str]:
-    preview_ref = state.get("preview_ref") or "PREVIEW_REF"
     return [
         (
             "Confirm this is a preview-only refresh: production catalog web deployment is automatic "
             "via `.github/workflows/catalog-web-deploy.yml` after the reviewed post-merge "
             "mutation/localization chain, but preview-only GCS uploads do not trigger that workflow."
         ),
-        f"Run `gh workflow run feature-preview-deploy.yml --ref {preview_ref} -f preview_data_mode=preserve` after preview-upload succeeds.",
+        f"Run `{preview_dispatch(state.get('preview_ref'))}` after preview-upload succeeds.",
         "Wait for the run to finish successfully, especially the Collect preview release indexes, Build preview catalog web bundle, and Publish preview catalog web bundle steps.",
         f"Stat gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json and record its generation, updated time, and generated_at value.",
     ]
@@ -1476,7 +1490,7 @@ def validate_preview_catalog_refresh(state: dict[str, Any], evidence: dict[str, 
     if workflow_name not in ("feature-preview-deploy.yml", *WORKFLOW_NAMES["feature-preview-deploy.yml"]):
         raise WorkflowError("evidence.workflow_name must identify feature-preview-deploy.yml (Preview / Deploy feature branch)")
     dispatched_ref = require_non_empty_string(evidence, "dispatched_ref")
-    if preview_ref and dispatched_ref != preview_ref:
+    if preview_ref and preview_source_ref(dispatched_ref) != preview_source_ref(preview_ref):
         raise WorkflowError(f"evidence.dispatched_ref must match preview_ref {preview_ref!r}")
     preview_data_mode = require_non_empty_string(evidence, "preview_data_mode")
     if preview_data_mode != "preserve":

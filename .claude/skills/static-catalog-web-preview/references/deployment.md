@@ -20,7 +20,7 @@ unchanged. A catalog selection failure fails delivery selection; publisher
 failures remain visible through the parent CI completion and the same catalog
 incident target. Successful wrapper jobs cannot establish recovery.
 
-An hourly read-only probe at minute 17 compares a generation-pinned release-index
+A daily read-only probe at 16:17 UTC compares a generation-pinned release-index
 snapshot and repo metadata with the published CSV and catalog JSON, using the
 same comparison as live publication acceptance. It ignores `generated_at` alone.
 Only changed catalog data selects the protected deployment job; idle probes skip
@@ -39,7 +39,7 @@ existing incident or prove a successful deployment.
 Selected deployments still require passing `ci-ready` for the scheduled main
 revision. The existing bundle digest skips publication when the same revision
 and release-index snapshot are already deployed; changed indexes can refresh the
-same revision. Pending differences are checked again on the next hourly probe;
+same revision. Pending differences are checked again on the next daily probe;
 this gate is not a retry budget or a replacement for failed-deployment recovery.
 No ingestion IAM or dataset writes are added.
 

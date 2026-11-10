@@ -58,6 +58,12 @@ resource "google_storage_bucket_iam_member" "monitoring_slack_recovery" {
   member = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
 
+resource "google_storage_bucket_iam_member" "monitoring_slack_reconciler" {
+  bucket = google_storage_bucket.monitoring_slack.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.github_job["reconciler"].email}"
+}
+
 resource "google_secret_manager_secret" "monitoring_slack" {
   project   = var.project_id
   secret_id = "shared-datasets-slack-bot-token"

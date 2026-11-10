@@ -34,16 +34,16 @@ class FeaturePreviewTests(unittest.TestCase):
             trigger["workflow_dispatch"]["inputs"]["preview_data_mode"]["options"],
             ["preserve", "reset"],
         )
-        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write", "pull-requests": "read"})
         self.assertEqual(job["environment"], "shared-datasets-production")
         self.assertEqual(
             job["concurrency"],
             {"group": "feature-branch-preview", "cancel-in-progress": False},
         )
         self.assertEqual(workflow["env"]["SHARED_DATASETS_BUCKET"], "skytruth-shared-datasets-1-preview")
-        self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "main")
-        self.assertEqual(steps["Check out selected feature branch"]["with"]["ref"], "${{ github.ref }}")
-        self.assertEqual(steps["Check out selected feature branch"]["with"]["path"], "preview-source")
+        self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "${{ github.workflow_sha }}")
+        self.assertNotIn("Check out selected feature branch", steps)
+        self.assertIn('git rev-parse FETCH_HEAD', steps["Validate selected ref"]["run"])
         self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", all_runs)
         self.assertIn("-target=google_firestore_database.feature_preview", all_runs)
 
@@ -100,34 +100,26 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("default: preserve", workflow)
         self.assertNotIn("inputs.ref", workflow)
         self.assertIn("Validate selected ref", workflow)
-        self.assertIn("Select the branch or tag to deploy from the workflow branch dropdown.", workflow)
+        self.assertIn("Execution must use this workflow from main.", workflow)
         self.assertIn("refs/heads/*|refs/tags/*", workflow)
-        self.assertIn("Only branch or tag refs are valid preview deploy sources", workflow)
+        self.assertIn("source_ref must be a full branch or tag ref.", workflow)
         self.assertIn("PREVIEW_DATA_MODE: ${{ github.event.inputs.preview_data_mode || 'preserve' }}", workflow)
         self.assertIn("Preview data mode must be either preserve or reset", workflow)
         self.assertIn("Preview data mode: ${PREVIEW_DATA_MODE}", workflow)
-        self.assertIn("PREVIEW_REF: ${{ github.ref_name }}", workflow)
-        self.assertIn("PREVIEW_SOURCE_REF: ${{ github.ref }}", workflow)
+        self.assertIn("PREVIEW_REF: ${{ inputs.source_ref }}", workflow)
+        self.assertNotIn("PREVIEW_SOURCE_REF", workflow)
         self.assertIn("IMAGE_NAME: preview-service", workflow)
         self.assertIn("CATALOG_VIEWER_IMAGE_NAME: preview-catalog-viewer", workflow)
-        self.assertIn("Validate preview IAM bootstrap", workflow)
-        self.assertIn("Preview IAM bootstrap is incomplete", workflow)
-        self.assertIn("missing_bootstrap=0", workflow)
-        self.assertIn("Missing preview service account", workflow)
-        self.assertIn("Missing preview loader service account", workflow)
-        self.assertIn("Preview Terraform IAM sync", workflow)
-        self.assertIn("feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
-        self.assertIn("feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
-        self.assertIn("PREVIEW_LOADER_WIF_MEMBER", workflow)
-        self.assertIn("preview service self signBlob binding", workflow)
-        self.assertIn("preview-source/services/feature_preview_service/Dockerfile", workflow)
-        self.assertIn("preview-source/services/catalog_viewer/Dockerfile", workflow)
-        self.assertIn("catalog viewer site-prefix override", workflow)
+        self.assertIn("exact reviewed main revision", workflow)
+        self.assertIn('git rev-parse FETCH_HEAD', workflow)
+        self.assertNotIn("preview-source", workflow)
+        self.assertIn("services/feature_preview_service/Dockerfile", workflow)
+        self.assertIn("services/catalog_viewer/Dockerfile", workflow)
         self.assertIn("Build preview service image", workflow)
         self.assertIn("Build preview catalog viewer image", workflow)
         self.assertIn("PREVIEW_SERVICE_IMAGE", workflow)
         self.assertIn("PREVIEW_CATALOG_VIEWER_IMAGE", workflow)
-        self.assertIn("PREVIEW_TERRAFORM_DIR: preview-source/terraform/envs/preview", workflow)
+        self.assertIn("PREVIEW_TERRAFORM_DIR: terraform/envs/preview", workflow)
         self.assertNotIn("feature_preview_service_image=", workflow)
         self.assertNotIn("inputs.action", workflow)
         self.assertIn('terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init', workflow)
@@ -190,8 +182,8 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("name: Destroy feature branch preview", workflow)
         self.assertIn("Validate main ref", workflow)
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
-        self.assertIn("Preview / Destroy environment may only apply from main", workflow)
-        self.assertIn("ref: main", workflow)
+        self.assertIn("Execution must use this workflow from main.", workflow)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
         self.assertIn("Release stable preview bootstrap state", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview state rm", workflow)
@@ -268,7 +260,6 @@ class FeaturePreviewTests(unittest.TestCase):
 
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
-        workflow = ARTIFACT_REGISTRY_IAM_WORKFLOW.read_text()
         custom_role = re.search(
             r'resource "google_project_iam_custom_role" "artifact_registry_iam_policy_manager" \{(?P<body>.*?)\n\}',
             artifact_registry_tf,
@@ -298,30 +289,10 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("roles/artifactregistry.writer", artifact_registry_tf)
         self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
         self.assertIn("google_project_iam_member.github_actions_artifact_registry_iam_policy_manager", artifact_registry_tf)
-        self.assertIn("Artifact Registry IAM sync", workflow)
-        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
-        self.assertIn("post_apply_wait_seconds: 30", workflow)
-        self.assertIn("allowed_exact", workflow)
-        self.assertIn(
-            "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
-            workflow,
-        )
-        self.assertIn("Refusing automatic Artifact Registry IAM bootstrap", workflow)
-        self.assertIn("Refusing automatic Artifact Registry IAM writer sync", workflow)
         self.assertNotIn("roles/artifactregistry.admin", artifact_registry_tf)
-        self.assertNotIn("roles/artifactregistry.admin", workflow)
 
     def test_preview_terraform_iam_sync_uses_custom_role_and_allowlist(self):
         preview_terraform_tf = (PROD_TF / "preview_terraform_iam.tf").read_text()
-        workflow = PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text()
 
         self.assertIn("import {", preview_terraform_tf)
         self.assertIn("projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform", preview_terraform_tf)
@@ -354,41 +325,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("resourcemanager.projects.setIamPolicy", preview_terraform_tf)
         self.assertNotIn("roles/storage.admin", preview_terraform_tf)
         self.assertNotIn("roles/editor", preview_terraform_tf)
-        self.assertIn("Preview Terraform IAM sync", workflow)
-        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
-        self.assertIn("workflow_call:", workflow)
-        self.assertIn("source_run_attempt:", workflow)
-        self.assertIn("needs: bootstrap", workflow)
-        self.assertIn("caller_workflow: preview-terraform-iam-sync.yml", workflow)
-        self.assertIn("allowed_exact", workflow)
-        self.assertIn(
-            "google_project_iam_custom_role.preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "module.feature_preview_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "module.feature_preview_loader_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "google_project_iam_member.github_actions_preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "google_service_account_iam_member.feature_preview_loader_github_wif",
-            workflow,
-        )
-        self.assertIn(
-            "google_service_account_iam_member.feature_preview_service_self_sign_blob",
-            workflow,
-        )
-        self.assertIn("block_deletes: true", workflow)
-        self.assertIn("Refusing automatic preview Terraform IAM sync", workflow)
-        self.assertNotIn("roles/storage.admin", workflow)
-        self.assertNotIn("roles/editor", workflow)
 
 
 if __name__ == "__main__":
@@ -402,15 +338,12 @@ def test_published_reader_is_scoped_and_owned_by_protected_iam_sync():
     assert 'role   = "roles/storage.objectViewer"' in resource
     assert 'expression  = local.catalog_viewer_object_viewer_condition' in resource
     assert 'bucket = var.bucket_name' in resource
-    workflow = (root / ".github/workflows/preview-terraform-iam-sync.yml").read_text()
-    assert workflow.count("google_storage_bucket_iam_member.feature_preview_published_reader") == 2
     preview = (root / "terraform/envs/preview/catalog_viewer.tf").read_text()
     assert 'name  = "CATALOG_VIEWER_INCLUDE_PUBLISHED"' in preview
 
 
 def test_published_reader_job_checks_bucket_authority_and_preserves_bootstrap_order():
-    import yaml
-    job = yaml.safe_load(PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text())["jobs"]["published-reader"]
+    job = load_workflow(PREVIEW_TERRAFORM_IAM_WORKFLOW)["jobs"]["published-reader"]
     assert job["needs"] == "sync"
     assert job["with"]["readiness_target"] == "bucket-iam"
     assert job["with"]["block_deletes"] is True

@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-import yaml
+from workflow_helpers import load_workflow, expanded_steps
 
 from scripts import deployment_permissions as live
 
@@ -36,7 +36,7 @@ class PreviewIamReadinessTests(unittest.TestCase):
         permissions = re.findall(r'"(iam\.[^"]+)"', role)
         self.assertEqual({p for p in permissions if p.startswith("iam.workloadIdentityPools.")}, set(POOL_READS))
         # Preserve the managed identity-pool dependency and exact reviewed member.
-        self.assertIn('member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"', source)
+        self.assertIn('member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.preview/allowed"', source)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', source)
 
     def test_read_probe_uses_actual_pool_and_all_observed_refresh_dependencies(self):
@@ -95,7 +95,7 @@ class PreviewIamReadinessTests(unittest.TestCase):
             require_reviewed_provider(changed)
 
     def test_targeted_preview_graph_matches_the_independently_audited_closure(self):
-        wrapper = yaml.safe_load((ROOT / ".github/workflows/preview-terraform-iam-sync.yml").read_text())
+        wrapper = load_workflow(ROOT / ".github/workflows/preview-terraform-iam-sync.yml")
         self.assertEqual(wrapper["jobs"]["sync"]["with"]["targets"].split(), READ_CONTRACT["targets"])
         source = (ROOT / "terraform/envs/prod/preview_terraform_iam.tf").read_text()
         self.assertIn("${google_iam_workload_identity_pool.github.name}", source)
@@ -169,14 +169,13 @@ class PreviewIamReadinessTests(unittest.TestCase):
         output.assert_not_called()
 
     def test_preview_workflow_requires_probe_before_plan_claim_and_apply(self):
-        wrapper = yaml.safe_load((ROOT / ".github/workflows/preview-terraform-iam-sync.yml").read_text())
+        wrapper = load_workflow(ROOT / ".github/workflows/preview-terraform-iam-sync.yml")
         self.assertEqual(wrapper["jobs"]["sync"]["with"]["readiness_target"], "preview-service-account-iam")
         self.assertEqual(wrapper["jobs"]["sync"]["needs"], "bootstrap")
-        leaf = yaml.safe_load((ROOT / ".github/workflows/prod-terraform-target-apply.yml").read_text())
-        steps = leaf["jobs"]["sync"]["steps"]
+        leaf = load_workflow(ROOT / ".github/workflows/prod-terraform-target-apply.yml")
+        steps = list(expanded_steps(ROOT, leaf["jobs"]["sync"]))
         by_name = {step["name"]: index for index, step in enumerate(steps)}
         probe = by_name["Verify prerequisite deployment permissions"]
-        self.assertEqual(steps[probe]["env"]["READINESS_TARGET"], "${{ inputs.readiness_target }}")
         self.assertIn('deployment_permissions.py --target "$READINESS_TARGET"', steps[probe]["run"])
         for step in ("Terraform plan", "Claim tested deployment revision", "Terraform apply"):
             self.assertLess(probe, by_name[step])

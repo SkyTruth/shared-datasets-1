@@ -5,138 +5,56 @@ description: Use before suggesting, planning, running, approving, or documenting
 
 # Protected Terraform Apply
 
-Production Terraform is a reviewed control-plane mutation. In this repository,
-agents may inspect and plan production Terraform, but they must not suggest or
-run local production applies as the normal path.
+Follow [Change a production deployment](../../../docs/ci-deployment.md)
+for the ordered procedure. [Terraform reconciliation](../../../docs/terraform-reconciliation.md) owns manual state reconciliation;
+[deployment contracts](../../../docs/deployment-contracts.md) own provenance,
+queues, saved-plan scope, permission checks and signed outcomes.
 
-## Default Rule
+## Authority
 
-- Do not run or suggest `terraform apply`, targeted applies, or
-  `scripts/terraform_prod_apply.py` for production from a local terminal.
-- Do not use local apply as a shortcut for GCS access changes, IAM changes,
-  PMTiles CDN route sync, Cloud Run services/jobs, Cloud Scheduler, monitoring,
-  APIs, service accounts, Artifact Registry, or load balancer changes.
-- Do run `terraform fmt`, `terraform validate`, `terraform plan`, and
-  `terraform show -json` when useful for review.
-- Route production Terraform mutations through a PR reviewed by `jonaraphael`,
-  merged to `main`, then applied by a protected GitHub Actions workflow in the
-  `shared-datasets-production` environment.
-- If no protected workflow exists for the infrastructure class, implement that
-  workflow by PR. Do not fall back to a local apply.
+- Do not run or suggest local production `terraform apply`, targeted applies or
+  `scripts/terraform_prod_apply.py` as the normal path. This includes IAM,
+  storage, CDN, Cloud Run, Scheduler, Monitoring, APIs and service accounts.
+- Local `terraform fmt`, `terraform validate`, `terraform plan` and
+  `terraform show -json` may provide review evidence.
+- Production changes require a PR reviewed by `jonaraphael`, merge to `main`,
+  and a protected workflow in `shared-datasets-production`. If the resource
+  class has no constrained workflow, add one by PR rather than applying locally.
+- Review, successful CI, environment reviewers and dataset mutation acceptance
+  are separate gates. Canonical object promotion/deletion follows the
+  [immutable dataset-plan contract](../../../.github/dataset-plans/README.md).
 
-## Normal Workflow
-
-1. Make the repo change on a focused branch.
-2. Run local checks:
-
-```bash
-terraform -chdir=terraform/envs/prod fmt -check
-terraform -chdir=terraform/envs/prod validate
-terraform -chdir=terraform/envs/prod plan -input=false ...
-```
-
-3. Summarize the expected live mutation from the plan, including changed
-   resource addresses and whether the existing protected workflow allowlist
-   covers them.
-4. Open a PR requesting `jonaraphael` review.
-5. After review and merge to `main`, let the protected workflow apply the
-   approved Terraform changes.
-
-## Existing Protected Paths
-
-### Which workflow applies what
-
-Workflow filenames below are under `.github/workflows/`. `ci.yml` routes selected
-main-push changes after successful `ci-ready`; the narrow sync callers delegate
-their applies to `prod-terraform-target-apply.yml`. That reusable workflow owns
-the `shared-datasets-production` environment, production-state queue, saved-plan
-apply, and `scripts/terraform_plan_allowlist.py` enforcement of each caller's
-explicit targets and allowed resource changes.
-
-| Workflow | Apply scope and enforcement |
-|---|---|
-| `ci.yml` | Orchestrates protected IAM syncs and deployments, passing the exact tested-main revision and CI run/attempt inputs. |
-| `prod-terraform-target-apply.yml` | Reusable protected apply for the narrow sync callers below; refuses changes outside their declared resource allowlists. |
-| `prod-terraform-state-reconcile.yml` | Reviewed manual state/output reconciliation through the same protected executor. An untargeted full plan and empty resource allowlist refuse every live resource mutation. Supply current recorded deployment variables. |
-| `terraform-state-read-iam-sync.yml` | Reviewed manual bootstrap of the Terraform metadata reader role and its one shared-project binding. Exactly five read permissions; blocks deletes/replacements. 30x30 work is deferred and is outside this bootstrap. |
-| `artifact-registry-iam-sync.yml` | Bootstraps the registry IAM policy manager, then applies the publisher's Artifact Registry writer binding. |
-| `scheduled-ingestion-deploy-iam-sync.yml` | Bootstraps translation notice secret IAM authority, then syncs ingestion deployer roles and bindings, staged-bundle read access, create-only automatic WDPA staging, and translation notice/debt access. |
-| `preview-terraform-iam-sync.yml` | Bootstraps preview Terraform authority, then syncs preview service accounts and their WIF/signing bindings; blocks deletes and replacements. |
-| `scratch-cleanup-iam-sync.yml` | Syncs pending-publish bindings and explicit WDPA retirement resources. Its operational retirement bootstraps the separately approved expiring authority, deletes only the 30 exact retired addresses (including the obsolete WDPA observer), and revokes the grant after success or failure; see `docs/terraform-reconciliation.md`. Preserves active services and monthly retained-bundle access. |
-| `cron-alert-policy-sync.yml` | Bootstraps Monitoring policy authority, then provisions the private authenticated Monitoring-to-Slack transport and syncs all five ingestion, identity-decision, Scheduler, unapproved-writer and deletion alert policies. |
-| `sea-ice-daily-deploy.yml`, `eamlis-monthly-deploy.yml` | Apply only their own Cloud Run Job through `scripts/terraform_plan_allowlist.py`, including the expected immutable image check. |
-| `mpatlas-monthly-deploy.yml` | Applies only the MPAtlas job with its exact tested image, scheduler invoker binding, monthly scheduler and optional canonical deny-policy writer exception; blocks deletes/replacements. The ingestion IAM sync owns its identities and scoped storage/actAs grants. |
-| `wdpa-monthly-deploy.yml` | Uses its inline allowlist for the monthly worker and canonical destructive-action deny policy; also validates the exact CI-tested image/config digest, absence of monthly pins, and runtime limits. |
-| `pmtiles-cdn-sync.yml` | Applies managed-folder IAM bootstrap checked by `scripts/cdn_plan_readiness.py check-bootstrap`, then shared-bucket/CDN URL-map/public managed-folder changes under its inline allowlist. |
-
-Other protected publication paths:
-
-- Catalog web bundle publication: `.github/workflows/catalog-web-deploy.yml`
-  after trusted `main` pushes.
-- Dataset object promotion/deletion:
-  `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
-  dispatch.
-
-For any Terraform resource not covered by an existing protected workflow, add or
-extend a constrained workflow in the same PR as the infrastructure change.
-
-Full state reconciliation uses the deployer's `terraform-state-read` readiness
-probe for the shared project. 30x30 reconciliation is deferred; the existing
-foreign-account Terraform record remains, so a full production plan is still
-blocked on that read. An operator's successful local plan or `iam-bootstrap`
-hint does not prove that the CI identity can refresh the full state. Do not
-retry while known reads are denied or hide them with refresh disabled. See
-`docs/terraform-reconciliation.md` for the observed failed boundary and scopes.
-
-The October operational retirement has explicit human approval for its temporary
-project-level delete/read scope through `2026-11-03T00:00:00Z`. The November
-observer-removal change adds ten exact targets and the two Cloud Run/Scheduler
-delete permissions to that protected scope; it requires review/merge before live
-use and does not extend the absolute window. Its Terraform
-variable defaults the grant off, the pure-delete saved-plan policy refuses
-resurrection/replacement and unrelated changes, and the revocation job runs even
-after a partial grant failure. Role creation precedes the grant, and revocation
-has no dependency that could recreate the role. Do not renew this absolute window implicitly.
-If revocation fails, the integration owner must finish the existing protected
-revocation with its exact tested revision; the fixed expiry remains the backstop.
-
-## Publisher and read-only identity configuration
+## Identity and storage constraints
 
 The Terraform Workload Identity provider restricts OIDC to this repository and
-its `shared-datasets-production` environment. After the protected workflow
-provisions it, set the environment variable `GCP_WORKLOAD_IDENTITY_PROVIDER` to
-Terraform output `github_workload_identity_provider`. Read-only catalog drift
-and hygiene workflows use repository variables
-`GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and `GCP_READONLY_SERVICE_ACCOUNT`, from
-outputs `github_readonly_workload_identity_provider` and
-`github_readonly_service_account`.
+`shared-datasets-production`. Configure `GCP_WORKLOAD_IDENTITY_PROVIDER` from
+`github_workload_identity_provider`; read-only catalog workflows use
+`GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and `GCP_READONLY_SERVICE_ACCOUNT`
+from the corresponding `github_readonly_*` Terraform outputs.
 
-GitHub environment deployment reviewers, when configured, are a separate gate
-from PR approval. The canonical mutation approval and executor contract lives
-in [.github/dataset-plans/README.md](../../../.github/dataset-plans/README.md).
+Follow the [two-phase identity rollout](../../../docs/github-identity-rollout.md).
+Phase 1 adds per-workflow grants while preserving legacy mappings, provider token
+acceptance and IAM members, including the unmanaged Terraform subject grant.
+Phase 2 requires a separate reviewed PR with successful main authentication
+evidence for every new identity before narrowing access.
 
-The publisher can read `_scratch/pending-publishes/` to promote reviewed bytes.
-`scratch_writer_members` retains the current scratch-only writer; override it
-with the approved scratch-only group/account when ready before removing broad
-human write grants. Conditional IAM and alerting are the standing project-scope
-controls: canonical writers are the publisher and scheduled-job identities;
-scratch access stays separate and unexpected canonical writes/deletes alert.
+Publisher and scheduled-job identities own canonical writes; scratch writers
+remain separate. The publisher reads `_scratch/pending-publishes/` for reviewed
+promotion. Keep `scratch_writer_members` scoped to the approved scratch-only
+identity before removing broad human writes. The bucket retains deleted or
+overwritten objects with 30-day soft delete.
 
-The optional project-level deny backstop defaults off.
-`canonical_mutation_deny_policy_enabled=true` requires an approved
-organization-level IAM administrator or controlled IaC identity with
-`roles/iam.denyAdmin` at organization scope; project ownership alone cannot grant
-or use that role. Changes to any of these resources follow the protected workflow
-above. The shared hierarchical-namespace bucket retains deleted/overwritten
-objects through Cloud Storage soft delete for 30 days.
+The optional `canonical_mutation_deny_policy_enabled` backstop defaults off.
+Enabling it requires approved organization-level `roles/iam.denyAdmin` authority;
+project ownership cannot grant that role. These changes follow the same protected
+procedure. Do not add object ACLs or use Terraform for changing dataset files.
 
-## Break-Glass Exception
+## Break-glass exception
 
-Only use local production apply when the user explicitly says this is
-break-glass or emergency work, names the exact live mutation to make, and accepts
-that it bypasses the PR/protected-workflow path. Record the operator identity,
-commands, affected resources, and rationale in the final response and in a
-follow-up PR when practical.
-
-Ambiguous phrases such as "deploy it", "apply this", "push it live", or "make
-it work" are not break-glass approval.
+Local production apply requires an explicitly named emergency, exact mutation
+and acceptance of bypassing the PR/protected workflow. Record operator identity,
+commands, affected resources and rationale, plus a follow-up PR when practical.
+“Deploy it”, “apply this” and “make it work” do not establish break-glass authority.
+Historical temporary retirement authority is expired; its
+[audit record](../../../docs/history/terraform-retirement-2026-10-27.md)
+does not renew or grant permissions.

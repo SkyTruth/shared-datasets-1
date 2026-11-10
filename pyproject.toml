@@ -21,6 +21,7 @@ wdpa-native = ["GDAL==3.6.2", "numpy==1.26.4"]
 gdal = ["numpy==1.26.4"]
 
 [dependency-groups]
+ci-plan = ["PyYAML>=6.0.0", "python-hcl2>=8,<9"]
 # Browser fixtures create real FGB bytes; Rasterio belongs to Python/native tests.
 browser = ["geopandas==1.1.1"]
 dev = [

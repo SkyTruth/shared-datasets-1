@@ -1,0 +1,263 @@
+{
+  "events": {
+    "artifact-registry-iam-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "bucket-hygiene-audit.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "catalog-viewer-deploy.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "catalog-web-deploy.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "ci.yml": [
+      "push"
+    ],
+    "cron-alert-policy-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "deployment-recovery.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "deployment-verification.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "eamlis-monthly-deploy.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "mpatlas-monthly-deploy.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "operational-safety-check.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "pmtiles-cdn-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "preview-terraform-iam-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "prod-terraform-state-reconcile.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "publish-dataset.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "publish-typescript-sdk.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "scheduled-ingestion-deploy-iam-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "scratch-cleanup-audit.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "scratch-cleanup-iam-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "sea-ice-daily-deploy.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "terraform-state-read-iam-sync.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "unattended-workflow-alert.yml": [
+      "schedule",
+      "workflow_dispatch",
+      "workflow_run"
+    ],
+    "wdpa-monthly-build.yml": [
+      "schedule",
+      "workflow_run"
+    ],
+    "wdpa-monthly-deploy.yml": [
+      "schedule",
+      "workflow_run"
+    ]
+  },
+  "prerequisites": {
+    "Artifact Registry IAM sync": [],
+    "Artifact Registry writer binding sync": [
+      "google_artifact_registry_repository.jobs",
+      "google_project_service.required",
+      "google_iam_workload_identity_pool.github",
+      "module.github_readonly_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.feature_preview_loader_service_account.google_service_account.this",
+      "google_storage_bucket.shared_bucket",
+      "google_storage_bucket.monitoring_slack"
+    ],
+    "Cron alert policy sync": [
+      "google_service_account.github_job",
+      "data.google_project.current",
+      "google_monitoring_notification_channel.cron_alert_slack",
+      "google_project_iam_audit_config.storage_data_write",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_project_iam_member.github_actions_dataset_usage_deployer",
+      "google_project_service.required",
+      "google_pubsub_topic.monitoring_slack",
+      "google_secret_manager_secret.monitoring_slack",
+      "google_project_iam_member.monitoring_slack_token",
+      "google_project_iam_member.monitoring_slack_token_writer",
+      "google_service_account.monitoring_slack",
+      "google_service_account.monitoring_slack_push",
+      "google_service_account_iam_member.monitoring_slack_deployer",
+      "google_storage_bucket.monitoring_slack",
+      "google_storage_bucket_iam_member.monitoring_slack_state",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.mpatlas_job_service_account.google_service_account.this",
+      "module.sea_ice_job_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.wdpa_job_service_account.google_service_account.this",
+      "terraform_data.cron_alert_channel_configured",
+      "google_storage_bucket_iam_member.monitoring_slack_recovery",
+      "google_storage_bucket_iam_member.monitoring_slack_reconciler",
+      "google_pubsub_topic.identity_decision_events",
+      "google_project_iam_member.monitoring_slack_incident_reader",
+      "google_project_iam_custom_role.monitoring_incident_reader"
+    ],
+    "Dataset usage deploy IAM bootstrap": [],
+    "Monitoring Slack transport resources": [
+      "google_project_service.required",
+      "google_project_iam_custom_role.monitoring_incident_reader",
+      "module.wdpa_job_service_account.google_service_account.this",
+      "module.sea_ice_job_service_account.google_service_account.this",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.mpatlas_job_service_account.google_service_account.this",
+      "google_project_iam_member.github_actions_dataset_usage_deployer",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_service_account.github_job"
+    ],
+    "Monitoring alert policy IAM bootstrap": [
+      "google_project_service.required"
+    ],
+    "Operational infrastructure retirement": [],
+    "Operational retirement IAM bootstrap": [],
+    "Operational retirement authority grant": [],
+    "Operational retirement authority revocation": [],
+    "PR plan identity IAM bootstrap": [],
+    "PR plan identity provisioning": [
+      "google_project_service.required",
+      "google_iam_workload_identity_pool.github",
+      "google_service_account.github_job"
+    ],
+    "Preview Terraform IAM bootstrap": [],
+    "Preview Terraform IAM sync": [
+      "google_iam_workload_identity_pool.github",
+      "google_project_iam_custom_role.catalog_viewer_sign_blob",
+      "google_project_service.required"
+    ],
+    "Preview published dataset reader": [
+      "module.feature_preview_service_account.google_service_account.this"
+    ],
+    "Production Terraform state read IAM bootstrap": [],
+    "Production Terraform state reconciliation": [],
+    "Scheduled ingestion deploy IAM sync": [
+      "google_project_service.required",
+      "google_secret_manager_secret.slack_webhook_url",
+      "google_storage_bucket.shared_bucket",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.wdpa_job_service_account.google_service_account.this",
+      "google_project_iam_custom_role.dataset_usage_deployer",
+      "google_project_iam_member.github_actions_dataset_usage_deployer"
+    ],
+    "Scratch cleanup IAM sync": [
+      "google_project_service.required",
+      "google_storage_bucket.shared_bucket",
+      "module.shared_datasets_publisher_service_account.google_service_account.this"
+    ],
+    "Translation notice secret IAM bootstrap": [
+      "data.google_project.current"
+    ],
+    "WDPA validation retirement": [],
+    "WDPA validation retirement IAM bootstrap": []
+  },
+  "publication_jobs": [
+    "Apply PMTiles CDN route sync",
+    "Apply Scheduled ingestion deploy IAM sync",
+    "Apply Translation notice secret IAM bootstrap",
+    "Apply approved PR mutation plans",
+    "Build and publish catalog web",
+    "Build image and apply",
+    "Detect reviewed PR mutation plans",
+    "Install reviewed feature-ID reset",
+    "Prepare publication image and apply"
+  ],
+  "records": {
+    "catalog-viewer": "catalog-viewer-deploy.yml",
+    "catalog-web": "catalog-web-deploy.yml",
+    "dataset-usage": "dataset-usage-deploy.yml",
+    "eamlis-monthly": "eamlis-monthly-deploy.yml",
+    "monitoring-slack": "cron-alert-policy-sync.yml",
+    "mpatlas-monthly": "mpatlas-monthly-deploy.yml",
+    "pmtiles-cdn": "pmtiles-cdn-sync.yml",
+    "sea-ice-daily": "sea-ice-daily-deploy.yml",
+    "typescript-sdk": "publish-typescript-sdk.yml",
+    "wdpa-monthly": "wdpa-monthly-deploy.yml",
+    "wdpa-monthly-build": "wdpa-monthly-build.yml"
+  },
+  "retired_resources": {
+    "Operational infrastructure retirement": [
+      "google_iam_workload_identity_pool_provider.operational_observer",
+      "google_logging_log_view.operational_observations",
+      "google_monitoring_alert_policy.dataset_schema_changed",
+      "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat",
+      "google_monitoring_metric_descriptor.operational_reconciliation_heartbeat_v2",
+      "google_project_iam_custom_role.operational_log_view_manager",
+      "google_project_iam_custom_role.operational_metric_descriptor_manager",
+      "google_project_iam_custom_role.operational_observer_reader",
+      "google_project_iam_custom_role.operational_observer_receipts",
+      "google_project_iam_custom_role.operational_provider_creator",
+      "google_project_iam_custom_role.operational_provider_reader",
+      "google_project_iam_custom_role.readonly_provider_updater",
+      "module.operational_observer_service_account.google_service_account.this",
+      "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+      "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+      "google_monitoring_alert_policy.wdpa_execution_observer_unhealthy",
+      "google_project_iam_custom_role.wdpa_execution_reader",
+      "google_project_iam_custom_role.wdpa_observer_bootstrap",
+      "google_service_account_iam_member.wdpa_observer_deployer",
+      "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+      "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+      "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+      "module.wdpa_observer_service_account.google_service_account.this"
+    ],
+    "WDPA validation retirement": [
+      "google_storage_bucket_iam_member.wdpa_build_stager",
+      "google_storage_bucket_iam_member.wdpa_build_folder_stager",
+      "google_project_iam_custom_role.wdpa_build_stager",
+      "google_service_account_iam_member.wdpa_validation_deployer",
+      "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this",
+      "module.wdpa_validation_service_account.google_service_account.this"
+    ]
+  }
+}

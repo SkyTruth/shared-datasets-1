@@ -2,9 +2,7 @@
 
 import io
 import json
-import os
 from pathlib import Path
-import subprocess
 from unittest import mock
 
 import pytest
@@ -47,8 +45,10 @@ def test_supervised_or_nonfailure_runs_are_quiet(update):
     assert alerts.alert_for_run(event(**update)) is None
 
 
-def test_event_data_cannot_override_destination_or_inject_slack_mentions():
+def test_event_data_cannot_override_destination_or_inject_slack_mentions(monkeypatch):
     payload = event(name="<@U123> & <https://evil.test|click>", html_url="https://evil.test")
+    assert alerts.alert_for_run(payload) is None  # Unknown workflow identities cannot acquire alert ownership.
+    monkeypatch.setitem(alerts.WORKFLOW_PATHS, payload["workflow_run"]["name"], "bucket-hygiene-audit.yml")
     alert = alerts.alert_for_run(payload)
     assert "<@U123>" not in alert["body"]
     assert "&lt;@U123&gt;" in alert["body"]
@@ -60,23 +60,10 @@ def test_event_data_cannot_override_destination_or_inject_slack_mentions():
             alerts.alert_for_run(event(id=run_id))
 
 
-def test_cli_dry_run_and_delivery_failure(tmp_path, monkeypatch, capsys):
-    path = tmp_path / "event.json"
-    path.write_text(json.dumps(event()))
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path), "--dry-run"])
-    with mock.patch.object(alerts, "notify") as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
+def test_removed_webhook_cli_cannot_post(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["alert", "--event-path", "event.json"])
+    with pytest.raises(SystemExit):
         alerts.main()
-        notify.assert_not_called()
-    assert "actions/runs/123" in capsys.readouterr().out
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
-        with pytest.raises(RuntimeError, match="delivery failed"):
-            alerts.main()
-        assert notify.call_args.kwargs["strict"] is True
-    path.write_text(json.dumps(event(event="pull_request")))
-    with mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-        notify.assert_not_called()
 
 
 def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
@@ -84,29 +71,22 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
     subscriptions = workflow_triggers(workflow)["workflow_run"]["workflows"]
     for path in WORKFLOWS.glob("*.yml"):
         candidate = load_workflow(path)
-        if "schedule" in workflow_triggers(candidate):
-            if path.name in alerts.REPLAY_ONLY_WORKFLOWS:
-                assert candidate["name"] not in subscriptions
-                steps = workflow_steps_by_name(candidate, "safety")
-                handoff = steps["Request operational reconciliation"]
-                assert "failure()" in handoff["if"] and "always()" in handoff["if"]
-                assert "gh workflow run deployment-verification.yml --ref main" in handoff["run"]
-                assert path.name in alerts.MONITORED_WORKFLOWS
-            else:
-                assert candidate["name"] in subscriptions, path.name
+        if "schedule" in workflow_triggers(candidate) and path.name != "operational-safety-check.yml":
+            assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
-    assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
-    assert "CI" in subscriptions
+    assert {"Catalog / Web deploy", "Catalog / Viewer deploy"} <= set(subscriptions)
+    assert {load_workflow(WORKFLOWS / filename)["name"] for filename in ("ci.yml", "publish-typescript-sdk.yml")} <= set(subscriptions)
+    assert set(workflow["jobs"]) == {"incidents"}
     assert workflow["permissions"] == {"contents": "read", "actions": "read"}
-    worker_filter = workflow["jobs"]["notify"]["if"]
+    worker_filter = workflow["jobs"]["incidents"]["if"]
     assert "github.event.workflow_run.status == 'completed'" in worker_filter
     assert "contains(fromJSON(" in worker_filter
     conclusions = json.loads(worker_filter.split("fromJSON('", 1)[1].split("')", 1)[0])
     assert set(conclusions) == alerts.FAILED_CONCLUSIONS
     assert "github.event.workflow_run.head_repository.full_name == github.repository" in worker_filter
-    steps = workflow["jobs"]["notify"]["steps"]
+    steps = workflow["jobs"]["incidents"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
-    assert checkout["with"] == {"ref": "main", "persist-credentials": False}
+    assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
 
 
@@ -157,25 +137,19 @@ def test_scheduled_catalog_probe_with_skipped_publisher_stays_in_github(conclusi
     assert alerts.alert_for_run(event(name=name, event="workflow_run"), jobs=jobs) is not None
 
 
-def test_catalog_probe_cli_uses_verified_job_evidence_before_suppressing(tmp_path, monkeypatch):
+def test_catalog_probe_uses_verified_job_evidence_before_suppressing():
+    from scripts import slack_incidents as incidents
     payload = event(name="Catalog web deploy", head_sha="a" * 40, run_attempt=1)
     api = source_api(payload["workflow_run"])
     api.pages.return_value = [
         {"name": "Check for catalog input changes", "status": "completed", "conclusion": "failure"},
         {"name": "Build and publish catalog web", "status": "completed", "conclusion": "skipped"},
     ]
-    path = tmp_path / "event.json"
-    path.write_text(json.dumps(payload))
-    monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-    notify.assert_not_called()
+    assert incidents.source_observations(api, payload, {}) == []
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
     api = source_api(payload["workflow_run"], run_attempt=2)
-    with mock.patch.object(alerts, "GitHub", return_value=api), mock.patch.object(alerts, "notify") as notify:
-        alerts.main()
-    notify.assert_not_called()
+    assert incidents.source_observations(api, payload, {}) == []
     api.pages.assert_not_called()
 
 
@@ -202,7 +176,7 @@ def test_ci_alert_checks_source_identity_and_suppresses_obsolete_attempts():
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
 
 
-@pytest.mark.parametrize("name", sorted(alerts.OBSERVER_WORKFLOWS))
+@pytest.mark.parametrize("name", [name for path in ("deployment-verification.yml", "deployment-recovery.yml") for name in alerts.WORKFLOW_NAMES[path]])
 def test_failed_terminal_observation_and_explicit_reconciliation_remain_visible(name):
     payload = event(name=name, event="workflow_dispatch", head_sha="a" * 40, run_attempt=1)
     assert alerts.alert_for_run(payload) is not None
@@ -230,7 +204,7 @@ def test_ci_covers_any_real_post_validation_deployment_failure():
 
 @pytest.mark.parametrize("name", [
     "geospatial-changes", "lint", "tests", "geospatial-integration", "production-images",
-    "sdk-validation (Node 22)", "sdk-validation (Node 24)", "browser", "ci-ready",
+    "sdk-validation (Node 22)", "sdk-validation (Node 24)", "browser", "ci-ready", "tests-control-plane",
 ])
 def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attempt(name):
     failed_validation = {"name": name, "status": "completed", "conclusion": "failure"}
@@ -244,32 +218,53 @@ def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attem
     assert alerts.alert_for_run(payload, jobs=[ready, failed_validation, failed_delivery]) is not None
 
 
-@pytest.mark.parametrize("filename,step_name", [
-    ("sea-ice-daily-deploy.yml", "Execute sea-ice-daily canary"),
-    ("eamlis-monthly-deploy.yml", "Execute eamlis-monthly canary"),
-])
+@pytest.mark.parametrize("target", ["mpatlas-monthly", "sea-ice-daily", "eamlis-monthly", "wdpa-monthly"])
 @pytest.mark.parametrize("date", ["", "2026-10-01", "invalid; exit 0"])
 @pytest.mark.parametrize("exit_code", [0, 7])
-def test_real_synchronous_canary_shell_marks_only_execution_and_propagates_failure(filename, step_name, date, exit_code):
-    step = workflow_steps_by_name(load_workflow(WORKFLOWS / filename), "deploy")[step_name]
-    recorder = f'gcloud() {{ printf "%s\\n" "$@"; return {exit_code}; }}\n'
-    env = {**os.environ, "JOB_NAME": "test-job", "REGION": "us-central1",
-           "GOOGLE_CLOUD_PROJECT": "test-project", "CANARY_RUN_DATE": date,
-           "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY,
-           "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull}
-    result = subprocess.run(["bash", "-c", recorder + step["run"]], env=env, capture_output=True, text=True)
+def test_real_canary_launch_marks_only_short_executions_and_propagates_failure(tmp_path, target, date, exit_code):
+    from test_ingestion_deploy_workflow import run_shell, shared_step
+    launch = shared_step("verify", "Execute ingestion canary")
+    recorder = f'''gcloud() {{
+      printf "%s\\n" "$@" > "$COMMAND_LOG"
+      echo test-execution
+      return {exit_code}
+    }}
+'''
+    log = tmp_path / "commands"
+    result = run_shell(tmp_path, launch["run"], target=target, prefix=recorder, extra={
+        "COMMAND_LOG": str(log), "CANARY_RUN_DATE": date,
+        "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY, "GITHUB_RUN_ID": "123",
+    })
     if date.startswith("invalid"):
         assert result.returncode != 0
-        assert result.stdout == ""
+        assert not log.exists()
         return
     assert result.returncode == exit_code, result.stderr
-    args = result.stdout.splitlines()
-    assert args[:3] == ["run", "jobs", "execute"] or args[1:4] == ["run", "jobs", "execute"]
-    assert "--wait" in args and "--async" not in args
-    overrides = [a for a in args if a.startswith("--update-env-vars=")]
-    assert len(overrides) == 1
-    assert f"{MARKER}=https://github.com/{alerts.REPOSITORY}/actions/runs/123" in overrides[0]
-    assert (",RUN_DATE=2026-10-01" in overrides[0]) == bool(date)
+    args = log.read_text().splitlines()
+    assert args[:4] == ["run", "jobs", "execute", target]
+    assert "--async" in args and "--wait" not in args
+    overrides = [arg for arg in args if arg.startswith("--update-env-vars=")]
+    marker = f"{MARKER}=https://github.com/{alerts.REPOSITORY}/actions/runs/123"
+    assert (marker in " ".join(overrides)) == (target != "wdpa-monthly")
+    assert ("RUN_DATE=2026-10-01" in " ".join(overrides)) == bool(date)
+    assert not launch.get("continue-on-error", False)
+    if not exit_code:
+        assert (tmp_path / "environment").read_text() == "CANARY_EXECUTION=test-execution\n"
+
+
+@pytest.mark.parametrize("target", ["mpatlas-monthly", "sea-ice-daily", "eamlis-monthly", "wdpa-monthly"])
+@pytest.mark.parametrize("phase", ["verified", "failed", "wrong-image", "unknown"])
+def test_shared_canary_watcher_requires_terminal_success_of_exact_image(tmp_path, target, phase):
+    from test_ingestion_deploy_workflow import run_shell, shared_step
+    image = "image@sha256:" + "a" * 64
+    facts = {"spec": {"template": {"spec": {"containers": [{"image": image if phase != "wrong-image" else "wrong"}]}}},
+             "status": {"completionTime": "now", "succeededCount": 1 if phase == "verified" else 0,
+                        "failedCount": 1 if phase == "failed" else 0}}
+    prefix = "gcloud() { printf '%s' '$FACTS'; }\n".replace("$FACTS", json.dumps(facts))
+    step = shared_step("verify", "Watch ingestion canary")
+    result = run_shell(tmp_path, step["run"], target=target, prefix=prefix,
+                       extra={"IMAGE": image, "CANARY_EXECUTION": "test-execution"})
+    assert (result.returncode == 0) == (phase == "verified"), result.stderr
     assert not step.get("continue-on-error", False)
 
 
@@ -284,11 +279,18 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                 run = step.get("run", "")
                 if MARKER in run:
                     marked_steps.append(step["name"])
-                    assert "--wait" in run and "--async" not in run
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute mpatlas-monthly canary", "Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary"}
+                    if path.name == "ingestion-deploy.yml":
+                        assert step["name"] == "Execute ingestion canary"
+                        assert 'if [[ "$CANARY_RUN_URL" == true ]]' in run
+                        from scripts.ingestion_targets import DEPLOY_TARGETS as TARGETS
+                        assert {name for name, config in TARGETS.items() if config['canary_mode'] == 'deferred'} == {'wdpa-monthly'}
+                        assert "Watch ingestion canary" in workflow_steps_by_name(workflow, "verify")
+                    else:
+                        assert "--wait" in run and "--async" not in run
+    assert set(marked_steps) == {"Execute ingestion canary"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path
@@ -300,7 +302,7 @@ def test_cloud_policy_covers_all_workers_and_suppresses_only_trusted_marked_exec
     filter_text = failure.split("filter = <<-EOT", 1)[1].split("EOT", 1)[0]
     assert 'protoPayload.status.code>0' in filter_text
     assert '''NOT (
-  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${google_service_account.github_job["runtime"].email}"
   AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
 )''' in filter_text
     assert "resource.labels.job_name" not in filter_text
@@ -315,21 +317,13 @@ def test_cloud_policy_covers_all_workers_and_suppresses_only_trusted_marked_exec
     assert "wdpa_observer" not in iam
 
 
-def test_routine_wdpa_runs_keep_async_coverage():
-    workflow = load_workflow(WORKFLOWS / "wdpa-monthly-deploy.yml")
-    steps = workflow_steps_by_name(workflow, "deploy")
-    run = steps["Execute wdpa-monthly canary"]["run"]
-    assert "--async" in run
-    assert MARKER not in run
-
-
 @pytest.mark.parametrize("failure", [None, "missing", "applied", "older", "divergent", "unsigned", "unregistered"])
-def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure):
+def test_legacy_resolution_cli_requires_every_failed_target_to_recover(monkeypatch, failure, historical_graph):
     from scripts import slack_incidents as incidents
     from scripts import deployment_revision as deployments
     from scripts.slack_incident_api import Slack
 
-    run = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    run = event(name="CI", event="push", run_attempt=1, head_sha=historical_graph.sha)["workflow_run"]
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
     run.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
@@ -394,14 +388,14 @@ def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
     assert step["env"]["ORIGINAL_MESSAGE_TS"] == "${{ inputs.message_ts }}"
 
 
-def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(monkeypatch):
+def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(monkeypatch, historical_graph):
     from scripts import dataset_mutation_authorization as authorization
     from scripts import deployment_revision as deployments
     from scripts import deployment_emission as emissions
     from scripts.slack_incident_api import Slack
 
     repository = {"id": 9, "full_name": alerts.REPOSITORY}
-    original = event(name="CI", event="push", run_attempt=1, head_sha="a" * 40)["workflow_run"]
+    original = event(name="CI", event="push", run_attempt=1, head_sha=historical_graph.sha)["workflow_run"]
     original.update(workflow_id=7, path=".github/workflows/ci.yml", repository=repository, head_repository=repository)
     recovered = {**original, "id": 456, "head_sha": "b" * 40, "conclusion": "success"}
     job = {"id": 10, "name": "dataset-usage / Deploy tested dataset usage image and private telemetry resources",
@@ -439,7 +433,7 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     opener = mock.Mock(return_value=Response(b'{"ok":true,"channel":"C0123456789","ts":"1792793158.506179"}'))
     slack = Slack("test-token", "C0123456789", opener=opener)
     monkeypatch.setattr("sys.argv", ["alert", "--resolve-run-id", "123", "--message-ts", "1792793158.506179"])
-    with mock.patch.object(authorization, "read", side_effect=read), mock.patch.object(deployments, "read", side_effect=read), \
+    with mock.patch.object(authorization, "read", side_effect=read), \
             mock.patch.object(emissions, "verify") as verify_receipt, \
             mock.patch("scripts.slack_incidents.terminal_contract_sha256", return_value="c" * 64), \
             mock.patch.object(deployments, "git_ancestor", return_value=True), \
@@ -450,125 +444,14 @@ def test_legacy_resolution_uses_real_deployment_client_through_ci_verification(m
     assert opener.call_args.args[0].full_url == "https://slack.com/api/chat.update"
 
 
-class NativeLegacyHandoff:
-    """API transport double; source verification and title parsing stay real."""
-
-    def __init__(self):
-        self.repository = {"id": 9, "full_name": alerts.REPOSITORY}
-        common = {"run_attempt": 1, "head_sha": "a" * 40, "head_branch": "main", "status": "completed",
-                  "repository": dict(self.repository), "head_repository": dict(self.repository)}
-        self.completion = {**common, "id": 123, "workflow_id": 7,
-                           "name": alerts.WORKFLOW_NAMES["deployment-verification.yml"][0],
-                           "path": ".github/workflows/deployment-verification.yml",
-                           "event": "workflow_dispatch", "conclusion": "success",
-                           "display_title": "Operational follow-up: safety 456/1"}
-        self.parent = {**common, "id": 456, "workflow_id": 8,
-                       "name": alerts.WORKFLOW_NAMES["operational-safety-check.yml"][0],
-                       "path": ".github/workflows/operational-safety-check.yml",
-                       "event": "schedule", "conclusion": "failure"}
-        self.reads = []
-
-    def get(self, path):
-        self.reads.append(path)
-        responses = {
-            f"repos/{alerts.REPOSITORY}": self.repository,
-            f"repos/{alerts.REPOSITORY}/actions/runs/123": self.completion,
-            f"repos/{alerts.REPOSITORY}/actions/runs/456": self.parent,
-            f"repos/{alerts.REPOSITORY}/actions/workflows/7": {
-                "id": 7, "path": ".github/workflows/deployment-verification.yml"},
-            f"repos/{alerts.REPOSITORY}/actions/workflows/8": {
-                "id": 8, "path": ".github/workflows/operational-safety-check.yml"},
-            f"repos/{alerts.REPOSITORY}/actions/workflows/operational-safety-check.yml": {
-                "id": 8, "path": ".github/workflows/operational-safety-check.yml"},
-        }
-        if path not in responses:
-            raise AssertionError("unexpected native read: " + path)
-        return json.loads(json.dumps(responses[path]))
-
-
-@pytest.fixture
-def native_legacy_handoff(tmp_path, monkeypatch):
-    api = NativeLegacyHandoff()
-    payload = json.loads(json.dumps({"repository": api.repository, "workflow_run": api.completion}))
-    path = tmp_path / "completion.json"
-    notify = mock.Mock()
-    monkeypatch.setattr(alerts, "GitHub", lambda: api)
-    monkeypatch.setattr(alerts, "notify", notify)
-
-    def invoke(*, dry_run=False):
-        path.write_text(json.dumps(payload))
-        arguments = ["alert", "--event-path", str(path)]
-        if dry_run:
-            arguments.append("--dry-run")
-        monkeypatch.setattr("sys.argv", arguments)
-        alerts.main()
-
-    return api, payload, notify, invoke
-
-
-def test_legacy_handoff_cli_links_original_native_safety_failure(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    invoke()
-    notify.assert_called_once()
-    alert = notify.call_args.kwargs
-    assert alert["strict"] is True and alert["status"] == "error"
-    assert "Operations / Safety check finished with failure." in alert["body"]
-    assert "/actions/runs/456|" in alert["body"] and "/actions/runs/123|" not in alert["body"]
-    assert f"repos/{alerts.REPOSITORY}/actions/workflows/7" in api.reads
-    assert f"repos/{alerts.REPOSITORY}/actions/workflows/8" in api.reads
-
-
-def test_legacy_handoff_dry_run_serializes_original_failure_without_sending(native_legacy_handoff, capsys):
-    _api, _payload, notify, invoke = native_legacy_handoff
-    invoke(dry_run=True)
-    notify.assert_not_called()
-    alert = json.loads(capsys.readouterr().out)
-    assert alert["status"] == "error" and "/actions/runs/456|" in alert["body"]
-
-
-def test_successful_native_safety_parent_is_quiet(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.parent["conclusion"] = "success"
-    invoke()
-    notify.assert_not_called()
-
-
-@pytest.mark.parametrize("change", ["parent-repository", "parent-path", "parent-attempt",
-                                   "completion-repository", "completion-path"])
-def test_legacy_handoff_cli_rejects_forged_native_provenance(native_legacy_handoff, change):
-    api, _payload, notify, invoke = native_legacy_handoff
-    target = api.parent if change.startswith("parent-") else api.completion
-    if change.endswith("repository"):
-        target["head_repository"] = {"id": 9, "full_name": "Other/repository"}
-    elif change.endswith("path"):
-        target["path"] = ".github/workflows/ci.yml"
-    else:
-        target["run_attempt"] = 2
-    with pytest.raises((ValueError, RuntimeError)):
-        invoke()
-    notify.assert_not_called()
-
-
-def test_event_title_cannot_select_an_arbitrary_parent(native_legacy_handoff):
-    api, payload, notify, invoke = native_legacy_handoff
-    payload["workflow_run"]["display_title"] = "Operational follow-up: safety 999/1"
-    invoke()
-    notify.assert_called_once()
-    assert "/actions/runs/456|" in notify.call_args.kwargs["body"]
-    assert not any("/actions/runs/999" in path for path in api.reads)
-
-
-def test_event_title_without_matching_native_hint_cannot_manufacture_failure(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.completion["display_title"] = "Deployment completion check"
-    invoke()
-    notify.assert_not_called()
-    assert not any(path.endswith("/actions/runs/456") for path in api.reads)
-
-
-def test_obsolete_successful_completion_does_not_forward_a_parent(native_legacy_handoff):
-    api, _payload, notify, invoke = native_legacy_handoff
-    api.completion.update(run_attempt=2, status="in_progress", conclusion=None)
-    invoke()
-    notify.assert_not_called()
-    assert not any(path.endswith("/actions/runs/456") for path in api.reads)
+def test_native_safety_failure_needs_no_parent_handoff_or_timing_assumption():
+    from scripts import slack_incidents as incidents
+    payload = event(name="Operations / Safety check", event="schedule", head_sha="a" * 40, run_attempt=1)
+    run = payload["workflow_run"]
+    run["updated_at"] = "2026-11-04T18:19:00Z"
+    api = source_api(run)
+    api.pages.return_value = [{"id": 456, "name": "Check for operational work", "status": "completed",
+                              "conclusion": "failure", "completed_at": "2026-11-04T18:00:00Z"}]
+    observed = incidents.source_observations(api, payload, {})
+    assert len(observed) == 1 and observed[0]["conclusion"] == "failure"
+    assert observed[0]["job_id"] == 456

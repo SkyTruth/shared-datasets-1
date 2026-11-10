@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -32,9 +33,10 @@ class ReceiptContractTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.workflows = self.root / ".github/workflows"
         self.workflows.mkdir(parents=True)
+        shutil.copytree(Path(__file__).resolve().parents[1] / '.github/actions', self.root / '.github/actions')
         for name in contracts.WORKFLOWS:
             value = leaf(name)
-            if name == "publish-typescript-sdk.yml":
+            if name in {"publish-typescript-sdk.yml", "ingestion-deploy.yml", "dataset-usage-deploy.yml", "catalog-viewer-deploy.yml"}:
                 source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
                 value = yaml.safe_load(source.read_text())
             self.write(name, value)
@@ -45,6 +47,58 @@ class ReceiptContractTests(unittest.TestCase):
     def test_all_registered_leaves_have_valid_linked_claims_and_outcomes(self):
         self.assertEqual(contracts.boundaries(self.root), [])
         self.assertEqual(contracts.permissions(self.root), [])
+
+    def test_nested_composites_keep_input_transport_gates_and_receipt_barriers(self):
+        filename = 'catalog-web-deploy.yml'
+        value = leaf(filename)
+        steps = value['jobs']['deploy']['steps']
+        steps[0]['with']['signer-workflow'] = '${{ inputs.signer }}'
+        for depth in range(3):
+            path = self.root / f'.github/actions/nested-{depth}/action.yml'
+            path.parent.mkdir()
+            path.write_text(yaml.safe_dump({'inputs': {'signer': {'default': filename}},
+                'runs': {'using': 'composite', 'steps': steps}}))
+            steps = [{'uses': f'./.github/actions/nested-{depth}', 'with': {'signer': '${{ inputs.signer }}'}}]
+        steps[0]['with']['signer'] = filename
+        job = value['jobs']['deploy']
+        job['steps'] = steps
+        self.write(filename, value)
+        self.assertEqual(len(list(contracts.expanded_steps(self.root, job))), 7)
+        self.assertEqual(contracts.boundaries(self.root), [])
+        for field in ({'if': False}, {'continue-on-error': True}):
+            with self.subTest(field=field):
+                broken = copy.deepcopy(value)
+                broken['jobs']['deploy']['steps'][0].update(field)
+                self.write(filename, broken)
+                self.assertTrue(contracts.boundaries(self.root))
+        self.write(filename, value)
+        path = self.root / '.github/actions/nested-0/action.yml'
+        action = yaml.safe_load(path.read_text())
+        action['runs']['steps'][0]['if'] = False
+        path.write_text(yaml.safe_dump(action))
+        self.assertTrue(contracts.boundaries(self.root))
+
+    def test_recursive_or_escaping_composites_fail_closed(self):
+        path = self.root / '.github/actions/cyclic/action.yml'
+        path.parent.mkdir()
+        job = {'steps': [{'uses': './.github/actions/cyclic'}]}
+        path.write_text(yaml.safe_dump({'runs': {'using': 'composite', **job}}))
+        with self.assertRaisesRegex(ValueError, 'cyclic'):
+            list(contracts.expanded_steps(self.root, job))
+        with self.assertRaisesRegex(ValueError, 'Invalid'):
+            list(contracts.expanded_steps(self.root, {'steps': [{'uses': './.github/actions/../../../foreign'}]}))
+
+    def test_step_labels_and_equivalent_shell_do_not_define_receipt_authority(self):
+        name = "ingestion-deploy.yml"
+        value = yaml.safe_load((self.workflows / name).read_text())
+        for job in value["jobs"].values():
+            for index, step in enumerate(job.get("steps", [])):
+                step["name"] = f"Renamed step {index}"
+                if "run" in step:
+                    step["run"] = step["run"].replace('test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success',
+                                                       '[[ "$APPLY_RESULT" == success && "$CLAIM_SIGNED" == success ]]')
+        self.write(name, value)
+        self.assertEqual(contracts.boundaries(self.root), [])
 
     def test_removed_disabled_late_or_wrong_signer_rehearsals_fail(self):
         name = "wdpa-monthly-deploy.yml"
@@ -88,6 +142,57 @@ class ReceiptContractTests(unittest.TestCase):
         self.write(name, value)
         self.assertEqual(contracts.boundaries(self.root), [])
 
+    def test_shared_graph_rejects_missing_disabled_bypassed_or_disconnected_claims(self):
+        name = "ingestion-deploy.yml"
+        original = yaml.safe_load((self.workflows / name).read_text())
+        mutations = {
+            "prepare rehearsal removed": lambda jobs: jobs["prepare"]["steps"].remove(next(step for step in jobs["prepare"]["steps"] if step.get("with", {}).get("mode") == "rehearsal")),
+            "apply signature disconnected": lambda jobs: jobs["apply"]["outputs"].update(claim_signed="${{ steps.other.outcome }}"),
+            "apply claim disabled": lambda jobs: next(step for step in jobs["apply"]["steps"] if step.get("id") == "claim-receipt").update({"if": False}),
+            "apply claim missing": lambda jobs: jobs["apply"]["steps"].remove(next(step for step in jobs["apply"]["steps"] if step.get("id") == "claim-receipt")),
+            "apply OR bypass": lambda jobs: next(step for step in jobs["apply"]["steps"] if step.get("name") == "Terraform apply").update({"if": "steps.claim-receipt.outcome == 'success' || true"}),
+            "verify disconnected": lambda jobs: jobs["verify"].update(needs="prepare"),
+            "failed apply hidden": lambda jobs: jobs["verify"].update({"if": "success()"}),
+            "guard removed": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply")),
+            "guard disabled": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply").update({"if": False}),
+            "guard ignored": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply").update({"continue-on-error": True}),
+            "canary bypass": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Execute ingestion canary").update({"if": "always()"}),
+            "outcome missing": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("id") == "deployment-outcome")),
+            "outcome signature missing": lambda jobs: jobs["verify"]["steps"].pop(),
+            "outcome signature disabled": lambda jobs: jobs["verify"]["steps"][-1].update({"if": False}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = copy.deepcopy(original)
+                mutate(value["jobs"])
+                self.write(name, value)
+                self.assertTrue(contracts.boundaries(self.root))
+
+    def test_viewer_rejects_disconnected_bootstrap_and_failed_apply_bypasses(self):
+        name = 'catalog-viewer-deploy.yml'
+        original = yaml.safe_load((self.workflows / name).read_text())
+        for defect in ('signature', 'lock', 'readiness', 'admission', 'ignored', 'outcome', 'skip-failure'):
+            with self.subTest(defect=defect):
+                value = copy.deepcopy(original)
+                jobs = value['jobs']
+                if defect == 'signature':
+                    jobs['prepare']['outputs']['claim_signed'] = '${{ steps.other.outcome }}'
+                elif defect == 'lock':
+                    jobs['ready']['concurrency'] = jobs['deploy']['concurrency']
+                elif defect == 'readiness':
+                    jobs['deploy']['needs'].remove('ready')
+                elif defect in {'admission', 'ignored'}:
+                    guard = next(s for s in jobs['deploy']['steps'] if s.get('name') == 'Require successful signed preparation')
+                    guard.update({'if': False} if defect == 'admission' else {'continue-on-error': True})
+                elif defect == 'outcome':
+                    jobs['verify']['steps'].pop()
+                else:
+                    jobs['verify']['if'] = 'success()'
+                self.write(name, value)
+                self.assertTrue(contracts.boundaries(self.root))
+        self.write(name, original)
+
+
     def test_unknown_outcome_requires_always_signing_of_its_own_file(self):
         name = "deployment-verification.yml"
         value = leaf(name)
@@ -115,17 +220,22 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertTrue(contracts.permissions(self.root))
 
     def test_sdk_existing_oidc_boundary_requires_main_and_trusted_bootstrap(self):
-        job = {"steps": [
-            {"run": 'if [[ "$GITHUB_REF" != refs/heads/main ]]; then exit 1; fi\ncase "$GITHUB_WORKFLOW_REF" in publish-typescript-sdk.yml@refs/heads/main) ;; *) exit 1 ;; esac'},
-            {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}"}},
-            {"run": "python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml"},
-        ]}
-        self.assertTrue(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", job))
-        for index in range(3):
+        workflow = yaml.safe_load((self.workflows / 'publish-typescript-sdk.yml').read_text())
+        job = workflow['jobs']['publish']
+        self.assertTrue(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", job, self.root))
+        for index in (0, 1, 3):
             changed = copy.deepcopy(job)
             changed["steps"].pop(index)
             with self.subTest(index=index):
-                self.assertFalse(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", changed))
+                self.assertFalse(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", changed, self.root))
+        for defect in ({'if': False}, {'continue-on-error': True}, {'with': {'workflow': 'ci.yml'}}):
+            changed = copy.deepcopy(job)
+            changed['steps'][3].update(defect)
+            with self.subTest(defect=defect):
+                self.assertFalse(contracts.sdk_boundary('publish-typescript-sdk.yml', 'publish', changed, self.root))
+        changed = copy.deepcopy(job)
+        changed['steps'].insert(2, {'uses': 'google-github-actions/auth@v3'})
+        self.assertFalse(contracts.sdk_boundary('publish-typescript-sdk.yml', 'publish', changed, self.root))
 
     def notification(self):
         source = Path(__file__).resolve().parents[1] / ".github/workflows" / contracts.NOTIFICATION_WORKFLOW
@@ -133,6 +243,8 @@ class ReceiptContractTests(unittest.TestCase):
 
     def test_exact_main_notification_writer_preserves_production_boundaries(self):
         value = self.notification()
+        for step in value["jobs"]["incidents"]["steps"]:
+            step["name"] = "Renamed notification step"
         self.assertTrue(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "incidents", value, value["jobs"]["incidents"]))
         self.write(contracts.NOTIFICATION_WORKFLOW, value)
         self.assertEqual(contracts.permissions(self.root), [])
@@ -193,11 +305,7 @@ class ReceiptContractTests(unittest.TestCase):
             "unsigned send": lambda steps: steps[8].update({"if": "always()"}),
             "late claim signature": lambda steps: steps.insert(9, steps.pop(7)),
             "lost failed outcome": lambda steps: steps[9].update({"if": "success()"}),
-            "missing verification": lambda steps: steps.pop(-2),
-            "missing cache retention": lambda steps: steps.pop(),
-            "cache after failure": lambda steps: steps[-1].update({"if": "always()"}),
-            "cache other bytes": lambda steps: steps[-1]["with"].update(path="${{ runner.temp }}/*"),
-            "cache missing attempt": lambda steps: steps[-1]["with"].update(name="notification-verification"),
+            "missing verification": lambda steps: steps.pop(),
             "unpinned Python": lambda steps: steps[2]["with"].update({"python-version": "3.12"}),
             "unpinned uv": lambda steps: steps[3]["with"].update(version="latest"),
         }

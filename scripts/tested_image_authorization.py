@@ -14,7 +14,8 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import sdk_release_authorization as proof
-from scripts.ci_contract import select_production_images
+from scripts.ci_contract import planned_images
+from scripts.ci_source_proof import job_name
 from scripts.deployment_revision import DeploymentError, GitHub as DeploymentGitHub, TARGET_WORKFLOWS, require, verify_context
 from scripts.tested_image_bundle import ImageError, MAX_IMAGE, MAX_JSON, TARGETS, hash_file, load_image, read_json, report_timing, validate_manifest
 
@@ -43,12 +44,13 @@ class GitHub(proof.GitHub):
 
 def retained_artifact(artifacts, reference, run_id, maximum):
     found = [artifact for artifact in artifacts if artifact.get("name") == reference]
-    require(len(found) == 1, "missing or ambiguous retained-image artifact")
+    remedy = "Image TARs are retained for 2 days; re-run all jobs of the main run to recreate the tested handoff."
+    require(len(found) == 1, "missing or ambiguous retained-image artifact. " + remedy)
     artifact = found[0]
     require(type(artifact.get("id")) is int and artifact["id"] > 0 and not artifact.get("expired")
             and artifact.get("workflow_run", {}).get("id") == run_id
             and type(artifact.get("size_in_bytes")) is int and 0 < artifact["size_in_bytes"] <= maximum,
-            "retained-image artifact is expired, oversized or belongs to another run")
+            "retained-image artifact is expired, oversized or belongs to another run. " + remedy)
     return artifact
 
 
@@ -65,7 +67,10 @@ def selected_image(api, repository, run_id, artifacts, reference, path, target, 
     manifest = read_json(files["images/manifest.json"])
     require(result.get("production_images") == manifest, "image manifest differs from recorded validation result")
     images = validate_manifest(manifest, sha)
-    require(set(images) == set(select_production_images(plan.get("changed_paths"))) & TARGETS and target in images,
+    selected = set(planned_images(plan)) & TARGETS
+    expected = {target} if result.get("image_target") == target else selected
+    require(("image_target" not in result or result["image_target"] == target)
+            and target in selected and set(images) == expected and target in images,
             "tested production-image set differs from validation selection or requested target")
     image = images[target]
     report_timing("result-download-and-verification", started)
@@ -96,37 +101,22 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     total_started = started = perf_counter()
     require(target in TARGETS, "target has no retained-image contract")
     run, artifacts, evidence, plan = proof.verified_plan(api, repository, run_id, attempt, sha, root)
+    require(all(plan.get(key) == evidence.get(key) for key in ("deployments", "production_image_targets")), "resolved image plan differs from ci-ready evidence")
     require("production-images" in plan["suites"], "production images were not selected for validation")
-    reference = evidence.get("suite_artifacts", {}).get("production-images")
-    suite_attempt = proof.reference_attempt(reference, "ci-result-production-images", evidence["source"]["run_attempt"])
-    proof.producing_job(api, repository, run_id, suite_attempt, sha, "production-images", run["workflow_id"], run["repository"]["id"])
-    authorized_sha = sha
-    reused = evidence.get("reused_suites", {}).get("production-images")
-    if reused is not None:
-        from scripts.ci_reuse import verify_source
-
-        wrapper = read_json(proof.artifact_files(api, repository, run_id, artifacts, reference)["result.json"])
-        require(wrapper.get("source") == {"run_id": str(run_id), "run_attempt": suite_attempt}
-                and wrapper.get("suite") == "production-images" and wrapper.get("status") == "success"
-                and all(wrapper.get(key) == plan.get(key) for key in proof.IDENTITY)
-                and wrapper.get("tools") == proof.expected_tools("production-images")
-                and wrapper.get("commands") and all(command.get("exit_code") == 0 for command in wrapper["commands"])
-                and wrapper.get("reused_from") == reused, "image reuse wrapper differs from authorized main evidence")
-        source = verify_source(api, repository, plan, root, "production-images", reused,
-                               main_source=wrapper["source"], require_latest=False)
-        run_id, artifacts, plan = source.run["id"], source.artifacts, source.plan
-        reference, suite_attempt, sha = source.suite_artifact, source.suite_attempt, plan["tested_sha"]
+    references = evidence.get("suite_artifacts", {})
+    suite = "production-images-" + target if "production-images-" + target in references else "production-images"
+    reference = references.get(suite)
+    suite_attempt = proof.reference_attempt(reference, "ci-result-" + suite, evidence["source"]["run_attempt"])
+    proof.producing_job(api, repository, run_id, suite_attempt, sha, job_name(suite), run["workflow_id"], run["repository"]["id"])
+    require("production-images" not in evidence.get("reused_suites", {}), "cross-run image reuse is not supported")
     report_timing("source-authorization", started)
     directory.mkdir(parents=True, exist_ok=True)
     archive = directory / f"{target}.docker.tar"
     image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
     image_id = load_image(archive, image)
     report_timing("total", total_started)
-    outputs = {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
-               "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
-    if reused is not None:
-        outputs["authorized_sha"] = authorized_sha
-    return outputs
+    return {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
+            "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
 
 
 def main():

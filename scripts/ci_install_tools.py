@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.ci_toolchain import TOOLCHAIN
+from scripts.ci_toolchain import TOOLCHAIN, SHELLCHECK_SHA256
 
 
 def download(url: str) -> bytes:
@@ -55,7 +55,15 @@ def install(destination: Path, names: list[str]) -> None:
                     if member.name:
                         archive.extract(member, root, filter="data")
             continue
-        if name == "terraform":
+        if name == "shellcheck":
+            arch = "x86_64" if architecture == "amd64" else "aarch64"
+            filename = f"shellcheck-v{version}.linux.{arch}.tar.gz"
+            data = download(f"https://github.com/koalaman/shellcheck/releases/download/v{version}/{filename}")
+            if hashlib.sha256(data).hexdigest() != SHELLCHECK_SHA256[architecture]:
+                raise ValueError(f"release checksum mismatch: {filename}")
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+                binary = archive.extractfile(f"shellcheck-v{version}/shellcheck").read()
+        elif name == "terraform":
             filename = f"terraform_{version}_linux_{architecture}.zip"
             base = f"https://releases.hashicorp.com/terraform/{version}"
             data = checked_archive(f"{base}/{filename}", f"{base}/terraform_{version}_SHA256SUMS", filename)
@@ -80,7 +88,7 @@ def install(destination: Path, names: list[str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
-    parser.add_argument("tools", nargs="+", choices=("node22", "node24", "terraform", "gitleaks", "actionlint"))
+    parser.add_argument("tools", nargs="+", choices=("node22", "node24", "terraform", "gitleaks", "actionlint", "shellcheck"))
     args = parser.parse_args()
     install(args.destination, args.tools)
 

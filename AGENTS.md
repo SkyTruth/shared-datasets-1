@@ -145,6 +145,10 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Reviewed canonical publish/delete plan contract | [dataset plans](.github/dataset-plans/README.md) |
 | Operational alert routing and notification configuration | [alert routing](docs/alert-routing.md) |
 | Slack incident recovery, setup, and reconciliation | [Slack incidents](docs/slack-incidents.md) |
+| Change or add an ingestion deployment | [deployment procedure](docs/ci-deployment.md) |
+| Change Terraform/IAM targets | [Deployment procedure](docs/ci-deployment.md) |
+| Reconcile Terraform state | [State reconciliation](docs/terraform-reconciliation.md#manual-state-only-reconciliation) |
+| Recover a failed deployment or incident | [recovery procedure](docs/ci-recovery.md) |
 | Complete validation before pushing | [CI preflight](docs/ci-preflight.md) |
 | Complete decision discovery before expensive builds or CI | [publication readiness](docs/publication-readiness.md) |
 | Concurrent agent ownership, prerequisites, and final integration | [agent integration](docs/agent-integration.md) |
@@ -355,26 +359,30 @@ Git and history:
   reviewer request because `jonaraphael` authored the PR, record that in the PR.
   This exception does not permit staging unrelated files, amending history,
   applying Terraform, or mutating canonical GCS objects from a local terminal.
-- When committing is explicitly requested, use `repo-alert-commit-messages`
-  before creating the commit.
+- Run `uv run ruff check .` before every commit. When committing is explicitly
+  requested, use `repo-alert-commit-messages` before creating the commit.
 - For concurrent PR work, follow [agent integration](docs/agent-integration.md):
   declare one final integration/recovery owner, related PR dependencies, and
   overlapping files. Finish prerequisites, merge current main when required,
   and freeze the committed head before full preflight. Use focused checks while
-  editing. The local preflight slot is exclusive; a busy slot is a coordination
-  failure, never a passing check. Do not edit or commit in a validating checkout.
+  editing. The local preflight slot is exclusive; use `--wait` to queue
+  on a busy slot, never treat waiting as a passing check. Do not edit or commit
+  in a validating checkout.
   Follow-ups must refresh live PR/run identity and stop acting on completed or
   superseded work. Do not take over another chat without human authorization.
 - Before the first push, commit the focused changes and run
-  `uv run python scripts/ci_preflight.py --base <current-main-sha> --head <head-sha>`
+  `uv run python scripts/ci_preflight.py --wait --base <current-main-sha> --head <head-sha>`
   from a clean checkout with full history. Read `docs/ci-preflight.md` for the
   pinned Linux toolchain and evidence contract. Missing tools, failed checks,
   empty collection and unexpected relevant skips must be fixed before pushing.
-- Revalidate before every subsequent push after code, comparison base, toolchain
-  or validation-contract changes. Preflight tests an isolated prospective merge
-  and must not modify unrelated working-tree or index state. Local hooks and
-  evidence are supplementary; GitHub `ci-ready` independently validates all
-  selected suites and remains authoritative.
+- The PR's first push and toolchain or validation-contract changes require full
+  local preflight. Later code changes may use `--since <validated-sha>` with
+  passing local evidence for that SHA on the same base and contract; it runs the
+  delta plus always-on suites and records reuse. Conflict-free base-only
+  movement, PR-body edits and hosted waits need no local rerun. Preflight tests
+  an isolated prospective merge and must not modify unrelated working-tree or
+  index state. Local hooks and evidence are supplementary; GitHub `ci-ready`
+  independently runs the full current PR selection and remains authoritative.
 
 ## When To Ask For Human Input
 

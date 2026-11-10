@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+import json
+
+import pytest
 from unittest.mock import Mock, patch
 
 from scripts import deployment_revision as d
@@ -29,7 +32,7 @@ class DeploymentProvenanceTests(unittest.TestCase):
     def test_completed_gate_in_still_running_main_ci_can_authorize_dependents(self):
         self.run["status"] = "in_progress"
         self.assertEqual(d.verify_ci(self.api, REPO, CURRENT, 13, 2), self.run)
-        self.api.pages.assert_called_once_with(f"repos/{REPO}/actions/runs/13/attempts/2/jobs?per_page=100", "jobs")
+        self.api.pages.assert_called_once_with(f"repos/{REPO}/actions/runs/13/attempts/2/jobs?per_page=100", field="jobs")
 
     def test_rejects_untested_or_untrusted_source_before_mutation(self):
         for key, value in [("event", "pull_request"), ("head_branch", "feature"), ("head_sha", OLD), ("path", ".github/workflows/fake.yml"),
@@ -263,7 +266,8 @@ class CallerAndRecordTests(unittest.TestCase):
                 d.verify_record(self.api, REPO, record)
 
     def test_each_terraform_target_binds_its_actual_manual_caller(self):
-        for sync, workflow in d.TERRAFORM_SYNCS.items():
+        for sync, config in d.TERRAFORM_SYNCS.items():
+            workflow = config["workflow"]
             target = "terraform-" + d.hashlib.sha256(sync.encode()).hexdigest()[:16]
             record = ReplayTests.record(CURRENT)
             record["environment"] = "production-" + target
@@ -336,7 +340,7 @@ class VerifiedSupersessionTests(unittest.TestCase):
         self.assertEqual(result, {"proceed": "false", "outcome": "superseded", "superseded_by_sha": NEW})
         self.api.post.assert_not_called()
         self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1"), self.api.get.call_args_list)
-        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1/jobs?per_page=100", "jobs"), self.api.pages.call_args_list)
+        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1/jobs?per_page=100", field="jobs"), self.api.pages.call_args_list)
 
     def test_forged_newer_source_or_untrusted_record_cannot_be_a_successful_supersession(self):
         for change in ({"head_sha": OLD}, {"workflow_id": 99}, {"event": "pull_request"}, {"repository": {"id": 18, "full_name": REPO}}):
@@ -433,18 +437,14 @@ class PendingDiscoveryBoundaryTests(unittest.TestCase):
         workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows/deployment-verification.yml").read_text())
         triggers = workflow.get("on", workflow.get(True))
         self.assertEqual(set(triggers), {"workflow_dispatch"})
-        inputs = triggers["workflow_dispatch"]["inputs"]
-        self.assertEqual(set(inputs), {"safety_run_id", "safety_run_attempt"})
-        self.assertTrue(all(value["type"] == "string" and not value.get("required", False) for value in inputs.values()))
+        self.assertIsNone(triggers["workflow_dispatch"])
         pending, verify = (workflow["jobs"][name] for name in ("pending", "verify"))
         self.assertNotIn("needs", pending)
         self.assertNotIn("concurrency", pending)
         installer = "python scripts/install_deployment_verifier.py"
         self.assertNotIn(installer, [step.get("run") for step in pending["steps"]])
         self.assertIn(installer, [step.get("run") for step in verify["steps"]])
-        handoff = next(step for step in pending["steps"] if step.get("name") == "Wait for the safety handoff to finish")
-        self.assertIn("inputs.safety_run_id != '' || inputs.safety_run_attempt != ''", handoff["if"])
-        self.assertEqual(handoff["run"], "python scripts/operational_safety_check.py --wait-for-safety")
+        self.assertFalse(any("wait-for-safety" in step.get("run", "") for step in pending["steps"]))
         self.assertEqual(verify["environment"], "shared-datasets-production")
         self.assertEqual(verify["needs"], "pending")
 
@@ -511,3 +511,84 @@ else:
                                      "TEST_SCHEDULER_STATE": state})
         assert result.returncode == 0, result.stderr
         assert output.read_text() == "ready=" + expected + "\n"
+
+
+def test_usage_replay_requires_verified_runtime_and_recovery_accepts_the_registered_collector(tmp_path):
+    import types
+    import pytest
+    record = ReplayTests.record(CURRENT)
+    record['environment'] = 'production-dataset-usage'
+    record['payload'].update(target='dataset-usage', targets=['module.dataset_usage_job.google_cloud_run_v2_job.this'])
+    with pytest.raises(d.DeploymentError, match='reconcile'):
+        d.replay_decision([record], CURRENT, ReplayTests.ancestor, lambda _: [{'state': 'success', 'description': 'applied'}])
+    assert d.replay_decision([record], CURRENT, ReplayTests.ancestor, lambda _: [{'state': 'success', 'description': 'verified'}]) == 'noop'
+    api = Mock()
+    api.get.return_value = record
+    environment = {'GITHUB_REPOSITORY': REPO, 'GITHUB_REF': 'refs/heads/main',
+                   'GITHUB_WORKFLOW_REF': REPO + '/.github/workflows/deployment-recovery.yml@refs/heads/main'}
+    with patch.dict(d.os.environ, environment), patch.object(d, 'verify_record', return_value=record['payload']), patch.object(d, 'verify_ci'):
+        assert d.recovery_record(types.SimpleNamespace(deployment_id=record['id']), api) == (record, record['payload'])
+
+
+def test_registered_permission_probes_preserve_historical_endpoints():
+    from pathlib import Path
+    from scripts.terraform_target_contracts import registry
+    fixture = json.loads((Path(__file__).parent / 'fixtures/ci_failures/deployment-permission-probes.json').read_text())
+    assert set(registry(section='permission_probes')) == set(fixture) | {
+        'job-runtime', 'catalog-viewer-observe', 'workflow-identities-and-registry',
+    }
+    for name, expected in fixture.items():
+        if name == 'monitoring-alerts':
+            expected = [(url, [p for p in values if p != 'logging.logMetrics.delete']) for url, values in expected]
+        assert permissions.checks(name) == [(url, tuple(values)) for url, values in expected]
+    with pytest.raises(KeyError):
+        permissions.checks('unregistered-target')
+
+
+class PropagationWindowTests(unittest.TestCase):
+    CLAIMED_AT = "2026-11-10T16:00:00Z"
+    CHANGED = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["create"]}}]}
+    EMPTY = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["no-op"]}}]}
+    APPLIED = [{"description": "applied", "created_at": "2026-11-10T15:59:30Z"},
+               {"description": "started", "created_at": "2026-11-10T15:58:00Z"}]
+
+    def seconds(self, plan, previous, window=120):
+        return d.propagation_seconds(d.propagation_deadline(plan, window, previous), window, self.CLAIMED_AT)
+
+    def test_changing_plan_waits_the_full_window(self):
+        self.assertEqual(self.seconds(self.CHANGED, None), 120)
+        self.assertEqual(self.seconds(self.CHANGED, self.APPLIED), 120)
+
+    def test_disabled_window_never_waits(self):
+        self.assertEqual(self.seconds(self.CHANGED, None, window=0), 0)
+
+    def test_previous_timestamps_are_parsed_before_claiming(self):
+        deadline = d.propagation_deadline(self.EMPTY, 120, self.APPLIED)
+        self.assertEqual(deadline, d.github_time("2026-11-10T16:01:30Z"))
+        with self.assertRaises(ValueError):
+            d.propagation_deadline(self.EMPTY, 120, [{"description": "applied", "created_at": "not-a-time"}])
+
+    def test_empty_plan_waits_out_the_previous_attempt_window_on_github_time(self):
+        self.assertEqual(self.seconds(self.EMPTY, self.APPLIED), 90)
+
+    def test_failed_previous_attempt_counts_from_its_terminal_status(self):
+        failed = [{"description": "failed", "created_at": "2026-11-10T15:59:00Z"},
+                  {"description": "started", "created_at": "2026-11-10T15:50:00Z"}]
+        self.assertEqual(self.seconds(self.EMPTY, failed), 60)
+
+    def test_empty_plan_after_an_aged_or_absent_previous_attempt_does_not_wait(self):
+        self.assertEqual(self.seconds(self.EMPTY, [{"description": "applied", "created_at": "2026-11-10T15:50:00Z"}]), 0)
+        self.assertEqual(self.seconds(self.EMPTY, None), 0)
+
+    def test_previous_attempt_without_a_terminal_status_waits_the_full_window(self):
+        for previous in ([], [{"description": "started", "created_at": "2026-11-10T15:00:00Z"}]):
+            with self.subTest(previous=previous):
+                self.assertEqual(self.seconds(self.EMPTY, previous), 120)
+
+    def test_previous_attempt_is_the_newest_record_read_before_claiming(self):
+        api = unittest.mock.Mock()
+        api.pages.side_effect = lambda path, field=None: [{"id": 7}, {"id": 9}, {"id": 8}] if "/deployments?" in path else self.APPLIED
+        self.assertEqual(d.previous_attempt_statuses(api, REPO, "terraform-abc"), self.APPLIED)
+        api.pages.assert_called_with(f"repos/{REPO}/deployments/9/statuses?per_page=100")
+        api.pages.side_effect = lambda path, field=None: []
+        self.assertIsNone(d.previous_attempt_statuses(api, REPO, "terraform-abc"))

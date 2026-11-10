@@ -1,13 +1,10 @@
 name: Operations / Safety check
-
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 16 * * *"
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   safety:
     name: Check for operational work
@@ -19,6 +16,7 @@ jobs:
       contents: read
       actions: write
       deployments: read
+      attestations: read
       id-token: write
     concurrency:
       group: operational-safety-check
@@ -51,49 +49,84 @@ jobs:
           version: "0.11.8"
           enable-cache: false
       - name: Install locked probe dependencies
+        id: dependencies
         run: uv sync --locked --no-dev
+      # The gh release download returned a 504 on 2026-11-09. The installer
+      # re-checks this archive's SHA-256, so a cached copy needs no trust.
+      # Python and uv stay uncached: setup actions do not verify cache hits.
+      - name: Restore pinned verifier archive
+        uses: actions/cache@v4
+        with:
+          key: safety-gh-verifier-2.96.0-linux-amd64
+          path: ${{ runner.temp }}/deployment-receipts/tools/gh_2.96.0_linux_amd64.tar.gz
       - name: Install pinned durable receipt verifier
+        id: verifier
         run: python scripts/install_deployment_verifier.py
-      - name: Authenticate read-only catalog probe
+      - name: Authenticate heartbeat writer and catalog reader
+        id: authentication
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+          service_account: shared-datasets-heartbeat@shared-datasets-1.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          skip_install: true
       - name: Check operational work
         id: probe
         env:
           GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
           SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
           SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
           SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
-          SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
         run: uv run --no-sync python scripts/operational_safety_check.py --work-dir "$RUNNER_TEMP/operational-safety"
       - name: Request catalog refresh
         if: ${{ steps.probe.outputs.catalog == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run catalog-web-deploy.yml --ref main -f safety_run_id="$GITHUB_RUN_ID" -f safety_run_attempt="$GITHUB_RUN_ATTEMPT"
-      - name: Retain operational safety snapshot
-        if: ${{ success() && steps.probe.outputs.snapshot == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: safety-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/operational-safety/cache.json
-          if-no-files-found: error
-          retention-days: 1
-      - name: Request operational reconciliation
-        if: ${{ always() && steps.trust.outcome == 'success' && (steps.probe.outputs.reconcile == 'true' || failure()) }}
+      - name: Request execution verification
+        if: ${{ steps.probe.outputs.verify == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          MISSED_HANDOFFS: ${{ steps.probe.outputs.missed_handoffs || '[]' }}
+        run: gh workflow run deployment-verification.yml --ref main
+      - name: Request operational reconciliation
+        if: ${{ always() && steps.probe.outputs.reconcile == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run unattended-workflow-alert.yml --ref main
+          -f incident_id=operational-batch -f delivery_result=batch
+          -f operation="safety:${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+      - name: Check freshness and stalled operations
+        id: health
+        if: ${{ always() && !cancelled() && steps.trust.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SAFETY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
+          SAFETY_SETUP_OUTCOMES: ${{ format('dependencies={0}, verifier={1}, authentication={2}', steps.dependencies.outcome, steps.verifier.outcome, steps.authentication.outcome) }}
+          SHARED_DATASETS_SLACK_INCIDENTS_ENABLED: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}
+          SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
-          set -euo pipefail
-          gh workflow run deployment-verification.yml --ref main -f safety_run_id="$GITHUB_RUN_ID" -f safety_run_attempt="$GITHUB_RUN_ATTEMPT"
-          python - <<'PY'
-          import json, os, subprocess
-          for parent in json.loads(os.environ['MISSED_HANDOFFS']):
-              if set(parent) != {'id', 'run_attempt'} or any(type(value) is not int or value <= 0 for value in parent.values()):
-                  raise ValueError('Invalid safety handoff')
-              subprocess.run(['gh', 'workflow', 'run', 'deployment-verification.yml', '--ref', 'main',
-                              '-f', f"safety_run_id={parent['id']}", '-f', f"safety_run_attempt={parent['run_attempt']}"], check=True)
-          PY
+          interpreter=python
+          if [[ -x .venv/bin/python ]]; then interpreter=.venv/bin/python; fi
+          "$interpreter" scripts/operational_safety_check.py --health --work-dir "$RUNNER_TEMP/operational-safety"
+      - name: Retain safety health report
+        id: health-report
+        if: ${{ always() && steps.health.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operational-safety/health/cache.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report safety failure directly
+        if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.probe.outcome == 'success' || steps.health.outcome != 'success' || steps.health-report.outcome != 'success') }}
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: |
+          curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' \
+            --data "{\"text\":\"Operational safety infrastructure failed: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$SHARED_DATASETS_SLACK_WEBHOOK_URL"
