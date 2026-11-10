@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,6 +20,7 @@ from scripts import deployment_emission as emissions
 from scripts.dataset_mutation_authorization import GitHub as ReadOnlyGitHub, executor_acceptance
 from scripts.terraform_target_contracts import registry
 from scripts.ingestion_targets import DEPLOY_TARGETS as INGESTION_CONFIGS, image_variables
+from scripts.terraform_plan_allowlist import plan_changes
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
@@ -300,6 +303,29 @@ def check(args, api):
     return {"proceed": "true"}
 
 
+def propagation_seconds(api, repository, target, plan, window, *, now=None):
+    """Seconds dependents wait for IAM propagation after this attempt applies.
+
+    A changing plan waits the full window. An empty plan waits out the rest of the
+    previous attempt's window: that attempt may have granted IAM moments ago and
+    released the serialized state lock before its own barrier finished.
+    """
+    if window <= 0:
+        return 0
+    if plan_changes(plan):
+        return window
+    records = api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100")
+    if not records:
+        return 0
+    latest = max(records, key=lambda record: record["id"])
+    statuses = api.pages(f"repos/{repository}/deployments/{latest['id']}/statuses?per_page=100")
+    if not statuses:
+        return window  # An unfinished or unrecorded attempt may still be applying.
+    finished = max(datetime.fromisoformat(status["created_at"].replace("Z", "+00:00")) for status in statuses)
+    elapsed = ((now or datetime.now(timezone.utc)) - finished).total_seconds()
+    return max(0, min(window, math.ceil(window - elapsed)))
+
+
 def start(args, api):
     decision = check(args, api)
     if decision["proceed"] == "false":
@@ -320,6 +346,9 @@ def start(args, api):
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
+    window = getattr(args, "propagation_window", None)
+    # Read the previous attempt before this claim becomes the newest record.
+    propagation = None if window is None else propagation_seconds(api, repository, args.target, plan, window)
     record = api.post(f"repos/{repository}/deployments", {
         "ref": args.executor_sha, "environment": f"production-{args.target}",
         "auto_merge": False, "required_contexts": [], "production_environment": True,
@@ -329,7 +358,12 @@ def start(args, api):
     })
     phase = "deferred" if getattr(args, "deferred", False) else "started"
     post_status(api, repository, record, phase)
-    return {"proceed": "false"} if getattr(args, "deferred", False) else {"proceed": "true", "deployment_id": str(record["id"])}
+    if getattr(args, "deferred", False):
+        return {"proceed": "false"}
+    result = {"proceed": "true", "deployment_id": str(record["id"])}
+    if propagation is not None:
+        result["propagation_seconds"] = str(propagation)
+    return result
 
 
 def finish(args, api):
@@ -547,6 +581,7 @@ def main():
             begin.add_argument("--deferred", action="store_true")
             begin.add_argument("--plan-json")
             begin.add_argument("--plan-scope")
+            begin.add_argument("--propagation-window", type=int)
     commands.add_parser("accept").add_argument("--pr-number", type=int)
     end = commands.add_parser("finish")
     end.add_argument("--deployment-id", required=True, type=int)

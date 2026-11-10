@@ -70,8 +70,8 @@ there is no separate `GitHub workflow identity sync` target or checkpoint namesp
 The combined scope retains the exact resource union and prerequisites (plus the
 bare recovery account, moved from the held PR-plan scope), both original
 permission probes, `block_deletes: true`, bootstrap ordering and the
-unprivileged 120-second propagation barrier before dependent delivery. The
-barrier runs only when the applied plan changed resources.
+unprivileged 120-second propagation barrier before dependent delivery. An
+empty plan waits only for what remains of the previous attempt's window.
 
 Every enabled Terraform scope keeps an old-main target name/hash, deployment
 environment and `prod-terraform-target-apply.yml` receipt signer. Old main accepts

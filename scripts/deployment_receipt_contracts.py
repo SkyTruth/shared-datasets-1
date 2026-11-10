@@ -273,10 +273,12 @@ def terraform_boundary(workflow):
         return ['Terraform preparation must gate the protected serialized apply']
     if (propagation.get('needs') != 'sync' or propagation.get('permissions') != {}
             or 'environment' in propagation
-            or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && needs.sync.outputs.changed == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+            or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
             or sync.get('outputs', {}).get('applied') != "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}"
-            or sync.get('outputs', {}).get('changed') != '${{ steps.allowlist.outputs.changed }}'):
-        return ['Terraform propagation waits only after a successful signed apply that changed resources, without production authority']
+            or sync.get('outputs', {}).get('wait_seconds') != "${{ steps.revision.outputs.propagation_seconds || '0' }}"
+            or not any('--propagation-window "$POST_APPLY_WAIT_SECONDS"' in step.get('run', '')
+                       for step in sync.get('steps', []) if step.get('id') == 'revision')):
+        return ['Terraform propagation requires successful signed apply, a claim-computed wait and no production authority']
     return []
 
 

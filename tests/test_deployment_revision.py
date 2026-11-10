@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+from datetime import datetime, timezone
 
 import pytest
 from unittest.mock import Mock, patch
@@ -543,3 +544,38 @@ def test_registered_permission_probes_preserve_historical_endpoints():
         assert permissions.checks(name) == [(url, tuple(values)) for url, values in expected]
     with pytest.raises(KeyError):
         permissions.checks('unregistered-target')
+
+
+class PropagationWindowTests(unittest.TestCase):
+    NOW = datetime(2026, 11, 10, 16, 0, 0, tzinfo=timezone.utc)
+    CHANGED = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["create"]}}]}
+    EMPTY = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["no-op"]}}]}
+
+    def seconds(self, plan, records, statuses, window=120):
+        api = unittest.mock.Mock()
+        api.pages.side_effect = lambda path, field=None: records if "/deployments?" in path else statuses
+        return d.propagation_seconds(api, REPO, "terraform-abc", plan, window, now=self.NOW), api
+
+    def test_changing_plan_waits_the_full_window_without_reading_history(self):
+        seconds, api = self.seconds(self.CHANGED, [], [])
+        self.assertEqual(seconds, 120)
+        api.pages.assert_not_called()
+
+    def test_disabled_window_never_waits_or_reads_history(self):
+        seconds, api = self.seconds(self.CHANGED, [], [], window=0)
+        self.assertEqual(seconds, 0)
+        api.pages.assert_not_called()
+
+    def test_empty_plan_waits_out_the_previous_attempt_window(self):
+        records = [{"id": 7}, {"id": 9}, {"id": 8}]
+        statuses = [{"created_at": "2026-11-10T15:59:30Z"}, {"created_at": "2026-11-10T15:58:00Z"}]
+        seconds, api = self.seconds(self.EMPTY, records, statuses)
+        self.assertEqual(seconds, 90)
+        api.pages.assert_any_call(f"repos/{REPO}/deployments/9/statuses?per_page=100")
+
+    def test_empty_plan_after_an_aged_or_absent_previous_attempt_does_not_wait(self):
+        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], [{"created_at": "2026-11-10T15:50:00Z"}])[0], 0)
+        self.assertEqual(self.seconds(self.EMPTY, [], [])[0], 0)
+
+    def test_previous_attempt_without_statuses_is_treated_as_still_applying(self):
+        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], [])[0], 120)

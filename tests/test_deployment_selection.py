@@ -62,6 +62,22 @@ def test_unchanged_plan_claim_does_not_consume_unrelated_runtime_evidence(journe
     assert services.statuses[0]['description'] == 'started'
 
 
+@pytest.mark.parametrize('actions,expected', [(['no-op'], '0'), (['update'], '120')])
+def test_claim_reports_its_propagation_wait_before_recording_itself(journey, actions, expected):
+    services, directory = journey
+    image = 'image@sha256:' + 'a' * 64
+    path = directory / 'propagation.json'
+    path.write_text(json.dumps({'resource_changes': [{'address': 'module.sea_ice_daily_job.google_cloud_run_v2_job.this',
+                                                    'change': {'actions': actions}}]}))
+    services.sign(emission.emit(REPO, *emission.rehearsal(services, REPO)))
+    args = SimpleNamespace(target='sea-ice-daily', workflow='sea-ice-daily-deploy.yml',
+                           executor_sha=services.plan['tested_sha'], source_run_id=123, source_run_attempt=1,
+                           artifact=image, plan_json=path, propagation_window=120)
+    # No earlier attempt exists, so only a changing plan waits.
+    assert deployment.start(args, services) == {'proceed': 'true', 'deployment_id': '71', 'propagation_seconds': expected}
+    assert len(services.records) == 1
+
+
 def expression_value(expression, values):
     if not isinstance(expression, str) or not expression.startswith('${{'):
         return expression
