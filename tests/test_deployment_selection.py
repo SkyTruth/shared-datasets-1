@@ -78,6 +78,27 @@ def test_claim_reports_its_propagation_wait_before_recording_itself(journey, act
     assert len(services.records) == 1
 
 
+def test_failed_history_read_leaves_no_unfinished_claim(journey):
+    services, directory = journey
+    path = directory / 'empty.json'
+    path.write_text(json.dumps({'resource_changes': [{'address': 'module.sea_ice_daily_job.google_cloud_run_v2_job.this',
+                                                    'change': {'actions': ['no-op']}}]}))
+    services.sign(emission.emit(REPO, *emission.rehearsal(services, REPO)))
+    args = SimpleNamespace(target='sea-ice-daily', workflow='sea-ice-daily-deploy.yml',
+                           executor_sha=services.plan['tested_sha'], source_run_id=123, source_run_attempt=1,
+                           artifact='image@sha256:' + 'a' * 64, plan_json=path, propagation_window=120)
+    original = deployment.previous_attempt_statuses
+    def unavailable(*arguments):
+        raise deployment.DeploymentError('history unavailable')
+    deployment.previous_attempt_statuses = unavailable
+    try:
+        with pytest.raises(deployment.DeploymentError, match='history unavailable'):
+            deployment.start(args, services)
+    finally:
+        deployment.previous_attempt_statuses = original
+    assert services.records == [] and services.statuses == []
+
+
 def expression_value(expression, values):
     if not isinstance(expression, str) or not expression.startswith('${{'):
         return expression

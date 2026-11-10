@@ -547,47 +547,49 @@ def test_registered_permission_probes_preserve_historical_endpoints():
 
 
 class PropagationWindowTests(unittest.TestCase):
-    CLAIM = {"record_id": 10, "created_at": "2026-11-10T16:00:00Z"}
+    CLAIMED_AT = "2026-11-10T16:00:00Z"
     CHANGED = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["create"]}}]}
     EMPTY = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["no-op"]}}]}
+    APPLIED = [{"description": "applied", "created_at": "2026-11-10T15:59:30Z"},
+               {"description": "started", "created_at": "2026-11-10T15:58:00Z"}]
 
-    def seconds(self, plan, records, statuses, window=120):
-        api = unittest.mock.Mock()
-        api.pages.side_effect = lambda path, field=None: records if "/deployments?" in path else statuses
-        return d.propagation_seconds(api, REPO, "terraform-abc", plan, window, claim=self.CLAIM), api
+    def seconds(self, plan, previous, window=120):
+        return d.propagation_seconds(d.propagation_deadline(plan, window, previous), window, self.CLAIMED_AT)
 
-    def test_changing_plan_waits_the_full_window_without_reading_history(self):
-        seconds, api = self.seconds(self.CHANGED, [], [])
-        self.assertEqual(seconds, 120)
-        api.pages.assert_not_called()
+    def test_changing_plan_waits_the_full_window(self):
+        self.assertEqual(self.seconds(self.CHANGED, None), 120)
+        self.assertEqual(self.seconds(self.CHANGED, self.APPLIED), 120)
 
-    def test_disabled_window_never_waits_or_reads_history(self):
-        seconds, api = self.seconds(self.CHANGED, [], [], window=0)
-        self.assertEqual(seconds, 0)
-        api.pages.assert_not_called()
+    def test_disabled_window_never_waits(self):
+        self.assertEqual(self.seconds(self.CHANGED, None, window=0), 0)
+
+    def test_previous_timestamps_are_parsed_before_claiming(self):
+        deadline = d.propagation_deadline(self.EMPTY, 120, self.APPLIED)
+        self.assertEqual(deadline, d.github_time("2026-11-10T16:01:30Z"))
+        with self.assertRaises(ValueError):
+            d.propagation_deadline(self.EMPTY, 120, [{"description": "applied", "created_at": "not-a-time"}])
 
     def test_empty_plan_waits_out_the_previous_attempt_window_on_github_time(self):
-        # Record 10 is this claim; record 9 is the newest previous attempt.
-        records = [{"id": 7}, {"id": 10}, {"id": 9}, {"id": 8}]
-        statuses = [{"description": "applied", "created_at": "2026-11-10T15:59:30Z"},
-                    {"description": "started", "created_at": "2026-11-10T15:58:00Z"}]
-        seconds, api = self.seconds(self.EMPTY, records, statuses)
-        self.assertEqual(seconds, 90)
-        api.pages.assert_any_call(f"repos/{REPO}/deployments/9/statuses?per_page=100")
+        self.assertEqual(self.seconds(self.EMPTY, self.APPLIED), 90)
 
     def test_failed_previous_attempt_counts_from_its_terminal_status(self):
-        statuses = [{"description": "failed", "created_at": "2026-11-10T15:59:00Z"},
-                    {"description": "started", "created_at": "2026-11-10T15:50:00Z"}]
-        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], statuses)[0], 60)
+        failed = [{"description": "failed", "created_at": "2026-11-10T15:59:00Z"},
+                  {"description": "started", "created_at": "2026-11-10T15:50:00Z"}]
+        self.assertEqual(self.seconds(self.EMPTY, failed), 60)
 
     def test_empty_plan_after_an_aged_or_absent_previous_attempt_does_not_wait(self):
-        aged = [{"description": "applied", "created_at": "2026-11-10T15:50:00Z"}]
-        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], aged)[0], 0)
-        self.assertEqual(self.seconds(self.EMPTY, [], [])[0], 0)
-        self.assertEqual(self.seconds(self.EMPTY, [{"id": 10}, {"id": 11}], aged)[0], 0)
+        self.assertEqual(self.seconds(self.EMPTY, [{"description": "applied", "created_at": "2026-11-10T15:50:00Z"}]), 0)
+        self.assertEqual(self.seconds(self.EMPTY, None), 0)
 
     def test_previous_attempt_without_a_terminal_status_waits_the_full_window(self):
-        old_start = [{"description": "started", "created_at": "2026-11-10T15:00:00Z"}]
-        for statuses in ([], old_start):
-            with self.subTest(statuses=statuses):
-                self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], statuses)[0], 120)
+        for previous in ([], [{"description": "started", "created_at": "2026-11-10T15:00:00Z"}]):
+            with self.subTest(previous=previous):
+                self.assertEqual(self.seconds(self.EMPTY, previous), 120)
+
+    def test_previous_attempt_is_the_newest_record_read_before_claiming(self):
+        api = unittest.mock.Mock()
+        api.pages.side_effect = lambda path, field=None: [{"id": 7}, {"id": 9}, {"id": 8}] if "/deployments?" in path else self.APPLIED
+        self.assertEqual(d.previous_attempt_statuses(api, REPO, "terraform-abc"), self.APPLIED)
+        api.pages.assert_called_with(f"repos/{REPO}/deployments/9/statuses?per_page=100")
+        api.pages.side_effect = lambda path, field=None: []
+        self.assertIsNone(d.previous_attempt_statuses(api, REPO, "terraform-abc"))

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 import hashlib
 import json
 import math
@@ -308,30 +308,43 @@ def github_time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def propagation_seconds(api, repository, target, plan, window, *, claim):
-    """Seconds dependents wait for IAM propagation after this attempt applies.
+def previous_attempt_statuses(api, repository, target):
+    """Statuses of the target's newest attempt, or None when it has never been attempted.
+
+    Read before claiming, so a failed read leaves no unfinished deployment record.
+    """
+    records = api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100")
+    if not records:
+        return None
+    latest = max(records, key=lambda record: record["id"])
+    return api.pages(f"repos/{repository}/deployments/{latest['id']}/statuses?per_page=100")
+
+
+def propagation_deadline(plan, window, previous):
+    """Before claiming: a fixed IAM propagation wait in seconds, or the GitHub time
+    at which the previous attempt's window ends.
 
     A changing plan waits the full window. An empty plan waits out the rest of the
     previous attempt's window: that attempt may have granted IAM moments ago and
-    released the serialized state lock before its own barrier finished. Elapsed
-    time uses GitHub timestamps only (the previous attempt's terminal status and
-    this claim's started status), so runner clock skew cannot shorten the wait.
+    released the serialized state lock before its own barrier finished.
     """
     if window <= 0:
         return 0
     if plan_changes(plan):
         return window
-    records = [record for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100")
-               if record["id"] < claim["record_id"]]
-    if not records:
+    if previous is None:
         return 0
-    latest = max(records, key=lambda record: record["id"])
-    statuses = api.pages(f"repos/{repository}/deployments/{latest['id']}/statuses?per_page=100")
-    if not any(status.get("description") not in {"started", "deferred"} for status in statuses):
+    if not any(status.get("description") not in {"started", "deferred"} for status in previous):
         return window  # Without a terminal status the attempt may have mutated IAM at any later time.
-    finished = max(github_time(status["created_at"]) for status in statuses)
-    elapsed = (github_time(claim["created_at"]) - finished).total_seconds()
-    return max(0, min(window, math.ceil(window - elapsed)))
+    return max(github_time(status["created_at"]) for status in previous) + timedelta(seconds=window)
+
+
+def propagation_seconds(deadline, window, claimed_at):
+    """After claiming: seconds until the deadline, measured on GitHub's clock from
+    this claim's started status, so runner clock skew cannot shorten the wait."""
+    if not isinstance(deadline, datetime):
+        return deadline
+    return max(0, min(window, math.ceil((deadline - github_time(claimed_at)).total_seconds())))
 
 
 def start(args, api):
@@ -354,6 +367,12 @@ def start(args, api):
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
+    window = getattr(args, "propagation_window", None)
+    deadline = None
+    if window is not None and not getattr(args, "deferred", False):
+        # Every fallible read and parse happens before the claim exists.
+        previous = previous_attempt_statuses(api, repository, args.target) if window > 0 and not plan_changes(plan) else None
+        deadline = propagation_deadline(plan, window, previous)
     record = api.post(f"repos/{repository}/deployments", {
         "ref": args.executor_sha, "environment": f"production-{args.target}",
         "auto_merge": False, "required_contexts": [], "production_environment": True,
@@ -366,10 +385,8 @@ def start(args, api):
     if getattr(args, "deferred", False):
         return {"proceed": "false"}
     result = {"proceed": "true", "deployment_id": str(record["id"])}
-    window = getattr(args, "propagation_window", None)
-    if window is not None:
-        claim = {"record_id": record["id"], "created_at": status["created_at"]}
-        result["propagation_seconds"] = str(propagation_seconds(api, repository, args.target, plan, window, claim=claim))
+    if deadline is not None:
+        result["propagation_seconds"] = str(propagation_seconds(deadline, window, status["created_at"]))
     return result
 
 
