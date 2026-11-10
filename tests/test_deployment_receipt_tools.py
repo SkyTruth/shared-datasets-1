@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+import urllib.error
 
 import yaml
 import pytest
@@ -151,7 +152,7 @@ class VerifierInstallationTests(unittest.TestCase):
 
     def archive(self, member=None, kind=tarfile.REGTYPE):
         target = self.root / "deployment-receipts/tools" / installer.ASSET
-        target.parent.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(target, "w:gz") as bundle:
             entry = tarfile.TarInfo(member or f"gh_{installer.VERSION}_linux_amd64/bin/gh")
             entry.type = kind
@@ -182,3 +183,42 @@ class VerifierInstallationTests(unittest.TestCase):
         digest = installer.hashlib.sha256(archive.read_bytes()).hexdigest()
         with patch.object(installer, "SHA256", digest), self.assertRaisesRegex(RuntimeError, "regular gh binary"):
             installer.install()
+
+    def download(self, *replies, digest=None):
+        """Run install() against scripted release-download replies; None serves the archive."""
+        archive = self.archive()
+        payload = archive.read_bytes()
+        archive.unlink()
+        responses = [io.BytesIO(payload) if reply is None else reply for reply in replies]
+        with patch.object(installer, "SHA256", digest or installer.hashlib.sha256(payload).hexdigest()), \
+                patch("urllib.request.urlopen", side_effect=responses) as fetch, patch("time.sleep") as sleep, \
+                patch.object(installer.subprocess, "check_output", return_value="gh version 2.96.0 (2026-07-02)\n"):
+            try:
+                installer.install()
+            finally:
+                self.fetches, self.sleeps = fetch.call_count, [call.args[0] for call in sleep.call_args_list]
+
+    @staticmethod
+    def http(code):
+        return urllib.error.HTTPError(installer.URL, code, "release download", {}, None)
+
+    def test_transient_release_download_failures_retry_before_checked_install(self):
+        # Nov 2026 safety-check failures: the release CDN returned 504 Gateway Time-out.
+        self.download(self.http(504), urllib.error.URLError(TimeoutError("timed out")), None)
+        self.assertEqual((self.fetches, self.sleeps), (3, [10, 30]))
+        self.assertEqual(self.path.read_text(), str(self.root / "deployment-receipts/tools/bin") + "\n")
+
+    def test_permanent_exhausted_or_tampered_download_fails_without_install(self):
+        cases = {  # String labels: xdist serializes subtest context and cannot copy HTTPError.
+            "not found": ((self.http(404),), urllib.error.HTTPError, (1, [])),
+            "exhausted gateway retries": ((self.http(504),) * 4, urllib.error.HTTPError, (4, [10, 30, 60])),
+            "checksum mismatch is never retried": ((None,), RuntimeError, (1, [])),
+        }
+        for label, (replies, error, attempts) in cases.items():
+            with self.subTest(case=label):
+                digest = "0" * 64 if error is RuntimeError else None
+                with self.assertRaises(error):
+                    self.download(*replies, digest=digest)
+                self.assertEqual((self.fetches, self.sleeps), attempts)
+                self.assertEqual(self.path.read_text(), "")
+                (self.root / "deployment-receipts/tools" / installer.ASSET).unlink(missing_ok=True)
