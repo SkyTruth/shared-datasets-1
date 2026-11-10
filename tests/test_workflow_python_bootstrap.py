@@ -177,7 +177,7 @@ from pathlib import Path
 sys.path.insert(0, sys.argv.pop(1))
 from scripts import operational_safety_check as s, slack_notify
 s.GitHub = Mock()
-s.alerts.context = Mock(return_value={"id": 2})
+s.alerts.context = Mock(return_value={"id": 2, "run_attempt": 1})
 s.alerts.verify_source_event = Mock(return_value=True)
 s.prior_runs = Mock(return_value=[{"id": 1, "conclusion": os.environ["PREVIOUS"], "event": "schedule"}])
 s.policy_warnings = Mock(return_value=([], []))

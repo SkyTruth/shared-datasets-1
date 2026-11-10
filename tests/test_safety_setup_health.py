@@ -145,6 +145,7 @@ def run_health_cli(tmp_path, api, identifier, cause, prior):
         with zipfile.ZipFile(output, 'w') as archive:
             archive.writestr('cache.json', (tmp_path / 'health/cache.json').read_bytes())
         raw = output.getvalue()
+        (tmp_path / 'health/cache.json').unlink()  # The run under test must write its own report.
         routes[prefix + '/actions/runs/' + str(prior['id'])] = prior
         routes[prefix + '/actions/runs/' + str(prior['id']) + '/attempts/1/jobs'] = {'total_count': 1, 'jobs': [
             {'name': safety.JOB, 'started_at': prior['created_at'], 'completed_at': prior['updated_at'],
@@ -208,36 +209,47 @@ def test_setup_outage_alerts_at_once_without_a_trusted_successful_previous_run(p
     assert safety.isolated_setup_failure(api, api.current) is False
 
 
-def test_isolated_setup_failure_requires_authenticated_previous_success(monkeypatch):
+def test_isolated_setup_failure_requires_authenticated_previous_success_on_a_first_attempt(monkeypatch):
     api = OperationalAPI()
     row = {**api.source(299, 'operational-safety-check.yml'), 'conclusion': 'success'}
     monkeypatch.setattr(safety, 'prior_runs', lambda *_: [row])
     for verified, quiet in ((True, True), (False, False)):
         monkeypatch.setattr(safety.alerts, 'verify_source_event', lambda *_: verified)
         assert safety.isolated_setup_failure(api, api.current) is quiet
+    # A manual re-run of a quiet failure is the next try, so it alerts.
+    assert safety.isolated_setup_failure(api, {**api.current, 'run_attempt': 2}) is False
     monkeypatch.setattr(safety.alerts, 'verify_source_event', mock.Mock(side_effect=ValueError('forged run')))
     with pytest.raises(ValueError, match='forged run'):
         safety.isolated_setup_failure(api, api.current)  # The health step fails, so the direct fallback alerts.
 
 
-def test_safety_toolchain_cache_matches_setup_pins_and_precedes_every_download():
+def test_prior_runs_keep_only_completed_earlier_safety_runs_newest_first():
+    api = OperationalAPI()
+
+    def safety_run(identifier, **fields):
+        return {**api.source(identifier, 'operational-safety-check.yml'), **fields}
+
+    rows = [safety_run(297), safety_run(299, status='in_progress', conclusion=None), safety_run(298),
+            safety_run(300), safety_run(301), api.source(296, 'bucket-hygiene-audit.yml')]
+    api.pages = mock.Mock(return_value=rows)
+    assert [row['id'] for row in safety.prior_runs(api, api.current)] == [298, 297]
+    assert 'branch=main' in api.pages.call_args.args[0] and 'operational-safety-check.yml/runs' in api.pages.call_args.args[0]
+
+
+def test_safety_job_caches_only_the_checksum_verified_verifier_archive():
     from scripts import install_deployment_verifier as installer
-    from scripts.ci_toolchain import TOOLCHAIN
     workflow = load_workflow(safety.ROOT / '.github/workflows/operational-safety-check.yml')
-    steps = {step.get('name') or step['uses']: step for step in workflow['jobs']['safety']['steps']}
-    names = list(steps)
-    cache, key = steps['Restore pinned toolchain downloads'], steps['Select toolchain cache key']['run']
+    steps = list(workflow['jobs']['safety']['steps'])
+    caches = [step for step in steps if str(step.get('uses', '')).startswith('actions/cache')]
+    assert [step['name'] for step in caches] == ['Restore pinned verifier archive']
+    cache, = caches
     assert cache['uses'] == 'actions/cache@v4'
-    assert names.index('Restore pinned toolchain downloads') < min(names.index('actions/setup-python@v5'), names.index('astral-sh/setup-uv@v6'),
-                                                                  names.index('Install pinned durable receipt verifier'))
-    python = steps['actions/setup-python@v5']['with']['python-version']
-    uv = steps['astral-sh/setup-uv@v6']['with']['version']
-    assert (python, uv) == (TOOLCHAIN['python'], TOOLCHAIN['uv'])
-    assert cache['with']['path'].splitlines() == ['${{ runner.tool_cache }}/Python/' + python, '${{ runner.tool_cache }}/uv/' + uv,
-                                             '${{ runner.temp }}/deployment-receipts/tools/' + installer.ASSET]
-    assert cache['with']['key'] == '${{ steps.toolchain.outputs.key }}'
-    for part in ('${ImageOS}', '${RUNNER_ARCH}', 'python' + python, 'uv' + uv, 'gh' + installer.VERSION):
-        assert part in key
+    # Setup actions trust tool-cache hits without verification; only the installer re-checks its SHA-256.
+    assert cache['with']['path'] == '${{ runner.temp }}/deployment-receipts/tools/' + installer.ASSET
+    assert cache['with']['key'] == f'safety-gh-verifier-{installer.VERSION}-linux-amd64'
+    assert steps.index(cache) + 1 == next(index for index, step in enumerate(steps) if step.get('name') == 'Install pinned durable receipt verifier')
+    assert all(step['with'].get('enable-cache') is False for step in steps if str(step.get('uses', '')).startswith('astral-sh/setup-uv'))
+    assert not any('cache' in step.get('with', {}) for step in steps if str(step.get('uses', '')).startswith('actions/setup-python'))
 
 
 @pytest.mark.parametrize('failed_setup', ['Install locked probe dependencies', 'Install pinned durable receipt verifier', 'Authenticate read-only catalog probe', 'Authenticate heartbeat writer and catalog reader'])

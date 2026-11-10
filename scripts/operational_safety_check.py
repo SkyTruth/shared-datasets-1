@@ -301,9 +301,12 @@ def prior_runs(api, run):
 
 
 def isolated_setup_failure(api, run):
-    """Setup that fails right after a trusted successful run waits for the next run before alerting."""
+    """Setup that fails right after a trusted successful run waits for the next run before alerting.
+
+    Only a first attempt qualifies: a re-run of a quiet failure is the next try and alerts.
+    """
     previous = next(iter(prior_runs(api, run)), None)
-    return (previous is not None and previous.get("conclusion") == "success"
+    return (run["run_attempt"] == 1 and previous is not None and previous.get("conclusion") == "success"
             and previous.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, previous))
 
 

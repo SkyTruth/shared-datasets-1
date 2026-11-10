@@ -41,19 +41,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
-      # Tool release downloads hit GitHub CDN 504s on 2026-11-08..09. Main-scoped
-      # caches skip those downloads; the gh archive is still checksum-verified.
-      - name: Select toolchain cache key
-        id: toolchain
-        run: echo "key=safety-toolchain-${ImageOS}-${RUNNER_ARCH}-python3.12.12-uv0.11.8-gh2.96.0" >> "$GITHUB_OUTPUT"
-      - name: Restore pinned toolchain downloads
-        uses: actions/cache@v4
-        with:
-          key: ${{ steps.toolchain.outputs.key }}
-          path: |
-            ${{ runner.tool_cache }}/Python/3.12.12
-            ${{ runner.tool_cache }}/uv/0.11.8
-            ${{ runner.temp }}/deployment-receipts/tools/gh_2.96.0_linux_amd64.tar.gz
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12.12"
@@ -64,6 +51,14 @@ jobs:
       - name: Install locked probe dependencies
         id: dependencies
         run: uv sync --locked --no-dev
+      # The gh release download returned a 504 on 2026-11-09. The installer
+      # re-checks this archive's SHA-256, so a cached copy needs no trust.
+      # Python and uv stay uncached: setup actions do not verify cache hits.
+      - name: Restore pinned verifier archive
+        uses: actions/cache@v4
+        with:
+          key: safety-gh-verifier-2.96.0-linux-amd64
+          path: ${{ runner.temp }}/deployment-receipts/tools/gh_2.96.0_linux_amd64.tar.gz
       - name: Install pinned durable receipt verifier
         id: verifier
         run: python scripts/install_deployment_verifier.py
