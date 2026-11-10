@@ -133,6 +133,7 @@
       "module.wdpa_job_service_account.google_service_account.this",
       "terraform_data.cron_alert_channel_configured",
       "google_storage_bucket_iam_member.monitoring_slack_recovery",
+      "google_storage_bucket_iam_member.monitoring_slack_reconciler",
       "google_pubsub_topic.identity_decision_events",
       "google_project_iam_member.monitoring_slack_incident_reader",
       "google_project_iam_custom_role.monitoring_incident_reader"
