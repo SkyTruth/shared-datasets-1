@@ -62,6 +62,17 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("runWithOverrides" in item for item in errors))
         self.assertTrue(any("bootstrap" in item for item in errors))
 
+    def test_combined_identity_and_writer_sync_requires_bootstrap_authority(self):
+        path = self.root / '.github/workflows/artifact-registry-iam-sync.yml'
+        original = path.read_text()
+        self.assertEqual(contracts.iam_contract(self.root), [])
+        for needs in ([], 'identities'):
+            with self.subTest(needs=needs):
+                value = yaml.safe_load(original)
+                value['jobs']['writer']['needs'] = needs
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('bootstrap authority' in error for error in contracts.iam_contract(self.root)))
+
     def test_monitoring_private_resources_and_authority_must_precede_cutover(self):
         path = self.root / ".github/workflows/cron-alert-policy-sync.yml"
         original = path.read_text()

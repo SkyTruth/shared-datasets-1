@@ -107,7 +107,13 @@
     "Artifact Registry IAM sync": [],
     "Artifact Registry writer binding sync": [
       "google_artifact_registry_repository.jobs",
-      "google_project_service.required"
+      "google_project_service.required",
+      "google_iam_workload_identity_pool.github",
+      "module.github_readonly_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.feature_preview_loader_service_account.google_service_account.this",
+      "google_storage_bucket.shared_bucket",
+      "google_storage_bucket.monitoring_slack"
     ],
     "Cron alert policy sync": [
       "google_service_account.github_job",
@@ -139,15 +145,6 @@
       "google_project_iam_custom_role.monitoring_incident_reader"
     ],
     "Dataset usage deploy IAM bootstrap": [],
-    "GitHub workflow identity sync": [
-      "google_project_service.required",
-      "google_iam_workload_identity_pool.github",
-      "module.github_readonly_service_account.google_service_account.this",
-      "module.shared_datasets_publisher_service_account.google_service_account.this",
-      "module.feature_preview_loader_service_account.google_service_account.this",
-      "google_storage_bucket.shared_bucket",
-      "google_storage_bucket.monitoring_slack"
-    ],
     "Monitoring Slack transport resources": [
       "google_project_service.required",
       "google_project_iam_custom_role.monitoring_incident_reader",

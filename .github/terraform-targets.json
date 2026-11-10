@@ -10,11 +10,6 @@
       ],
       "post_apply_wait_seconds": 30
     },
-    "Artifact Registry writer binding sync": {"prerequisites": ["google_artifact_registry_repository.jobs", "google_project_service.required"],
-      "block_deletes": true, "workflow": "artifact-registry-iam-sync.yml",
-      "readiness_target": "artifact-registry",
-      "resources": ["google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer"]
-    },
     "Monitoring alert policy IAM bootstrap": {"prerequisites": ["google_project_service.required"],
       "workflow": "cron-alert-policy-sync.yml",
       "readiness_target": "iam-bootstrap",
@@ -187,10 +182,11 @@
       "block_deletes": true,
       "image_placeholder": "unused-by-state-read-iam-sync"
     },
-    "GitHub workflow identity sync": {"prerequisites": ["google_project_service.required", "google_iam_workload_identity_pool.github", "module.github_readonly_service_account.google_service_account.this", "module.shared_datasets_publisher_service_account.google_service_account.this", "module.feature_preview_loader_service_account.google_service_account.this", "google_storage_bucket.shared_bucket", "google_storage_bucket.monitoring_slack"],
+    "Artifact Registry writer binding sync": {"prerequisites": ["google_artifact_registry_repository.jobs", "google_project_service.required", "google_iam_workload_identity_pool.github", "module.github_readonly_service_account.google_service_account.this", "module.shared_datasets_publisher_service_account.google_service_account.this", "module.feature_preview_loader_service_account.google_service_account.this", "google_storage_bucket.shared_bucket", "google_storage_bucket.monitoring_slack"],
       "workflow": "artifact-registry-iam-sync.yml",
-      "readiness_target": "iam-bootstrap",
+      "readiness_target": "workflow-identities-and-registry",
       "resources": [
+        "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
         "google_iam_workload_identity_pool_provider.github", "google_iam_workload_identity_pool_provider.github_readonly", "google_service_account_iam_member.github_actions_terraform_wif",
         "google_service_account_iam_member.shared_datasets_publisher_github_wif", "google_service_account_iam_member.shared_datasets_publisher_github_wif_workflow", "google_service_account_iam_member.github_readonly_wif", "google_service_account_iam_member.github_readonly_wif_workflow", "google_service_account.github_job[\"observer\"]",
         "google_project_iam_custom_role.github_job[\"observer\"]", "google_project_iam_member.github_job[\"observer\"]", "google_service_account_iam_member.github_job_wif[\"observer\"]",
@@ -210,6 +206,7 @@
       "post_apply_wait_seconds": 120
     },
     "PR plan identity IAM bootstrap": {"prerequisites": [],
+      "deployment_hold": "Requires a separately reviewed contract-phase PR after the plain-revert window closes; old main cannot read this target's checkpoints",
       "workflow": "terraform-state-read-iam-sync.yml",
       "readiness_target": "iam-bootstrap",
       "resources": ["google_project_iam_custom_role.pr_plan_provisioner", "google_project_iam_member.pr_plan_provisioner"],
@@ -217,6 +214,7 @@
       "post_apply_wait_seconds": 30
     },
     "PR plan identity provisioning": {"prerequisites": ["google_project_service.required", "google_iam_workload_identity_pool.github"],
+      "deployment_hold": "Requires a separately reviewed contract-phase PR after the plain-revert window closes; old main cannot read this target's checkpoints",
       "workflow": "terraform-state-read-iam-sync.yml",
       "readiness_target": "iam-bootstrap",
       "resources": [
@@ -276,6 +274,7 @@
     }
   },
   "permission_probes": {
+    "workflow-identities-and-registry": ["iam-bootstrap", "artifact-registry"],
     "iam-bootstrap": [
       [
         "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",

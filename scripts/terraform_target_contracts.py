@@ -136,7 +136,7 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         raise ValueError('Terraform target does not belong to its trusted caller')
     resources = item['resources']
     if (set(item) - {'workflow', 'readiness_target', 'resources', 'block_deletes', 'delete_only',
-                    'prepare_monitoring_slack', 'post_apply_wait_seconds', 'state_only', 'tf_vars', 'image_placeholder', 'prerequisites', 'retired_resources'}
+                    'prepare_monitoring_slack', 'post_apply_wait_seconds', 'state_only', 'tf_vars', 'image_placeholder', 'prerequisites', 'retired_resources', 'deployment_hold'}
             or not isinstance(resources, list) or len(resources) != len(set(resources))
             or any(type(item[key]) is not bool for key in ('block_deletes', 'delete_only', 'prepare_monitoring_slack', 'state_only') if key in item)
             or bool(resources) == bool(item.get('state_only'))
@@ -144,10 +144,13 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
         raise ValueError('Terraform targets require an exact mutation allowlist or a state-only scope')
     for row in resources:
         address(row)
+    if 'deployment_hold' in item and (not isinstance(item['deployment_hold'], str)
+                                     or not item['deployment_hold'].strip() or any(c in item['deployment_hold'] for c in '\r\n')):
+        raise ValueError('Deployment hold requires a nonempty single-line reason')
     if item.get('state_only') and item.get('prepare_monitoring_slack'):
         raise ValueError('state-only reconciliation cannot prepare external mutations')
     result = {key: value for key, value in item.items() if key not in {
-        'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars', 'prerequisites', 'retired_resources',
+        'workflow', 'resources', 'image_placeholder', 'state_only', 'tf_vars', 'prerequisites', 'retired_resources', 'deployment_hold',
     }}
     placeholder = item.get('image_placeholder', 'unused-by-' + Path(workflow).stem)
     variables = [*item.get('tf_vars', []), *(name + '=' + placeholder for name in image_variables('', placeholder))]
@@ -160,6 +163,9 @@ def resolve(sync_name: str, workflow: str, root: Path = ROOT, *, tf_vars: str = 
 def export(sync_name: str, workflow: str, *, tf_vars: str = '') -> None:
     """Serialize reviewed settings once for the workflow's plan/guard consumers."""
     values = resolve(sync_name, workflow, tf_vars=tf_vars)
+    hold = registry()[sync_name].get('deployment_hold')
+    if hold:
+        raise ValueError(f'Deployment held for {sync_name}: {hold}')
     with Path(os.environ['GITHUB_ENV']).open('a') as stream:
         for key, value in values.items():
             if isinstance(value, bool):

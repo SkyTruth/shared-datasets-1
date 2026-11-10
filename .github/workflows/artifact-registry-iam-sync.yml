@@ -28,19 +28,9 @@ jobs:
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-  identities:
-    name: Bind protected workflow identities
-    needs: bootstrap
-    uses: ./.github/workflows/prod-terraform-target-apply.yml
-    with:
-      caller_workflow: artifact-registry-iam-sync.yml
-      sync_name: GitHub workflow identity sync
-      executor_sha: ${{ inputs.executor_sha }}
-      source_run_id: ${{ inputs.source_run_id }}
-      source_run_attempt: ${{ inputs.source_run_attempt }}
   writer:
-    name: Apply Artifact Registry writer binding
-    needs: [bootstrap, identities]
+    name: Bind protected workflow identities and Artifact Registry writer
+    needs: bootstrap
     if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:

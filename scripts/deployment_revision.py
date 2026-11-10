@@ -29,6 +29,10 @@ TERRAFORM_WORKFLOWS = {
     "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: target["workflow"]
     for name, target in TERRAFORM_SYNCS.items()
 }
+TERRAFORM_DEPLOYMENT_HOLDS = {
+    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: target["deployment_hold"]
+    for name, target in TERRAFORM_SYNCS.items() if target.get("deployment_hold")
+}
 INGESTION_TARGETS = frozenset(INGESTION_CONFIGS)
 INGESTION_SIGNER = ".github/workflows/ingestion-deploy.yml"
 
@@ -268,6 +272,8 @@ def verify_context(args, api):
 
 
 def check(args, api):
+    if args.target in TERRAFORM_DEPLOYMENT_HOLDS:
+        raise DeploymentError("deployment held: " + TERRAFORM_DEPLOYMENT_HOLDS[args.target])
     repository = verify_context(args, api)
     require(TARGET.fullmatch(args.target) and args.target in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS), "invalid deployment target")
     require((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS)[args.target] == args.workflow, "deployment target differs from its workflow contract")

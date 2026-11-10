@@ -25,7 +25,7 @@ def test_delivery_callers_wait_for_created_identities_in_nested_reusable_workflo
 def test_identity_sync_exports_a_bounded_propagation_barrier(tmp_path):
     # Exercise the registry CLI/environment transport consumed by the apply job.
     environment = terraform_environment(tmp_path, {
-        'sync_name': 'GitHub workflow identity sync', 'caller_workflow': 'artifact-registry-iam-sync.yml',
+        'sync_name': 'Artifact Registry writer binding sync', 'caller_workflow': 'artifact-registry-iam-sync.yml',
     })
     seconds = int(environment['POST_APPLY_WAIT_SECONDS'])
     assert seconds == 120
@@ -75,7 +75,7 @@ def test_identity_ordering_follows_created_accounts_through_multiple_reusable_ho
     if create_account:
         resources.append('google_service_account.github_job["fresh"]')
     (directory.parent / 'terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {
-        'GitHub workflow identity sync': {'workflow': 'create.yml', 'resources': resources}}}))
+        'Artifact Registry writer binding sync': {'workflow': 'create.yml', 'resources': resources}}}))
     def call(filename):
         return {'uses': './.github/workflows/' + filename}
     documents = {

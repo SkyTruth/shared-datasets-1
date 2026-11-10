@@ -27,7 +27,7 @@ def workflow_triggers(workflow: dict[str, Any]) -> dict[str, Any]:
 
 def identity_sync_needs(root: Path) -> dict[str, set[str]]:
     """Derive first-run ordering from created identities and reusable callers."""
-    sync = registry(root)['GitHub workflow identity sync']
+    sync = registry(root)['Artifact Registry writer binding sync']
     inventory = json.loads((root / 'terraform/envs/prod/github-workflow-identities.json').read_text())
     consumers = {workflow for identity, workflows in inventory.items()
                  if f'google_service_account.github_job["{identity}"]' in sync['resources']

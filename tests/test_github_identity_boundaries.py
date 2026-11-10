@@ -87,11 +87,11 @@ def test_generated_workflow_allowlists_equal_actual_auth_and_registries():
 
 def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
     jobs = workflow('artifact-registry-iam-sync.yml')['jobs']
-    assert jobs['identities']['needs'] == 'bootstrap'
-    assert jobs['identities']['with']['sync_name'] == 'GitHub workflow identity sync'
-    assert jobs['writer']['needs'] == ['bootstrap', 'identities']
+    assert jobs['writer']['needs'] == 'bootstrap'
+    assert jobs['writer']['with']['sync_name'] == 'Artifact Registry writer binding sync'
+    assert set(jobs) == {'bootstrap', 'writer'}
     registry = json.loads((ROOT / '.github/terraform-targets.json').read_text())
-    scope = registry['targets']['GitHub workflow identity sync']
+    scope = registry['targets']['Artifact Registry writer binding sync']
     assert scope['block_deletes'] is True  # Phase 1 must preserve every installed grant.
     assert 'google_service_account_iam_member.github_actions_terraform_wif' in scope['resources']
     identities = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]['github_job_permissions']

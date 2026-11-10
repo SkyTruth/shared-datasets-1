@@ -68,7 +68,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertNotIn('Prepare tested Monitoring image and bot credential', shared_steps())
 
 
-@pytest.mark.parametrize('sync_name,item', list(registry().items()))
+@pytest.mark.parametrize('sync_name,item', [(name, item) for name, item in registry().items() if not item.get('deployment_hold')])
 def test_target_contract_reaches_actual_plan_and_allowlist_without_scope_drift(tmp_path, sync_name, item):
     inputs = {'sync_name': sync_name, 'caller_workflow': item['workflow']}
     environment = terraform_environment(tmp_path, inputs)
@@ -285,13 +285,12 @@ class TargetApplyCallerTests(unittest.TestCase):
             push_paths=None,
             job_name="writer",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
-            expected_needs=["bootstrap", "identities"],
+            expected_needs="bootstrap",
             sync_name="Artifact Registry writer binding sync",
             expected_block_deletes=True,
             refusal_prefix="Refusing automatic Artifact Registry IAM writer sync",
-            expected_targets={
-                "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
-            },
+            expected_post_apply_wait_seconds=120,
+            expected_targets=set(registry()['Artifact Registry writer binding sync']['resources']),
             expected_tf_vars=tf_vars,
             blocked_resources={"roles/artifactregistry.admin"},
         )

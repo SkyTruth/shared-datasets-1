@@ -6,11 +6,13 @@ current authentication path usable even if a new mapping is wrong.
 
 ## Phase 1: expand
 
-Artifact Registry IAM bootstrap precedes **GitHub workflow identity sync**, which
-precedes writer rollout. Sync adds `job_workflow_ref` capability attributes and
+Artifact Registry IAM bootstrap precedes **Artifact Registry writer binding sync**,
+which includes workflow identity provisioning and precedes dependent writer rollout.
+Sync adds `job_workflow_ref` capability attributes and
 the observer, runtime, heartbeat, reconciler and cleanup identities. Recovery and
-PR-planning identities remain manually provisioned through the protected
-`terraform-state-read-iam-sync.yml` bootstrap/provisioning sequence.
+PR-planning identities are reserved for the protected
+`terraform-state-read-iam-sync.yml` bootstrap/provisioning sequence after the
+plain-revert window closes; both scopes have enforced deployment holds in phase 1.
 After a successful signed identity-sync apply, the reusable executor waits 120
 seconds in its unprivileged propagation job before dependent callers can
 authenticate. This stays below that job's five-minute timeout and holds neither
@@ -62,15 +64,40 @@ receipt fails those operations and cannot establish incident recovery.
 The detached verifier enumerates only pending WDPA records. Usage's reader-first
 gate verifies the viewer receipt, whose signer remains compatible.
 
-`GitHub workflow identity sync` and the two manual PR-plan identity scopes have
-new hashed target IDs and separate deployment environments. Old deployment and
-WDPA-pending readers do not enumerate those environments; known Terraform
-targets keep their names and generic `prod-terraform-target-apply.yml` signer.
-Explicit recovery of a new target is rejected as unregistered by old main.
-Successful new scopes create no incident checkpoint by themselves. If a failure
-has created a new-target incident checkpoint, old incident reconciliation and
-its safety dry-run reject that scope as an unregistered recovery target; resolve
-that bookkeeping before rollback. A Git revert does not migrate incident state.
+Workflow identity provisioning is folded into the already registered
+`Artifact Registry writer binding sync` scope in `artifact-registry-iam-sync.yml`;
+there is no separate `GitHub workflow identity sync` target or checkpoint namespace.
+The combined scope retains the exact resource union and prerequisites, both
+original permission probes, `block_deletes: true`, bootstrap ordering and the
+unprivileged 120-second propagation barrier before dependent delivery.
+
+Every enabled Terraform scope keeps an old-main target name/hash, deployment
+environment and `prod-terraform-target-apply.yml` receipt signer. Old main accepts
+the signed expanded resource lists; it does not compare them with its own target
+registry. It checks their address syntax for explicit recovery, the deployment
+schema, exact target/environment binding, immutable revision/artifact, Actions
+creator, CI/execution run provenance and signed receipt bytes. Incident state
+retains its existing schema. The terminal contract digest is a cache key: reverting
+reader code changes it and triggers full receipt revalidation rather than rejecting
+the checkpoint. Retained resolved checkpoints undergo that same target validation.
+
+The new-only `PR plan identity IAM bootstrap` and `PR plan identity provisioning`
+scopes have checked-in `deployment_hold` reasons. Registry export refuses them
+before cloud authentication, and deployment admission rejects both `check` and
+`start` before any API read/write. Manual dispatch cannot create their deployment
+checkpoints during phase 1. Remove the holds only in a separately reviewed PR
+that explicitly closes the plain-revert window; then provision these identities
+and collect their authentication evidence before removing legacy access.
+
+`tests/test_deployment_checkpoint_revert.py` runs the current deployment and
+incident writers against a pinned `4aa19c71` reader snapshot, with only external
+API/attestation transport replaced. It exercises retained open and resolved
+checkpoints for every enabled Terraform scope through receipt verification,
+incident reconciliation and the scheduled safety dry-run, plus refusal of
+altered environment/resource/signer/digest evidence and both held manual scopes.
+Thus a plain Git revert needs no incident-state cleanup for checkpoints this
+phase can write. This guarantee ends when a later reviewed change lifts these
+holds or enables an incompatible receipt signer.
 
 ## Phase 2: contract
 
