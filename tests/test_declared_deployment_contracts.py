@@ -149,10 +149,19 @@ def step_condition(step, values):
                                                   ('push', 'skipped', False), ('push', 'failure', False)])
 def test_pr_skips_unconsumed_tars_but_keeps_gate_evidence(event, upload, allowed):
     job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
-    retain = next(step for step in job['steps'] if step.get('id') == 'retained-image')
-    assert step_condition(retain, {'github.event_name': event}) is (event != 'pull_request')
-    gate = next(step for step in job['steps'] if step.get('name') == 'Upload compact gate result')
-    assert step_condition(gate, {'github.event_name': event, 'steps.retained-results.outcome': 'success',
+    calls = [step for step in job['steps'] if step.get('uses') == './.github/actions/ci-image-result']
+    assert len(calls) == 7
+    assert all("github.event_name == 'push'" in step['with']['retain-image']
+               and 'deploy_image_targets' in step['with']['retain-image'] for step in calls)
+    steps = load_workflow(ROOT / '.github/actions/ci-image-result/action.yml')['runs']['steps']
+    retain = next(step for step in steps if step.get('id') == 'retained-image')
+    assert retain['if'] == "inputs.retain-image == 'true'"
+    assert retain['with']['retention-days'] == 2
+    gate = next(step for step in steps if step.get('name') == 'Upload compact gate result')
+    expression = copy.deepcopy(gate)
+    expression['if'] = expression['if'].replace('inputs.retain-image', 'github.retain_image')
+    assert step_condition(expression, {'github.retain_image': 'true' if event == 'push' else 'false',
+                                   'steps.retained-results.outcome': 'success',
                                    'steps.retained-image.outcome': upload}) is allowed
 
 

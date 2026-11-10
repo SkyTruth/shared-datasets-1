@@ -40,7 +40,8 @@ class Services:
                     'referenced_workflows': [{'path': REPOSITORY + '/' + SIGNER + '@refs/heads/main',
                                              'sha': plan['tested_sha'], 'ref': 'refs/heads/main'}]}
         self.jobs = [{'name': name, 'status': 'completed', 'conclusion': 'success', 'started_at': '2026-11-05T01:00:00Z',
-                      'completed_at': '2026-11-05T01:01:00Z'} for name in ('ci-ready', 'geospatial-changes', 'production-images (' + self.target + ')')]
+                      'completed_at': '2026-11-05T01:01:00Z'} for name in ('ci-ready', 'geospatial-changes',
+                          'production-images (wdpa)' if target == 'wdpa-monthly' else 'production-images (short)')]
         manifest = {'schema_version': 1, 'tested_sha': plan['tested_sha'], 'images': {self.target: image}}
         result = {**plan, 'suite': 'production-images', 'image_target': self.target, 'status': 'success',
                   'tools': ci.expected_tools('production-images'), 'commands': [{'argv': ['fixture-image-probe'], 'exit_code': 0}],
