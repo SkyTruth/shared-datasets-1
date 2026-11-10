@@ -30,7 +30,9 @@ def test_draft_failure_is_sticky_for_the_original_event_and_allocates_only_two_j
         # Re-running an old draft run retains its original payload even after
         # the live PR is ready. It must fail again rather than turn green.
         for live_draft in (True, False):
-            event = {"event_name": "pull_request", "event": {"pull_request": {"draft": True}}}
+            event = {"event_name": "pull_request", "event": {
+                "pull_request": {"draft": True}, "live_pull_request": {"draft": live_draft},
+            }}
             expression = step["if"].removeprefix("${{").removesuffix("}}").strip()
             evaluated = subprocess.run(["node", "-e", "console.log(Function('github', 'return ' + process.argv[1])(JSON.parse(process.argv[2])))",
                                         expression, json.dumps(event)], check=True, capture_output=True, text=True)

@@ -35,10 +35,55 @@ def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sour
     for name in VALIDATION:
         assert 'concurrency' not in workflow['jobs'][name]
     assert workflow['jobs']['ci-ready']['if'] == 'always()'
-    assert [step['with']['node'] for step in workflow['jobs']['sdk-validation']['steps'] if step.get('uses') == './.github/actions/ci-tools'] == ['22', '24']
+    assert [step['with']['node'] for step in workflow['jobs']['sdk-validation']['steps'] if step.get('uses') == './.github/actions/ci-tools'] == ['22']
     for name, job in workflow['jobs'].items():
         if name not in VALIDATION:
             assert not job.get('concurrency', {}).get('cancel-in-progress', False)
+
+
+def test_no_job_initializes_setup_uv_twice_through_local_composites():
+    def setups(steps):
+        count = 0
+        for step in steps:
+            action = step.get('uses', '')
+            if action.startswith('astral-sh/setup-uv@'):
+                count += 1
+            elif action.startswith('./.github/actions/'):
+                composite = load_workflow(ROOT / action / 'action.yml')
+                count += setups(composite['runs'].get('steps', []))
+        return count
+
+    for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
+        for name, job in load_workflow(path)['jobs'].items():
+            assert setups(job.get('steps', [])) <= 1, (path.name, name)
+
+
+@pytest.mark.parametrize('node22', ['success', 'failure', 'skipped'])
+def test_node24_runs_after_node22_failure_and_skipped_legs_do_not_upload_missing_paths(node22):
+    steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows/ci.yml'), 'sdk-validation')
+    install = steps['Install Node 24']
+    validate = steps['Validate SDK on Node 24']
+    assert 'ci_install_tools.py' in install['run'] and ' node24' in install['run']
+    assert 'CI_NODE24_BIN=' in install['run']
+    job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['sdk-validation']
+    uploads = {step['id']: step for step in job['steps'] if step.get('id', '').startswith('retained-results-')}
+    state = {'sdk-tools': {'outcome': 'success'}, 'node24': {'outcome': 'success'},
+             'sdk-node22': {'outcome': node22}, 'sdk-node24': {'outcome': 'skipped'}}
+    def evaluate(expression):
+        # Execute the actual Actions expressions, preserving hyphenated step IDs.
+        expression = re.sub(r'steps\.([\w-]+)', r'steps["\1"]', expression[3:-2])
+        import json
+        result = subprocess.run(['node', '-e', "console.log(Function('steps', 'cancelled', 'always', 'return ' + process.argv[1])(JSON.parse(process.argv[2]), () => false, () => true))",
+                                 expression, json.dumps(state)], capture_output=True, text=True, check=True)
+        return result.stdout.strip() == 'true'
+    assert evaluate(install['if'])
+    assert evaluate(validate['if'])
+    assert evaluate(uploads['retained-results-22']['if']) == (node22 != 'skipped')
+    assert not evaluate(uploads['retained-results-24']['if'])
+
+
+def test_main_push_run_name_keeps_the_commit_message():
+    assert 'github.event.head_commit.message' in load_workflow(ROOT / '.github/workflows/ci.yml')['run-name']
 
 
 @pytest.mark.parametrize('filename', [

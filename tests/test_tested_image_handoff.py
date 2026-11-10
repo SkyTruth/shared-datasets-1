@@ -23,6 +23,12 @@ SHA = "a" * 40
 REPO = "SkyTruth/shared-datasets-1"
 
 
+@pytest.mark.parametrize('artifacts', [[], [{'name': 'ci-image-sea-ice-daily-attempt1', 'expired': True}]])
+def test_missing_or_expired_tar_explains_retention_and_recovery(artifacts):
+    with pytest.raises(DeploymentError, match='2 days; re-run all jobs of the main run'):
+        consumer.retained_artifact(artifacts, 'ci-image-sea-ice-daily-attempt1', 123, 1024)
+
+
 def docker_tar(target, *, architecture="amd64", extra=None, tag=None):
     layer = b"rootfs tar bytes for " + target.encode()
     config = json.dumps({"os": "linux", "architecture": architecture,

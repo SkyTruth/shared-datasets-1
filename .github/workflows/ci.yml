@@ -1,5 +1,5 @@
 name: CI / Validate and deliver
-run-name: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Draft CI' || 'CI' }} / ${{ github.event.pull_request.title || github.sha }}"
+run-name: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Draft CI' || 'CI' }} / ${{ github.event.pull_request.title || github.event.head_commit.message || github.sha }}"
 
 on:
   pull_request:
@@ -243,14 +243,16 @@ jobs:
       - *validation-checkout
       - *validation-plan
       - uses: ./.github/actions/ci-tools
+        id: sdk-tools
         with:
           node: '22'
           binaries: gitleaks
       - name: Validate SDK on Node 22
+        id: sdk-node22
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite sdk-node22 --output "$RUNNER_TEMP/ci-results/sdk-node22"
       - uses: actions/upload-artifact@v4
         id: retained-results-22
-        if: always()
+        if: ${{ always() && steps.sdk-node22.outcome != 'skipped' }}
         with:
           name: ci-result-sdk-node22-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/sdk-node22
@@ -264,15 +266,19 @@ jobs:
           path: ${{ runner.temp }}/ci-results/sdk-node22/result.json
           if-no-files-found: error
           retention-days: 14
-      - uses: ./.github/actions/ci-tools
-        with:
-          node: '24'
-          binaries: gitleaks
+      - name: Install Node 24
+        id: node24
+        if: ${{ !cancelled() && steps.sdk-tools.outcome == 'success' }}
+        run: |
+          python scripts/ci_install_tools.py --destination "$RUNNER_TEMP/ci-tools" node24
+          echo "CI_NODE24_BIN=$RUNNER_TEMP/ci-tools/node24/bin" >> "$GITHUB_ENV"
       - name: Validate SDK on Node 24
+        id: sdk-node24
+        if: ${{ !cancelled() && steps.node24.outcome == 'success' }}
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite sdk-node24 --output "$RUNNER_TEMP/ci-results/sdk-node24"
       - uses: actions/upload-artifact@v4
         id: retained-results-24
-        if: always()
+        if: ${{ always() && steps.sdk-node24.outcome != 'skipped' }}
         with:
           name: ci-result-sdk-node24-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/sdk-node24

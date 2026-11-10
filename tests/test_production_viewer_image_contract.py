@@ -231,10 +231,10 @@ def test_build_cache_policy_preserves_actual_recipe_and_target_scopes(monkeypatc
         monkeypatch.setenv('SHARED_DATASETS_GITHUB_IMAGE_CACHE', 'true')
     actual = cached_build(original, target)
     if not enabled:
-        assert actual == original
+        assert actual == [*original[:2], "--builder", "default", *original[2:]]
         return
     if target in {'catalog-viewer', 'monitoring-slack'}:
-        assert actual == original
+        assert actual == [*original[:2], "--builder", "default", *original[2:]]
         return
     cache = f'type=gha,version=2,scope=production-{target}'
     assert actual == ['docker', 'buildx', 'build', '--load', '--cache-from', cache,

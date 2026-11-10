@@ -483,7 +483,7 @@ def test_token_dispatched_failure_is_replayed_without_native_event(tmp_path, fil
     assert api.posts == []
 
 
-@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (23,'success',False), (24,'success',True), (1,'failure',True), (7,None,False)])
+@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (23,'success',True), (24,'success',True), (1,'failure',True), (7,None,False)])
 def test_pending_checks_back_off_unchanged_success_but_not_failure(age, conclusion, expected):
     api = OperationalAPI()
     source = api.source(101, 'deployment-verification.yml', status='completed' if conclusion else 'in_progress', conclusion=conclusion)
@@ -581,6 +581,17 @@ def test_pending_backoff_never_delays_new_execution_or_new_failure(monkeypatch):
     assert safety.verification_due(api,[source,failed],[99],now=NOW)
 
 
+@pytest.mark.parametrize('elapsed,due', [(timedelta(hours=23)-timedelta(seconds=1), False),
+                                      (timedelta(hours=23), True), (timedelta(hours=24), True)])
+def test_pending_backoff_allows_one_hour_of_daily_schedule_jitter(monkeypatch, elapsed, due):
+    api = OperationalAPI()
+    monkeypatch.setattr(safety.subprocess, 'check_output', lambda *_a, **_k: '{"status":{}}')
+    source = api.source(101, 'deployment-verification.yml', conclusion='success')
+    source['created_at'] = stamp(NOW-elapsed)
+    api.statuses[99] = [{'created_at': stamp(NOW-timedelta(days=2)), 'environment_url': 'https://console.cloud.google.com/run/jobs/executions/details/us-central1/wdpa-monthly-abcde?project=shared-datasets-1'}]
+    assert safety.verification_due(api, [source], [99], now=NOW) is due
+
+
 @pytest.mark.parametrize('filename,cpu_peak,memory_peak', [('eamlis_monthly',2.60,0.96),('mpatlas_monthly',2.32,3.36),('sea_ice_daily',0.92,0.16)])
 def test_resources_retain_cpu_headroom_and_twice_observed_memory_peak(filename,cpu_peak,memory_peak):
     import hcl2
@@ -655,7 +666,7 @@ def test_pending_completion_is_probed_before_backoff_and_retry_is_capped(monkeyp
     probe = mock.Mock(return_value=json.dumps({'status': terminal}))
     monkeypatch.setattr(safety.subprocess, 'check_output', probe)
     assert safety.verification_due(api, [source], [99], now=NOW) is bool(terminal)
-    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=22)) is bool(terminal)
+    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=22) - timedelta(seconds=1)) is bool(terminal)
     assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=23))
     assert probe.call_count == 3 and 'wdpa-monthly-abcde' in probe.call_args.args[0]
 
@@ -708,7 +719,13 @@ def test_independent_heartbeat_has_49_hour_absence_and_step_only_webhooks():
     resources = {name: values for group in config['resource'] for entries in group.values() for name, values in entries.items()}
     absence = resources['operational_safety_absent']['conditions'][0]['condition_prometheus_query_language'][0]
     assert absence['duration'] == '0s' and absence['evaluation_interval'] == '300s'
-    assert 'operational_safety_heartbeat' in absence['query'] and '[49h]' in absence['query']
+    assert 'logging.googleapis.com/log_entry_count' in absence['query'] and '[49h]' in absence['query']
+    assert 'log="operational-safety-heartbeat"' in absence['query']
+    assert 'monitored_resource="global"' in absence['query']
+    assert 'logging.googleapis.com/user/' not in absence['query']
+    assert resources['operational_safety_absent']['enabled'] == '${var.cron_alerts_enabled && var.operational_safety_absent_enabled}'
+    variables = hcl2.loads((safety.ROOT/'terraform/envs/prod/monitoring_variables.tf').read_text(), serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
+    assert next(item['operational_safety_absent_enabled'] for item in variables['variable'] if 'operational_safety_absent_enabled' in item)['default'] is False
     assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
     assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 

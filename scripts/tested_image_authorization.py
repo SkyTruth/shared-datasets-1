@@ -44,12 +44,13 @@ class GitHub(proof.GitHub):
 
 def retained_artifact(artifacts, reference, run_id, maximum):
     found = [artifact for artifact in artifacts if artifact.get("name") == reference]
-    require(len(found) == 1, "missing or ambiguous retained-image artifact")
+    remedy = "Image TARs are retained for 2 days; re-run all jobs of the main run to recreate the tested handoff."
+    require(len(found) == 1, "missing or ambiguous retained-image artifact. " + remedy)
     artifact = found[0]
     require(type(artifact.get("id")) is int and artifact["id"] > 0 and not artifact.get("expired")
             and artifact.get("workflow_run", {}).get("id") == run_id
             and type(artifact.get("size_in_bytes")) is int and 0 < artifact["size_in_bytes"] <= maximum,
-            "retained-image artifact is expired, oversized or belongs to another run")
+            "retained-image artifact is expired, oversized or belongs to another run. " + remedy)
     return artifact
 
 

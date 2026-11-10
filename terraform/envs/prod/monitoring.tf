@@ -451,14 +451,14 @@ resource "google_monitoring_alert_policy" "operational_safety_absent" {
   project               = var.project_id
   display_name          = "Shared datasets operational safety heartbeat missing"
   combiner              = "OR"
-  enabled               = var.cron_alerts_enabled
+  enabled               = var.cron_alerts_enabled && var.operational_safety_absent_enabled
   notification_channels = local.cron_alert_notification_channels
   conditions {
     display_name = "No safety check completed for 49 hours"
-    # Standard metric absence is limited to 23.5 hours. PromQL can inspect two
-    # daily intervals plus one hour of scheduling grace without another runner.
+    # User log-based metrics are limited to 25 hours in PromQL alerts. The
+    # system log counter supports two daily intervals plus one hour of grace.
     condition_prometheus_query_language {
-      query               = "(sum(sum_over_time({__name__=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\", monitored_resource=\"global\", project_id=\"${var.project_id}\"}[49h])) == 0) or absent_over_time({__name__=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\", monitored_resource=\"global\", project_id=\"${var.project_id}\"}[49h])"
+      query               = "(sum(sum_over_time({__name__=\"logging.googleapis.com/log_entry_count\", monitored_resource=\"global\", log=\"operational-safety-heartbeat\", project_id=\"${var.project_id}\"}[49h])) == 0) or absent_over_time({__name__=\"logging.googleapis.com/log_entry_count\", monitored_resource=\"global\", log=\"operational-safety-heartbeat\", project_id=\"${var.project_id}\"}[49h])"
       duration            = "0s"
       evaluation_interval = "300s"
     }

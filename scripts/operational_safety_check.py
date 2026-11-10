@@ -144,7 +144,7 @@ def verification_due(api, sources, pending, *, now):
             "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
-    return now - utc(latest["created_at"]) >= SAFETY_INTERVAL or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
+    return now - utc(latest["created_at"]) >= SAFETY_INTERVAL - timedelta(hours=1) or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
 
 
 def reconciliation_stalled(api, run):

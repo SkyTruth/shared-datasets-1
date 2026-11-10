@@ -720,7 +720,7 @@ def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     assert ready["name"] == "ci-ready"
     assert ready["if"] == "always()"
     assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
-    assert [step["with"]["node"] for step in workflow["jobs"]["sdk-validation"]["steps"] if step.get("uses") == "./.github/actions/ci-tools"] == ["22", "24"]
+    assert [step["with"]["node"] for step in workflow["jobs"]["sdk-validation"]["steps"] if step.get("uses") == "./.github/actions/ci-tools"] == ["22"]
     assert not (ROOT / ".github/workflows/sdk-validation.yml").exists()
     assert not (ROOT / ".github/workflows/catalog-browser-smoke.yml").exists()
 
