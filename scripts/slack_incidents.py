@@ -367,7 +367,7 @@ def same_migrated_episode(original, current):
 def replay_observations(api, since, *, now=None, completed_until=None):
     """Periodic observation catches bounded queue loss without another scheduler.
 
-    Reconcile the last 24 hours, starting no earlier than explicit activation.
+    Reconcile the last 72 hours, starting no earlier than explicit activation.
     Longer GitHub outages need an explicit replay, documented beside rollout.
     """
     runs, start, end = alerts.source_inventory(api, None, since, now=now or datetime.now(timezone.utc))

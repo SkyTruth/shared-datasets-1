@@ -36,6 +36,9 @@ CRON_ASSETS = {job: tuple(slug for slug in CATALOG if slug == config["asset_slug
                (not config["asset_slug"] and slug.startswith(config["selection"] + "-")))
                for job, config in TARGETS.items()} | {"dataset-usage": ()}
 FRESHNESS_DAYS = {"daily": 2, "monthly": 31 + 7}
+SAFETY_INTERVAL = timedelta(days=1)
+HEARTBEAT_WINDOW = 2 * SAFETY_INTERVAL + timedelta(hours=1)
+REPLAY_WINDOW = 3 * SAFETY_INTERVAL
 UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already published",
                      "latest available source already published"}
 
@@ -141,12 +144,12 @@ def verification_due(api, sources, pending, *, now):
             "--region=us-central1", "--project=shared-datasets-1", "--format=json(status)"], text=True))
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
-    return now - utc(latest["created_at"]) >= timedelta(hours=3) or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
+    return now - utc(latest["created_at"]) >= SAFETY_INTERVAL or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
 
 
 def reconciliation_stalled(api, run):
     """Read the last two dispatch steps without a separate counter."""
-    since = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = (datetime.now(timezone.utc) - REPLAY_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     query = urlencode({"branch": "main", "created": ">=" + since, "per_page": 100})
     rows = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
     prior = sorted((item for item in rows if item["id"] < run["id"]), key=lambda item: item["id"], reverse=True)[:2]
@@ -206,7 +209,7 @@ def probe(api, run, identity, since, client, directory):
     from scripts import deployment_revision as deployments
 
     pending = deployments.pending(api, REPOSITORY)
-    since = since if identity else (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since = since if identity else (datetime.now(timezone.utc) - REPLAY_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
     all_sources, start, end = source_inventory(api, run, since) if identity or pending else ([], None, None)
     generations = catalog_inventory(client)
     changed = catalog_changed(client, directory)
@@ -223,7 +226,7 @@ def policy_warnings(now):
         validate_suspensions(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else ROLLOUT_HOLD_TARGETS))
         for target, entry in entries.items():
             remaining = utc(entry["expires_at"]) - now
-            if remaining <= timedelta(hours=75):  # Three-hour sampling still warns >=72 hours ahead.
+            if remaining <= timedelta(hours=72) + SAFETY_INTERVAL:  # Daily sampling still warns >=72 hours ahead.
                 message = f"{target}: {filename} {'expired' if remaining <= timedelta(0) else 'expires'} {entry['expires_at']} (owner {entry['owner']})"
                 (problems if remaining <= timedelta(0) else warnings).append(message)
     return warnings, problems
@@ -294,8 +297,8 @@ def recovery_identity(api):
 
 
 def prior_runs(api, run):
-    """Completed earlier safety runs on main from the last three days, newest first."""
-    query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    """Completed earlier safety runs on main within report retention, newest first."""
+    query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     prior = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
     return sorted((row for row in prior if row["id"] < run["id"] and row.get("status") == "completed" and row.get("path") == WORKFLOW), key=lambda row: row["id"], reverse=True)
 
@@ -307,6 +310,7 @@ def isolated_setup_failure(api, run):
     """
     previous = next(iter(prior_runs(api, run)), None)
     return (run["run_attempt"] == 1 and previous is not None and previous.get("conclusion") == "success"
+            and timedelta(0) <= utc(run["created_at"]) - utc(previous["created_at"]) <= SAFETY_INTERVAL + timedelta(hours=1)
             and previous.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, previous))
 
 
@@ -355,7 +359,7 @@ def heartbeat_series(now):
     from google.auth.transport.requests import AuthorizedSession
     credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/monitoring.read"])
     query = {"filter": 'metric.type="logging.googleapis.com/user/operational-safety-heartbeat" AND resource.type="global"',
-             "interval.startTime": (now - timedelta(hours=7)).isoformat(), "interval.endTime": now.isoformat(),
+             "interval.startTime": (now - HEARTBEAT_WINDOW).isoformat(), "interval.endTime": now.isoformat(),
              "view": "HEADERS", "pageSize": 1}
     with AuthorizedSession(credentials) as session:
         response = session.get("https://monitoring.googleapis.com/v3/projects/shared-datasets-1/timeSeries", params=query, timeout=30)

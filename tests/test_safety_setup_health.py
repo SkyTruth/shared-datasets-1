@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import zipfile
+from datetime import timedelta
 from unittest import mock
 
 import pytest
@@ -223,6 +224,16 @@ def test_isolated_setup_failure_requires_authenticated_previous_success_on_a_fir
         safety.isolated_setup_failure(api, api.current)  # The health step fails, so the direct fallback alerts.
 
 
+@pytest.mark.parametrize('gap,quiet', [(24, True), (25, True), (25.01, False), (48, False)])
+def test_a_missed_daily_run_cannot_grant_another_quiet_setup_failure(monkeypatch, gap, quiet):
+    api = OperationalAPI()
+    prior = {**api.source(299, 'operational-safety-check.yml'), 'conclusion': 'success',
+             'created_at': (safety.utc(api.current['created_at']) - timedelta(hours=gap)).isoformat()}
+    monkeypatch.setattr(safety, 'prior_runs', lambda *_: [prior])
+    monkeypatch.setattr(safety.alerts, 'verify_source_event', lambda *_: True)
+    assert safety.isolated_setup_failure(api, api.current) is quiet
+
+
 def test_prior_runs_keep_only_completed_earlier_safety_runs_newest_first():
     api = OperationalAPI()
 
@@ -276,7 +287,7 @@ def test_heartbeat_acceptance_reads_metric_time_series_instead_of_assuming_log_w
         assert query['view'] == 'HEADERS' and query['pageSize'] == 1
         assert 'operational-safety-heartbeat' in query['filter']
         assert 'resource.type="global"' in query['filter']
-        assert query['interval.startTime'] < query['interval.endTime']
+        assert safety.utc(query['interval.endTime']) - safety.utc(query['interval.startTime']) == timedelta(hours=49)
         get.return_value.raise_for_status.assert_called_once()
 
 

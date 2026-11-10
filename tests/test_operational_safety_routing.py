@@ -19,10 +19,10 @@ WORKFLOWS = ROOT / ".github/workflows"
 SAFETY = "operational-safety-check.yml"
 
 
-def test_three_hour_entrypoint_and_direct_safety_failure_coverage():
+def test_daily_entrypoint_and_direct_safety_failure_coverage():
     files = (SAFETY, "catalog-web-deploy.yml", "deployment-verification.yml")
     schedules = {name: workflow_triggers(load_workflow(WORKFLOWS / name)).get("schedule") for name in files}
-    assert schedules == {SAFETY: [{"cron": "17 */3 * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
+    assert schedules == {SAFETY: [{"cron": "17 6 * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
     assert not (set(WORKFLOW_NAMES[SAFETY]) & set(subscriptions))
@@ -44,7 +44,7 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert "Install pinned durable receipt verifier" in steps
-    assert steps["Retain safety health report"]["with"]["retention-days"] == 3
+    assert steps["Retain safety health report"]["with"]["retention-days"] == 7
     assert not any("attest" in step.get("uses", "") for step in job["steps"])
 
 

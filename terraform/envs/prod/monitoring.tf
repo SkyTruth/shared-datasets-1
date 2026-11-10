@@ -454,19 +454,17 @@ resource "google_monitoring_alert_policy" "operational_safety_absent" {
   enabled               = var.cron_alerts_enabled
   notification_channels = local.cron_alert_notification_channels
   conditions {
-    display_name = "No safety check completed for seven hours"
-    condition_absent {
-      filter   = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\" AND resource.type=\"global\""
-      duration = "25200s"
-      aggregations {
-        alignment_period   = "3600s"
-        per_series_aligner = "ALIGN_SUM"
-      }
-      trigger { count = 1 }
+    display_name = "No safety check completed for 49 hours"
+    # Standard metric absence is limited to 23.5 hours. PromQL can inspect two
+    # daily intervals plus one hour of scheduling grace without another runner.
+    condition_prometheus_query_language {
+      query               = "(sum(sum_over_time({__name__=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\", monitored_resource=\"global\", project_id=\"${var.project_id}\"}[49h])) == 0) or absent_over_time({__name__=\"logging.googleapis.com/user/${google_logging_metric.operational_safety_heartbeat.name}\", monitored_resource=\"global\", project_id=\"${var.project_id}\"}[49h])"
+      duration            = "0s"
+      evaluation_interval = "300s"
     }
   }
   documentation {
-    content   = "No authenticated operational-safety-check.yml heartbeat for seven hours. Inspect GitHub scheduling, disabled workflows, authentication and the health-report upload. This policy is evaluated independently by Cloud Monitoring; enable it only after the first heartbeat has established its time series."
+    content   = "No authenticated operational-safety-check.yml heartbeat for 49 hours (two daily intervals plus one hour of grace). One missed run stays quiet; two missed runs alert within 49 hours 5 minutes of the last heartbeat, plus metric ingestion delay. Inspect GitHub scheduling, disabled workflows, authentication and the health-report upload. This independent PromQL policy also detects an unestablished series; enable it after the first verified heartbeat."
     mime_type = "text/markdown"
   }
   alert_strategy { auto_close = "86400s" }

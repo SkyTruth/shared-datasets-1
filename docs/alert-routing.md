@@ -135,7 +135,7 @@ recovery](slack-incidents.md) for polling, signing and uncertain-delivery contra
 
 ## Scheduled freshness and capacity
 
-Every three-hour probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
+Every daily (06:17 UTC) probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
 monthly assets within 38 days (31-day cadence plus seven days of grace). Monthly jobs run on day 2; WDPA checks days 1–10. An old release with a recent confirmed unchanged check is healthy.
 Missing-source/decision skips and metadata-only rewrites cannot reset freshness. The weekly bucket audit uses the same rule.
 Both `bucket-hygiene-audit.yml` and `scratch-cleanup-audit.yml` require authenticated successful main completion within nine days (weekly cadence plus two days); missing/failed audits cannot reset that clock.
@@ -146,12 +146,12 @@ Recovery readiness requires signed successful manual identity provisioning; miss
 
 Scheduler states other than `ENABLED` for >=72 hours since `userUpdateTime` fail health unless `.github/scheduler-pauses.json` names a reviewed CODEOWNER, reason and future timezone-aware `expires_at`.
 Deployment holds in `.github/ingestion-rollout-holds.json` require the same fields but cannot authorize pauses. Missing jobs/failed reads fail visibly.
-Approved pauses suppress freshness until expiry, including telemetry's pre-activation pause while `gcs_usage.verified_at` is null. Three-hour probes warn >=72 hours before expiry and alert afterward.
+Approved pauses suppress freshness until expiry, including telemetry's pre-activation pause while `gcs_usage.verified_at` is null. Daily probes start warning at 96 hours remaining, guaranteeing >=72 hours before expiry under on-time sampling and alert afterward.
 Expired holds still block deployment while permitting selection and `ci-ready`; lint rejects malformed entries and changed holds that are already expired.
 
 Disabled incidents or missing activation timestamp/bot token skip incident discovery; catalog/execution checks continue and health reports include configuration findings.
 Setup, probe and reader failures share one retained report with change-plus-daily reminders. Health reporting works without probe dependencies or the pinned verifier.
-A first-attempt setup failure directly after an authenticated successful safety run sends no Slack message: the run stays red, logs the cause as a warning annotation and carries the previous report forward, so a second consecutive failure or a re-run that fails is a new finding and alerts. Probe and reader failures alert at once. The quiet run skips health readers, so other new findings and due reminders wait one run (3 h). A late next run can still trip the seven-hour heartbeat absence policy after one quiet failure.
+A first-attempt setup failure directly after an authenticated successful safety run sends no Slack message: the run stays red, logs the cause as a warning annotation and carries the previous report forward, so a second consecutive failure or a re-run that fails is a new finding and alerts. Probe and reader failures alert at once. The quiet run skips health readers, so other new findings and due reminders wait one run (24 h). A previous success older than 25 hours cannot qualify for quiet setup handling, so a missing run followed by a setup failure alerts.
 The safety job restores only the checksum-verified `gh` verifier archive from a main-scoped Actions cache. Python and uv still download from GitHub releases, because `setup-python` and `setup-uv` trust tool-cache hits without verification and this job holds production credentials; release-download 504s on 2026-11-08..09 failed 3 of 194 hourly runs.
 Setup/probe failures stay red; authenticated reports suppress duplicate replay. Delivery, upload and dispatch failures remain visible. Unchanged findings cannot advance stall escalation.
 
@@ -161,8 +161,10 @@ Only `shared-datasets-heartbeat` gets `logging.logEntries.create`; its separate 
 
 After successful discovery and health-report delivery (or a deduplicated no-send), the authenticated `operational-safety-heartbeat` log confirms reporting is alive.
 Reader failures remain in the delivered health report; they still permit that heartbeat. Failed discovery or report delivery emits none.
-The independent seven-hour (`25200s`) absence policy covers missed/disabled safety runs, follows `cron_alerts_enabled` and uses cron notification channels.
-Health warns when no recent metric series exists: a log write alone cannot establish absence detection. Local tests cannot prove deployed IAM or alert delivery.
+The independent PromQL absence policy checks the last 49 hours (`176400s`): two 24-hour intervals plus one hour of scheduling grace. One missed daily run stays quiet; two consecutive missed runs alert within 49 hours 5 minutes of the last heartbeat, plus metric ingestion and notification delay (300-second evaluation interval). Setup failures on two on-time runs alert on the second run, within 48 hours of the last success plus run time. Poll-only findings normally wait at most 24 hours; the quiet setup path can extend that to 48 hours. GitHub scheduling itself has no hard delivery bound. Failure-triggered workflow alerts remain immediate. The policy follows `cron_alerts_enabled` and uses cron notification channels.
+
+Standard [metric-absence conditions](https://docs.cloud.google.com/monitoring/alerts/metric-absence) stop at 23.5 hours, so the policy uses [PromQL](https://docs.cloud.google.com/monitoring/alerts/using-promql) `absent_over_time(...[49h])` with a zero retest window. It detects a never-established series too; enable it after verifying the first heartbeat. Health-series inspection uses the same 49-hour window. Reports and prior-run discovery retain seven days; automatic replay covers 72 hours (three daily intervals), preserving overlap after a missed or quiet setup run. Longer outages need reviewed replay. Reconciliation stall discovery retains three days to find the previous two daily dispatches; three consecutive dispatches still escalate, now across 48 hours.
+Health warns when no recent metric series exists: a log write alone cannot prove metric ingestion. Local tests cannot prove deployed IAM or alert delivery.
 
 Read-only Monitoring evidence (2026-10-06 through 2026-11-05) bounded the highest
 occupied utilization histogram bucket, multiplied by live 4-vCPU/16-GiB limits:

@@ -36,6 +36,7 @@ def receipt_workspace(tmp_path, monkeypatch):
     # Source windows and claim ages must use the same clock as the dated receipts.
     monkeypatch.setattr(safety, "datetime", FixtureClock)
     monkeypatch.setattr(safety.alerts, "datetime", FixtureClock)
+    monkeypatch.setattr(incidents, "datetime", FixtureClock)
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(START))
@@ -170,6 +171,26 @@ def test_inventory_retains_missed_final_events_and_source_attempt_changes():
     changed, _, _ = safety.source_inventory(api, api.current, stamp(START), now=NOW)
     assert changed != inventory and changed[0]["run_attempt"] == 2
     assert "branch=main" in api.calls[-1][1]
+
+
+def test_replay_keeps_three_daily_intervals_with_activation_as_a_floor():
+    api = OperationalAPI()
+    _, start, end = safety.source_inventory(api, api.current, stamp(NOW - timedelta(days=30)), now=NOW)
+    assert end - start == timedelta(hours=72)
+    assert parse_qs(api.calls[-1][1].split('?', 1)[1])['created'] == [stamp(start) + '..' + stamp(end)]
+
+
+def test_daily_stall_inventory_covers_the_previous_two_dispatches():
+    api = OperationalAPI()
+    for identifier, hours in ((298, 48), (299, 24)):
+        source = api.source(identifier, 'operational-safety-check.yml')
+        source['created_at'] = stamp(NOW - timedelta(hours=hours))
+        api.add_source(source)
+        api.jobs[identifier] = [{'name': safety.JOB, 'steps': [
+            {'name': 'Request operational reconciliation', 'status': 'completed', 'conclusion': 'success'}]}]
+    assert safety.reconciliation_stalled(api, api.current)
+    query = next(path for _, path in api.calls if '/operational-safety-check.yml/runs?' in path)
+    assert parse_qs(query.split('?', 1)[1])['created'] == ['>=' + stamp(NOW - timedelta(hours=72))]
 
 
 def test_inventory_is_activation_limited_and_retains_unfinished_or_failed_safety_runs():
@@ -462,7 +483,7 @@ def test_token_dispatched_failure_is_replayed_without_native_event(tmp_path, fil
     assert api.posts == []
 
 
-@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (7,'success',True), (1,'failure',True), (7,None,False)])
+@pytest.mark.parametrize('age,conclusion,expected', [(1,'success',False), (23,'success',False), (24,'success',True), (1,'failure',True), (7,None,False)])
 def test_pending_checks_back_off_unchanged_success_but_not_failure(age, conclusion, expected):
     api = OperationalAPI()
     source = api.source(101, 'deployment-verification.yml', status='completed' if conclusion else 'in_progress', conclusion=conclusion)
@@ -634,8 +655,9 @@ def test_pending_completion_is_probed_before_backoff_and_retry_is_capped(monkeyp
     probe = mock.Mock(return_value=json.dumps({'status': terminal}))
     monkeypatch.setattr(safety.subprocess, 'check_output', probe)
     assert safety.verification_due(api, [source], [99], now=NOW) is bool(terminal)
-    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=2))
-    assert probe.call_count == 2 and 'wdpa-monthly-abcde' in probe.call_args.args[0]
+    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=22)) is bool(terminal)
+    assert safety.verification_due(api, [source], [99], now=NOW + timedelta(hours=23))
+    assert probe.call_count == 3 and 'wdpa-monthly-abcde' in probe.call_args.args[0]
 
 
 def test_health_only_failures_never_create_reconciliation_work_but_infrastructure_failures_do(tmp_path):
@@ -656,8 +678,8 @@ def test_expiry_warns_at_72_hours_and_alerts_afterwards_without_releasing_holds(
     for target, hold in holds.items():
         expiry = datetime.fromisoformat(hold['expires_at'].replace('Z', '+00:00'))
         message = f"{target}: {safety.INGESTION_ROLLOUT_HOLDS} expires {hold['expires_at']} (owner {hold['owner']})"
-        assert message not in safety.policy_warnings(expiry - timedelta(hours=76))[0]
-        for hours in (75, 72):
+        assert message not in safety.policy_warnings(expiry - timedelta(hours=97))[0]
+        for hours in (96, 72):
             warnings, problems = safety.policy_warnings(expiry - timedelta(hours=hours))
             assert message in warnings and message not in problems
         warnings, problems = safety.policy_warnings(expiry)
@@ -675,7 +697,7 @@ def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():
     assert any('dataset-usage' in item for item in safety.policy_warnings(expiry - timedelta(hours=72))[0])
 
 
-def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
+def test_independent_heartbeat_has_49_hour_absence_and_step_only_webhooks():
     import hcl2
     from workflow_helpers import load_workflow
     workflow = load_workflow(safety.ROOT/'.github/workflows/operational-safety-check.yml')
@@ -684,8 +706,9 @@ def test_independent_heartbeat_has_seven_hour_absence_and_step_only_webhooks():
     assert {step.get('name') for step in job['steps'] if 'SHARED_DATASETS_SLACK_WEBHOOK_URL' in step.get('env', {})} == {'Check freshness and stalled operations', 'Report safety failure directly'}
     config = hcl2.loads((safety.ROOT/'terraform/envs/prod/monitoring.tf').read_text(), serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
     resources = {name: values for group in config['resource'] for entries in group.values() for name, values in entries.items()}
-    absence = resources['operational_safety_absent']['conditions'][0]['condition_absent'][0]
-    assert absence['duration'] == '25200s' and 'operational_safety_heartbeat' in absence['filter']
+    absence = resources['operational_safety_absent']['conditions'][0]['condition_prometheus_query_language'][0]
+    assert absence['duration'] == '0s' and absence['evaluation_interval'] == '300s'
+    assert 'operational_safety_heartbeat' in absence['query'] and '[49h]' in absence['query']
     assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
     assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 

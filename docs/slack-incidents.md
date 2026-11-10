@@ -14,9 +14,9 @@ attempt and mutation records. Unknown impact remains unknown.
 `unattended-workflow-alert.yml` receives failed native completions, including
 main-push CI delivery jobs and the top-level SDK publisher. Healthy events
 allocate no worker except the terminal observer, which also reconciles recovery.
-The three-hour safety probe discovers GITHUB_TOKEN-dispatched failures, including
+The daily safety probe discovers GITHUB_TOKEN-dispatched failures, including
 notification batches, for which GitHub emits no `workflow_run` event. Its rolling
-24-hour replay window dispatches only actionable transitions. Three actual
+72-hour replay window dispatches only actionable transitions. Three actual
 consecutive reconciliation dispatches fail health; unchanged health findings never
 enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
 owns scoped non-red reports, deduplication, reminders and missing-run detection.
@@ -25,7 +25,7 @@ Infrastructure failures that prevent reporting retain a direct webhook signal.
 
 Each safety probe cheaply inspects the exact pending WDPA execution for terminal
 status before completion-observer backoff. Pending verification backs off at most
-three hours after an unchanged successful observer; failed checks stay eligible
+24 hours after an unchanged successful observer; failed checks stay eligible
 and active observers are not duplicated. This live hint only requests protected
 verification; it cannot authorize a terminal result. Freshness/hold/pause checks and
 72-hour expiry warnings follow [alert routing](alert-routing.md#scheduled-freshness-and-capacity).

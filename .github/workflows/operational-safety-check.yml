@@ -1,7 +1,7 @@
 name: Operations / Safety check
 on:
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -119,7 +119,7 @@ jobs:
           name: safety-health-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/operational-safety/health/cache.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
       - name: Report safety failure directly
         if: ${{ (failure() || cancelled()) && steps.trust.outcome == 'success' && (steps.probe.outcome == 'success' || steps.health.outcome != 'success' || steps.health-report.outcome != 'success') }}
         env:

@@ -121,7 +121,8 @@ def context(api, environment=os.environ, *, workflow, events=("schedule", "workf
 
 def source_inventory(api, run, since, *, now=None):
     now = now or datetime.now(timezone.utc)
-    start = max(timestamp(since), now - timedelta(hours=24))
+    # Three daily intervals cover a skipped probe plus one full interval of overlap.
+    start = max(timestamp(since), now - timedelta(hours=72))
     query = urlencode({"branch": "main", "created": start.strftime("%Y-%m-%dT%H:%M:%SZ")
                        + ".." + now.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     rows = api.pages(f"{API_ROOT}/actions/runs?{query}", field="workflow_runs")
