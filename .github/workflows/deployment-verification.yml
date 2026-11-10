@@ -62,6 +62,8 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          skip_install: true
       - name: Verify exact execution terminal outcome
         id: deployment-outcome
         env:

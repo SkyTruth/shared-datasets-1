@@ -76,6 +76,14 @@ complete here.
    [recovery](ci-recovery.md) after failures; maintain separate code-merged, operation-completed,
    observer-verified and incident-reconciled milestones.
 
+Protected deployment authentication, the safety check and completion verification use the hosted
+Ubuntu runner's preinstalled gcloud through `setup-gcloud` with `skip_install: true`. Their commands
+use GA components and declare no SDK version pin; workflows that require a pinned SDK must retain
+installation. Post-canary ingestion hygiene lists only `--prefix "$ASSET_ROOT/"`. The preceding
+`ingestion_verification.py` check still reads the deployed asset's release index, manifest, schema,
+metadata sidecar, FGB fields and PMTiles metadata. The weekly production bucket audit retains global
+release/index and metadata-readiness coverage.
+
 ## Caller scheduling
 
 The first main-push attempt may reuse [verified same-tree PR validation](ci-preflight.md#image-execution-and-hosted-evidence) for pure validation suites. Its `ci-ready-evidence` records the PR run/attempt and matching tree/base/contract/tools. Selected image and SDK jobs still run on main, so delivery continues to consume main-produced TARs and package candidates through the existing exact-attempt loaders. Forks, dispatches, ambiguous or stale proof and lookup failures take the full-validation path. Main all-job reruns also run full validation. This removes the independent main-context rerun of pure suites only when the PR proof matches.

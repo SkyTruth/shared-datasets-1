@@ -21,6 +21,7 @@ from scripts.deployment_receipt_contracts import expanded_steps
 from workflow_helpers import (
     load_workflow,
     workflow_steps_by_name,
+    workflow_triggers,
 )
 
 
@@ -427,6 +428,18 @@ def test_short_canary_requires_terminal_success_of_exact_digest(tmp_path, target
 
 
 def test_canary_validation_and_hygiene_precede_scheduler_resume(tmp_path):
+    release = shared_step('verify', 'Validate latest release contract')
+    audit = shared_step('verify', 'Run asset bucket hygiene audit')
+    assert release['run'] == 'uv run --frozen --no-dev python scripts/ingestion_verification.py'
+    assert release['if'] == audit['if'] == "env.ASSET_ROOT != ''"
+    assert '--prefix "$ASSET_ROOT/"' in audit['run']
+    assert 'scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"' in audit['run']
+    weekly = load_workflow(REPO_ROOT / '.github/workflows/bucket-hygiene-audit.yml')
+    assert workflow_triggers(weekly)['schedule'] == [{'cron': '0 14 * * 1'}]
+    global_audit = next(step['run'] for job in weekly['jobs'].values() for step in job['steps']
+                        if 'audit_shared_datasets.py' in step.get('run', ''))
+    assert '--prefix' not in global_audit
+    assert '--health-profile production' in global_audit
     names = [s.get('name') for s in shared_workflow()['jobs']['verify']['steps']]
     order = ['Require successful signed apply', 'Confirm deployed digest', 'Execute ingestion canary', 'Watch ingestion canary',
              'Validate latest release contract', 'Run asset bucket hygiene audit', 'Resume verified ingestion scheduler', 'Record deployment outcome']

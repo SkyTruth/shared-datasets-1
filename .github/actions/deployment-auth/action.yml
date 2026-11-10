@@ -20,3 +20,6 @@ runs:
       service_account: ${{ inputs.service-account || env.TERRAFORM_SERVICE_ACCOUNT }}
   - name: Set up gcloud
     uses: google-github-actions/setup-gcloud@v2
+    with:
+      # Hosted Ubuntu supplies every GA command used by these callers.
+      skip_install: true

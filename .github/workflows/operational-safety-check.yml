@@ -69,6 +69,8 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: shared-datasets-heartbeat@shared-datasets-1.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          skip_install: true
       - name: Check operational work
         id: probe
         env:

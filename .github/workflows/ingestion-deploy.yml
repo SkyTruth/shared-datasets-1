@@ -344,7 +344,7 @@ jobs:
       if: env.ASSET_ROOT != ''
       run: |
         uv run --frozen --no-dev python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
-          --bucket "$BUCKET" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
+          --bucket "$BUCKET" --prefix "$ASSET_ROOT/" --format json > "$RUNNER_TEMP/bucket-hygiene.json"
         uv run --frozen --no-dev python scripts/ingestion_verification.py "$RUNNER_TEMP/bucket-hygiene.json"
     - name: Verify usage scheduler
       if: env.PLAN_GUARD == 'usage'
