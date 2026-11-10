@@ -800,7 +800,7 @@ def preflight(args: argparse.Namespace, *, slot_wait_s=0, record=None) -> int:
                 record["per_suite_s"][suite] = round(monotonic() - suite_started, 3)
                 print(f"Preflight {suite}: {record['per_suite_s'][suite]:.3f}s", flush=True)
 
-        # SwiftShader's four browser workers need the small VM's CPU budget.
+        # SwiftShader's browser workers need the small VM's CPU budget.
         # Larger VMs can start browser beside images and lint; small VMs finish
         # the other suites before rendering, retaining early lint failures.
         priority = {"production-images": 0, "browser": 1} if runtime["suite_workers"] == 3 else {"production-images": 0}

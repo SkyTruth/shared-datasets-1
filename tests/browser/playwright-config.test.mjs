@@ -9,7 +9,7 @@ test('CI Git metadata capture cannot truncate the validation checkout', () => {
 // One fixture build/server, per-test browser contexts and per-owner comparison jobs.
 test('parallel browser validation retains zero retries and a single static server', () => {
   assert.equal(config.fullyParallel, true);
-  assert.equal(config.workers, 4);
+  assert.equal(config.workers, 2);
   assert.equal(config.retries, 0);
   assert.equal(config.webServer.reuseExistingServer, false);
 });

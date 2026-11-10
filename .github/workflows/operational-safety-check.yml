@@ -1,7 +1,7 @@
 name: Operations / Safety check
 on:
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "17 16 * * *"
   workflow_dispatch:
 permissions:
   contents: read

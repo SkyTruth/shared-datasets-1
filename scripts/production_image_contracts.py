@@ -194,7 +194,6 @@ def main():
     args = parser.parse_args()
     if args.local_images and (not args.output or os.environ.get("GITHUB_RUN_ID")):
         parser.error("local image receipts require local output and cannot be used in Actions")
-    os.environ.setdefault("SHARED_DATASETS_PREFLIGHT_RUN", "standalone-" + uuid.uuid4().hex)
     if args.viewer_image:
         if args.target or args.output:
             parser.error("viewer-image cannot be combined with build targets")

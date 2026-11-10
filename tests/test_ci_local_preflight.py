@@ -319,6 +319,17 @@ def test_cleanup_selects_only_owned_containers_and_expired_preflight_tags(monkey
     assert [call.args[0] for call in run.call_args_list] == [['docker', 'rm', '-f', 'container-a', 'container-b'], ['docker', 'image', 'rm', old]]
 
 
+def test_standalone_cli_probe_never_carries_the_driver_label(monkeypatch):
+    monkeypatch.delenv('SHARED_DATASETS_PREFLIGHT_RUN', raising=False)
+    monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['production_image_contracts.py', '--viewer-image', 'viewer:test'])
+    labels = []
+    monkeypatch.setattr(producer, 'verify_viewer_image', lambda image, limits: labels.append(producer.container_options()[-1]))
+    producer.main()
+    assert len(labels) == 1 and labels[0].startswith('shared-datasets-preflight=standalone-')
+    assert 'SHARED_DATASETS_PREFLIGHT_RUN' not in os.environ
+
+
 @pytest.mark.parametrize('run_id', [None, 'this-run'])
 def test_cleanup_preserves_live_standalone_probe_and_removes_only_driver_containers(monkeypatch, run_id):
     monkeypatch.delenv('SHARED_DATASETS_PREFLIGHT_RUN', raising=False)

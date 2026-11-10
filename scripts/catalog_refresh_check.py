@@ -39,7 +39,7 @@ def main(argv=None):
             deployment_source.resolve_main_ci(deployment_source.GitHub(),
                 os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"])
     except deployment_source.PendingCI:
-        message = "Catalog refresh deferred: main CI is still pending. The next hourly probe will check again."
+        message = "Catalog refresh deferred: main CI is still pending. The next daily probe will check again."
     else:
         message = ("Catalog inputs changed; selecting the protected deployment."
                    if changed else "Catalog inputs unchanged; deployment skipped.")

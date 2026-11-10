@@ -13,14 +13,11 @@ import os
 from pathlib import Path
 import re
 import signal
-import subprocess
 import sys
-import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_contract import REUSABLE_SUITES, expected_tools, write_json
-from scripts.deployment_revision import DeploymentError, require
-from scripts.reviewed_dataset_plan import PlanValidationError
+from scripts.deployment_revision import require
 from scripts.sdk_release_authorization import GitHub, artifact_files, execution_time, gate_execution
 
 WORKFLOW = ".github/workflows/ci.yml"
@@ -150,8 +147,7 @@ def select_reuse(api, plan, current, *, attempt, now=None):
     try:
         signal.setitimer(signal.ITIMER_REAL, LOOKUP_TIMEOUT_SECONDS)
         return discover(api, plan, current, now=now)
-    except (DeploymentError, PlanValidationError, ValueError, KeyError, TypeError, OSError,
-            subprocess.SubprocessError, zipfile.BadZipFile, RuntimeError) as error:
+    except Exception as error:  # Reuse is optional: any lookup failure selects full validation.
         print(f"PR validation reuse unavailable; running the full selection: {type(error).__name__}: {error}", file=sys.stderr)
         return None
     finally:

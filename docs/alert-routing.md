@@ -135,7 +135,7 @@ recovery](slack-incidents.md) for polling, signing and uncertain-delivery contra
 
 ## Scheduled freshness and capacity
 
-Every daily (06:17 UTC) probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
+Every daily (16:17 UTC, after the 15:00 UTC sea-ice publish) probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
 monthly assets within 38 days (31-day cadence plus seven days of grace). Monthly jobs run on day 2; WDPA checks days 1–10. An old release with a recent confirmed unchanged check is healthy.
 Missing-source/decision skips and metadata-only rewrites cannot reset freshness. The weekly bucket audit uses the same rule.
 Both `bucket-hygiene-audit.yml` and `scratch-cleanup-audit.yml` require authenticated successful main completion within nine days (weekly cadence plus two days); missing/failed audits cannot reset that clock.

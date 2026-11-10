@@ -22,7 +22,7 @@ SAFETY = "operational-safety-check.yml"
 def test_daily_entrypoint_and_direct_safety_failure_coverage():
     files = (SAFETY, "catalog-web-deploy.yml", "deployment-verification.yml")
     schedules = {name: workflow_triggers(load_workflow(WORKFLOWS / name)).get("schedule") for name in files}
-    assert schedules == {SAFETY: [{"cron": "17 6 * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
+    assert schedules == {SAFETY: [{"cron": "17 16 * * *"}], "catalog-web-deploy.yml": None, "deployment-verification.yml": None}
     observer = load_workflow(WORKFLOWS / "unattended-workflow-alert.yml")
     subscriptions = workflow_triggers(observer)["workflow_run"]["workflows"]
     assert not (set(WORKFLOW_NAMES[SAFETY]) & set(subscriptions))
