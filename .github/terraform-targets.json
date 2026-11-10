@@ -183,6 +183,7 @@
       "image_placeholder": "unused-by-state-read-iam-sync"
     },
     "Artifact Registry writer binding sync": {"prerequisites": ["google_artifact_registry_repository.jobs", "google_project_service.required", "google_iam_workload_identity_pool.github", "module.github_readonly_service_account.google_service_account.this", "module.shared_datasets_publisher_service_account.google_service_account.this", "module.feature_preview_loader_service_account.google_service_account.this", "google_storage_bucket.shared_bucket", "google_storage_bucket.monitoring_slack"],
+      "retired_resources": ["google_storage_bucket_iam_member.github_readonly_object_viewer_scoped"],
       "workflow": "artifact-registry-iam-sync.yml",
       "readiness_target": "workflow-identities-and-registry",
       "resources": [
@@ -198,7 +199,7 @@
         "google_project_iam_custom_role.github_job[\"reconciler\"]", "google_project_iam_member.github_job[\"reconciler\"]",
         "google_service_account_iam_member.github_job_wif[\"reconciler\"]", "google_project_iam_custom_role.operational_safety_reader",
         "google_project_iam_member.operational_safety_reader", "google_service_account_iam_member.feature_preview_loader_github_wif", "google_service_account_iam_member.feature_preview_loader_github_wif_workflow",
-        "google_storage_bucket_iam_member.monitoring_slack_recovery", "google_storage_bucket_iam_member.monitoring_slack_reconciler", "google_storage_bucket_iam_member.github_readonly_object_viewer", "google_storage_bucket_iam_member.github_readonly_canonical_object_viewer", "google_storage_bucket_iam_member.github_readonly_pending_publish_viewer",
+        "google_storage_bucket_iam_member.monitoring_slack_recovery", "google_storage_bucket_iam_member.monitoring_slack_reconciler", "google_storage_bucket_iam_member.github_readonly_object_viewer", "google_storage_bucket_iam_member.github_readonly_object_viewer_scoped", "google_storage_bucket_iam_member.github_readonly_canonical_object_viewer", "google_storage_bucket_iam_member.github_readonly_pending_publish_viewer",
         "google_service_account.github_job[\"cleanup\"]", "google_project_iam_custom_role.github_job[\"cleanup\"]",
         "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]",
         "google_service_account.github_job[\"recovery\"]"

@@ -38,6 +38,10 @@ reads reuse `canonical_mutation_publisher_condition`; bucket listing and staging
 reads reuse `pending_publish_source_condition` in a separate grant. Their union
 preserves the original scoped read set without combining all clauses into one
 expression. Keep both companions when removing the legacy grant in phase 2.
+The rejected `github_readonly_object_viewer_scoped` address remains in the
+writer's exact scope as a `retired_resources` entry for static deletion checks.
+The graph contract requires it to stay absent; `block_deletes: true` still
+rejects any deletion in a saved plan.
 
 [IAM limits](https://cloud.google.com/iam/quotas#limits) allow at most 12 logical
 operators (`&&`, `||`, `!`) per role-binding condition, and 20 bindings for the

@@ -253,13 +253,14 @@ def test_identity_fold_preserves_original_scopes_and_readiness_guards():
     assert moved <= set(before['PR plan identity provisioning']['resources'])
     original_resources = set().union(*(row['resources'] for row in original))
     # The rejected over-budget companion never existed remotely. Its exact
-    # read set now has two conditional grants; every other owner stays fixed.
-    original_resources.remove('google_storage_bucket_iam_member.github_readonly_object_viewer_scoped')
+    # read set now has two conditional grants; its absent address remains
+    # explicitly owned for static deletion checks, without enabling deletes.
     scoped_readers = {
         'google_storage_bucket_iam_member.github_readonly_canonical_object_viewer',
         'google_storage_bucket_iam_member.github_readonly_pending_publish_viewer',
     }
     assert set(combined['resources']) == original_resources | moved | scoped_readers
+    assert combined['retired_resources'] == ['google_storage_bucket_iam_member.github_readonly_object_viewer_scoped']
     assert set(combined['prerequisites']) == set().union(*(row['prerequisites'] for row in original))
     from scripts.deployment_permissions import checks
     expected = set(check for row in original for check in checks(row['readiness_target']))
