@@ -10,6 +10,10 @@ in order. It owns preparation, registry/wrapper changes, prerequisites, tests,
 review, rollout and completion. Read only the selected job's operational
 exceptions in [job operations](references/job-operations.md).
 
+Identity activation follows the [two-phase rollout](../../../docs/github-identity-rollout.md):
+phase 1 adds workflow identities beside legacy access; phase 2 removes legacy
+grants only after successful main runs prove every new identity authenticates.
+
 ## Required boundaries
 
 - Load [protected Terraform guidance](../protected-terraform-apply/SKILL.md)

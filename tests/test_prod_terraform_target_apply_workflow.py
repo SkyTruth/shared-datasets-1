@@ -144,6 +144,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_name="Infrastructure / Ingestion deploy IAM sync",
             push_paths=None,
             sync_name="Scheduled ingestion deploy IAM sync",
+            expected_block_deletes=True,
             expected_needs="bootstrap",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
             refusal_prefix="Refusing automatic scheduled ingestion deploy IAM sync",
@@ -217,6 +218,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "module.feature_preview_service_account.google_service_account.this",
                 "module.feature_preview_loader_service_account.google_service_account.this",
                 "google_service_account_iam_member.feature_preview_loader_github_wif",
+                "google_service_account_iam_member.feature_preview_loader_github_wif_workflow",
                 "google_service_account_iam_member.feature_preview_service_self_sign_blob",
             },
             expected_tf_vars={name + "=unused-by-preview-terraform-iam-sync" for name in image_variables("", "")},
@@ -240,6 +242,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_name="Infrastructure / Scratch cleanup IAM sync",
             push_paths=None,
             sync_name="Scratch cleanup IAM sync",
+            expected_block_deletes=True,
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
             refusal_prefix="Refusing automatic scratch cleanup IAM sync",
             expected_targets={
@@ -264,6 +267,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             job_name="bootstrap",
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
             sync_name="Artifact Registry IAM sync",
+            expected_block_deletes=True,
             refusal_prefix="Refusing automatic Artifact Registry IAM bootstrap",
             expected_post_apply_wait_seconds=30,
             expected_targets={
@@ -283,6 +287,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_job_if=MAIN_DEPLOYMENT_EVENT,
             expected_needs=["bootstrap", "identities"],
             sync_name="Artifact Registry writer binding sync",
+            expected_block_deletes=True,
             refusal_prefix="Refusing automatic Artifact Registry IAM writer sync",
             expected_targets={
                 "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",

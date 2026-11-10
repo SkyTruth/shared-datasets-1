@@ -53,9 +53,10 @@ def test_subscriptions_and_worker_filters_keep_current_and_historical_runs():
         assert set(trigger["workflows"]) == {name for file in upstream for name in WORKFLOW_NAMES[file]}
 
 
-def test_readonly_workflow_files_match_the_oidc_policy_independently_of_labels():
+def test_readonly_workflow_files_extend_the_legacy_display_name_policy():
     policy = (ROOT / "terraform/envs/prod/github_readonly_iam.tf").read_text()
-    assert 'assertion.workflow ==' not in policy
+    assert 'assertion.workflow ==' in policy  # Phase 1 keeps accepted legacy tokens.
+    assert 'local.github_readonly_workflow_condition' in policy
     allowed = set(json.loads((ROOT / 'terraform/envs/prod/github-workflow-identities.json').read_text())['bucket_reader'])
     assert allowed == set((
         "bucket-hygiene-audit.yml", "catalog-drift-guard.yml", "dataset-breaking-change-alert.yml", "eamlis-held-candidate-preview.yml",

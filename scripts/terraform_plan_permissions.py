@@ -40,10 +40,12 @@ PROJECT_OPERATIONS = {
     "google_secret_manager_secret": ("secretmanager.secrets", ("secret_id",), {"create"}),
     "google_monitoring_notification_channel": ("monitoring.notificationChannels", (), {"create", "update"}),
 }
+# Phase 1 permits additive SA IAM members only; authoritative role bindings
+# could remove the unmanaged legacy Terraform subject grant.
 # plan_checks owns operation and identity validation.
 RESOURCE_KINDS = PROJECT_OPERATIONS.keys() | frozenset('''
 google_logging_log_view google_monitoring_metric_descriptor
-google_service_account google_service_account_iam_member google_service_account_iam_binding
+google_service_account google_service_account_iam_member
 google_storage_bucket google_storage_bucket_iam_member google_storage_managed_folder
 google_storage_managed_folder_iam_member google_secret_manager_secret_iam_member
 google_artifact_registry_repository_iam_member google_cloud_run_v2_job google_cloud_run_v2_service
@@ -296,7 +298,7 @@ def plan_checks(plan, *, project_number, target=None):
                     add(PROJECT_URL, ("iam.serviceAccounts.create", "iam.serviceAccounts.get"))
                 else:
                     sa(account, ("iam.serviceAccounts.get", "iam.serviceAccounts." + action), row)
-            elif kind in {"google_service_account_iam_member", "google_service_account_iam_binding"}:
+            elif kind == "google_service_account_iam_member":
                 sa(current.get("service_account_id"), ("iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"), row)
             elif kind == "google_storage_bucket":
                 project(current)

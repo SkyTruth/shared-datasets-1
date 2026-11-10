@@ -96,11 +96,17 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   description                        = "Restricts GitHub OIDC tokens to the shared-datasets repository and publish environment."
   disabled                           = false
 
+  # Phase 1 preserves the accepted token set and every legacy mapping.
   attribute_mapping = merge(local.github_identity_attributes, {
-    "google.subject" = "assertion.sub"
+    "google.subject"             = "assertion.sub"
+    "attribute.actor"            = "assertion.actor"
+    "attribute.environment"      = "assertion.environment"
+    "attribute.repository"       = "assertion.repository"
+    "attribute.repository_owner" = "assertion.repository_owner"
+    "attribute.workflow"         = "assertion.workflow"
   })
 
-  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.environment == '${var.github_publish_environment}' && assertion.ref == 'refs/heads/main'"
+  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.environment == '${var.github_publish_environment}'"
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -117,7 +123,14 @@ module "shared_datasets_publisher_service_account" {
   depends_on = [google_project_service.required]
 }
 
+# Preserve the legacy grant until main-run identity evidence permits phase 2.
 resource "google_service_account_iam_member" "shared_datasets_publisher_github_wif" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+}
+
+resource "google_service_account_iam_member" "shared_datasets_publisher_github_wif_workflow" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.publisher/allowed"

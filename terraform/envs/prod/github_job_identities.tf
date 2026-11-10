@@ -4,7 +4,7 @@ locals {
   github_job_workflow_ref = "('job_workflow_ref' in assertion ? assertion.job_workflow_ref : assertion.workflow_ref)"
   github_identity_attributes = {
     for identity, workflows in local.github_workflow_identities : "attribute.${identity}" =>
-    "${local.github_job_workflow_ref} in ${jsonencode([for workflow in workflows : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main"])} ? 'allowed' : 'denied'"
+    "assertion.ref == 'refs/heads/main' && ${local.github_job_workflow_ref} in ${jsonencode([for workflow in workflows : "${var.github_repository}/.github/workflows/${workflow}@refs/heads/main"])} ? 'allowed' : 'denied'"
     if identity != "bucket_reader" && !startswith(identity, "pr_plan")
   }
   observer_permissions = [
@@ -86,11 +86,12 @@ resource "google_storage_bucket_iam_member" "recovery_state_reader" {
   }
 }
 
-# Authoritative for this role: retire the old environment-wide subject grant.
-resource "google_service_account_iam_binding" "github_actions_terraform_wif" {
+# Phase 1 must not own the role policy: the legacy subject grant is unmanaged.
+# Keep it intact until every new identity has authenticated on main.
+resource "google_service_account_iam_member" "github_actions_terraform_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${var.github_actions_terraform_service_account_email}"
   role               = "roles/iam.workloadIdentityUser"
-  members            = ["principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.terraform/allowed"]
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.terraform/allowed"
   depends_on         = [google_iam_workload_identity_pool_provider.github]
 }
 

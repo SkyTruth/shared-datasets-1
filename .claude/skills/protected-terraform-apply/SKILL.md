@@ -32,6 +32,12 @@ The Terraform Workload Identity provider restricts OIDC to this repository and
 `GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and `GCP_READONLY_SERVICE_ACCOUNT`
 from the corresponding `github_readonly_*` Terraform outputs.
 
+Follow the [two-phase identity rollout](../../../docs/github-identity-rollout.md).
+Phase 1 adds per-workflow grants while preserving legacy mappings, provider token
+acceptance and IAM members, including the unmanaged Terraform subject grant.
+Phase 2 requires a separate reviewed PR with successful main authentication
+evidence for every new identity before narrowing access.
+
 Publisher and scheduled-job identities own canonical writes; scratch writers
 remain separate. The publisher reads `_scratch/pending-publishes/` for reviewed
 promotion. Keep `scratch_writer_members` scoped to the approved scratch-only

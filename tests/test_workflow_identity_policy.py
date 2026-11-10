@@ -31,7 +31,10 @@ def resource(filename, kind, name):
 
 def claims(filename, ref=MAIN, event='workflow_dispatch', **extra):
     return dict(repository=REPO, ref=ref, event_name=event,
-                environment='shared-datasets-production', sub='fixture',
+                environment='shared-datasets-production', sub='fixture', actor='fixture',
+                repository_owner='SkyTruth', workflow={'catalog-drift-guard.yml': 'Catalog drift guard',
+                    'bucket-hygiene-audit.yml': 'Bucket hygiene audit',
+                    'dataset-breaking-change-alert.yml': 'Dataset breaking change alert'}.get(filename, filename),
                 workflow_ref=f'{REPO}/.github/workflows/{filename}@{ref}', **extra)
 
 
@@ -39,11 +42,13 @@ def claims(filename, ref=MAIN, event='workflow_dispatch', **extra):
 def policies():
     values = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]
     values['github_workflow_identities'] = json.loads((PROD / 'github-workflow-identities.json').read_text())
+    values.update(load_terraform(PROD / 'github_readonly_iam.tf')['locals'][0])
+    values['readonly_attributes'] = resource('github_readonly_iam.tf', 'google_iam_workload_identity_pool_provider', 'github_readonly')['attribute_mapping']
     for key, filename, name in [('production', 'canonical_mutation_iam.tf', 'github'),
                                ('readonly', 'github_readonly_iam.tf', 'github_readonly'),
                                ('pr', 'pr_plan_iam.tf', 'pr_plan')]:
         values[key] = resource(filename, 'google_iam_workload_identity_pool_provider', name)['attribute_condition']
-    return evaluate(values, '{production = local.production, readonly = local.readonly, pr = local.pr, attributes = local.github_identity_attributes}',
+    return evaluate(values, '{production = local.production, readonly = local.readonly, pr = local.pr, attributes = local.github_identity_attributes, readonly_attributes = local.readonly_attributes}',
                     variables={'github_repository': REPO, 'github_publish_environment': 'shared-datasets-production'})
 
 
@@ -53,7 +58,8 @@ def allowed(identity, assertion):
         if identity.startswith('pr_plan'):
             return cel(policy['pr'], assertion) is True
         if identity == 'bucket_reader':
-            return cel(policy['readonly'], assertion) is True
+            return (cel(policy['readonly'], assertion) is True
+                    and cel(policy['readonly_attributes']['attribute.bucket_reader'], assertion) == 'allowed')
         return (cel(policy['production'], assertion) is True
                 and cel(policy['attributes']['attribute.' + identity], assertion) == 'allowed')
     except KeyError:
@@ -193,7 +199,7 @@ def test_preview_dispatch_validates_control_ref_and_independent_source(ref, sour
 def test_preview_bootstrap_checks_the_actual_capability_binding(tmp_path, binding):
     command = next(step['run'] for step in workflow('feature-preview-deploy.yml')['jobs']['preview']['steps']
                    if step.get('name') == 'Validate preview IAM bootstrap')
-    member = resource('preview_terraform_iam.tf', 'google_service_account_iam_member', 'feature_preview_loader_github_wif')['member']
+    member = resource('preview_terraform_iam.tf', 'google_service_account_iam_member', 'feature_preview_loader_github_wif_workflow')['member']
     expected = member.replace('${google_iam_workload_identity_pool.github.name}', 'projects/123/locations/global/workloadIdentityPools/github')
     assert '/attribute.preview/allowed' in expected
     project = 'shared-datasets-1'

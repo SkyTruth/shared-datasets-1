@@ -46,8 +46,10 @@ original alert reconciled as distinct milestones.
 inspect the original Terraform configuration or SDK bytes; executor scripts
 never replace recovery policy. Infrastructure plans use dedicated recovery credentials,
 refresh live resources with `-lock=false` and never apply or write state.
-After the automatic **GitHub workflow identity sync** establishes the production
-WIF provider, manually run protected `terraform-state-read-iam-sync.yml` from the
+Phase 1 automatic **GitHub workflow identity sync** adds workflow attributes and
+grants beside the unchanged legacy access. Follow the [two-phase identity rollout](github-identity-rollout.md);
+phase 2 must wait for successful main authentication evidence, including recovery.
+After phase 1, manually run protected `terraform-state-read-iam-sync.yml` from the
 exact successful main-push CI source triple: **PR plan identity IAM bootstrap**
 precedes **PR plan identity provisioning**. That manual scope installs the PR
 planning roles and the recovery identity, metadata/IAM-policy reads (including

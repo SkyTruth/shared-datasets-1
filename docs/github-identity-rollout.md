@@ -1,0 +1,87 @@
+# GitHub workflow identity rollout
+
+Identity migration has two separately reviewed phases. A Git revert cannot
+restore an IAM grant removed by a previous apply, so phase 1 must leave the
+current authentication path usable even if a new mapping is wrong.
+
+## Phase 1: expand
+
+Artifact Registry IAM bootstrap precedes **GitHub workflow identity sync**, which
+precedes writer rollout. Sync adds `job_workflow_ref` capability attributes and
+the observer, runtime, heartbeat, reconciler and cleanup identities. Recovery and
+PR-planning identities remain manually provisioned through the protected
+`terraform-state-read-iam-sync.yml` bootstrap/provisioning sequence.
+
+Preserve all legacy mapping keys with their original expressions and all
+existing IAM grants at the same addresses with unchanged members, roles and
+conditions. The production provider keeps its previous repository/environment
+condition. The read-only provider accepts `(legacy) || (workflow)` because the
+new held-EAMLIS preview workflow's display name fails the legacy condition.
+New capability mappings still require their registered main leaf (or the exact
+PR advisory leaf); legacy token acceptance remains available in parallel.
+
+Terraform WIF uses an additive `google_service_account_iam_member`, with an
+explicit dependency on the updated provider. It must not own the entire
+`roles/iam.workloadIdentityUser` binding: the existing environment subject grant
+was created outside Terraform and must remain untouched in this phase.
+
+Publisher, preview, read-only WIF and reconciler access get separate companion
+resources. The reader gets a conditional companion beside its unconditional
+legacy bucket grant; its effective access stays broad until phase 2.
+Non-retirement IAM syncs use `block_deletes: true`: the saved-plan allowlist
+rejects any action containing `delete`, including either replacement order,
+even for an otherwise allowlisted address. Existing exact obsolete-resource
+retirements and temporary-authority revocation remain separate scopes.
+
+## Phase 2: contract
+
+A separate PR removes legacy grants and mapping keys, requires production main
+refs, narrows read-only token acceptance and bucket reads, and makes Terraform
+WIF authoritative for the new capability. Retain the new service accounts,
+roles and companion grants. Do not merge this phase until successful main runs
+have authenticated as **each** of Terraform, publisher, preview, bucket-reader,
+observer, runtime, heartbeat, reconciler, cleanup and recovery. PR-planning
+activation remains separately gated: its policy requires a same-repository PR
+merge ref, so retain successful PR-plan authentication evidence from the reviewed
+main workflow implementation rather than requiring an impossible main-ref token.
+
+Attach run URLs, exact main SHAs and attempts, reusable leaf refs, actual
+authenticated service-account identities and successful capability operations.
+Include a fresh saved-plan review listing every intended removal/replacement,
+proof that manual recovery/planning provisioning succeeded, and a successful
+Terraform identity-sync run using the new mapping. Existing legacy grants can
+mask a broken new WIF grant: inspect rendered token attributes and prove the
+new principal path rather than treating an auth step alone as proof.
+Review and apply through the protected workflow after owner approval and merge.
+
+## Audit of existing resources
+
+Compared with main `7bd972e6150a01ca3be538d1ca33bc543d6aa6f8`, these are all
+pre-existing IAM resources modified by the original CI/CD proposal. Resource
+addresses below omit the common `google_` prefix.
+
+| Resource | Phase-1 disposition |
+| --- | --- |
+| `iam_workload_identity_pool_provider.github` | Legacy condition and mapping expressions unchanged; capability mappings added. |
+| `iam_workload_identity_pool_provider.github_readonly` | Legacy mappings unchanged; token condition union adds the new reader. |
+| `service_account_iam_member.shared_datasets_publisher_github_wif` | Unchanged; `_workflow` companion added. |
+| `service_account_iam_member.github_readonly_wif` | Unchanged; `_workflow` companion added. |
+| `storage_bucket_iam_member.github_readonly_object_viewer` | Unchanged; `_scoped` companion added; narrowing deferred. |
+| `service_account_iam_member.feature_preview_loader_github_wif` | Unchanged; `_workflow` companion added. |
+| `storage_bucket_iam_member.monitoring_slack_recovery` | Unchanged; `monitoring_slack_reconciler` companion added; SA swap deferred. |
+| `storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer` | Policy unchanged; same bucket through IAM-only data source. |
+| `storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user` | Policy unchanged; same bucket through IAM-only data source. |
+| `storage_bucket_iam_member.eamlis_job_object_user` | Policy unchanged; same bucket through IAM-only data source. |
+| `storage_bucket_iam_member.mpatlas_job_object_user` | Policy unchanged; same bucket through IAM-only data source. |
+| `storage_bucket_iam_member.wdpa_reset_translation_reader` | Policy unchanged; same bucket through IAM-only data source; no SA swap exists in this diff. |
+| `project_iam_custom_role.monitoring_alert_policy_manager` | Existing permissions retained; log-metric create/read/update permissions added. |
+
+The unmanaged Terraform environment subject grant remains untouched; its new
+companion is `service_account_iam_member.github_actions_terraform_wif`.
+The bucket data source in `shared_bucket_public.tf` adds no grant. The existing
+Monitoring failure filter changes its canary creator to the runtime SA, while
+the four ingestion files also adjust job resource limits; these are independent
+of IAM policy membership. `monitoring.tf` adds the dedicated heartbeat role and
+grant without changing an existing IAM grant. The pinned test fixture records
+all 40 existing grants in the touched files and the existing Monitoring role's
+permissions, so policy preservation does not depend on this prose audit.

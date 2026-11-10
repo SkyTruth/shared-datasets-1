@@ -92,8 +92,8 @@ def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
     assert jobs['writer']['needs'] == ['bootstrap', 'identities']
     registry = json.loads((ROOT / '.github/terraform-targets.json').read_text())
     scope = registry['targets']['GitHub workflow identity sync']
-    assert scope['block_deletes'] is False  # Existing IAM members replace when their principal changes.
-    assert 'google_service_account_iam_binding.github_actions_terraform_wif' in scope['resources']
+    assert scope['block_deletes'] is True  # Phase 1 must preserve every installed grant.
+    assert 'google_service_account_iam_member.github_actions_terraform_wif' in scope['resources']
     identities = load_terraform(PROD / 'github_job_identities.tf')['locals'][0]['github_job_permissions']
     for identity in identities:
         owner = registry['targets']['PR plan identity provisioning'] if identity == 'recovery' else scope
@@ -108,9 +108,9 @@ def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
     def row(address):
         return {'address': address, 'change': {'actions': ['delete', 'create']}}
     plan = {'resource_changes': [row('google_service_account_iam_member.shared_datasets_publisher_github_wif')]}
-    assert blocked_changes(plan, allowed_exact=set(scope['resources']), allowed_patterns=[], block_deletes=False) == []
+    assert blocked_changes(plan, allowed_exact=set(scope['resources']), allowed_patterns=[], block_deletes=True) != []
     plan['resource_changes'].append(row('google_cloud_run_v2_job.unrelated'))
-    assert blocked_changes(plan, allowed_exact=set(scope['resources']), allowed_patterns=[], block_deletes=False)
+    assert blocked_changes(plan, allowed_exact=set(scope['resources']), allowed_patterns=[], block_deletes=True)
 
 
 @pytest.mark.parametrize('path,expected', [
@@ -124,14 +124,15 @@ def test_identity_contract_edits_select_their_automatic_delivery_path(path, expe
     assert select_deployments(['docs/ci-deployment.md']) == []
 
 
-def test_production_provider_requires_repo_environment_main_and_per_identity_leaf():
+def test_production_provider_preserves_legacy_tokens_and_adds_main_per_identity_leaf():
     provider = attributes('canonical_mutation_iam.tf', 'google_iam_workload_identity_pool_provider', 'github')
     condition = provider['attribute_condition']
-    for required in ("assertion.repository == '${var.github_repository}'", "assertion.environment == '${var.github_publish_environment}'", "assertion.ref == 'refs/heads/main'"):
+    for required in ("assertion.repository == '${var.github_repository}'", "assertion.environment == '${var.github_publish_environment}'"):
         assert required in condition
     assert 'merge(local.github_identity_attributes' in provider['attribute_mapping']
     source = (PROD / 'github_job_identities.tf').read_text()
     assert "('job_workflow_ref' in assertion ? assertion.job_workflow_ref : assertion.workflow_ref)" in source
+    assert "assertion.ref == 'refs/heads/main'" in source
     assert '@refs/heads/main' in source
     assert "? 'allowed' : 'denied'" in source
     assert 'assertion.workflow ==' not in source
@@ -140,30 +141,24 @@ def test_production_provider_requires_repo_environment_main_and_per_identity_lea
 @pytest.mark.parametrize('name,identity', [('shared_datasets_publisher_github_wif', 'publisher'), ('feature_preview_loader_github_wif', 'preview'), ('github_readonly_wif', 'bucket_reader')])
 def test_bindings_are_capability_specific_not_environment_or_repository_subjects(name, identity):
     filename = {'publisher': 'canonical_mutation_iam.tf', 'preview': 'preview_terraform_iam.tf', 'bucket_reader': 'github_readonly_iam.tf'}[identity]
-    binding = attributes(filename, 'google_service_account_iam_member', name)
+    binding = attributes(filename, 'google_service_account_iam_member', name + '_workflow')
     assert binding['member'].endswith('/attribute.' + identity + '/allowed')
     assert '/subject/' not in binding['member']
     assert '/attribute.repository/' not in binding['member']
 
 
-def test_terraform_wif_replaces_legacy_environment_wide_grants():
-    filename = PROD / 'github_job_identities.tf'
-    assert filename.exists(), 'Terraform WIF must be owned and narrowed in this repository'
-    binding = attributes(filename.name, 'google_service_account_iam_binding', 'github_actions_terraform_wif')
+def test_terraform_wif_adds_a_member_without_owning_the_legacy_role_policy():
+    binding = attributes('github_job_identities.tf', 'google_service_account_iam_member', 'github_actions_terraform_wif')
     assert binding['role'] == 'roles/iam.workloadIdentityUser'
-    assert len(binding['members']) == 1
-    assert '/attribute.terraform/allowed' in binding['members'][0]
-    assert '/subject/' not in json.dumps(binding)
+    assert binding['member'].endswith('/attribute.terraform/allowed')
+    for path in PROD.glob('*.tf'):
+        assert all(kind != 'google_service_account_iam_binding' for kind, _, _ in resources(load_terraform(path)))
 
 
-def test_readonly_provider_uses_main_file_identity_not_mutable_display_name():
+def test_readonly_provider_preserves_main_mappings_and_unions_new_reader_tokens():
     provider = attributes('github_readonly_iam.tf', 'google_iam_workload_identity_pool_provider', 'github_readonly')
-    condition = provider['attribute_condition']
-    assert "assertion.ref == 'refs/heads/main'" in condition
-    assert 'local.github_job_workflow_ref' in condition
-    assert 'github_workflow_identities.bucket_reader' in condition
-    assert 'assertion.workflow ==' not in condition
-    assert provider['attribute_mapping']['attribute.bucket_reader'] == "'allowed'"
+    assert provider['attribute_condition'] == '(${local.github_readonly_legacy_condition}) || (${local.github_readonly_workflow_condition})'
+    assert provider['attribute_mapping']['attribute.bucket_reader'] == "${local.github_readonly_workflow_condition} ? 'allowed' : 'denied'"
 
 
 @pytest.mark.parametrize('filename,job', [('deployment-verification.yml', 'verify'), ('catalog-viewer-deploy.yml', 'ready'), ('catalog-viewer-deploy.yml', 'verify'), ('ingestion-deploy.yml', 'verify'), ('pmtiles-cdn-sync.yml', 'verify')])
@@ -227,7 +222,7 @@ def test_reconcilers_keep_state_writes_separate_from_observer():
     for filename in ('identity-decision-reconcile.yml', 'resolve-workflow-alert.yml'):
         value = workflow(filename)
         assert [account for job in value['jobs'].values() for _, account in auth_accounts(value, job)] == [expected]
-    grant = attributes('monitoring_slack.tf', 'google_storage_bucket_iam_member', 'monitoring_slack_recovery')
+    grant = attributes('monitoring_slack.tf', 'google_storage_bucket_iam_member', 'monitoring_slack_reconciler')
     assert 'github_job["reconciler"]' in grant['member']
     assert grant['role'] == 'roles/storage.objectUser'
     assert expected in (ROOT / 'scripts/reconcile_identity_decisions.py').read_text()
@@ -245,7 +240,7 @@ def test_auth_configuration_cannot_fall_back_to_direct_federation(account, provi
 
 
 @pytest.mark.parametrize('kind,values,permission', [
-    ('google_service_account_iam_binding', {'service_account_id': 'projects/shared-datasets-1/serviceAccounts/shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com', 'role': 'roles/iam.workloadIdentityUser', 'members': ['principalSet://fixture/attribute.terraform/allowed']}, 'iam.serviceAccounts.setIamPolicy'),
+    ('google_service_account_iam_member', {'service_account_id': 'projects/shared-datasets-1/serviceAccounts/shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com', 'role': 'roles/iam.workloadIdentityUser', 'member': 'principalSet://fixture/attribute.terraform/allowed'}, 'iam.serviceAccounts.setIamPolicy'),
     ('google_iam_workload_identity_pool_provider', {'project': 'shared-datasets-1', 'workload_identity_pool_id': 'github', 'workload_identity_pool_provider_id': 'github'}, 'iam.workloadIdentityPoolProviders.update'),
 ])
 def test_new_iam_plan_boundaries_check_actual_mutation_permission_and_reject_other_project(kind, values, permission):

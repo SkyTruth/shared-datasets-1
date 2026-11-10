@@ -9,6 +9,13 @@ protected workflow boundaries offline. It does not prove installed publication
 state or propagated IAM; protected jobs verify those live before mutation.
 API failures and missing authority remain failures.
 
+Identity activation follows the [two-phase rollout](github-identity-rollout.md):
+phase 1 preserves legacy access and adds per-workflow identities; phase 2 removes
+legacy grants only after successful main runs prove each new identity.
+The saved-plan guard blocks deletes and replacements for every non-retirement IAM
+sync, including workflow identity sync. Exact obsolete-resource retirement and
+temporary-authority revocation scopes retain their separate deletion contracts.
+
 ## Images and execution
 
 `production_image_contracts.py` builds actual Linux production Dockerfiles and

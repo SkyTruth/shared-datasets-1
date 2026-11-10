@@ -82,8 +82,8 @@ def test_preview_resolves_source_before_dependencies_or_credentials(tmp_path, se
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
-def test_authoritative_binding_waits_for_valid_provider_mapping():
-    binding = resource("github_job_identities.tf", "google_service_account_iam_binding", "github_actions_terraform_wif")
+def test_additive_member_waits_for_valid_provider_mapping():
+    binding = resource("github_job_identities.tf", "google_service_account_iam_member", "github_actions_terraform_wif")
     assert "${google_iam_workload_identity_pool_provider.github}" in binding["depends_on"]
     source = (PROD / "github_job_identities.tf").read_text()
     assert "has(assertion." not in source
@@ -96,8 +96,8 @@ def test_authoritative_binding_waits_for_valid_provider_mapping():
     ("000-system/terraform/state/prod/default.tfstate", False), ("000-system/other", False),
     ("_scratch/translation-debt/private.json", False),
 ])
-def test_advisory_object_reads_exclude_state(name, allowed):
-    grant = resource("github_readonly_iam.tf", "google_storage_bucket_iam_member", "github_readonly_object_viewer")
+def test_new_scoped_advisory_grant_excludes_state(name, allowed):
+    grant = resource("github_readonly_iam.tf", "google_storage_bucket_iam_member", "github_readonly_object_viewer_scoped")
     expression = grant["condition"][0]["expression"]
     assert cel(storage_condition(expression),
                {"name": "projects/_/buckets/fixture/objects/" + name}) is allowed

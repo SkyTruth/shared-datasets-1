@@ -84,7 +84,14 @@ resource "google_project_iam_member" "github_actions_preview_terraform" {
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
 
+# Preserve the legacy grant until main-run identity evidence permits phase 2.
 resource "google_service_account_iam_member" "feature_preview_loader_github_wif" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
+}
+
+resource "google_service_account_iam_member" "feature_preview_loader_github_wif_workflow" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.preview/allowed"
