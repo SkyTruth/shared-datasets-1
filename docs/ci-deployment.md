@@ -66,7 +66,7 @@ complete here.
    bootstrap first. [Queue and saved-plan
    contracts](deployment-contracts.md#serialization-and-protected-execution) keep image/credential preparation
    and canaries outside the state queue, with guarded plan/claim/apply atomic inside it; propagation waits
-   stay unprivileged. A changing plan waits its full window; an empty plan waits only for what remains of the previous attempt's window on that target, measured from its last deployment status. Usage holds its target queue through signed apply/canary; other ingestion wrappers
+   stay unprivileged. A changing plan waits its full window; an empty plan waits only for what remains of the previous attempt's window on that target, measured on GitHub's clock from that attempt's terminal deployment status to this claim. A previous attempt without a terminal status gets the full window. Usage holds its target queue through signed apply/canary; other ingestion wrappers
    retain combined rollout. Ingestion/cleanup IAM read bucket metadata through a data source, keeping
    CORS/logging out and independent of usage canaries.
 7. **Verify and report completion.** Inspect captured exact-image canary execution, signed terminal outcomes

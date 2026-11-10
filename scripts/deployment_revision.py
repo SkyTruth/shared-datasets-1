@@ -188,6 +188,7 @@ def post_status(api, repository, record, phase, environment_url=""):
                "environment_url": environment_url, "log_url": status_log()}
     status = api.post(f"repos/{repository}/deployments/{record['id']}/statuses", payload)
     emissions.emit(repository, record, {**payload, **status})
+    return status
 
 
 def verified_statuses(api, repository, record):
@@ -303,26 +304,33 @@ def check(args, api):
     return {"proceed": "true"}
 
 
-def propagation_seconds(api, repository, target, plan, window, *, now=None):
+def github_time(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def propagation_seconds(api, repository, target, plan, window, *, claim):
     """Seconds dependents wait for IAM propagation after this attempt applies.
 
     A changing plan waits the full window. An empty plan waits out the rest of the
     previous attempt's window: that attempt may have granted IAM moments ago and
-    released the serialized state lock before its own barrier finished.
+    released the serialized state lock before its own barrier finished. Elapsed
+    time uses GitHub timestamps only (the previous attempt's terminal status and
+    this claim's started status), so runner clock skew cannot shorten the wait.
     """
     if window <= 0:
         return 0
     if plan_changes(plan):
         return window
-    records = api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100")
+    records = [record for record in api.pages(f"repos/{repository}/deployments?environment=production-{target}&per_page=100")
+               if record["id"] < claim["record_id"]]
     if not records:
         return 0
     latest = max(records, key=lambda record: record["id"])
     statuses = api.pages(f"repos/{repository}/deployments/{latest['id']}/statuses?per_page=100")
-    if not statuses:
-        return window  # An unfinished or unrecorded attempt may still be applying.
-    finished = max(datetime.fromisoformat(status["created_at"].replace("Z", "+00:00")) for status in statuses)
-    elapsed = ((now or datetime.now(timezone.utc)) - finished).total_seconds()
+    if not any(status.get("description") not in {"started", "deferred"} for status in statuses):
+        return window  # Without a terminal status the attempt may have mutated IAM at any later time.
+    finished = max(github_time(status["created_at"]) for status in statuses)
+    elapsed = (github_time(claim["created_at"]) - finished).total_seconds()
     return max(0, min(window, math.ceil(window - elapsed)))
 
 
@@ -346,9 +354,6 @@ def start(args, api):
     if getattr(args, "plan_scope", None):
         targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
-    window = getattr(args, "propagation_window", None)
-    # Read the previous attempt before this claim becomes the newest record.
-    propagation = None if window is None else propagation_seconds(api, repository, args.target, plan, window)
     record = api.post(f"repos/{repository}/deployments", {
         "ref": args.executor_sha, "environment": f"production-{args.target}",
         "auto_merge": False, "required_contexts": [], "production_environment": True,
@@ -357,12 +362,14 @@ def start(args, api):
                     "image_config_digest": config_digest},
     })
     phase = "deferred" if getattr(args, "deferred", False) else "started"
-    post_status(api, repository, record, phase)
+    status = post_status(api, repository, record, phase)
     if getattr(args, "deferred", False):
         return {"proceed": "false"}
     result = {"proceed": "true", "deployment_id": str(record["id"])}
-    if propagation is not None:
-        result["propagation_seconds"] = str(propagation)
+    window = getattr(args, "propagation_window", None)
+    if window is not None:
+        claim = {"record_id": record["id"], "created_at": status["created_at"]}
+        result["propagation_seconds"] = str(propagation_seconds(api, repository, args.target, plan, window, claim=claim))
     return result
 
 

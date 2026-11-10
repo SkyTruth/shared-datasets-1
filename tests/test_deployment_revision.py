@@ -547,14 +547,14 @@ def test_registered_permission_probes_preserve_historical_endpoints():
 
 
 class PropagationWindowTests(unittest.TestCase):
-    NOW = datetime(2026, 11, 10, 16, 0, 0, tzinfo=timezone.utc)
+    CLAIM = {"record_id": 10, "created_at": "2026-11-10T16:00:00Z"}
     CHANGED = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["create"]}}]}
     EMPTY = {"resource_changes": [{"address": "google_project_iam_member.x", "change": {"actions": ["no-op"]}}]}
 
     def seconds(self, plan, records, statuses, window=120):
         api = unittest.mock.Mock()
         api.pages.side_effect = lambda path, field=None: records if "/deployments?" in path else statuses
-        return d.propagation_seconds(api, REPO, "terraform-abc", plan, window, now=self.NOW), api
+        return d.propagation_seconds(api, REPO, "terraform-abc", plan, window, claim=self.CLAIM), api
 
     def test_changing_plan_waits_the_full_window_without_reading_history(self):
         seconds, api = self.seconds(self.CHANGED, [], [])
@@ -566,16 +566,28 @@ class PropagationWindowTests(unittest.TestCase):
         self.assertEqual(seconds, 0)
         api.pages.assert_not_called()
 
-    def test_empty_plan_waits_out_the_previous_attempt_window(self):
-        records = [{"id": 7}, {"id": 9}, {"id": 8}]
-        statuses = [{"created_at": "2026-11-10T15:59:30Z"}, {"created_at": "2026-11-10T15:58:00Z"}]
+    def test_empty_plan_waits_out_the_previous_attempt_window_on_github_time(self):
+        # Record 10 is this claim; record 9 is the newest previous attempt.
+        records = [{"id": 7}, {"id": 10}, {"id": 9}, {"id": 8}]
+        statuses = [{"description": "applied", "created_at": "2026-11-10T15:59:30Z"},
+                    {"description": "started", "created_at": "2026-11-10T15:58:00Z"}]
         seconds, api = self.seconds(self.EMPTY, records, statuses)
         self.assertEqual(seconds, 90)
         api.pages.assert_any_call(f"repos/{REPO}/deployments/9/statuses?per_page=100")
 
-    def test_empty_plan_after_an_aged_or_absent_previous_attempt_does_not_wait(self):
-        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], [{"created_at": "2026-11-10T15:50:00Z"}])[0], 0)
-        self.assertEqual(self.seconds(self.EMPTY, [], [])[0], 0)
+    def test_failed_previous_attempt_counts_from_its_terminal_status(self):
+        statuses = [{"description": "failed", "created_at": "2026-11-10T15:59:00Z"},
+                    {"description": "started", "created_at": "2026-11-10T15:50:00Z"}]
+        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], statuses)[0], 60)
 
-    def test_previous_attempt_without_statuses_is_treated_as_still_applying(self):
-        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], [])[0], 120)
+    def test_empty_plan_after_an_aged_or_absent_previous_attempt_does_not_wait(self):
+        aged = [{"description": "applied", "created_at": "2026-11-10T15:50:00Z"}]
+        self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], aged)[0], 0)
+        self.assertEqual(self.seconds(self.EMPTY, [], [])[0], 0)
+        self.assertEqual(self.seconds(self.EMPTY, [{"id": 10}, {"id": 11}], aged)[0], 0)
+
+    def test_previous_attempt_without_a_terminal_status_waits_the_full_window(self):
+        old_start = [{"description": "started", "created_at": "2026-11-10T15:00:00Z"}]
+        for statuses in ([], old_start):
+            with self.subTest(statuses=statuses):
+                self.assertEqual(self.seconds(self.EMPTY, [{"id": 9}], statuses)[0], 120)
