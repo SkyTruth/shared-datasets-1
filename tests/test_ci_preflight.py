@@ -578,6 +578,8 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
         return {"transport": "container", "exit_code": 0}
 
     def command(argv, **kwargs):
+        if argv[:2] == ["docker", "build"]:
+            assert "--builder" not in argv  # No setup-buildx runs on the local path.
         if "run-suite" in argv:
             output = Path(argv[argv.index("--output") + 1])
             assert kwargs["cwd"] == output.parent / "production-image-repo"

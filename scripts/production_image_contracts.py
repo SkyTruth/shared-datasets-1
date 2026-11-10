@@ -173,7 +173,9 @@ def commands(target, executor, *, image_id=None, limits=None):
 
 def cached_build(command, target):
     """Reuse build layers in Actions; checks and retained images always run anew."""
-    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true" or target in {"catalog-viewer", "monitoring-slack"}:
+    if os.environ.get("SHARED_DATASETS_GITHUB_IMAGE_CACHE") != "true":
+        return command
+    if target in {"catalog-viewer", "monitoring-slack"}:
         return [*command[:2], "--builder", "default", *command[2:]]
     cache = f"type=gha,version=2,scope=production-{target}"
     return ["docker", "buildx", "build", "--load", "--cache-from", cache,

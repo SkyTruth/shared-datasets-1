@@ -745,10 +745,10 @@ def preflight(args: argparse.Namespace, *, slot_wait_s=0, record=None) -> int:
         suffix = "-arm" if runtime["server_architecture"] == "arm64" else ""
         image = f"shared-datasets-preflight{suffix}:{plan['contract_digest'][:16]}"
         started = monotonic()
-        subprocess.run(["docker", "build", "--builder", "default", "--platform", runtime["platform"], "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
+        subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
         native_image = f"shared-datasets-native{suffix}:{plan['contract_digest'][:16]}"
         if "geospatial-integration" in execution["suites"]:
-            subprocess.run(["docker", "build", "--builder", "default", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
+            subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
         phases["toolchain_build_s"] = round(monotonic() - started, 3)
         results = []
         failures = []
