@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from scripts import deployment_permissions as live
-from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, RESOURCE_KINDS, plan_checks
+from scripts.terraform_plan_permissions import PROJECT, PROJECT_URL, RESOURCE_KINDS, configured_references, plan_checks, references_address
 
 NUMBER = "123456789"
 ACCOUNT = f"catalog-viewer@{PROJECT}.iam.gserviceaccount.com"
@@ -35,6 +35,68 @@ def checks(value, target=None):
 
 def permissions(value, target=None):
     return {permission for actual in checks(value, target).values() for permission in actual}
+
+
+def reference_fixture():
+    return json.loads((Path(__file__).parent / "fixtures/terraform_reference_shapes/plan.json").read_text())
+
+
+@pytest.mark.parametrize("name", ["attribute", 'dynamic["observer"]', 'dynamic["runtime"]', "literal", "numeric",
+                                 'module_dynamic["observer"]', "module_literal", "module_local"])
+def test_terraform_185_creation_reference_shapes(name):
+    value = reference_fixture()
+    assert value["terraform_version"] == "1.8.5"
+    address = ('module.child["observer"].google_service_account_iam_member.local' if name == "module_local"
+               else "google_service_account_iam_member." + name)
+    value["resource_changes"] = [r for r in value["resource_changes"] if r["type"] == "google_service_account" or r["address"] == address]
+    assert len(value["resource_changes"]) == 6
+    assert set(checks(value)[PROJECT_URL]) == {"iam.serviceAccounts.create", "iam.serviceAccounts.get",
+                                             "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}
+
+
+@pytest.mark.parametrize("suffix", ["", '["observer"]', "[0]", "[each.key]", ".name", '["observer"].name',
+                                  '["a]b"].name'])
+@pytest.mark.parametrize("prefix", ["", 'module.outer["k"].module.inner[0].'])
+def test_creation_reference_address_boundaries(prefix, suffix):
+    address = prefix + 'google_service_account.github_job["observer"]'
+    assert references_address(prefix + "google_service_account.github_job" + suffix, address)
+    assert not references_address(prefix + "google_service_account.github_jobs" + suffix, address)
+    assert not references_address(prefix + "data.google_service_account.github_job" + suffix, address)
+
+
+@pytest.mark.parametrize("reference", ["google_service_account.github_jobs", "google_service_account.absent.name",
+                                     "data.google_service_account.github_job.name", "module.children.name",
+                                     "module.child.google_service_account.other.name",
+                                     "module.child.data.google_service_account.this.name"])
+def test_unknown_identity_rejects_unrelated_references(reference):
+    value = reference_fixture()
+    policy = next(r for r in value["configuration"]["root_module"]["resources"]
+                  if r["address"] == "google_service_account_iam_member.literal")
+    policy["expressions"]["service_account_id"]["references"] = [reference]
+    with pytest.raises(ValueError, match="explicit creation dependency"):
+        checks(value)
+
+
+@pytest.mark.parametrize("actions,mode", [(["no-op"], "managed"), (["update"], "managed"), (["read"], "data"), (["create"], "data")])
+def test_unknown_identity_requires_managed_creation_in_this_plan(actions, mode):
+    value = reference_fixture()
+    for resource in value["resource_changes"]:
+        if resource["type"] == "google_service_account":
+            resource["change"]["actions"] = actions
+            resource["mode"] = mode
+    with pytest.raises(ValueError, match="explicit creation dependency"):
+        checks(value)
+
+
+def test_module_local_references_cannot_match_another_module_or_root_creation():
+    value = reference_fixture()
+    local = 'module.child["observer"].google_service_account_iam_member.local'
+    assert configured_references(value, local) == {"module.child.google_service_account.this", "module.child.google_service_account.this.name"}
+    value["resource_changes"] = [r for r in value["resource_changes"] if not r["address"].endswith(".google_service_account.this")]
+    value["resource_changes"].append(row("google_service_account", ["create"], {"project": PROJECT, "account_id": "other"},
+                                         address="google_service_account.this"))
+    with pytest.raises(ValueError, match="explicit creation dependency"):
+        checks(value)
 
 
 @pytest.mark.parametrize("action", ["create", "update", "delete"])

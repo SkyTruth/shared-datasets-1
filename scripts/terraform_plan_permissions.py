@@ -118,16 +118,27 @@ def references(value):
             yield from references(item)
 
 
+def unindexed(address):
+    """Compare configuration traversals with count/for_each plan instances."""
+    return re.sub(r'\[(?:"(?:[^"\\]|\\.)*"|[^\[\]"]+)\]', "", address)
+
+
+def references_address(reference, address):
+    reference, address = unindexed(reference), unindexed(address)
+    return reference == address or reference.startswith(address + ".")
+
+
 def configured_references(plan, address):
-    normalized = re.sub(r"\[[^]]+\]", "", address)
+    normalized = unindexed(address)
     def walk(module, prefix="", inherited=()):
         for resource in module.get("resources", []):
             local = resource["address"]
             full = local if local.startswith("module.") else prefix + local
-            if re.sub(r"\[[^]]+\]", "", full) == normalized:
-                return set(inherited) | set(references(resource.get("expressions", {})))
+            if unindexed(full) == normalized:
+                return set(inherited) | {prefix + ref for ref in references(resource.get("expressions", {}))}
         for name, call in module.get("module_calls", {}).items():
-            found = walk(call.get("module", {}), prefix + "module." + name + ".", (*inherited, *references(call.get("expressions", {}))))
+            found = walk(call.get("module", {}), prefix + "module." + name + ".",
+                         (*inherited, *(prefix + ref for ref in references(call.get("expressions", {})))))
             if found is not None:
                 return found
         return None
@@ -144,7 +155,7 @@ def plan_checks(plan, *, project_number, target=None):
     created = defaultdict(set)
     created_addresses = defaultdict(set)
     for row in rows:
-        if row.get("change", {}).get("actions") == ["create"]:
+        if row.get("mode", "managed") == "managed" and row.get("change", {}).get("actions") == ["create"]:
             kind = row.get("type")
             value = row["change"].get("after") or {}
             created_addresses[kind].add(row["address"])
@@ -176,9 +187,13 @@ def plan_checks(plan, *, project_number, target=None):
     def future_unknown(row, kind):
         refs = configured_references(plan, row["address"])
         for address in created_addresses[kind]:
-            base = re.sub(r"\[[^]]+\]", "", address)
+            base = unindexed(address)
             module = base.rsplit(".", 2)[0] if base.startswith("module.") else None
-            if any(ref.startswith(base + ".") or (module and ref.startswith(module + ".")) for ref in refs):
+            # Terraform can report only the collection/module for dynamic keys.
+            # Module outputs have one segment after the module call; an explicit
+            # sibling resource/data traversal must still match the resource.
+            if any(references_address(ref, base) or (module and (
+                    unindexed(ref) == module or unindexed(ref).rsplit(".", 1)[0] == module)) for ref in refs):
                 return True
         return False
 

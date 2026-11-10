@@ -1,0 +1,643 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "resource_changes": [
+    {
+      "address": "google_service_account.counted[0]",
+      "mode": "managed",
+      "type": "google_service_account",
+      "name": "counted",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "account_id": "fixture-counted",
+          "create_ignore_already_exists": null,
+          "description": null,
+          "disabled": false,
+          "display_name": null,
+          "email": "fixture-counted@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:fixture-counted@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_service_account.github_job[\"observer\"]",
+      "mode": "managed",
+      "type": "google_service_account",
+      "name": "github_job",
+      "index": "observer",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "account_id": "fixture-observer",
+          "create_ignore_already_exists": null,
+          "description": null,
+          "disabled": false,
+          "display_name": null,
+          "email": "fixture-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:fixture-observer@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_service_account.github_job[\"runtime\"]",
+      "mode": "managed",
+      "type": "google_service_account",
+      "name": "github_job",
+      "index": "runtime",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "account_id": "fixture-runtime",
+          "create_ignore_already_exists": null,
+          "description": null,
+          "disabled": false,
+          "display_name": null,
+          "email": "fixture-runtime@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:fixture-runtime@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_service_account.single",
+      "mode": "managed",
+      "type": "google_service_account",
+      "name": "single",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "account_id": "fixture-single",
+          "create_ignore_already_exists": null,
+          "description": null,
+          "disabled": false,
+          "display_name": null,
+          "email": "fixture-single@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:fixture-single@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.attribute",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "attribute",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.dynamic[\"observer\"]",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "dynamic",
+      "index": "observer",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.dynamic[\"runtime\"]",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "dynamic",
+      "index": "runtime",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.literal",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "literal",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.module_dynamic[\"observer\"]",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "module_dynamic",
+      "index": "observer",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.module_literal",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "module_literal",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "google_service_account_iam_member.numeric",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "numeric",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    },
+    {
+      "address": "module.child[\"observer\"].google_service_account.this",
+      "module_address": "module.child[\"observer\"]",
+      "mode": "managed",
+      "type": "google_service_account",
+      "name": "this",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "account_id": "fixture-child",
+          "create_ignore_already_exists": null,
+          "description": null,
+          "disabled": false,
+          "display_name": null,
+          "email": "fixture-child@shared-datasets-1.iam.gserviceaccount.com",
+          "member": "serviceAccount:fixture-child@shared-datasets-1.iam.gserviceaccount.com",
+          "project": "shared-datasets-1",
+          "timeouts": null
+        },
+        "after_unknown": {
+          "id": true,
+          "name": true,
+          "unique_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.child[\"observer\"].google_service_account_iam_member.local",
+      "module_address": "module.child[\"observer\"]",
+      "mode": "managed",
+      "type": "google_service_account_iam_member",
+      "name": "local",
+      "provider_name": "registry.terraform.io/hashicorp/google",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "before": null,
+        "after": {
+          "condition": [],
+          "member": "user:fixture@example.org",
+          "role": "roles/iam.serviceAccountUser"
+        },
+        "after_unknown": {
+          "condition": [],
+          "etag": true,
+          "id": true,
+          "service_account_id": true
+        },
+        "before_sensitive": false,
+        "after_sensitive": {
+          "condition": []
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "google_service_account.counted",
+          "mode": "managed",
+          "type": "google_service_account",
+          "name": "counted",
+          "provider_config_key": "google",
+          "expressions": {
+            "account_id": {
+              "constant_value": "fixture-counted"
+            },
+            "project": {
+              "constant_value": "shared-datasets-1"
+            }
+          },
+          "schema_version": 0,
+          "count_expression": {
+            "constant_value": 1
+          }
+        },
+        {
+          "address": "google_service_account.github_job",
+          "mode": "managed",
+          "type": "google_service_account",
+          "name": "github_job",
+          "provider_config_key": "google",
+          "expressions": {
+            "account_id": {
+              "references": [
+                "each.key"
+              ]
+            },
+            "project": {
+              "constant_value": "shared-datasets-1"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account.single",
+          "mode": "managed",
+          "type": "google_service_account",
+          "name": "single",
+          "provider_config_key": "google",
+          "expressions": {
+            "account_id": {
+              "constant_value": "fixture-single"
+            },
+            "project": {
+              "constant_value": "shared-datasets-1"
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.attribute",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "attribute",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "google_service_account.single.name",
+                "google_service_account.single"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.dynamic",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "dynamic",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "google_service_account.github_job",
+                "each.key"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.literal",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "literal",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "google_service_account.github_job[\"observer\"].name",
+                "google_service_account.github_job[\"observer\"]",
+                "google_service_account.github_job"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.module_dynamic",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "module_dynamic",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "module.child",
+                "each.key"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.module_literal",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "module_literal",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "module.child[\"observer\"].name",
+                "module.child[\"observer\"]"
+              ]
+            }
+          },
+          "schema_version": 0
+        },
+        {
+          "address": "google_service_account_iam_member.numeric",
+          "mode": "managed",
+          "type": "google_service_account_iam_member",
+          "name": "numeric",
+          "provider_config_key": "google",
+          "expressions": {
+            "member": {
+              "constant_value": "user:fixture@example.org"
+            },
+            "role": {
+              "constant_value": "roles/iam.serviceAccountUser"
+            },
+            "service_account_id": {
+              "references": [
+                "google_service_account.counted[0].name",
+                "google_service_account.counted[0]",
+                "google_service_account.counted"
+              ]
+            }
+          },
+          "schema_version": 0
+        }
+      ],
+      "module_calls": {
+        "child": {
+          "source": "./child",
+          "module": {
+            "outputs": {
+              "name": {
+                "expression": {
+                  "references": [
+                    "google_service_account.this.name",
+                    "google_service_account.this"
+                  ]
+                }
+              }
+            },
+            "resources": [
+              {
+                "address": "google_service_account.this",
+                "mode": "managed",
+                "type": "google_service_account",
+                "name": "this",
+                "provider_config_key": "google",
+                "expressions": {
+                  "account_id": {
+                    "constant_value": "fixture-child"
+                  },
+                  "project": {
+                    "constant_value": "shared-datasets-1"
+                  }
+                },
+                "schema_version": 0
+              },
+              {
+                "address": "google_service_account_iam_member.local",
+                "mode": "managed",
+                "type": "google_service_account_iam_member",
+                "name": "local",
+                "provider_config_key": "google",
+                "expressions": {
+                  "member": {
+                    "constant_value": "user:fixture@example.org"
+                  },
+                  "role": {
+                    "constant_value": "roles/iam.serviceAccountUser"
+                  },
+                  "service_account_id": {
+                    "references": [
+                      "google_service_account.this.name",
+                      "google_service_account.this"
+                    ]
+                  }
+                },
+                "schema_version": 0
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
