@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import zipfile
@@ -23,6 +24,11 @@ from scripts.reviewed_dataset_plan import PlanValidationError
 from scripts.sdk_release_authorization import GitHub, artifact_files, execution_time, gate_execution
 
 WORKFLOW = ".github/workflows/ci.yml"
+LOOKUP_TIMEOUT_SECONDS = 60
+
+
+def lookup_expired(_signal, _frame):
+    raise TimeoutError("PR reuse lookup exceeded its overall deadline")
 
 
 def context(environment=os.environ):
@@ -47,8 +53,8 @@ def fields(value, names):
     return {key: value[key] for key in names.split()}
 
 
-def check_snapshot(plan, snapshot, current, *, now):
-    """Validate once at the producer boundary and again when consuming its plan."""
+def check_snapshot(plan, snapshot, current):
+    """Recheck identities using freshness established by the selector's admission."""
     require(current["event"] == "push" and current["ref"] == "refs/heads/main", "reuse requires a main push")
     require(plan["head"] == plan["tested_sha"] == current["sha"]
             and plan["base"] == current["before"], "push identity changed")
@@ -67,9 +73,10 @@ def check_snapshot(plan, snapshot, current, *, now):
     require(gate["name"] == "ci-ready" and gate["status"] == "completed" and gate["conclusion"] == "success",
             "PR ci-ready did not succeed")
     start, end = gate_execution(gate)
+    admitted = execution_time(snapshot["admitted_at"])
     require(artifact["name"] == f"ci-ready-evidence-attempt{run['run_attempt']}"
             and artifact["workflow_run"]["id"] == run["id"] and not artifact["expired"]
-            and execution_time(artifact["expires_at"]) > now
+            and execution_time(artifact["created_at"]) <= admitted < execution_time(artifact["expires_at"])
             and start <= execution_time(artifact["created_at"]) <= end, "PR evidence is expired or belongs to another execution")
     require(evidence["source"] == {"run_id": str(run["id"]), "run_attempt": run["run_attempt"]}
             and evidence["schema_version"] == 1 and evidence["status"] == "success", "PR evidence source mismatch")
@@ -122,12 +129,13 @@ def discover(api, plan, current, *, now):
                    for side in ("head", "base")}}
     run = fields(run, "id run_attempt workflow_id path event head_sha status conclusion repository head_repository")
     run.update({key: fields(run[key], "id full_name") for key in ("repository", "head_repository")})
-    snapshot = {"schema_version": 1, "main_source": plan["source"], "pr": pr, "run": run,
+    snapshot = {"schema_version": 1, "main_source": plan["source"],
+                "admitted_at": (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z"), "pr": pr, "run": run,
                 "gate": fields(gates[0], "name status conclusion started_at completed_at"),
                 "artifact": fields(matches[0], "id name workflow_run expired expires_at created_at digest size_in_bytes"),
                 "evidence": fields(evidence, "schema_version status source validation_context head tested_sha tree base contract_digest suites toolchains validation_results"),
                 "reused_suites": sorted(set(plan["suites"]) & REUSABLE_SUITES)}
-    check_snapshot(plan, snapshot, current, now=now)
+    check_snapshot(plan, snapshot, current)
     return snapshot
 
 
@@ -135,15 +143,23 @@ def select_reuse(api, plan, current, *, attempt, now=None):
     """Every external lookup/shape/archive failure takes the full-validation path."""
     if current["event"] != "push" or current["ref"] != "refs/heads/main" or attempt != 1:
         return None
+    # The Ubuntu selector runs on its main thread. One alarm spans every gh
+    # request, retry sleep and archive read; subprocess.run kills/waits on its
+    # child when interrupted, including the otherwise unbounded ZIP download.
+    previous_handler = signal.signal(signal.SIGALRM, lookup_expired)
     try:
-        return discover(api, plan, current, now=now or datetime.now(timezone.utc))
+        signal.setitimer(signal.ITIMER_REAL, LOOKUP_TIMEOUT_SECONDS)
+        return discover(api, plan, current, now=now)
     except (DeploymentError, PlanValidationError, ValueError, KeyError, TypeError, OSError,
             subprocess.SubprocessError, zipfile.BadZipFile, RuntimeError) as error:
         print(f"PR validation reuse unavailable; running the full selection: {type(error).__name__}: {error}", file=sys.stderr)
         return None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
-def verified_reuse(plan, current, *, run_id, attempt, now=None):
+def verified_reuse(plan, current, *, run_id, attempt):
     snapshot = plan.get("main_reuse")
     if snapshot is None:
         return frozenset()
@@ -152,7 +168,7 @@ def verified_reuse(plan, current, *, run_id, attempt, now=None):
     require(attempt == 1 and snapshot["main_source"] == plan["source"] == {"run_id": run_id, "run_attempt": attempt},
             "reuse plan is from another attempt; re-run all jobs for full validation")
     require(snapshot["schema_version"] == 1, "invalid main reuse proof")
-    return check_snapshot(plan, snapshot, current, now=now or datetime.now(timezone.utc))
+    return check_snapshot(plan, snapshot, current)
 
 
 def main():

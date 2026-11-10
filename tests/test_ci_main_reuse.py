@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
+import os
+import signal
 import subprocess
 import sys
+from time import monotonic
 import zipfile
 
 import pytest
@@ -98,7 +101,7 @@ def test_successful_exact_tree_pr_evidence_survives_json_and_gate_verification(m
     validation, current, api = main_push
     receipt = reuse.select_reuse(api, validation, current, attempt=1, now=NOW)
     validation["main_reuse"] = json.loads(json.dumps(receipt))
-    covered = reuse.verified_reuse(validation, current, run_id="789", attempt=1, now=NOW)
+    covered = reuse.verified_reuse(validation, current, run_id="789", attempt=1)
     assert covered == REUSABLE_SUITES
     assert receipt["run"]["id"] == 123 and receipt["run"]["run_attempt"] == 2 and receipt["pr"]["number"] == 42
     assert receipt["evidence"]["tested_sha"] != validation["tested_sha"]  # Squash/merge SHA can differ; tree cannot.
@@ -207,7 +210,7 @@ def test_other_events_and_all_job_reruns_validate_without_a_lookup(main_push, ev
     assert api.requests == []
 
 
-@pytest.mark.parametrize("defect", ["expired", "tree", "attempt", "source", "image-reuse"])
+@pytest.mark.parametrize("defect", ["expired", "tree", "attempt", "source", "image-reuse", "missing-admission", "late-admission"])
 def test_gate_refuses_stale_or_rebound_selector_proof(main_push, defect):
     validation, current, api = main_push
     validation["main_reuse"] = reuse.select_reuse(api, validation, current, attempt=1, now=NOW)
@@ -220,10 +223,112 @@ def test_gate_refuses_stale_or_rebound_selector_proof(main_push, defect):
         attempt = 2
     elif defect == "source":
         validation["main_reuse"]["main_source"] = {"run_id": "456", "run_attempt": 1}
+    elif defect == "missing-admission":
+        validation["main_reuse"].pop("admitted_at")
+    elif defect == "late-admission":
+        validation["main_reuse"]["admitted_at"] = validation["main_reuse"]["artifact"]["expires_at"]
     else:
         validation["main_reuse"]["reused_suites"].append("production-images")
-    with pytest.raises(DeploymentError):
-        reuse.verified_reuse(validation, current, run_id="789", attempt=attempt, now=NOW)
+    with pytest.raises((DeploymentError, KeyError)):
+        reuse.verified_reuse(validation, current, run_id="789", attempt=attempt)
+
+
+def test_gate_keeps_proof_admitted_30_seconds_before_expiry_after_60_seconds(main_push, monkeypatch):
+    validation, current, api = main_push
+    api.artifact["expires_at"] = (NOW + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    validation["main_reuse"] = json.loads(json.dumps(reuse.select_reuse(api, validation, current, attempt=1, now=NOW)))
+
+    class GateClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW + timedelta(seconds=60)
+
+    monkeypatch.setattr(reuse, "datetime", GateClock)
+    assert reuse.verified_reuse(validation, current, run_id="789", attempt=1) == REUSABLE_SUITES
+    assert validation["main_reuse"]["admitted_at"] == "2026-11-10T00:00:00Z"
+    validation["main_reuse"]["evidence"]["tree"] = "0" * 40
+    with pytest.raises(DeploymentError, match="tree"):
+        reuse.verified_reuse(validation, current, run_id="789", attempt=1)
+
+
+def test_admission_checks_freshness_after_download_not_before_lookup(main_push, monkeypatch):
+    validation, current, api = main_push
+    api.artifact["expires_at"] = (NOW + timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    clock = [NOW]
+    archive = api.archive
+
+    def download(repository, identifier):
+        clock[0] = NOW + timedelta(seconds=60)
+        return archive(repository, identifier)
+
+    class AdmissionClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    monkeypatch.setattr(reuse, "datetime", AdmissionClock)
+    monkeypatch.setattr(api, "archive", download)
+    assert reuse.select_reuse(api, validation, current, attempt=1) is None
+
+
+@pytest.mark.parametrize("stall", ["metadata", "retry", "archive"])
+def test_cli_overall_deadline_stops_transport_and_emits_unchanged_full_plan(main_push, tmp_path, stall):
+    validation, current, api = main_push
+    prefix = f"repos/{REPOSITORY}"
+    responses = {
+        f"{prefix}/commits/{current['sha']}/pulls?per_page=100": [api.pulls],
+        f"{prefix}/pulls/42": api.pr,
+        f"{prefix}/actions/workflows/ci.yml": {"id": 7, "path": reuse.WORKFLOW},
+        f"{prefix}/actions/workflows/ci.yml/runs?event=pull_request&head_sha={api.pr['head']['sha']}&per_page=100":
+            [{"total_count": 1, "workflow_runs": api.runs}],
+        f"{prefix}/actions/runs/123/attempts/2": api.run,
+        f"{prefix}/actions/runs/123/attempts/2/jobs?per_page=100": [{"total_count": 1, "jobs": api.jobs}],
+        f"{prefix}/actions/runs/123/artifacts?per_page=100": [{"total_count": 1, "artifacts": api.artifacts}],
+    }
+    (tmp_path / "responses.json").write_text(json.dumps(responses))
+    shim = tmp_path / "gh"
+    shim.write_text(f"#!{sys.executable}\n" + """
+import json, os, pathlib, sys, time
+root = pathlib.Path(os.environ['TRANSPORT_FIXTURE'])
+path = sys.argv[-1]
+stall = os.environ['STALL']
+if stall != 'archive' or path.endswith('/zip'):
+    (root / 'transport-pid').write_text(str(os.getpid()))
+    if stall == 'retry':
+        sys.stderr.write('gh: Service Unavailable (HTTP 503)\\n')
+        sys.exit(1)
+    time.sleep(30)
+print(json.dumps(json.loads((root / 'responses.json').read_text())[path]))
+""")
+    shim.chmod(0o755)
+    plan_path, output = tmp_path / "plan.json", tmp_path / "outputs"
+    plan_path.write_text(json.dumps(validation))
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"before": current["before"]}))
+    environment = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+                   "TRANSPORT_FIXTURE": str(tmp_path), "STALL": stall, "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_REF": current["ref"], "GITHUB_REPOSITORY": REPOSITORY, "GITHUB_SHA": current["sha"],
+                   "GITHUB_EVENT_PATH": str(event), "GITHUB_RUN_ATTEMPT": "1"}
+    started = monotonic()
+    with subprocess.Popen([sys.executable, "-c", "from scripts import ci_main_reuse as m; m.LOOKUP_TIMEOUT_SECONDS = 1; m.main()",
+                           "--plan", str(plan_path), "--github-output", str(output)],
+                          cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=5)
+    assert process.returncode == 0, stderr
+    assert monotonic() - started < 4
+    assert "overall deadline" in stderr
+    if stall == "retry":
+        assert "retrying in 5s" in stderr
+    assert json.loads(plan_path.read_text()) == validation
+    assert output.read_text() == "reuse_validation=false\n"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int((tmp_path / "transport-pid").read_text()), 0)
 
 
 def test_new_all_job_plan_discards_attempt_specific_reuse_without_changing_selection(main_push):

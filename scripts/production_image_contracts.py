@@ -147,7 +147,9 @@ def resource_limits(target, limits=None):
 
 
 def container_options():
-    return ["--init", "--label", "shared-datasets-preflight=" + os.environ.get("SHARED_DATASETS_PREFLIGHT_RUN", f"standalone-{os.getpid()}")]
+    run_id = os.environ.get("SHARED_DATASETS_PREFLIGHT_RUN")
+    label = f"shared-datasets-preflight-driver={run_id}" if run_id else f"shared-datasets-preflight=standalone-{os.getpid()}"
+    return ["--init", "--label", label]
 
 
 def commands(target, executor, *, image_id=None, limits=None):

@@ -816,7 +816,7 @@ def test_mismatched_image_platform_cannot_silently_enable_emulation(tmp_path, im
 def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_path, exit_code):
     (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': exit_code}
-    with mock.patch.object(preflight.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(preflight.subprocess, 'run') as run:
+    with mock.patch.object(preflight.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']) as query, mock.patch.object(preflight.subprocess, 'run') as run:
         if exit_code:
             with pytest.raises(ValueError, match='container failed'):
                 preflight.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
@@ -830,6 +830,7 @@ def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_pat
             assert not any('TOKEN' in key for key in record['environment'])
         commands = [call.args[0] for call in run.call_args_list]
     assert ['docker', 'cp', f'{ROOT}/.', 'owned-container:/workspace'] in commands
+    assert f'shared-datasets-preflight-driver={tmp_path.name}' in query.call_args_list[1].args[0]
     assert ['docker', 'cp', str(tmp_path / 'browser-event.json'), 'owned-container:/browser-event.json'] in commands
     event = json.loads((tmp_path / 'browser-event.json').read_text())
     assert event['pull_request']['base']['sha'] == plan()['base']

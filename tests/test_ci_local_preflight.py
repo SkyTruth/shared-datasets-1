@@ -120,6 +120,35 @@ def test_since_cannot_overwrite_its_own_prior_evidence_or_use_a_nonancestor(tmp_
     assert path.read_bytes() == original
 
 
+@pytest.mark.parametrize('corrupt', [False, True])
+def test_changed_contract_runs_full_selection_without_reusing_prior_receipts(tmp_path, monkeypatch, corrupt):
+    monkeypatch.setattr(p, 'LOCAL_COORDINATION_DIRECTORY', tmp_path / 'coordination')
+    source, git = fixture_repo(tmp_path)
+    base = git('rev-parse', 'HEAD')
+    (source / 'component.bin').write_bytes(b'new')
+    git('add', '.')
+    git('commit', '-m', 'initial full selection')
+    prior = p.make_plan(source, base, 'HEAD')
+    path, evidence = save_evidence(prior)
+    if corrupt:
+        evidence['results'][0]['commands'][0]['exit_code'] = 1
+        p.write_json(path, evidence)
+    script = source / 'scripts/ci_preflight.py'
+    script.write_text(script.read_text() + '\n# changed validator\n')
+    git('add', '.')
+    git('commit', '-m', 'change validation contract')
+    current = p.make_plan(source, base, 'HEAD')
+    assert current['contract_digest'] != prior['contract_digest']
+    if corrupt:
+        with pytest.raises(ValueError, match='failed command'):
+            p.local_execution_plan(source, current, prior['head'])
+    else:
+        execution, reused = p.local_execution_plan(source, current, prior['head'])
+        assert execution == current
+        assert reused == {}
+        assert execution['suites'] == list(SUITES)
+
+
 def test_local_manifest_never_passes_hosted_verification():
     validation = plan()
     results = local_results(validation)
@@ -285,9 +314,28 @@ def test_cleanup_selects_only_owned_containers_and_expired_preflight_tags(monkey
     with mock.patch.object(p.subprocess, 'check_output', side_effect=['container-a\ncontainer-b', f'{old}\n{fresh}\n{foreign}\nshared-datasets-preflight:<none>\n', json.dumps(images)]) as query, mock.patch.object(p.subprocess, 'run') as run:
         p.remove_containers('this-run')
         p.cleanup_old_images()
-    assert query.call_args_list[0].args[0] == ['docker', 'ps', '-aq', '--filter', 'label=shared-datasets-preflight=this-run']
+    assert query.call_args_list[0].args[0] == ['docker', 'ps', '-aq', '--filter', 'label=shared-datasets-preflight-driver=this-run']
     assert query.call_args_list[2].args[0] == ['docker', 'image', 'inspect', fresh, old]
     assert [call.args[0] for call in run.call_args_list] == [['docker', 'rm', '-f', 'container-a', 'container-b'], ['docker', 'image', 'rm', old]]
+
+
+@pytest.mark.parametrize('run_id', [None, 'this-run'])
+def test_cleanup_preserves_live_standalone_probe_and_removes_only_driver_containers(monkeypatch, run_id):
+    monkeypatch.delenv('SHARED_DATASETS_PREFLIGHT_RUN', raising=False)
+    standalone = producer.container_options()[-1]
+    monkeypatch.setenv('SHARED_DATASETS_PREFLIGHT_RUN', 'this-run')
+    owned = producer.container_options()[-1]
+    assert standalone.startswith('shared-datasets-preflight=standalone-')
+    assert owned == 'shared-datasets-preflight-driver=this-run'
+    labels = {'live-standalone': standalone, 'abandoned-driver': owned}
+
+    def query(command, **kwargs):
+        selected = command[-1].removeprefix('label=')
+        return '\n'.join(name for name, label in labels.items() if label == selected or label.split('=')[0] == selected)
+
+    with mock.patch.object(p.subprocess, 'check_output', side_effect=query), mock.patch.object(p.subprocess, 'run') as remove:
+        p.remove_containers(run_id)
+    assert remove.call_args.args[0] == ['docker', 'rm', '-f', 'abandoned-driver']
 
 
 @pytest.mark.parametrize('workers', [2, 3])

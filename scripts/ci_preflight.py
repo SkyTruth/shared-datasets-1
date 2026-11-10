@@ -40,7 +40,7 @@ from scripts.ci_contract import (
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
-CONTAINER_LABEL = "shared-datasets-preflight"
+CONTAINER_LABEL = "shared-datasets-preflight-driver"
 
 # Host Python and Docker retain normal filesystem/API capabilities; this
 # isolates default configuration and inherited credentials, not malicious code.
@@ -693,7 +693,14 @@ def local_execution_plan(root: Path, plan: dict, since: str | None) -> tuple[dic
     if since == plan["head"]:
         raise ValueError("--since must name an earlier validated head; this head already has evidence")
     git(root, "merge-base", "--is-ancestor", since, plan["head"])
-    _, covered, images = local_coverage(plan["base"], since, plan["contract_digest"])
+    try:
+        prior_digest = json.loads(local_evidence_path(plan["base"], since).read_text())["contract_digest"]
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid prior local validation contract") from error
+    _, covered, images = local_coverage(plan["base"], since, prior_digest)
+    if prior_digest != plan["contract_digest"]:
+        print("Validation contract changed; running the full selection without reuse", flush=True)
+        return plan, {}
     delta = make_plan(root, since, "HEAD", original_head=plan["head"], comparison_head=plan["head"])
     selected = set(delta["suites"]) | ALWAYS | (set(plan["suites"]) - covered)
     if not set(plan["production_image_targets"]) <= images:
@@ -834,7 +841,7 @@ def preflight(args: argparse.Namespace, *, slot_wait_s=0, record=None) -> int:
         phases["verify_cleanup_s"] = round(monotonic() - started, 3)
         write_json(work / "runtime.json", runtime)
         evidence = {**plan, "status": "success", "scope": "local", "execution_plan": execution,
-                    "results": results, "runtime": runtime, "since": git(root, "rev-parse", args.since) if args.since else None,
+                    "results": results, "runtime": runtime, "since": git(root, "rev-parse", args.since) if reused else None,
                     "reused_suites": reused}
         write_json(work / "preflight.json", evidence)
         write_json(local_evidence_path(base, original_head), evidence)
