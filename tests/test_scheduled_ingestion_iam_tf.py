@@ -220,13 +220,22 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                 principals = json.dumps({key: attributes[key] for key in ("member", "members", "policy_data") if key in attributes})
                 if "module.github_readonly_service_account." in principals or "shared-datasets-gh-readonly" in principals:
                     grants[f"{kind}.{name}"] = {
-                        key: attributes.get(key) for key in ("bucket", "role", "member", "members", "policy_data")
+                        key: attributes.get(key) for key in ("bucket", "role", "member", "members", "policy_data", "condition")
                     }
         self.assertEqual(grants, {
             "google_storage_bucket_iam_member.github_readonly_object_viewer": {
                 "bucket": "${var.bucket_name}", "role": "roles/storage.objectViewer",
                 "member": "${module.github_readonly_service_account.member}",
+                "members": None, "policy_data": None, "condition": None,
+            },
+            "google_storage_bucket_iam_member.github_readonly_object_viewer_scoped": {
+                "bucket": "${var.bucket_name}", "role": "roles/storage.objectViewer",
+                "member": "${module.github_readonly_service_account.member}",
                 "members": None, "policy_data": None,
+                "condition": [{
+                    "title": "advisory_and_audit_objects",
+                    "expression": "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.canonical_mutation_publisher_condition}) || (${local.pending_publish_source_condition})",
+                }],
             },
         })
         self.assertIn("github_readonly_workload_identity_provider", outputs_tf)

@@ -206,7 +206,8 @@
         "google_service_account.github_job[\"cleanup\"]", "google_project_iam_custom_role.github_job[\"cleanup\"]",
         "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]"
       ],
-      "block_deletes": true
+      "block_deletes": true,
+      "post_apply_wait_seconds": 120
     },
     "PR plan identity IAM bootstrap": {"prerequisites": [],
       "workflow": "terraform-state-read-iam-sync.yml",

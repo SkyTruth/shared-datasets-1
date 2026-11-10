@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, resolve_selection
+from scripts.ci_contract import ALWAYS, DEPLOYMENTS, delivery_outputs, rollout_holds, select_deployments, resolve_selection
 from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
 from workflow_helpers import deployment_prerequisites, load_workflow, workflow_triggers, workflow_steps_by_name
@@ -26,6 +26,65 @@ def test_shared_ingestion_executor_selects_all_callers_and_preserves_rollout_hol
     assert set(select_deployments(paths, ingestion_holds=("wdpa", "sea_ice"))) == targets - {"wdpa", "sea_ice"}
     assert "production-images" in resolve_selection(paths)["suites"]
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "dataset-usage"} <= set(resolve_selection(paths)["production_image_targets"])
+
+
+def test_usage_hold_blocks_delivery_but_preserves_validation_and_reviewed_release(tmp_path):
+    from test_ci_preflight import fixture_repo, emit_plan
+
+    root, git = fixture_repo(tmp_path)
+    path = root / ci_preflight.INGESTION_ROLLOUT_HOLDS
+    path.write_text((ROOT / ci_preflight.INGESTION_ROLLOUT_HOLDS).read_text())
+    git('add', '.')
+    git('commit', '-m', 'hold merge deployments')
+    base = git('rev-parse', 'HEAD')
+    workflow = root / '.github/workflows/dataset-usage-deploy.yml'
+    workflow.write_text(workflow.read_text() + '\n# changed usage deployment\n')
+    git('add', '.')
+    git('commit', '-m', 'change held usage deployment')
+    selected, outputs = emit_plan(root, base, tmp_path / 'held')
+    assert 'dataset_usage' not in selected['deployments']
+    assert outputs['dataset_usage'] == 'false'
+    assert delivery_outputs(selected, 'push', 'refs/heads/main')['dataset-usage'] is False
+    assert 'dataset-usage' in selected['production_image_targets']
+    assert 'production-images' in selected['suites']
+
+    base = git('rev-parse', 'HEAD')
+    holds = json.loads(path.read_text())
+    previous = holds.copy()
+    del holds['dataset_usage']
+    assert rollout_holds(holds, previous=previous) == tuple(holds)
+    path.write_text(json.dumps(holds))
+    git('add', '.')
+    git('commit', '-m', 'release usage after review')
+    released, outputs = emit_plan(root, base, tmp_path / 'released')
+    assert released['deployments'] == ['dataset_usage']
+    assert outputs['dataset_usage'] == 'true'
+    assert delivery_outputs(released, 'push', 'refs/heads/main')['dataset-usage'] is True
+    assert released['production_image_targets'] == ['dataset-usage']
+
+
+def test_usage_hold_does_not_allow_unrelated_deployment_targets():
+    hold = dict(owner='jonaraphael', reason='review', expires_at='2099-01-01T00:00:00Z')
+    assert rollout_holds({'dataset_usage': hold}) == ('dataset_usage',)
+    with pytest.raises(ValueError, match='rollout holds must map'):
+        rollout_holds({'scratch_cleanup_iam': hold})
+
+
+@pytest.mark.parametrize('selection,workflow,image', [
+    ('mpatlas', 'mpatlas-monthly-deploy.yml', 'mpatlas-monthly'),
+    ('eamlis', 'eamlis-monthly-deploy.yml', 'eamlis-monthly'),
+    ('wdpa', 'wdpa-monthly-deploy.yml', 'wdpa-monthly'),
+    ('sea_ice', 'sea-ice-daily-deploy.yml', 'sea-ice-daily'),
+    ('dataset_usage', 'dataset-usage-deploy.yml', 'dataset-usage'),
+])
+def test_workflow_only_changes_keep_the_held_deployments_image_validation_floor(selection, workflow, image):
+    paths = ['.github/workflows/' + workflow]
+    ready = resolve_selection(paths)
+    held = resolve_selection(paths, ingestion_holds=(selection,))
+    assert selection in ready['deployments'] and selection not in held['deployments']
+    assert image in ready['production_image_targets']
+    assert held['production_image_targets'] == ready['production_image_targets']
+    assert held['suites'] == ready['suites']
 
 
 @pytest.mark.parametrize('path,expected', [

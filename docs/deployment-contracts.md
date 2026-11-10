@@ -15,6 +15,11 @@ legacy grants only after successful main runs prove each new identity.
 The saved-plan guard blocks deletes and replacements for every non-retirement IAM
 sync, including workflow identity sync. Exact obsolete-resource retirement and
 temporary-authority revocation scopes retain their separate deletion contracts.
+The six WDPA/operational retirement jobs in `scratch-cleanup-iam-sync.yml` run
+only on `workflow_dispatch` from `main` by `jonaraphael`. CI delivery still runs
+the non-retirement scratch-cleanup IAM sync. Owner dispatch retains tested-main
+provenance, protected execution, exact deletion scopes and revocation after any
+grant attempt; it does not renew the expired temporary retirement authority.
 
 ## Images and execution
 

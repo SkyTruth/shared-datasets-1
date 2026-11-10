@@ -23,7 +23,7 @@ HEALTH_SCOPE = "health:operational-safety-check"
 
 from scripts import incident_health_artifacts as native
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
-from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, rollout_holds as validate_suspensions
+from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, ROLLOUT_HOLD_TARGETS, rollout_holds as validate_suspensions
 from scripts.dataset_mutation_authorization import GitHub
 from scripts import workflow_failure_alert as alerts
 from scripts.workflow_failure_alert import API_ROOT, REPOSITORY, source_inventory
@@ -220,7 +220,7 @@ def policy_warnings(now):
     warnings, problems = [], []
     for filename in (INGESTION_ROLLOUT_HOLDS, ".github/scheduler-pauses.json"):
         entries = json.loads((ROOT / filename).read_text())
-        validate_suspensions(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else {config["selection"] for config in TARGETS.values()}))
+        validate_suspensions(entries, targets=(CRON_ASSETS if filename.endswith("scheduler-pauses.json") else ROLLOUT_HOLD_TARGETS))
         for target, entry in entries.items():
             remaining = utc(entry["expires_at"]) - now
             if remaining <= timedelta(hours=75):  # Three-hour sampling still warns >=72 hours ahead.

@@ -30,7 +30,7 @@ jobs:
       source_run_attempt: ${{ inputs.source_run_attempt }}
   retirement-bootstrap:
     name: Bootstrap temporary WDPA retirement authority
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
@@ -41,7 +41,7 @@ jobs:
   retire-wdpa-validation:
     name: Retire isolated WDPA validation resources
     needs: retirement-bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
@@ -51,7 +51,7 @@ jobs:
       source_run_attempt: ${{ inputs.source_run_attempt }}
   operational-retirement-bootstrap:
     name: Bootstrap approved temporary operational retirement authority
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
@@ -62,7 +62,7 @@ jobs:
   operational-retirement-grant:
     name: Grant approved temporary operational retirement authority
     needs: operational-retirement-bootstrap
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
@@ -74,7 +74,7 @@ jobs:
     name: Retire the 30 reviewed legacy operational resources
     needs:
     - operational-retirement-grant
-    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
@@ -87,7 +87,7 @@ jobs:
     needs:
     - operational-retirement-grant
     - retire-operational-infrastructure
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.operational-retirement-grant.result != 'skipped' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' && needs.operational-retirement-grant.result != 'skipped' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml

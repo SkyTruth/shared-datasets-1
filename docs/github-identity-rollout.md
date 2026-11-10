@@ -11,6 +11,10 @@ precedes writer rollout. Sync adds `job_workflow_ref` capability attributes and
 the observer, runtime, heartbeat, reconciler and cleanup identities. Recovery and
 PR-planning identities remain manually provisioned through the protected
 `terraform-state-read-iam-sync.yml` bootstrap/provisioning sequence.
+After a successful signed identity-sync apply, the reusable executor waits 120
+seconds in its unprivileged propagation job before dependent callers can
+authenticate. This stays below that job's five-minute timeout and holds neither
+the production environment nor the Terraform state queue.
 
 Preserve all legacy mapping keys with their original expressions and all
 existing IAM grants at the same addresses with unchanged members, roles and
@@ -32,6 +36,41 @@ Non-retirement IAM syncs use `block_deletes: true`: the saved-plan allowlist
 rejects any action containing `delete`, including either replacement order,
 even for an otherwise allowlisted address. Existing exact obsolete-resource
 retirements and temporary-authority revocation remain separate scopes.
+
+## Receipt compatibility during rollback
+
+The phase-1 merge keeps `dataset_usage` in
+[the rollout holds](../.github/ingestion-rollout-holds.json), owned by `jonaraphael`
+through `2026-11-19T00:00:00Z`. A separate reviewed PR must remove it; expiry does
+not release a hold automatically. Image validation still runs while delivery is
+held. The four publication producers retain their existing holds.
+
+The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
+
+| Target | Receipt signer after merge | Old-main verification |
+| --- | --- | --- |
+| `catalog-viewer` | `catalog-viewer-deploy.yml` | Compatible schema, signer and `started`/`verified` phases. |
+| `pmtiles-cdn` | `pmtiles-cdn-sync.yml` | Compatible schema, signer and `started`/`applied`/`verified` phases. |
+| `dataset-usage` | `ingestion-deploy.yml` | Rejected: old main requires `dataset-usage-deploy.yml`; held during the rollback window. |
+
+Old `deployment_revision.check` parses all records for its exact target
+environment, but verifies provenance only for the same revision or a
+non-ancestor. Thus an older ancestor record alone does not prevent a fresh
+revert deployment. `verify_record`, `verified_statuses` and incident
+`terminal_success`/`verify_saved_success` do verify signatures; an incompatible
+receipt fails those operations and cannot establish incident recovery.
+The detached verifier enumerates only pending WDPA records. Usage's reader-first
+gate verifies the viewer receipt, whose signer remains compatible.
+
+`GitHub workflow identity sync` and the two manual PR-plan identity scopes have
+new hashed target IDs and separate deployment environments. Old deployment and
+WDPA-pending readers do not enumerate those environments; known Terraform
+targets keep their names and generic `prod-terraform-target-apply.yml` signer.
+Explicit recovery of a new target is rejected as unregistered by old main.
+Successful new scopes create no incident checkpoint by themselves. If a failure
+has created a new-target incident checkpoint, old incident reconciliation and
+its safety dry-run reject that scope as an unregistered recovery target; resolve
+that bookkeeping before rollback. A Git revert does not migrate incident state.
 
 ## Phase 2: contract
 

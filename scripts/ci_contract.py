@@ -28,6 +28,7 @@ SUITES = (
 )
 DEPLOYMENTS = tuple(registry(section="deployments"))
 INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CONFIGS.values())
+ROLLOUT_HOLD_TARGETS = frozenset(config["selection"] for config in DEPLOY_TARGETS.values())
 DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests", "tests-control-plane"}
@@ -49,7 +50,7 @@ def delivery_outputs(plan, event, ref):
                              'publish-reviewed-dataset', 'identity-decision-reconcile'), enabled)}
 
 
-def rollout_holds(value, *, historical=False, previous=None, now=None, targets=INGESTION_DEPLOYMENTS) -> tuple[str, ...]:
+def rollout_holds(value, *, historical=False, previous=None, now=None, targets=ROLLOUT_HOLD_TARGETS) -> tuple[str, ...]:
     # Old commits used bare target names. Only comparison baselines may read that
     # persisted format; all new plans require accountable, bounded holds.
     if historical and isinstance(value, list) and all(isinstance(row, str) for row in value):
@@ -192,12 +193,14 @@ def documentation_only(paths: list[str] | None, *, root=ROOT) -> bool:
 
 
 def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
-    """Resolve deployments first, then their validation floor, exactly once."""
+    """Resolve the validation floor before rollout holds suppress delivery."""
     if paths is not None and (not isinstance(paths, list) or any(not isinstance(path, str) for path in paths)):
         raise ValueError("selection requires a changed-path list")
     root = root or ROOT
+    holds = deployment_inputs.pop('ingestion_holds', ())
     deployments = select_deployments(paths, root=root, **deployment_inputs)
     images = {row["image"] for target, row in registry(root, section="deployments").items() if target in deployments and "image" in row}
+    deployments = [target for target in deployments if target not in holds]
     suites, tiers = set(ALWAYS), set()
     reason = "comparison history unavailable"
     if paths is None:

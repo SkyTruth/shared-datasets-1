@@ -10,7 +10,7 @@ import yaml
 from scripts import ci_contract as ci, deployment_receipt_contracts as receipts
 from scripts import deployment_revision as revisions, workflow_failure_alert as alerts
 from scripts.terraform_target_contracts import registry
-from workflow_helpers import deployment_prerequisites, identity_sync_needs
+from workflow_helpers import deployment_prerequisites, identity_sync_needs, terraform_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,6 +20,48 @@ def test_delivery_callers_wait_for_created_identities_in_nested_reusable_workflo
     missing = {name: sorted(required - set([needs] if isinstance(needs := jobs[name].get('needs', []), str) else needs))
                for name, required in identity_sync_needs(ROOT).items()}
     assert not {name: needs for name, needs in missing.items() if needs}
+
+
+def test_identity_sync_exports_a_bounded_propagation_barrier(tmp_path):
+    # Exercise the registry CLI/environment transport consumed by the apply job.
+    environment = terraform_environment(tmp_path, {
+        'sync_name': 'GitHub workflow identity sync', 'caller_workflow': 'artifact-registry-iam-sync.yml',
+    })
+    seconds = int(environment['POST_APPLY_WAIT_SECONDS'])
+    assert seconds == 120
+    workflow = yaml.safe_load((ROOT / '.github/workflows/prod-terraform-target-apply.yml').read_text())
+    sync, propagation = workflow['jobs']['sync'], workflow['jobs']['propagation']
+    assert sync['outputs']['wait_seconds'] == '${{ env.POST_APPLY_WAIT_SECONDS }}'
+    assert propagation['needs'] == 'sync'
+    assert propagation['if'] == "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+    assert propagation['steps'][0]['env']['WAIT_SECONDS'] == '${{ needs.sync.outputs.wait_seconds }}'
+    assert propagation['steps'][0]['run'] == 'sleep "$WAIT_SECONDS"'
+    assert 0 < seconds < propagation['timeout-minutes'] * 60
+    assert propagation['permissions'] == {}
+    assert not {'environment', 'concurrency'} & propagation.keys()
+
+
+def test_merge_rollout_holds_the_receipt_signer_incompatible_with_old_main():
+    # 4aa19c71 deployment_revision.verify_receipt trusts these original leaves.
+    old_signers = {'catalog-viewer': 'catalog-viewer-deploy.yml', 'pmtiles-cdn': 'pmtiles-cdn-sync.yml',
+                   'dataset-usage': 'dataset-usage-deploy.yml'}
+    from unittest.mock import Mock
+    api = Mock()
+    api.get.return_value = {'id': 13, 'run_attempt': 1, 'head_sha': 'a' * 40, 'referenced_workflows': [{
+        'path': 'SkyTruth/shared-datasets-1/.github/workflows/ingestion-deploy.yml@refs/heads/main',
+        'sha': 'a' * 40, 'ref': 'refs/heads/main',
+    }]}
+    holds = json.loads((ROOT / ci.INGESTION_ROLLOUT_HOLDS).read_text())
+    for target, old_signer in old_signers.items():
+        signer = revisions.receipt_signer(api, 'SkyTruth/shared-datasets-1', target, 13, 1)
+        if target == 'dataset-usage':
+            assert signer == revisions.INGESTION_SIGNER
+            assert signer != '.github/workflows/' + old_signer
+            assert 'dataset_usage' in ci.rollout_holds(holds)
+            assert holds['dataset_usage']['owner'] == 'jonaraphael'
+            assert holds['dataset_usage']['expires_at'] == '2026-11-19T00:00:00Z'
+        else:
+            assert signer == '.github/workflows/' + old_signer
 
 
 @pytest.mark.parametrize('create_account', [False, True])

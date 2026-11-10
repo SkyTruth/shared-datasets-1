@@ -652,11 +652,18 @@ def test_health_only_failures_never_create_reconciliation_work_but_infrastructur
 
 def test_expiry_warns_at_72_hours_and_alerts_afterwards_without_releasing_holds():
     holds = json.loads((safety.ROOT / safety.INGESTION_ROLLOUT_HOLDS).read_text())
-    expiry = datetime.fromisoformat(next(iter(holds.values()))['expires_at'].replace('Z', '+00:00'))
-    assert len(safety.policy_warnings(expiry - timedelta(hours=75))[0]) == len(holds)
-    warnings, problems = safety.policy_warnings(expiry)
-    assert len(problems) == len(holds) and not warnings
-    assert set(safety.validate_suspensions(holds, now=expiry + timedelta(days=99))) == set(holds)
+    # Holds have independent deadlines; one expired hold must not hide another's warning.
+    for target, hold in holds.items():
+        expiry = datetime.fromisoformat(hold['expires_at'].replace('Z', '+00:00'))
+        message = f"{target}: {safety.INGESTION_ROLLOUT_HOLDS} expires {hold['expires_at']} (owner {hold['owner']})"
+        assert message not in safety.policy_warnings(expiry - timedelta(hours=76))[0]
+        for hours in (75, 72):
+            warnings, problems = safety.policy_warnings(expiry - timedelta(hours=hours))
+            assert message in warnings and message not in problems
+        warnings, problems = safety.policy_warnings(expiry)
+        assert message not in warnings
+        assert message.replace(' expires ', ' expired ') in problems
+        assert set(safety.validate_suspensions(holds, now=expiry + timedelta(days=99))) == set(holds)
 
 
 def test_reviewed_usage_pause_is_bounded_and_matches_pending_activation():

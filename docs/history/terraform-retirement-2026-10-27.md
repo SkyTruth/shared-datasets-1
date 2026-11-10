@@ -39,6 +39,10 @@ and revocation. Merge current main before final validation when necessary.
 `prod-terraform-target-apply.yml`, with the production environment, serialized
 state queue, exact tested-main provenance, saved-plan allowlist, live operation
 permission probes and signed deployment records intact.
+The WDPA and operational retirement chains are now available only through an
+owner (`jonaraphael`) `workflow_dispatch` on `main`, with the successful tested
+CI source triple. Main-push CI runs only the non-retirement scratch-cleanup IAM
+sync. Dispatch does not extend or renew the expired retirement grant.
 
 1. `operational-retirement-bootstrap` creates the dedicated role without granting
    it to anyone.

@@ -131,6 +131,7 @@
     "module.feature_preview_service_account.google_service_account.this",
     "module.feature_preview_loader_service_account.google_service_account.this",
     "google_service_account_iam_member.feature_preview_loader_github_wif",
+    "google_service_account_iam_member.feature_preview_loader_github_wif_workflow",
     "google_service_account_iam_member.feature_preview_service_self_sign_blob"
   ],
   "refresh_dependencies": [
