@@ -293,10 +293,22 @@ def recovery_identity(api):
     return []
 
 
-def previous_health(api, run):
+def prior_runs(api, run):
+    """Completed earlier safety runs on main from the last three days, newest first."""
     query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
     prior = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
-    for producer in sorted((row for row in prior if row["id"] < run["id"] and row.get("status") == "completed" and row.get("path") == WORKFLOW), key=lambda row: row["id"], reverse=True):
+    return sorted((row for row in prior if row["id"] < run["id"] and row.get("status") == "completed" and row.get("path") == WORKFLOW), key=lambda row: row["id"], reverse=True)
+
+
+def isolated_setup_failure(api, run):
+    """Setup that fails right after a trusted successful run waits for the next run before alerting."""
+    previous = next(iter(prior_runs(api, run)), None)
+    return (previous is not None and previous.get("conclusion") == "success"
+            and previous.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, previous))
+
+
+def previous_health(api, run):
+    for producer in prior_runs(api, run):
         artifacts = api.pages(f"{API_ROOT}/actions/runs/{producer['id']}/artifacts?per_page=100", field="artifacts")
         selected = [row for row in artifacts if row["name"] == f"safety-health-{producer['id']}-{producer['run_attempt']}" and not row["expired"]]
         if not selected:
@@ -324,10 +336,14 @@ def report_health(api, run, directory, problems, warnings, now):
         notify(title="Operational safety findings", body="\n".join(findings) + f"\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
                status="error" if problems else "warning", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
         report["notified_at"] = now.isoformat()
-    (directory / "health").mkdir(exist_ok=True)
-    (directory / "health/cache.json").write_bytes(native.canonical(report))
+    retain_health(directory, report)
     for finding in findings:
         print("::warning::" + finding)
+
+
+def retain_health(directory, report):
+    (directory / "health").mkdir(exist_ok=True)
+    (directory / "health/cache.json").write_bytes(native.canonical(report))
 
 
 def heartbeat_series(now):
@@ -367,6 +383,13 @@ def main():
         configuration = incident_problems()
         warnings, problems = [], list(configuration)
         probe_outcome = os.environ.get("SAFETY_PROBE_OUTCOME", "success")
+        if probe_outcome == "skipped" and isolated_setup_failure(api, run):
+            # Release-download outages usually clear before the next scheduled run.
+            # Carry the last report forward so a second consecutive failure is a change.
+            retain_health(args.work_dir, {"scope": HEALTH_SCOPE, **previous_health(api, run)})
+            print("::warning::Operational setup failed before discovery (" + os.environ.get("SAFETY_SETUP_OUTCOMES", "inspect setup steps")
+                  + "); the previous run succeeded, so Slack waits for a second consecutive failure")
+            return
         def dataset_freshness():
             from scripts import catalog_drift_guard as catalog
             return freshness(catalog.get_client(), now=now, scheduler=scheduler)
