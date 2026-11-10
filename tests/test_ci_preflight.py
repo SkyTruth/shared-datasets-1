@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from threading import Barrier, Lock
+from time import sleep
 from unittest import mock
 
 import pytest
@@ -550,6 +551,8 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
     def execute(suite, work):
         nonlocal active, peak
         with lock:
+            if workers == 2 and suite == "browser":
+                assert active == 0 and set(calls) == set(suites) - {"browser"}
             calls.append(suite)
             active += 1
             peak = max(peak, active)
@@ -557,6 +560,9 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
         try:
             if first_pair:
                 barrier.wait(timeout=5)
+            if suite == "sdk-node24":
+                # A queued renderer must wait for the last CPU consumer too.
+                sleep(0.05)
             if suite == "lint":
                 if outcome == "crash":
                     raise subprocess.CalledProcessError(7, ["docker", "start"])

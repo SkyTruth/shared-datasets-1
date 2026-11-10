@@ -800,27 +800,32 @@ def preflight(args: argparse.Namespace, *, slot_wait_s=0, record=None) -> int:
                 record["per_suite_s"][suite] = round(monotonic() - suite_started, 3)
                 print(f"Preflight {suite}: {record['per_suite_s'][suite]:.3f}s", flush=True)
 
-        # Larger VMs start browser beside images and lint. Two-worker hosts
-        # retain the original ordering so lint can fail before costly suites.
+        # SwiftShader's four browser workers need the small VM's CPU budget.
+        # Larger VMs can start browser beside images and lint; small VMs finish
+        # the other suites before rendering, retaining early lint failures.
         priority = {"production-images": 0, "browser": 1} if runtime["suite_workers"] == 3 else {"production-images": 0}
         order = sorted(execution["suites"], key=lambda suite: priority.get(suite, 2))
+        batches = [order] if runtime["suite_workers"] == 3 else [
+            [suite for suite in order if suite != "browser"], [suite for suite in order if suite == "browser"],
+        ]
         executor = ThreadPoolExecutor(max_workers=runtime["suite_workers"])
         futures = []
         started = monotonic()
         try:
-            futures = [executor.submit(execute, suite) for suite in order]
-            for future in as_completed(futures):
-                try:
-                    result, suite_runtime = future.result()
-                except BaseException:
-                    # A queued task may observe cancellation before the driver
-                    # consumes the original failure. Retain that first cause.
-                    if failures:
-                        raise failures[0]
-                    raise
-                results.append(result)
-                runtime["suites"][result["suite"]] = suite_runtime
-                write_json(work / "runtime.json", runtime)
+            for batch in batches:
+                futures = [executor.submit(execute, suite) for suite in batch]
+                for future in as_completed(futures):
+                    try:
+                        result, suite_runtime = future.result()
+                    except BaseException:
+                        # A queued task may observe cancellation before the driver
+                        # consumes the original failure. Retain that first cause.
+                        if failures:
+                            raise failures[0]
+                        raise
+                    results.append(result)
+                    runtime["suites"][result["suite"]] = suite_runtime
+                    write_json(work / "runtime.json", runtime)
         finally:
             cancelled.set()
             for future in futures:
