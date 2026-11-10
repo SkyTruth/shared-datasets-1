@@ -92,6 +92,12 @@ def blocked_changes(
     return blocked
 
 
+def plan_changes(plan: dict) -> bool:
+    """Whether applying the plan mutates any resource; empty plans need no propagation wait."""
+    return any(resource.get("change", {}).get("actions", []) not in IGNORED_ACTIONS
+               for resource in plan.get("resource_changes", []))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan_json", help="Path to `terraform show -json` output for the plan.")
@@ -105,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-image", help="Exact planned container image, required with --job-image-target.")
     parser.add_argument("--expected-config", help="Exact CI-tested config digest, required for WDPA.")
     parser.add_argument("--refusal-prefix", required=True, help="Message prefix printed before blocked resources.")
+    parser.add_argument("--changes-output", type=Path, help="Append changed=true|false (GitHub step output format) after the plan passes.")
     args = parser.parse_args(argv)
 
     allowed_exact = {line.strip() for line in (args.allowed_exact or "").splitlines() if line.strip()}
@@ -150,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
         for item in blocked:
             print(f"- {item}")
         return 1
+    if args.changes_output is not None:
+        with args.changes_output.open("a") as stream:
+            stream.write(f"changed={str(plan_changes(plan)).lower()}\n")
     return 0
 
 

@@ -247,8 +247,12 @@ def test_identity_fold_preserves_original_scopes_and_readiness_guards():
     before = json.loads(subprocess.check_output(['git', 'show', '18f53a71:.github/terraform-targets.json'], cwd=ROOT))['targets']
     original = [before[name] for name in ('GitHub workflow identity sync', 'Artifact Registry writer binding sync')]
     combined = registry()['Artifact Registry writer binding sync']
-    for key in ('resources', 'prerequisites'):
-        assert set(combined[key]) == set().union(*(row[key] for row in original))
+    # The bare recovery account moved from the held PR-plan target, so automatic
+    # dependents of google_service_account.github_job never plan to create it.
+    moved = {'google_service_account.github_job["recovery"]'}
+    assert moved <= set(before['PR plan identity provisioning']['resources'])
+    assert set(combined['resources']) == set().union(*(row['resources'] for row in original)) | moved
+    assert set(combined['prerequisites']) == set().union(*(row['prerequisites'] for row in original))
     from scripts.deployment_permissions import checks
     expected = set(check for row in original for check in checks(row['readiness_target']))
     assert set(checks(combined['readiness_target'])) == expected

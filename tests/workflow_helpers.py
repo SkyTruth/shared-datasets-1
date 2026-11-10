@@ -113,7 +113,9 @@ def terraform_environment(directory: Path, inputs: dict) -> dict[str, str]:
     root = Path(__file__).resolve().parents[1]
     destination = directory / 'github-env'
     destination.write_text('')
-    environment = {**os.environ, 'GITHUB_ENV': str(destination),
+    step_output = directory / 'github-output'
+    step_output.write_text('')
+    environment = {**os.environ, 'GITHUB_ENV': str(destination), 'GITHUB_OUTPUT': str(step_output),
                    'INPUT_TF_VARS': inputs.get('tf_vars', ''), 'DELETE_ONLY': 'false', 'BLOCK_DELETES': 'false'}
     subprocess.run([sys.executable, str(root / 'scripts/terraform_target_contracts.py'),
                     '--sync-name', inputs['sync_name'], '--workflow', inputs['caller_workflow']],

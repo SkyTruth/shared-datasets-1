@@ -32,13 +32,33 @@ def test_identity_sync_exports_a_bounded_propagation_barrier(tmp_path):
     workflow = yaml.safe_load((ROOT / '.github/workflows/prod-terraform-target-apply.yml').read_text())
     sync, propagation = workflow['jobs']['sync'], workflow['jobs']['propagation']
     assert sync['outputs']['wait_seconds'] == '${{ env.POST_APPLY_WAIT_SECONDS }}'
+    # Empty plans skip the barrier: only a plan that changed resources can need IAM propagation.
+    assert sync['outputs']['changed'] == '${{ steps.allowlist.outputs.changed }}'
+    allowlist = next(step for step in sync['steps'] if step.get('id') == 'allowlist')
+    assert '--changes-output "${GITHUB_OUTPUT}"' in allowlist['run']
+    apply_index = next(index for index, step in enumerate(sync['steps']) if step['name'] == 'Terraform apply')
+    assert sync['steps'].index(allowlist) < apply_index
     assert propagation['needs'] == 'sync'
-    assert propagation['if'] == "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+    assert propagation['if'] == ("${{ needs.sync.outputs.applied == 'true' && needs.sync.outputs.changed == 'true' "
+                                 "&& fromJSON(needs.sync.outputs.wait_seconds) > 0 }}")
     assert propagation['steps'][0]['env']['WAIT_SECONDS'] == '${{ needs.sync.outputs.wait_seconds }}'
     assert propagation['steps'][0]['run'] == 'sleep "$WAIT_SECONDS"'
     assert 0 < seconds < propagation['timeout-minutes'] * 60
     assert propagation['permissions'] == {}
     assert not {'environment', 'concurrency'} & propagation.keys()
+
+
+def test_terraform_boundary_refuses_an_unconditional_propagation_wait():
+    import copy
+    workflow = yaml.safe_load((ROOT / '.github/workflows/prod-terraform-target-apply.yml').read_text())
+    assert receipts.terraform_boundary(workflow) == []
+    unconditional = copy.deepcopy(workflow)
+    unconditional['jobs']['propagation']['if'] = (
+        "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}")
+    missing = copy.deepcopy(workflow)
+    del missing['jobs']['sync']['outputs']['changed']
+    for changed in (unconditional, missing):
+        assert receipts.terraform_boundary(changed)
 
 
 def test_merge_rollout_holds_the_receipt_signer_incompatible_with_old_main():

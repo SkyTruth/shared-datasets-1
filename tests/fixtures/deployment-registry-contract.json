@@ -166,7 +166,8 @@
     "PR plan identity IAM bootstrap": [],
     "PR plan identity provisioning": [
       "google_project_service.required",
-      "google_iam_workload_identity_pool.github"
+      "google_iam_workload_identity_pool.github",
+      "google_service_account.github_job"
     ],
     "Preview Terraform IAM bootstrap": [],
     "Preview Terraform IAM sync": [

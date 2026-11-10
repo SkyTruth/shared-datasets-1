@@ -89,11 +89,18 @@ def test_target_contract_reaches_actual_plan_and_allowlist_without_scope_drift(t
     assert [v.removeprefix('-var=') for v in values if v.startswith('-var=')] == environment['TF_VARS'].splitlines()
     plan_path = tmp_path / 'target-apply.tfplan.json'
     own_actions = ['delete'] if item.get('delete_only') else ['create']
-    for address, accepted in [(r, True) for r in item['resources']] + [('google_storage_bucket.unowned', False)]:
-        plan_path.write_text(json.dumps({'resource_changes': [{'address': address, 'change': {'actions': own_actions}}]}))
+    step_output = tmp_path / 'github-output'
+    environment['GITHUB_OUTPUT'] = str(step_output)
+    cases = [(r, own_actions, True, 'changed=true\n') for r in item['resources']]
+    cases += [(r, ['no-op'], True, 'changed=false\n') for r in item['resources'][:1]]
+    cases += [('google_storage_bucket.unowned', own_actions, False, '')]
+    for address, actions, accepted, reported in cases:
+        step_output.write_text('')
+        plan_path.write_text(json.dumps({'resource_changes': [{'address': address, 'change': {'actions': actions}}]}))
         guarded = subprocess.run(['bash', '-c', shared_steps()['Enforce resource-change allowlist']['run']],
                                  env=environment, cwd=REPO_ROOT, text=True, capture_output=True)
         assert (guarded.returncode == 0) is accepted, guarded.stdout + guarded.stderr
+        assert step_output.read_text() == reported
 
 
 @pytest.mark.parametrize('sync,workflow', [('unknown', 'artifact-registry-iam-sync.yml'),

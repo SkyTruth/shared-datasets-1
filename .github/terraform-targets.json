@@ -200,7 +200,8 @@
         "google_project_iam_member.operational_safety_reader", "google_service_account_iam_member.feature_preview_loader_github_wif", "google_service_account_iam_member.feature_preview_loader_github_wif_workflow",
         "google_storage_bucket_iam_member.monitoring_slack_recovery", "google_storage_bucket_iam_member.monitoring_slack_reconciler", "google_storage_bucket_iam_member.github_readonly_object_viewer", "google_storage_bucket_iam_member.github_readonly_object_viewer_scoped",
         "google_service_account.github_job[\"cleanup\"]", "google_project_iam_custom_role.github_job[\"cleanup\"]",
-        "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]"
+        "google_project_iam_member.github_job[\"cleanup\"]", "google_service_account_iam_member.github_job_wif[\"cleanup\"]",
+        "google_service_account.github_job[\"recovery\"]"
       ],
       "block_deletes": true,
       "post_apply_wait_seconds": 120
@@ -213,7 +214,7 @@
       "block_deletes": true,
       "post_apply_wait_seconds": 30
     },
-    "PR plan identity provisioning": {"prerequisites": ["google_project_service.required", "google_iam_workload_identity_pool.github"],
+    "PR plan identity provisioning": {"prerequisites": ["google_project_service.required", "google_iam_workload_identity_pool.github", "google_service_account.github_job"],
       "deployment_hold": "Requires a separately reviewed contract-phase PR after the plain-revert window closes; old main cannot read this target's checkpoints",
       "workflow": "terraform-state-read-iam-sync.yml",
       "readiness_target": "iam-bootstrap",
@@ -221,7 +222,7 @@
         "google_iam_workload_identity_pool.pr_plan", "google_iam_workload_identity_pool_provider.pr_plan", "google_service_account.pr_plan", "google_service_account_iam_member.pr_plan_wif",
         "google_project_iam_custom_role.pr_plan_reader", "google_project_iam_member.pr_plan_reader", "google_project_iam_custom_role.pr_plan_state_reader",
         "google_storage_bucket_iam_member.pr_plan_state_reader", "google_project_service.pr_plan_troubleshooter",
-        "google_service_account.github_job[\"recovery\"]", "google_project_iam_custom_role.github_job[\"recovery\"]",
+        "google_project_iam_custom_role.github_job[\"recovery\"]",
         "google_project_iam_member.github_job[\"recovery\"]", "google_service_account_iam_member.github_job_wif[\"recovery\"]",
         "google_project_iam_member.recovery_reader", "google_storage_bucket_iam_member.recovery_state_reader"
       ],

@@ -239,6 +239,32 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn(address, output)
 
+    def test_changes_output_reports_whether_the_passing_plan_mutates_resources(self):
+        allowed = "google_project_iam_member.allowed"
+        cases = [
+            (plan_with(), "false"),
+            (plan_with((allowed, ["no-op"]), ("data.google_project.current", ["read"])), "false"),
+            (plan_with((allowed, ["update"])), "true"),
+            (plan_with((allowed, ["create"]), ("google_storage_bucket.untouched", ["no-op"])), "true"),
+        ]
+        for plan, expected in cases:
+            with self.subTest(expected=expected, plan=plan), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "github-output"
+                output.write_text("prior=kept\n")
+                exit_code, _ = self.run_main(plan, "--allowed-exact", allowed, "--changes-output", str(output))
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(output.read_text(), f"prior=kept\nchanged={expected}\n")
+                self.assertEqual(terraform_plan_allowlist.plan_changes(plan), expected == "true")
+
+    def test_refused_plan_reports_no_change_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output"
+            exit_code, _ = self.run_main(plan_with(("google_storage_bucket.shared_bucket", ["update"])),
+                                         "--allowed-exact", "google_project_iam_member.allowed",
+                                         "--changes-output", str(output))
+            self.assertEqual(exit_code, 1)
+            self.assertFalse(output.exists())
+
     def test_conflicting_action_policies_fail_before_reading_a_plan(self):
         with self.assertRaises(SystemExit) as failure:
             terraform_plan_allowlist.main(["unused.json", "--allowed-exact", "retired.first",

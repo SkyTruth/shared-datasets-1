@@ -246,11 +246,12 @@ def test_pr_identity_has_new_protected_scope_without_widening_historical_scope()
     assert len(targets['Production Terraform state read IAM bootstrap']['resources']) == 2
     scope = targets['PR plan identity provisioning']['resources']
     declared = {f'{kind}.{name}' for kind, name, _ in resources(load_terraform(ROOT / 'terraform/envs/prod/pr_plan_iam.tf'))}
+    # Recovery authority stays manual; the bare account is created by the automatic writer sync.
     recovery = {'google_project_iam_member.recovery_reader', 'google_storage_bucket_iam_member.recovery_state_reader',
                 'google_service_account_iam_member.github_job_wif["recovery"]',
-                *(f'{kind}.github_job["recovery"]' for kind in (
-                    'google_service_account', 'google_project_iam_custom_role', 'google_project_iam_member'))}
+                *(f'{kind}.github_job["recovery"]' for kind in ('google_project_iam_custom_role', 'google_project_iam_member'))}
     assert set(scope) | set(targets['PR plan identity IAM bootstrap']['resources']) == declared | recovery
+    assert 'google_service_account.github_job["recovery"]' in targets['Artifact Registry writer binding sync']['resources']
     jobs = callers(ROOT)
     assert jobs['terraform-state-read-iam-sync.yml/pr-plan-identity']['needs'] == 'pr-plan-authority'
     assert jobs['terraform-state-read-iam-sync.yml/pr-plan-authority']['with']['block_deletes'] is True

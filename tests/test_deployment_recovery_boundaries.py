@@ -56,12 +56,16 @@ def test_unproven_planning_and_recovery_roles_are_manual_only():
     manual = registry['PR plan identity provisioning']
     protected = {'google_project_iam_member.recovery_reader', 'google_storage_bucket_iam_member.recovery_state_reader',
                  'google_project_iam_custom_role.pr_plan_reader', 'google_project_iam_custom_role.pr_plan_state_reader',
-                 *(f'{kind}.github_job["recovery"]' for kind in (
-                     'google_service_account', 'google_project_iam_custom_role', 'google_project_iam_member')),
+                 *(f'{kind}.github_job["recovery"]' for kind in ('google_project_iam_custom_role', 'google_project_iam_member')),
                  'google_service_account_iam_member.github_job_wif["recovery"]'}
     automatic = {row['workflow'] for row in contracts.registry(section='deployments').values()}
     assert manual['workflow'] not in automatic
     assert protected <= set(manual['resources'])
+    # The bare account carries no authority. Creating it automatically keeps dependents
+    # of google_service_account.github_job from planning it; every recovery grant stays manual.
+    account = 'google_service_account.github_job["recovery"]'
+    assert account in registry['Artifact Registry writer binding sync']['resources']
+    assert account not in manual['resources']
     for name, scope in registry.items():
         if scope['workflow'] in automatic:
             assert not protected & set(scope['resources']), name

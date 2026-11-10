@@ -120,6 +120,7 @@ jobs:
     outputs:
       wait_seconds: ${{ env.POST_APPLY_WAIT_SECONDS }}
       applied: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
+      changed: ${{ steps.allowlist.outputs.changed }}
     steps:
     - name: Validate main ref
       run: |
@@ -191,6 +192,7 @@ jobs:
       if: ${{ steps.replay.outputs.proceed == 'true' }}
       run: terraform -chdir="${TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/target-apply.tfplan" > "${RUNNER_TEMP}/target-apply.tfplan.json"
     - name: Enforce resource-change allowlist
+      id: allowlist
       if: ${{ steps.replay.outputs.proceed == 'true' }}
       run: |
         set -euo pipefail
@@ -199,6 +201,7 @@ jobs:
           "${RUNNER_TEMP}/target-apply.tfplan.json"
           --allowed-exact "${ALLOWED_EXACT}"
           --refusal-prefix "${REFUSAL_PREFIX}"
+          --changes-output "${GITHUB_OUTPUT}"
         )
         if [[ "${BLOCK_DELETES}" == "true" ]]; then
           enforce_args+=(--block-deletes)
@@ -255,7 +258,7 @@ jobs:
   propagation:
     name: Wait for IAM propagation
     needs: sync
-    if: ${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}
+    if: ${{ needs.sync.outputs.applied == 'true' && needs.sync.outputs.changed == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

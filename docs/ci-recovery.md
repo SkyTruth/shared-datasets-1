@@ -54,8 +54,10 @@ separate reviewed PR explicitly closes that window and removes their
 `deployment_hold` reasons, manually run protected `terraform-state-read-iam-sync.yml` from the
 exact successful main-push CI source triple: **PR plan identity IAM bootstrap**
 precedes **PR plan identity provisioning**. That manual scope installs the PR
-planning roles and the recovery identity, metadata/IAM-policy reads (including
-Secret Manager policy refresh), and exact default-state read/workspace-list grant.
+planning roles and the recovery identity's login, metadata/IAM-policy reads
+(including Secret Manager policy refresh), and exact default-state
+read/workspace-list grant. The automatic writer binding sync creates only the
+bare recovery account, which holds no roles until this scope runs.
 Recovery is unavailable until this provisioning succeeds; merge alone does not
 activate it. Unverified custom-role permissions stay out of automatic scopes.
 Only `deployment-recovery.yml` can assume this identity. State may contain the
