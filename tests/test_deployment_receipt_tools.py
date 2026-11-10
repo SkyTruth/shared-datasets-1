@@ -166,13 +166,13 @@ class VerifierInstallationTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(), str(self.root / "deployment-receipts/tools/bin") + "\n")
 
     def test_permanent_exhausted_or_tampered_download_fails_without_install(self):
-        cases = [
-            ((self.http(404),), urllib.error.HTTPError, (1, [])),
-            ((self.http(504),) * 4, urllib.error.HTTPError, (4, [10, 30, 60])),
-            ((None,), RuntimeError, (1, [])),  # checksum mismatch is never retried
-        ]
-        for replies, error, attempts in cases:
-            with self.subTest(replies=replies):
+        cases = {  # String labels: xdist serializes subtest context and cannot copy HTTPError.
+            "not found": ((self.http(404),), urllib.error.HTTPError, (1, [])),
+            "exhausted gateway retries": ((self.http(504),) * 4, urllib.error.HTTPError, (4, [10, 30, 60])),
+            "checksum mismatch is never retried": ((None,), RuntimeError, (1, [])),
+        }
+        for label, (replies, error, attempts) in cases.items():
+            with self.subTest(case=label):
                 digest = "0" * 64 if error is RuntimeError else None
                 with self.assertRaises(error):
                     self.download(*replies, digest=digest)
