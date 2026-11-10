@@ -17,6 +17,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize('active', [False, True])
+def test_planner_cli_consumes_reviewed_activation_before_emitting_selection(tmp_path, monkeypatch, capsys, active):
+    workflow_path = Path('.github/workflows/pr-terraform-plan.yml')
+    workflow = yaml.safe_load((ROOT / workflow_path).read_text())
+    workflow[True]['workflow_call']['inputs']['active']['default'] = active
+    target = tmp_path / workflow_path
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump(workflow))
+    plan = tmp_path / 'plan.json'
+    plan.write_text(json.dumps({'changed_paths': ['terraform/envs/prod/pr_plan_iam.tf'], 'deployments': []}))
+    output = tmp_path / 'github-output'
+    monkeypatch.setattr(pr, 'ROOT', tmp_path)
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setattr(pr.sys, 'argv', ['planner', 'select', '--plan', str(plan)])
+    pr.main()
+    assert output.read_text() == f'pr_terraform={str(active).lower()}\n'
+    assert ('not yet activated' in capsys.readouterr().out) is (not active)
+
+
+@pytest.mark.parametrize('active', [False, True])
 @pytest.mark.parametrize('missing', [None, 'PROVIDER', 'PLANNER', 'PRODUCTION_TERRAFORM_SERVICE_ACCOUNT'])
 def test_reviewed_activation_never_silently_disappears(active, missing):
     from workflow_helpers import condition_result
@@ -29,12 +48,12 @@ def test_reviewed_activation_never_silently_disappears(active, missing):
     # Inject only the status predicate required by the shared expression evaluator.
     enabled = {name: condition_result({'if': job['if'].replace('${{', '${{ !cancelled() && ')}, values)
                for name, job in leaf.items()}
-    assert enabled == {'activation': not active, 'plan': active}
+    assert enabled == {'plan': active}
     if not active:
-        notice = subprocess.run(['bash', '-e', '-c', leaf['activation']['steps'][0]['run']],
-                                capture_output=True, text=True, check=True, env={})
-        assert '::notice::' in notice.stdout and 'not yet activated' in notice.stdout
-        result = 'success'
+        # The planner emits the inactive notice without a dedicated runner.
+        output = ROOT / '.github/workflows/ci.yml'
+        assert 'scripts/pr_terraform_plan.py select' in output.read_text()
+        result = 'skipped'
     else:
         guard = next(s for s in leaf['plan']['steps'] if s.get('name') == 'Require activated planner configuration')
         environment = dict.fromkeys(('PROVIDER', 'PLANNER', 'PRODUCTION_TERRAFORM_SERVICE_ACCOUNT'), 'configured')
@@ -48,7 +67,7 @@ def test_reviewed_activation_never_silently_disappears(active, missing):
     ci = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
     assert 'active' not in ci['pr-terraform-plan'].get('with', {})
     gate = next(step for step in ci['ci-ready']['steps'] if step.get('name') == 'Require selected same-repo Terraform plan')
-    done = subprocess.run(['bash', '-c', gate['run']], env={'REQUIRED': 'true', 'RESULT': result})
+    done = subprocess.run(['bash', '-c', gate['run']], env={'REQUIRED': str(active).lower(), 'RESULT': result})
     assert (done.returncode == 0) is (not active or missing is None)
     for result in ['failure', 'cancelled', 'skipped', 'success']:
         done = subprocess.run(['bash', '-c', gate['run']], env={'REQUIRED': 'true', 'RESULT': result})

@@ -205,7 +205,7 @@ def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_sti
         evidence['suite_artifacts'] = {'production-images-' + target: handoff['artifacts'][2]['name']}
         handoff['payloads'][0] = zipped({'evidence.json': evidence})
         handoff['artifacts'][0].update(digest='sha256:' + hashlib.sha256(handoff['payloads'][0]).hexdigest())
-        handoff['jobs'][-1]['name'] = f'production-images ({target})'
+        handoff['jobs'][-1]['name'] = 'production-images (wdpa)' if target == 'wdpa-monthly' else 'production-images (short)'
         refresh(handoff)
     image = handoff["manifest"]["images"][target]
     artifact_id = handoff["image_artifact_ids"][target]

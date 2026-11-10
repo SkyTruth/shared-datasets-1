@@ -1,8 +1,9 @@
 name: CI / Validate and deliver
+run-name: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Draft CI' || 'CI' }} / ${{ github.event.pull_request.title || github.sha }}"
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -23,6 +24,7 @@ env:
   PYTHON_VERSION: "3.12.12"
   NODE_VERSION: "22.12.0"
   TERRAFORM_VERSION: "1.8.5"
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
   geospatial-changes:
@@ -36,8 +38,17 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
       production_images: ${{ steps.plan.outputs.production-images }}
+      production_image_groups: ${{ steps.plan.outputs.production-image-groups }}
+      deploy_image_targets: ${{ steps.plan.outputs.deploy-image-targets }}
       production_image_targets: ${{ steps.plan.outputs.production-image-targets }}
     steps:
+      # Two failed required checks block this SHA without allocating suite runners.
+      - &reject-draft
+        name: Require a ready PR
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: |
+          echo "::error::Full CI requires a ready PR. Mark ready for review to start a fresh run."
+          exit 1
       - &validation-checkout
         uses: actions/checkout@v4
         with:
@@ -88,8 +99,8 @@ jobs:
         id: retained-results
         if: always()
         with:
-          name: ci-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}
+          name: ci-result-${{ github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ github.job }}
           if-no-files-found: error
           retention-days: 14
       - &compact-gate-result
@@ -97,8 +108,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: ${{ always() && steps.retained-results.outcome == 'success' }}
         with:
-          name: ci-gate-result-${{ env.ARTIFACT_SUITE || github.job }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/${{ env.ARTIFACT_SUITE || github.job }}/result.json
+          name: ci-gate-result-${{ github.job }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/${{ github.job }}/result.json
           if-no-files-found: error
           retention-days: 14
 
@@ -118,29 +129,6 @@ jobs:
       - *compact-gate-result
 
   tests-control-plane: *python-tests
-
-  owner-acceptance:
-    needs: geospatial-changes
-    permissions:
-      contents: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - *validation-checkout
-      - *validation-python
-      - *validation-plan
-      - name: Owner approval of this exact head required before merge
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'jonaraphael' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
-          if [[ "$selected" == true ]]; then
-            python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
-          fi
 
   geospatial-integration:
     needs: geospatial-changes
@@ -185,19 +173,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions: *validation-permissions
-    name: production-images (${{ matrix.target }})
+    name: production-images (${{ matrix.group }})
     strategy:
       fail-fast: true
       matrix:
-        target: ${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}
+        group: ${{ fromJSON(needs.geospatial-changes.outputs.production_image_groups) }}
     steps:
       - *validation-checkout
       - *validation-plan
       - *validation-python
       - uses: docker/setup-buildx-action@v3
-        if: matrix.target != 'catalog-viewer' && matrix.target != 'monitoring-slack'
       - name: Expose the ephemeral Actions cache runtime
-        if: matrix.target != 'catalog-viewer' && matrix.target != 'monitoring-slack'
         uses: actions/github-script@v7
         with:
           script: |
@@ -210,60 +196,96 @@ jobs:
       - name: Test the actual production image recipes
         env:
           SHARED_DATASETS_GITHUB_IMAGE_CACHE: "true"
-        run: uv run --no-project --python 3.12.12 python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite production-images --image-target "${{ matrix.target }}" --output "$RUNNER_TEMP/ci-results/production-images"
-      - name: Retain tested image
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        id: retained-image
+          IMAGE_GROUP: ${{ matrix.group }}
+        run: uv run --no-project --python 3.12.12 python scripts/ci_preflight.py run-image-group --plan "$RUNNER_TEMP/ci-plans" --group "$IMAGE_GROUP" --output "$RUNNER_TEMP/ci-results/production-images"
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'dataset-usage') }}
         with:
-          name: ci-image-${{ matrix.target }}-attempt${{ github.run_attempt }}
-          compression-level: 1
-          path: ${{ runner.temp }}/ci-results/production-images/images/${{ matrix.target }}.docker.tar
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        id: retained-results
-        if: always()
+          target: dataset-usage
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'dataset-usage') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'monitoring-slack') }}
         with:
-          name: ci-result-production-images-${{ matrix.target }}-attempt${{ github.run_attempt }}
-          compression-level: 0
-          path: |
-            ${{ runner.temp }}/ci-results/production-images
-            !${{ runner.temp }}/ci-results/production-images/**/*.docker.tar
-          if-no-files-found: error
-          retention-days: 14
-      - name: Upload compact gate result
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.retained-results.outcome == 'success' && (steps.retained-image.outcome == 'success' || (github.event_name == 'pull_request' && steps.retained-image.outcome == 'skipped')) }}
+          target: monitoring-slack
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'monitoring-slack') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'catalog-viewer') }}
         with:
-          name: ci-gate-result-production-images-${{ matrix.target }}-attempt${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-results/production-images/result.json
-          if-no-files-found: error
-          retention-days: 14
+          target: catalog-viewer
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'catalog-viewer') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'eamlis-monthly') }}
+        with:
+          target: eamlis-monthly
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'eamlis-monthly') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'sea-ice-daily') }}
+        with:
+          target: sea-ice-daily
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'sea-ice-daily') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'short' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'mpatlas-monthly') }}
+        with:
+          target: mpatlas-monthly
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'mpatlas-monthly') }}
+      - uses: ./.github/actions/ci-image-result
+        if: ${{ always() && matrix.group == 'wdpa' && contains(fromJSON(needs.geospatial-changes.outputs.production_image_targets), 'wdpa-monthly') }}
+        with:
+          target: wdpa-monthly
+          retain-image: ${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), 'wdpa-monthly') }}
 
   sdk-validation:
-    name: sdk-validation (Node ${{ matrix.node }})
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.sdk == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
-    env:
-      ARTIFACT_SUITE: sdk-node${{ matrix.node }}
     steps:
       - *validation-checkout
+      - *validation-plan
       - uses: ./.github/actions/ci-tools
         with:
-          node: ${{ matrix.node }}
+          node: '22'
           binaries: gitleaks
-      - *validation-plan
-      - name: Run shared SDK version, runtime and packed consumer validation
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
-      - *retained-validation-results
-      - *compact-gate-result
+      - name: Validate SDK on Node 22
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite sdk-node22 --output "$RUNNER_TEMP/ci-results/sdk-node22"
+      - uses: actions/upload-artifact@v4
+        id: retained-results-22
+        if: always()
+        with:
+          name: ci-result-sdk-node22-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node22
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact Node 22 gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results-22.outcome == 'success' }}
+        with:
+          name: ci-gate-result-sdk-node22-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node22/result.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: ./.github/actions/ci-tools
+        with:
+          node: '24'
+          binaries: gitleaks
+      - name: Validate SDK on Node 24
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite sdk-node24 --output "$RUNNER_TEMP/ci-results/sdk-node24"
+      - uses: actions/upload-artifact@v4
+        id: retained-results-24
+        if: always()
+        with:
+          name: ci-result-sdk-node24-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node24
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload compact Node 24 gate result
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.retained-results-24.outcome == 'success' }}
+        with:
+          name: ci-gate-result-sdk-node24-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node24/result.json
+          if-no-files-found: error
+          retention-days: 14
 
   browser:
     needs: geospatial-changes
@@ -294,13 +316,14 @@ jobs:
     name: ci-ready
     permissions: *validation-permissions
     if: always()
-    needs: [geospatial-changes, lint, tests, tests-control-plane, owner-acceptance, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
+    needs: [geospatial-changes, lint, tests, tests-control-plane, geospatial-integration, production-images, sdk-validation, browser, pr-terraform-plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
       delivery: ${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}
     steps:
+      - *reject-draft
       - *validation-checkout
       - *validation-python
       - *validation-plan
@@ -308,10 +331,17 @@ jobs:
         with:
           pattern: ci-gate-result-*
           path: ${{ runner.temp }}/ci-results
-      - name: Require owner acceptance check
+      - name: Owner approval of this exact head required before merge
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'jonaraphael' }}
         env:
-          RESULT: ${{ needs.owner-acceptance.result }}
-        run: '[[ "$RESULT" == "success" ]]'
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
+          if [[ "$selected" == true ]]; then
+            python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
+          fi
       - name: Require selected same-repo Terraform plan
         env:
           REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.geospatial-changes.outputs.pr_terraform == 'true' }}

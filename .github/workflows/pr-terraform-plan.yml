@@ -9,12 +9,6 @@ permissions:
   contents: read
   id-token: write
 jobs:
-  activation:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && !inputs.active }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - run: echo '::notice::Read-only PR Terraform planning is not yet activated. Provision the protected identity, set repository variables, then enable the reviewed active default. Static IaC checks still run.'
   plan:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && inputs.active }}
     runs-on: ubuntu-24.04

@@ -322,7 +322,7 @@ def test_pr_planner_cli_in_declared_locked_hosted_environment(tmp_path):
     result = subprocess.run([sys.executable, '-I', str(ROOT / 'scripts/pr_terraform_plan.py'), 'select', '--plan', str(path)],
                             cwd=ROOT, env={**os.environ, 'GITHUB_OUTPUT': str(output)}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert output.read_text() == 'pr_terraform=true\n'
+    assert output.read_text() == 'pr_terraform=false\n'  # Reviewed planner default is inactive.
     path.write_text(json.dumps({'changed_paths': ['terraform/envs/prod/pr_plan_iam.tf'], 'deployments': []}))
     binary = tmp_path / 'bin'
     binary.mkdir()

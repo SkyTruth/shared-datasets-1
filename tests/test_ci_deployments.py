@@ -362,8 +362,8 @@ def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_comman
         assert args.count("--target") == 1
         assert args[-2:] == ["--output", str(ROOT / target)]
     suite = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["production-images"]
-    assert any("scripts/ci_preflight.py run-suite" in step.get("run", "") for step in suite["steps"])
-    upload = next(step for step in suite["steps"] if step.get("id") == "retained-results")
+    assert any("scripts/ci_preflight.py run-image-group" in step.get("run", "") for step in suite["steps"])
+    upload = next(step for step in load_workflow(ROOT / ".github/actions/ci-image-result/action.yml")["runs"]["steps"] if step.get("id") == "retained-results")
     assert upload["with"]["compression-level"] == 0
     assert upload["with"]["if-no-files-found"] == "error"
 

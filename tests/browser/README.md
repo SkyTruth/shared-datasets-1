@@ -48,7 +48,7 @@ MapLibre and PMTiles versions match `web/catalog/map-preview.js`; update both
 pins and the exact transport allowlist together when upgrading the product.
 Missing Chromium, software WebGL support, unexpected network calls, test skips,
 and browser errors fail the check. There are no test retries or visual golden
-files. Native geospatial tools are not needed for ordinary test runs.
+files. Four workers run order-independent scenarios with `fullyParallel: true` against one fixture server. Each scenario owns its browser context, routes and comparison identity; fixture inputs are read-only, screenshot paths are distinct, and Playwright attachments use per-test outputs. Native geospatial tools are not needed for ordinary test runs.
 Optional Playwright Git metadata capture is disabled because its CI diff
 collector performs a depth-one fetch. The shared validation plan records the
 exact tested revision, and browser execution must preserve full checkout history.

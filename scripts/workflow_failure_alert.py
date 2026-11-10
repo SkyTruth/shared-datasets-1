@@ -26,6 +26,7 @@ FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "s
 # Historical producer names remain routable after their workflow jobs are retired.
 PUBLICATION_JOBS = tuple(name for row in registry(section='workflows').values() for name in row.get('publication_jobs', []))
 VALIDATION_JOBS = {"lint", "tests", "tests-control-plane", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
+                   "sdk-validation", "production-images (short)", "production-images (wdpa)",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
 WORKFLOW_EVENTS = {filename: set(row['events']) for filename, row in registry(section='workflows').items() if 'events' in row}
 WORKFLOW_PATHS = {name: filename for filename in WORKFLOW_EVENTS for name in WORKFLOW_NAMES[filename]}

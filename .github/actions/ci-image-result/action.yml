@@ -1,0 +1,41 @@
+name: Retain one tested image result
+description: Keep per-target receipts and only retain TARs for selected push deliveries.
+inputs:
+  target:
+    description: Validated production image target
+    required: true
+  retain-image:
+    description: Whether this push deploys the target
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Retain tested image
+      if: inputs.retain-image == 'true'
+      uses: actions/upload-artifact@v4
+      id: retained-image
+      with:
+        name: ci-image-${{ inputs.target }}-attempt${{ github.run_attempt }}
+        compression-level: 1
+        path: ${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}/images/${{ inputs.target }}.docker.tar
+        if-no-files-found: error
+        retention-days: 2
+    - uses: actions/upload-artifact@v4
+      id: retained-results
+      if: always()
+      with:
+        name: ci-result-production-images-${{ inputs.target }}-attempt${{ github.run_attempt }}
+        compression-level: 0
+        path: |
+          ${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}
+          !${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}/**/*.docker.tar
+        if-no-files-found: error
+        retention-days: 14
+    - name: Upload compact gate result
+      uses: actions/upload-artifact@v4
+      if: ${{ always() && steps.retained-results.outcome == 'success' && (inputs.retain-image != 'true' || steps.retained-image.outcome == 'success') }}
+      with:
+        name: ci-gate-result-production-images-${{ inputs.target }}-attempt${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}/result.json
+        if-no-files-found: error
+        retention-days: 14

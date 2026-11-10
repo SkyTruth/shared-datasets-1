@@ -268,7 +268,7 @@ def test_failed_or_missing_sdk_matrix_job_cannot_pass_gate(outcome):
     validation = plan()
     jobs = jobs_for(validation)
     jobs["sdk-validation"] = {"result": outcome}
-    with pytest.raises(ValueError, match="SDK matrix"):
+    with pytest.raises(ValueError, match="SDK validation"):
         verify_results(validation, results_for(validation), jobs)
 
 
@@ -465,6 +465,8 @@ def test_committed_ingestion_holds_leave_ci_and_images_required(tmp_path):
     plan, emitted = emit_plan(source, base, tmp_path)
     assert plan["deployments"] == ["catalog_viewer"]
     assert {emitted[target] for target in INGESTION_DEPLOYMENTS} == {"false"}
+    assert not set(json.loads(emitted["deploy-image-targets"])) & {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"}
+    assert json.loads(emitted["production-image-groups"]) == ["short", "wdpa"]
     assert {"lint", "tests", "production-images", "geospatial-integration"} <= set(plan["suites"])
     assert {"mpatlas-monthly", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily"} <= set(json.loads(emitted["production-image-targets"]))
 
@@ -712,13 +714,13 @@ def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
     trigger = workflow_triggers(workflow)["pull_request"]
     assert set(trigger) == {"types"}
-    assert "ready_for_review" not in trigger["types"]
+    assert "ready_for_review" in trigger["types"]
     ready = workflow["jobs"]["ci-ready"]
     assert workflow["jobs"]["geospatial-changes"]["name"] == "geospatial-changes"
     assert ready["name"] == "ci-ready"
     assert ready["if"] == "always()"
-    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "tests-control-plane", "owner-acceptance", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
-    assert workflow["jobs"]["sdk-validation"]["strategy"]["matrix"]["node"] == ["22", "24"]
+    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "sdk-validation", "browser", "pr-terraform-plan"}
+    assert [step["with"]["node"] for step in workflow["jobs"]["sdk-validation"]["steps"] if step.get("uses") == "./.github/actions/ci-tools"] == ["22", "24"]
     assert not (ROOT / ".github/workflows/sdk-validation.yml").exists()
     assert not (ROOT / ".github/workflows/catalog-browser-smoke.yml").exists()
 

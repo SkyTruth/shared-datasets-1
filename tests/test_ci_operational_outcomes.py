@@ -35,7 +35,7 @@ def test_supersession_cancels_the_same_pr_graph_without_cancelling_delivery_sour
     for name in VALIDATION:
         assert 'concurrency' not in workflow['jobs'][name]
     assert workflow['jobs']['ci-ready']['if'] == 'always()'
-    assert workflow['jobs']['sdk-validation']['strategy']['matrix']['node'] == ['22', '24']
+    assert [step['with']['node'] for step in workflow['jobs']['sdk-validation']['steps'] if step.get('uses') == './.github/actions/ci-tools'] == ['22', '24']
     for name, job in workflow['jobs'].items():
         if name not in VALIDATION:
             assert not job.get('concurrency', {}).get('cancel-in-progress', False)

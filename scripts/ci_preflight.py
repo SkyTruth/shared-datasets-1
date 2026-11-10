@@ -26,13 +26,13 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.ci_source_proof import image_group, prove_attempts, select_plan
 from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
 from scripts.terraform_target_contracts import production_image_limits
 from scripts.tested_image_bundle import ImageError, validate_manifest
 from scripts.ci_contract import (
-    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs,
+    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs, deploy_image_targets,
     INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
@@ -403,7 +403,7 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     return versions
 
 
-def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None) -> dict:
+def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None, cancelled=None) -> dict:
     if suite not in plan["suites"]:
         raise ValueError(f"suite {suite} was not selected")
     output.mkdir(parents=True, exist_ok=True)
@@ -439,7 +439,8 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
         if suite == "production-images":
             result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
             result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
-        cancelled = Event()
+        owns_cancellation = cancelled is None
+        cancelled = cancelled if cancelled is not None else Event()
         def execute(item):
             if cancelled.is_set():
                 return None
@@ -479,7 +480,8 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
                         print((output / report["log"]).read_text()[-12000:], file=sys.stderr)
                         raise ValueError(f"{suite}: command {len(result['commands'])} failed ({report['exit_code']})")
             finally:
-                cancelled.set()
+                if owns_cancellation:
+                    cancelled.set()
         if suite == "geospatial-integration" or suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
         if suite == "production-images":
@@ -516,6 +518,27 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
     finally:
         write_json(output / "result.json", result)
     return result
+
+
+def run_image_group(root: Path, plan: dict, group: str, output: Path) -> bool:
+    """Share a runner while retaining independent target/attempt receipts."""
+    targets = [target for target in planned_images(plan) if image_group(target) == group]
+    if not targets:
+        raise ValueError("image group was not selected by the validation plan")
+    failed = Event()
+
+    def execute(target):
+        if failed.is_set():
+            return False
+        result = run_suite(root, plan, "production-images", output / target, image_target=target, cancelled=failed)
+        if result["status"] != "success":
+            failed.set()
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(execute, targets))
+    return all(outcomes)
 
 
 def isolated_merge(source: Path, base: str, head: str, destination: Path) -> tuple[Path, str, str]:
@@ -666,6 +689,10 @@ def main() -> int:
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument("--image-target")
+    group_runner = commands.add_parser("run-image-group")
+    group_runner.add_argument("--plan", type=Path, required=True)
+    group_runner.add_argument("--group", choices=("short", "wdpa"), required=True)
+    group_runner.add_argument("--output", type=Path, required=True)
     verifier = commands.add_parser("verify")
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
@@ -683,6 +710,8 @@ def main() -> int:
             if args.github_output:
                 with args.github_output.open("a") as output:
                     output.write("production-image-targets=" + json.dumps(planned_images(plan)) + "\n")
+                    output.write("production-image-groups=" + json.dumps(sorted({image_group(target) for target in planned_images(plan)})) + "\n")
+                    output.write("deploy-image-targets=" + json.dumps(deploy_image_targets(plan)) + "\n")
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
                     for target in DEPLOYMENTS:
@@ -693,6 +722,8 @@ def main() -> int:
         if args.command == "run-suite":
             plan = load_plan(args.plan)
             return 0 if run_suite(root, plan, args.suite, args.output, image_target=args.image_target)["status"] == "success" else 1
+        if args.command == "run-image-group":
+            return 0 if run_image_group(root, load_plan(args.plan), args.group, args.output) else 1
         if args.command == "verify":
             run_id = os.environ.get("GITHUB_RUN_ID")
             current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None

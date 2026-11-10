@@ -26,13 +26,19 @@ def expand(value, runner, suite, attempt):
     return (value.replace("${{ runner.temp }}", str(runner))
             .replace("${{ matrix.node }}", suite.removeprefix("sdk-node"))
             .replace("${{ matrix.target }}", suite.removeprefix("production-images-"))
+            .replace("${{ inputs.target }}", suite.removeprefix("production-images-"))
             .replace("${{ github.run_attempt }}", str(attempt))
-            .replace("${{ env.ARTIFACT_SUITE || github.job }}", suite))
+            .replace("${{ github.job }}", suite))
 
 
 def producer_steps(workflow, suite):
     job = "sdk-validation" if suite.startswith("sdk-node") else "production-images" if suite.startswith("production-images-") else suite
-    return workflow["jobs"][job]["steps"]
+    if job == "production-images":
+        return load_workflow(WORKFLOW.parent.parent / "actions/ci-image-result/action.yml")["runs"]["steps"]
+    steps = workflow["jobs"][job]["steps"]
+    if job == "sdk-validation":
+        return [step for step in steps if suite in step.get("with", {}).get("name", "")]
+    return steps
 
 
 def package_upload(step, runner, suite, attempt, directory):
@@ -80,6 +86,8 @@ def transport(tmp_path, source_plan):
     for key in suites:
         suite = "production-images" if key.startswith("production-images-") else key
         output = runner / key / "ci-results" / suite
+        if suite == "production-images":
+            output /= key.removeprefix("production-images-")
         output.mkdir(parents=True)
         result = {
             **{key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")},
@@ -160,6 +168,7 @@ def invoke_verifier(transport, tmp_path, monkeypatch, *, defect=None):
                             "conclusion": defect.removeprefix("producer-") if suite == "tests" and defect in {
                                 "producer-failure", "producer-cancelled", "producer-skipped",
                             } else "success"} for index, suite in enumerate([s for s in SUITES if s != "production-images"] + ["production-images-" + target for target in BUILD_TARGETS]))
+        source_jobs = list({job["name"]: job for job in source_jobs}.values())
         return {"total_count": len(source_jobs), "jobs": source_jobs}
     monkeypatch.setattr(proof, "api", api)
     monkeypatch.chdir(transport["source"])
@@ -212,11 +221,11 @@ def test_gate_receipt_follows_successful_retained_upload_and_has_no_bulk_path(su
     steps = producer_steps(load_workflow(WORKFLOW), suite)
     retained = next(step for step in steps if step.get("with", {}).get("name", "").startswith("ci-result-"))
     receipt = next(step for step in steps if step.get("with", {}).get("name", "").startswith("ci-gate-result-"))
-    assert retained["id"] == "retained-results"
+    assert retained["id"].startswith("retained-results")
     assert steps.index(retained) < steps.index(receipt)
-    condition = "always() && steps.retained-results.outcome == 'success'"
+    condition = f"always() && steps.{retained['id']}.outcome == 'success'"
     if suite == "production-images":
-        condition += " && (steps.retained-image.outcome == 'success' || (github.event_name == 'pull_request' && steps.retained-image.outcome == 'skipped'))"
+        condition += " && (inputs.retain-image != 'true' || steps.retained-image.outcome == 'success')"
     assert " ".join(receipt["if"].split()) == "${{ " + condition + " }}"
     assert receipt["with"]["path"] == retained["with"]["path"].splitlines()[0] + "/result.json"
     assert receipt["with"]["if-no-files-found"] == "error"

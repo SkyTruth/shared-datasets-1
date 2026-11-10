@@ -153,9 +153,28 @@ def test_production_cache_keeps_deployment_artifacts():
     producer = next(i for i, step in enumerate(steps) if step.get('name') == 'Test the actual production image recipes')
     assert buildx < runtime < producer
     assert steps[producer]['env']['SHARED_DATASETS_GITHUB_IMAGE_CACHE'] == 'true'
+    steps = load_workflow(ROOT / '.github/actions/ci-image-result/action.yml')['runs']['steps']
     retained = next(step['with'] for step in steps if step.get('id') == 'retained-results')
     assert retained['retention-days'] == 14
-    assert '!${{ runner.temp }}/ci-results/production-images/**/*.docker.tar' in retained['path'].splitlines()
+    assert '!${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}/**/*.docker.tar' in retained['path'].splitlines()
+
+
+@pytest.mark.parametrize('deployments', [[], ['sea_ice'], ['cron_alert_policy'], ['catalog_viewer', 'dataset_usage']])
+def test_tar_retention_uses_only_selected_push_deliveries(deployments):
+    from scripts.ci_contract import DEPLOYMENT_IMAGES, deploy_image_targets, resolve_selection
+    workflow = load_workflow(ROOT / '.github/workflows/ci.yml')
+    plan = {**resolve_selection(None), 'deployments': deployments}
+    assert set(deploy_image_targets(plan)) == {DEPLOYMENT_IMAGES[name] for name in deployments}
+    steps = workflow['jobs']['production-images']['steps']
+    uploads = [step for step in steps if step.get('uses') == './.github/actions/ci-image-result']
+    assert {step['with']['target'] for step in uploads} == set(IMAGE_TARGETS)
+    for step in uploads:
+        target = step['with']['target']
+        assert step['with']['retain-image'] == "${{ github.event_name == 'push' && contains(fromJSON(needs.geospatial-changes.outputs.deploy_image_targets), '" + target + "') }}"
+    artifact = next(step for step in load_workflow(ROOT / '.github/actions/ci-image-result/action.yml')['runs']['steps']
+                    if step.get('id') == 'retained-image')
+    assert artifact['with']['retention-days'] == 2
+    assert workflow['env']['DOCKER_BUILD_RECORD_UPLOAD'] == 'false'
 
 
 @pytest.mark.parametrize('target', sorted(IMAGE_TARGETS))
@@ -164,10 +183,10 @@ def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, t
     from test_ci_gate_artifact_transport import package_upload
     job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
     assert job['strategy']['fail-fast'] is True
-    assert job['strategy']['matrix']['target'] == '${{ fromJSON(needs.geospatial-changes.outputs.production_image_targets) }}'
-    steps = job['steps']
+    assert job['strategy']['matrix']['group'] == '${{ fromJSON(needs.geospatial-changes.outputs.production_image_groups) }}'
+    steps = load_workflow(ROOT / '.github/actions/ci-image-result/action.yml')['runs']['steps']
     retained = next(step for step in steps if step.get('id') == 'retained-image')
-    path = tmp_path / 'ci-results/production-images/images' / (target + '.docker.tar')
+    path = tmp_path / 'ci-results/production-images' / target / 'images' / (target + '.docker.tar')
     path.parent.mkdir(parents=True)
     path.write_bytes(target.encode())
     name, archive = package_upload(retained, tmp_path, 'production-images-' + target, 1, tmp_path)
@@ -178,7 +197,7 @@ def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, t
         assert bundle.read(path.name) == target.encode()
     compact = next(step for step in steps if step.get('with', {}).get('name', '').startswith('ci-gate-result-'))
     for failed in ('retained-image', 'retained-results'):
-        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True').replace('github.event_name', repr('push'))
+        expression = compact['if'].removeprefix('${{').removesuffix('}}').replace('always()', 'True').replace('inputs.retain-image', repr('true'))
         for upload in ('retained-image', 'retained-results'):
             expression = expression.replace('steps.' + upload + '.outcome', repr(outcome if upload == failed else 'success'))
         assert eval(expression.replace('&&', ' and ').replace('||', ' or '), {'__builtins__': {}}) is (outcome == 'success')

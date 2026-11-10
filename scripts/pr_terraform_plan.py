@@ -228,8 +228,14 @@ def main():
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text())
     if args.mode == "select":
+        import yaml
+        workflow = yaml.safe_load((ROOT / ".github/workflows/pr-terraform-plan.yml").read_text())
+        active = workflow[True]["workflow_call"]["inputs"]["active"]["default"]
+        require(type(active) is bool, "PR planner activation must be an explicit boolean")
+        if not active:
+            print("::notice::Read-only PR Terraform planning is not yet activated. Provision the protected identity, set repository variables, then enable the reviewed active default. Static IaC checks still run.")
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-            output.write("pr_terraform=" + str(selected(plan)).lower() + "\n")
+            output.write("pr_terraform=" + str(active and selected(plan)).lower() + "\n")
         return
     try:
         run(plan)

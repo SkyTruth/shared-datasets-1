@@ -7,11 +7,15 @@ import os
 import urllib.request
 
 
+def image_group(target: str) -> str:
+    return "wdpa" if target == "wdpa-monthly" else "short"
+
+
 def job_name(suite: str) -> str:
     if suite.startswith("production-images-"):
-        return f"production-images ({suite.removeprefix('production-images-')})"
+        return f"production-images ({image_group(suite.removeprefix('production-images-'))})"
     if suite in {"sdk-node22", "sdk-node24"}:
-        return f"sdk-validation (Node {suite.removeprefix('sdk-node')})"
+        return "sdk-validation"
     return suite
 
 

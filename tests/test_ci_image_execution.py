@@ -94,17 +94,21 @@ def test_historical_fresh_images_remain_loadable_with_unrelated_reused_suites(ha
         assert download(handoff)["config_digest"] == handoff["manifest"]["images"]["sea-ice-daily"]["config_digest"]
 
 
-@pytest.mark.parametrize("matrix", [False, True])
+@pytest.mark.parametrize("matrix", [False, True, "group"])
 @pytest.mark.parametrize("paths", [["ingestion/eamlis_monthly/run.py"], ["pyproject.toml"]])
 @pytest.mark.parametrize("defect", [None, "command", "missing-manifest", "wrong-set", "stale", "missing-tar"])
 def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tmp_path, monkeypatch, paths, defect, matrix):
     source, git = fixture_repo(tmp_path)
-    targets = resolve_selection(paths)["production_image_targets"][:1] if matrix else resolve_selection(paths)["production_image_targets"]
+    targets = resolve_selection(paths)["production_image_targets"]
+    if matrix == "group":
+        targets = [target for target in targets if target != "wdpa-monthly"]
+    elif matrix:
+        targets = targets[:1]
     producer = source / "scripts/production_image_contracts.py"
     # The external Docker producer is a small executable fixture. The real
     # command builder, child processes, JSON files and suite CLI remain in use.
     producer.write_text(f"COUNT={len(targets)!r}\nBROKEN={targets[0]!r}\nDEFECT={defect!r}\n"
-                        f"IMAGES={production_images('a' * 40)['images']!r}\n" + PRODUCER)
+                        f"IMAGES={production_images('a' * 40)['images']!r}\n" + (PRODUCER.replace("args.output.parent / 'metrics.json'", "args.output.parent.parent / 'metrics.json'") if matrix == "group" else PRODUCER))
     git("add", ".")
     git("commit", "-m", "install external image producer fixture")
     base = git("rev-parse", "HEAD")
@@ -126,9 +130,22 @@ def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tm
                         "{}" if argv[:2] == ["docker", "version"] else check_output(argv, **kwargs))
     monkeypatch.setattr(preflight, "probe_tools", lambda suite, environment: expected_tools(suite))
     monkeypatch.chdir(source)
-    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "run-suite", "--plan", str(plan_path),
-                                      "--suite", "production-images", "--output", str(output), *(["--image-target", targets[0]] if matrix else [])])
+    command = (["run-image-group", "--group", "short"] if matrix == "group" else
+               ["run-suite", "--suite", "production-images", *(["--image-target", targets[0]] if matrix else [])])
+    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", *command, "--plan", str(plan_path), "--output", str(output)])
     assert preflight.main() == (1 if defect else 0)
+    if matrix == "group":
+        reports = [json.loads(path.read_text()) for path in output.glob("*/result.json")]
+        if not defect:
+            assert {row["image_target"] for row in reports} == set(targets)
+            assert all(row["status"] == "success" and set(row["production_images"]["images"]) == {row["image_target"]} for row in reports)
+        else:
+            assert any(row["status"] == "failure" for row in reports)
+        metrics = json.loads((output / "metrics.json").read_text())
+        assert metrics["active"] == 0 and metrics["peak"] == min(2, len(targets))
+        if defect == "command":
+            assert metrics["started"] <= 2
+        return
     result = json.loads((output / "result.json").read_text())
     metrics = json.loads((output / "metrics.json").read_text())
     assert metrics["active"] == 0, "the suite returned while a child was still running"

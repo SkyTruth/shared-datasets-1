@@ -242,6 +242,12 @@ def planned_images(plan):
     return images
 
 
+def deploy_image_targets(plan):
+    """Only selected deliveries need retained TARs; holds still require validation."""
+    deploying = {DEPLOYMENT_IMAGES[target] for target in plan["deployments"] if target in DEPLOYMENT_IMAGES}
+    return [target for target in planned_images(plan) if target in deploying]
+
+
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
     """Compare the catalog fields actually compiled into release consumers."""
     def contracts(raw):
@@ -429,7 +435,7 @@ def verify_results(
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
         sdk_required = "success" if "sdk-node22" in selected else "skipped"
         if jobs.get("sdk-validation", {}).get("result") != sdk_required:
-            raise ValueError("SDK matrix failed, was cancelled, missing, or unexpectedly skipped")
+            raise ValueError("SDK validation failed, was cancelled, missing, or unexpectedly skipped")
         if jobs.get("geospatial-changes", {}).get("result") != "success":
             raise ValueError("validation selection did not succeed")
     return by_suite

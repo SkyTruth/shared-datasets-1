@@ -55,7 +55,7 @@ def fixture(tmp_path, monkeypatch, *, sdk_attempt=1, gate_attempt=2):
     api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else workflow if '/workflows/' in endpoint else {**run, 'run_attempt': int(endpoint.rsplit('/', 1)[-1])}
     api.pages.side_effect = lambda endpoint, field=None: artifacts if field == 'artifacts' else [
         {'name': name, 'status': 'completed', 'conclusion': 'success', 'started_at': '2026-10-14T01:31:38Z', 'completed_at': '2026-10-14T01:31:54Z'}
-        for name in ('ci-ready', 'geospatial-changes', 'sdk-validation (Node 24)')]
+        for name in ('ci-ready', 'geospatial-changes', 'sdk-validation')]
     monkeypatch.setattr(release, 'contract_digest', lambda root: 'contract')
     monkeypatch.setattr(release.subprocess, 'check_output', lambda args, **kwargs: 'release_needed=true' if args[0] == 'node' else 'tree')
     return api, candidate, package, artifacts, payloads
@@ -164,7 +164,7 @@ def test_passing_receipt_cannot_hide_failed_producing_job(tmp_path, monkeypatch)
     original = api.pages.side_effect
     def pages(endpoint, field=None):
         values = original(endpoint, field)
-        return values if field == 'artifacts' else [{**job, 'conclusion': 'failure'} if job['name'] == 'sdk-validation (Node 24)' else job for job in values]
+        return values if field == 'artifacts' else [{**job, 'conclusion': 'failure'} if job['name'] == 'sdk-validation' else job for job in values]
     api.pages.side_effect = pages
     with pytest.raises(DeploymentError, match='producing job'):
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
@@ -213,7 +213,7 @@ def admission_fixture(*, ready='success', sdk='success', conclusion='failure', n
     api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else publisher if endpoint.endswith('/workflows/publish-typescript-sdk.yml') else workflow if endpoint.endswith('/workflows/ci.yml') else current if '/runs/900/' in endpoint else run
     api.pages.return_value = [] if ready is None else [{'name': 'ci-ready', 'status': 'completed', 'conclusion': ready}]
     if sdk is not None:
-        api.pages.return_value.append({'name': 'sdk-validation (Node 24)', 'status': 'completed', 'conclusion': sdk})
+        api.pages.return_value.append({'name': 'sdk-validation', 'status': 'completed', 'conclusion': sdk})
     event = {'workflow_run': dict(run), 'repository': repository}
     return api, event
 

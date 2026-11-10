@@ -56,18 +56,16 @@ def test_wdpa_digest_uses_only_inputs_installed_by_its_dockerfile(tmp_path, monk
     assert wdpa.source_digest() == expected
 
 
-def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
+def test_premerge_acceptance_is_in_gate_and_binds_real_head():
     jobs = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']
-    job = jobs['owner-acceptance']
+    job = jobs['ci-ready']
     step = next(s for s in job['steps'] if s.get('name') == 'Owner approval of this exact head required before merge')
-    assert job['permissions'] == {'contents': 'read', 'pull-requests': 'read'}
-    assert job['timeout-minutes'] <= 5
-    assert 'owner-acceptance' in jobs['ci-ready']['needs']
+    assert job['permissions']['pull-requests'] == 'read'
+    assert job['timeout-minutes'] <= 10
+    assert 'owner-acceptance' not in jobs
     assert workflow_triggers(load_workflow(ROOT / '.github/workflows/ci.yml'))['pull_request']['types'] == [
-        'opened', 'synchronize', 'reopened']
-    assert any(s.get('env', {}).get('RESULT') == '${{ needs.owner-acceptance.result }}'
-               and 'success' in s.get('run', '') for s in jobs['ci-ready']['steps'])
-    assert jobs['pr-terraform-plan']['needs'] == job['needs'] == 'geospatial-changes'
+        'opened', 'synchronize', 'reopened', 'ready_for_review']
+    assert jobs['pr-terraform-plan']['needs'] == 'geospatial-changes'
     assert 'draft' not in step['if']
     for clause in ("github.event_name == 'pull_request'", 'github.event.pull_request.head.repo.full_name == github.repository',
                    "github.event.pull_request.user.login != 'jonaraphael'"):
@@ -80,7 +78,7 @@ def test_premerge_acceptance_is_parallel_to_live_planning_and_binds_real_head():
 @pytest.mark.parametrize('selection,approval,expected', [([], 9, 0), (['sea_ice'], 0, 0),
     (['sea_ice'], 1, 1), (['sea_ice'], 2, 2), ('malformed', 0, None), (None, 0, 2)])
 def test_premerge_acceptance_shell_rejects_missing_plan_or_approval(tmp_path, selection, approval, expected):
-    step = next(s for s in load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['owner-acceptance']['steps']
+    step = next(s for s in load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['ci-ready']['steps']
                 if s.get('name') == 'Owner approval of this exact head required before merge')
     if selection is not None:
         plan = tmp_path / 'ci-plans/ci-validation-plan-attempt1/plan.json'

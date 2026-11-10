@@ -95,6 +95,8 @@ Never delete ownership, rewind IDs, change the release date to bypass a claim,
 or overwrite partial releases. Follow the owning ingestion README and
 [feature-ID recovery](feature-id-reset-installation.md).
 
+Image delivery TARs are retained for two days and only for targets selected to deploy on a main push. Same-run delivery and recovery still require the exact tested target/attempt receipt and TAR. If those bytes have expired or the target was held/nondeploying, recovery must obtain a fresh eligible main CI build through the reviewed recovery path; loaders never rebuild or substitute an image. Diagnostic and gate evidence remains available for 14 days.
+
 For a compatible unfinished publication, rerun the entire original eligible main
 workflow with its executor and plan (GitHub limits: 30 days / 50 attempts).
 Apply-only reruns can retain stale envelopes. A newer executor may verify an

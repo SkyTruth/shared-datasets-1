@@ -17,6 +17,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ci_contract import contract_digest, expected_tools
+from scripts.ci_source_proof import job_name
 from scripts.dataset_mutation_authorization import GitHub as ArtifactGitHub
 from scripts.deployment_revision import DeploymentError, require, verify_ci, verify_context
 
@@ -38,7 +39,7 @@ def admit_source(api, repository, run_id, attempt, sha, event):
     require(all(event.get("repository", {}).get(key) == source["repository"][key] for key in ("id", "full_name")),
             "SDK event repository mismatch")
     jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
-    sdk = [job for job in jobs if job.get("name") == "sdk-validation (Node 24)"]
+    sdk = [job for job in jobs if job.get("name") == job_name("sdk-node24")]
     require(len(sdk) <= 1, "ambiguous SDK validation source job")
     return bool(sdk and sdk[0].get("status") == "completed" and sdk[0].get("conclusion") == "success")
 
@@ -140,7 +141,7 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     require(result.get("source") == {"run_id": str(run_id), "run_attempt": suite_attempt} and result.get("suite") == "sdk-node24" and result.get("status") == "success", "SDK result source or status mismatch")
     require(all(result.get(key) == plan.get(key) for key in IDENTITY), "SDK result differs from tested plan")
     require(result.get("tools") == expected_tools("sdk-node24") and result.get("commands") and all(command.get("exit_code") == 0 for command in result["commands"]), "SDK validation was skipped, failed or used another toolchain")
-    producing_job(api, repository, run_id, suite_attempt, sha, "sdk-validation (Node 24)", run["workflow_id"], run["repository"]["id"])
+    producing_job(api, repository, run_id, suite_attempt, sha, job_name("sdk-node24"), run["workflow_id"], run["repository"]["id"])
     candidate = json.loads(files["package/candidate.json"])
     require(result.get("package") == candidate, "candidate differs from the recorded tested package")
     package = files.get("package/" + str(candidate.get("tarball")))
