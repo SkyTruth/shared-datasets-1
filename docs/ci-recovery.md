@@ -97,6 +97,8 @@ or overwrite partial releases. Follow the owning ingestion README and
 
 Image delivery TARs are retained for two days and only for targets selected to deploy on a main push. Same-run delivery and recovery still require the exact tested target/attempt receipt and TAR. If those bytes have expired or the target was held/nondeploying, recovery must obtain a fresh eligible main CI build through the reviewed recovery path; loaders never rebuild or substitute an image. Diagnostic and gate evidence remains available for 14 days.
 
+Main CI's first attempt can reuse verified same-tree PR coverage for pure validation suites. **Re-run all jobs** disables that optimization, creates a new attempt-specific plan and validates the full current selection; expired or unavailable PR artifacts cannot prevent this path. Re-running only a previously reused gate is refused with that remedy, because the old skipped jobs are not new validation. Delivery reruns retain the original successful gate execution and main-produced image/SDK evidence. Workflow-health monitoring, signed receipts and protected replay authority are unchanged.
+
 For a compatible unfinished publication, rerun the entire original eligible main
 workflow with its executor and plan (GitHub limits: 30 days / 50 attempts).
 Apply-only reruns can retain stale envelopes. A newer executor may verify an

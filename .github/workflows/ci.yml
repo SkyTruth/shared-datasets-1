@@ -31,7 +31,12 @@ jobs:
     name: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions: &validation-permissions
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
+      reuse_validation: ${{ steps.reuse.outputs.reuse_validation }}
       pr_terraform: ${{ steps.pr-plan.outputs.pr_terraform }}
       should_run: ${{ steps.plan.outputs.should_run }}
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
@@ -73,6 +78,11 @@ jobs:
       - name: Select live PR Terraform check
         id: pr-plan
         run: uv run --frozen --only-group ci-plan python scripts/pr_terraform_plan.py select --plan "$RUNNER_TEMP/ci-plan/plan.json"
+      - name: Reuse verified PR validation on the identical main tree
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen --only-group ci-plan python scripts/ci_main_reuse.py --plan "$RUNNER_TEMP/ci-plan/plan.json" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: ci-validation-plan-attempt${{ github.run_attempt }}
@@ -82,6 +92,7 @@ jobs:
 
   lint:
     needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.reuse_validation != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -115,6 +126,7 @@ jobs:
 
   tests: &python-tests
     needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.reuse_validation != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -132,13 +144,10 @@ jobs:
 
   geospatial-integration:
     needs: geospatial-changes
-    if: needs.geospatial-changes.outputs.should_run == 'true'
+    if: needs.geospatial-changes.outputs.should_run == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    permissions: &validation-permissions
-      contents: read
-      actions: read
-      pull-requests: read
+    permissions: *validation-permissions
     steps:
       - *validation-checkout
       - *validation-plan
@@ -295,7 +304,7 @@ jobs:
 
   browser:
     needs: geospatial-changes
-    if: needs.geospatial-changes.outputs.browser == 'true'
+    if: needs.geospatial-changes.outputs.browser == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: *validation-permissions
@@ -334,6 +343,7 @@ jobs:
       - *validation-python
       - *validation-plan
       - uses: actions/download-artifact@v4
+        if: needs.geospatial-changes.outputs.reuse_validation != 'true' || needs.geospatial-changes.outputs.production_images == 'true' || needs.geospatial-changes.outputs.sdk == 'true'
         with:
           pattern: ci-gate-result-*
           path: ${{ runner.temp }}/ci-results

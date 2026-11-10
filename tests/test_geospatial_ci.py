@@ -43,7 +43,7 @@ class GeospatialCiTests(unittest.TestCase):
     def test_geospatial_job_runs_shared_native_contract(self):
         job = self.workflow['jobs']['geospatial-integration']
         self.assertEqual(job['needs'], 'geospatial-changes')
-        self.assertEqual(job['if'], "needs.geospatial-changes.outputs.should_run == 'true'")
+        self.assertEqual(job['if'], "needs.geospatial-changes.outputs.should_run == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'")
         run = workflow_steps_by_name(self.workflow, 'geospatial-integration')['Run shared native validation']['run']
         self.assertIn('scripts/ci_preflight.py run-suite', run)
         self.assertIn('--suite geospatial-integration', run)

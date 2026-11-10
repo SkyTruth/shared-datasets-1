@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.ci_source_proof import image_group, prove_attempts, select_plan
+from scripts.ci_main_reuse import context as validation_context, result_summary, verified_reuse
 from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
 from scripts.terraform_target_contracts import production_image_limits
@@ -959,8 +960,9 @@ def main() -> int:
                 proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
                 if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
                     raise ValueError("selected plan has no successful source selection job")
+            reused = verified_reuse(plan, validation_context(), run_id=run_id, attempt=current_attempt)
             chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id,
-                                    run_attempt=current_attempt)
+                                    run_attempt=current_attempt, reused_suites=reused)
             if args.output:
                 evidence = {**plan, "status": "success"}
                 if run_id:
@@ -968,6 +970,12 @@ def main() -> int:
                         "source": {"run_id": run_id, "run_attempt": current_attempt},
                         "plan_artifact": f"ci-validation-plan-attempt{plan['source']['run_attempt']}",
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
+                        "validation_context": validation_context(),
+                        "toolchains": {suite: expected_tools(suite) for suite in plan["suites"]},
+                        "validation_results": {
+                            **{suite: plan["main_reuse"]["evidence"]["validation_results"][suite] for suite in reused},
+                            **result_summary(chosen),
+                        },
                     })
                 write_json(args.output, evidence)
             if args.github_output:

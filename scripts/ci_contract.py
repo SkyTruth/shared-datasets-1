@@ -32,6 +32,7 @@ ROLLOUT_HOLD_TARGETS = frozenset(config["selection"] for config in DEPLOY_TARGET
 DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests", "tests-control-plane"}
+REUSABLE_SUITES = frozenset({"lint", "tests", "tests-control-plane", "geospatial-integration", "browser"})
 DELIVERY_FILTERS = {'refresh-reviewed-catalog': 'has_catalog_changes',
                     'announce-repo-functionality': 'has_repo_alert', 'publish-reviewed-dataset': 'has_mutations'}
 
@@ -372,6 +373,7 @@ def verify_results(
     plan: dict, results: list[dict], jobs: dict | None = None, *,
     source_proofs: dict[int, set[str]] | None = None,
     run_id: str | None = None, run_attempt: int | None = None, local: bool = False,
+    reused_suites: frozenset[str] = frozenset(),
 ) -> dict[str, dict]:
     if local and (jobs is not None or source_proofs is not None or run_id is not None):
         raise ValueError("local image receipts cannot authorize hosted validation")
@@ -384,9 +386,12 @@ def verify_results(
         raise ValueError("core validation suites must always be selected")
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
+    if reused_suites and (local or source_proofs is None or jobs is None or not run_id
+                          or not reused_suites <= REUSABLE_SUITES & set(selected)):
+        raise ValueError("PR reuse requires verified hosted coverage of pure validation suites")
     targets = planned_images(plan)
     matrix = any("image_target" in result for result in results)
-    required_results = set(selected)
+    required_results = set(selected) - reused_suites
     if matrix and "production-images" in selected:
         required_results.remove("production-images")
         required_results.update("production-images-" + target for target in targets)
@@ -441,7 +446,7 @@ def verify_results(
                 raise ValueError("tested production-image set differs from validation selection")
     if jobs is not None:
         for job in ("lint", "tests", "tests-control-plane", "geospatial-integration", "production-images", "browser"):
-            required = "success" if job in selected else "skipped"
+            required = "success" if job in selected and job not in reused_suites else "skipped"
             if jobs.get(job, {}).get("result") != required:
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
         sdk_required = "success" if "sdk-node22" in selected else "skipped"
