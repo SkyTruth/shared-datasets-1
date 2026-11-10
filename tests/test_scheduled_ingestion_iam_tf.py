@@ -228,13 +228,22 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                 "member": "${module.github_readonly_service_account.member}",
                 "members": None, "policy_data": None, "condition": None,
             },
-            "google_storage_bucket_iam_member.github_readonly_object_viewer_scoped": {
+            "google_storage_bucket_iam_member.github_readonly_canonical_object_viewer": {
                 "bucket": "${var.bucket_name}", "role": "roles/storage.objectViewer",
                 "member": "${module.github_readonly_service_account.member}",
                 "members": None, "policy_data": None,
                 "condition": [{
-                    "title": "advisory_and_audit_objects",
-                    "expression": "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.canonical_mutation_publisher_condition}) || (${local.pending_publish_source_condition})",
+                    "title": "advisory_and_audit_canonical_objects",
+                    "expression": "${local.canonical_mutation_publisher_condition}",
+                }],
+            },
+            "google_storage_bucket_iam_member.github_readonly_pending_publish_viewer": {
+                "bucket": "${var.bucket_name}", "role": "roles/storage.objectViewer",
+                "member": "${module.github_readonly_service_account.member}",
+                "members": None, "policy_data": None,
+                "condition": [{
+                    "title": "advisory_and_audit_pending_publishes",
+                    "expression": "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.pending_publish_source_condition})",
                 }],
             },
         })

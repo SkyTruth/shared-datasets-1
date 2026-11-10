@@ -97,10 +97,10 @@ def test_additive_member_waits_for_valid_provider_mapping():
     ("_scratch/translation-debt/private.json", False),
 ])
 def test_new_scoped_advisory_grant_excludes_state(name, allowed):
-    grant = resource("github_readonly_iam.tf", "google_storage_bucket_iam_member", "github_readonly_object_viewer_scoped")
-    expression = grant["condition"][0]["expression"]
-    assert cel(storage_condition(expression),
-               {"name": "projects/_/buckets/fixture/objects/" + name}) is allowed
+    grants = [resource("github_readonly_iam.tf", "google_storage_bucket_iam_member", name)
+              for name in ("github_readonly_canonical_object_viewer", "github_readonly_pending_publish_viewer")]
+    assert any(cel(storage_condition(grant["condition"][0]["expression"]),
+                   {"name": "projects/_/buckets/fixture/objects/" + name}) for grant in grants) is allowed
 
 
 def test_cleanup_has_no_canonical_publisher_authority():
