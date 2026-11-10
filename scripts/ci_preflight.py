@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager, nullcontext
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -22,6 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 from threading import Event
+from time import monotonic
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,13 +32,14 @@ from scripts.ci_source_proof import image_group, prove_attempts, select_plan
 from scripts.check_geospatial_test_results import check_junit
 from scripts.deployment_revision import DeploymentError
 from scripts.terraform_target_contracts import production_image_limits
-from scripts.tested_image_bundle import ImageError, validate_manifest
+from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, validate_manifest, validate_local_manifest
 from scripts.ci_contract import (
-    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs, deploy_image_targets,
+    ALWAYS, DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs, deploy_image_targets,
     INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
+CONTAINER_LABEL = "shared-datasets-preflight"
 
 # Host Python and Docker retain normal filesystem/API capabilities; this
 # isolates default configuration and inherited credentials, not malicious code.
@@ -152,10 +155,12 @@ def local_runtime() -> dict:
     architecture = server["Arch"]
     if server["Os"] != "linux" or architecture not in {"amd64", "arm64"}:
         raise ValueError("preflight requires a Linux Docker server on amd64 or arm64")
-    return {"platform": f"linux/{architecture}", "server_architecture": architecture, "docker_version": server["Version"]}
+    cpus = int(subprocess.check_output(["docker", "info", "--format", "{{.NCPU}}"], text=True).strip())
+    return {"platform": f"linux/{architecture}", "server_architecture": architecture,
+            "docker_version": server["Version"], "cpus": cpus, "suite_workers": 3 if cpus >= 8 else 2}
 
 
-def run_container(root: Path, work: Path, suite: str, image: str, platform: str) -> dict:
+def run_container(root: Path, work: Path, suite: str, image: str, platform: str, *, cancelled=None) -> dict:
     """Copy a clean checkout into an owned container and retain its evidence.
 
     No host directories, Docker socket, environment credentials or user config
@@ -164,7 +169,7 @@ def run_container(root: Path, work: Path, suite: str, image: str, platform: str)
     image_platform = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}", image], text=True).strip()
     if image_platform != platform:
         raise ValueError(f"{suite}: image platform {image_platform} differs from native runtime {platform}")
-    command = ["docker", "create", "--platform", platform, "-w", "/workspace",
+    command = ["docker", "create", "--init", "--label", f"{CONTAINER_LABEL}={work.name}", "--platform", platform, "-w", "/workspace",
                "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/opt/uv-cache",
                "-e", "UV_LINK_MODE=copy"]
     environment = {"CI": "true"}
@@ -191,6 +196,8 @@ def run_container(root: Path, work: Path, suite: str, image: str, platform: str)
     identifier = subprocess.check_output(command, text=True).strip()
     record = {"platform": platform, "image": image, "container": identifier, "environment": environment}
     try:
+        if cancelled is not None and cancelled.is_set():
+            raise ValueError(f"{suite}: preflight cancelled")
         subprocess.run(["docker", "cp", f"{root}/.", f"{identifier}:/workspace"], check=True)
         subprocess.run(["docker", "cp", str(work / "plan.json"), f"{identifier}:/plan.json"], check=True)
         if suite == "browser":
@@ -228,7 +235,7 @@ def ingestion_rollout_holds(root: Path, revision: str, *, historical=False) -> t
     return rollout_holds(json.loads(git(root, "show", f"{revision}:{INGESTION_ROLLOUT_HOLDS}", raw=True)), historical=historical)
 
 
-def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None) -> dict:
+def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None, comparison_head: str | None = None) -> dict:
     require_complete_history(root)
     tested_sha = git(root, "rev-parse", "HEAD")
     resolved_head = git(root, "rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}")
@@ -236,7 +243,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         raise ValueError("head must be the checked-out tested revision")
     try:
         resolved_base = git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
-        changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, resolved_head, raw=True)
+        changed = git(root, "diff", "--no-renames", "--name-only", "-z", resolved_base, comparison_head or resolved_head, raw=True)
         paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
         resolved_base = base
@@ -367,7 +374,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             raise ValueError("production image suite selected without image targets")
         for target in targets:
             add(sys.executable, "-I", "scripts/production_image_contracts.py",
-                "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target))
+                "--target", target, "--limits", json.dumps(plan["production_image_limits"][target]), "--output", str(output / target),
+                *(["--local-images"] if plan.get("local_images") else []))
     else:
         raise ValueError(f"unknown suite: {suite}")
     if suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
@@ -403,7 +411,7 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     return versions
 
 
-def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None, cancelled=None) -> dict:
+def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=None, cancelled=None, local_images=False) -> dict:
     if suite not in plan["suites"]:
         raise ValueError(f"suite {suite} was not selected")
     output.mkdir(parents=True, exist_ok=True)
@@ -415,7 +423,11 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
         plan = {**plan, "image_target": image_target}
         result["image_target"] = image_target
     if os.environ.get("GITHUB_RUN_ID"):
+        if local_images:
+            raise ValueError("local image receipts cannot be used in Actions")
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
+    if local_images:
+        plan = {**plan, "local_images": True}
     environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
     environment.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root)})
     environment["SHARED_DATASETS_WORKDIR"] = str(output / "work")
@@ -486,14 +498,18 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
         if suite == "production-images":
             manifest = {"schema_version": 1, "tested_sha": plan["tested_sha"], "images": {}}
+            if local_images:
+                manifest["transport"] = "local-daemon"
             (output / "images").mkdir(exist_ok=True)
             for target in [image_target] if image_target else planned_images(plan):
                 directory = output / target / "images"
-                images = validate_manifest(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
+                validator = validate_local_manifest if local_images else validate_manifest
+                images = validator(json.loads((directory / "manifest.json").read_text()), plan["tested_sha"])
                 if set(images) != {target}:
                     raise ValueError("tested production-image set differs from validation selection")
                 manifest["images"].update(images)
-                (directory / images[target]["archive"]).replace(output / "images" / images[target]["archive"])
+                if not local_images:
+                    (directory / images[target]["archive"]).replace(output / "images" / images[target]["archive"])
             write_json(output / "images/manifest.json", manifest)
             result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
@@ -549,8 +565,13 @@ def isolated_merge(source: Path, base: str, head: str, destination: Path) -> tup
     head_sha = git(source, "rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}")
     executable = os.environ.get("CI_GIT", "git")
     subprocess.run([executable, "clone", "--no-local", "--no-hardlinks", "--no-checkout", str(source), str(destination)], check=True)
+    # A base can be reachable only through the source's origin/* refs, which
+    # clone does not copy. Fetch the exact commits into this owned clone.
+    subprocess.run([executable, "-C", str(destination), "fetch", "--no-tags", str(source), base_sha, head_sha], check=True)
     subprocess.run([executable, "-C", str(destination), "checkout", "--detach", base_sha], check=True)
-    environment = {**os.environ, "GIT_AUTHOR_NAME": "CI preflight", "GIT_AUTHOR_EMAIL": "ci-preflight@invalid.example", "GIT_COMMITTER_NAME": "CI preflight", "GIT_COMMITTER_EMAIL": "ci-preflight@invalid.example"}
+    timestamp = max(int(git(source, "show", "-s", "--format=%ct", revision)) for revision in (base_sha, head_sha))
+    environment = {**os.environ, "GIT_AUTHOR_NAME": "CI preflight", "GIT_AUTHOR_EMAIL": "ci-preflight@invalid.example", "GIT_COMMITTER_NAME": "CI preflight", "GIT_COMMITTER_EMAIL": "ci-preflight@invalid.example",
+                   "GIT_AUTHOR_DATE": f"{timestamp} +0000", "GIT_COMMITTER_DATE": f"{timestamp} +0000"}
     # Hooks and signing are user-owned configuration and do not run in this
     # process-owned checkout. Merge conflicts fail before any validation.
     subprocess.run([executable, "-C", str(destination), "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "merge", "--no-ff", "--no-edit", head_sha], env=environment, check=True)
@@ -558,7 +579,7 @@ def isolated_merge(source: Path, base: str, head: str, destination: Path) -> tup
 
 
 @contextmanager
-def local_preflight_slot(source: Path, base: str, head: str):
+def local_preflight_slot(source: Path, base: str, head: str, *, wait=False):
     """One heavy preflight per local user/host, across worktrees and temp roots.
 
     The kernel owns the lock; retained owner text is diagnostic, never a lease.
@@ -568,98 +589,265 @@ def local_preflight_slot(source: Path, base: str, head: str):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"preflight-{os.getuid()}.lock"
     with path.open("a+") as stream:
+        started = monotonic()
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             stream.seek(0)
-            raise ValueError(
-                f"another local preflight owns {path}: {stream.read().strip()}; "
-                "coordinate with its integration owner before retrying"
-            ) from None
+            owner = stream.read().strip()
+            if not wait:
+                raise ValueError(f"another local preflight owns {path}: {owner}; use --wait to queue") from None
+            print(f"Waiting for preflight slot {path}: {owner}", flush=True)
+            fcntl.flock(stream, fcntl.LOCK_EX)
         try:
+            waited = round(monotonic() - started, 3)
+            print(f"Preflight slot wait: {waited:.3f}s", flush=True)
             stream.seek(0)
             stream.truncate()
             stream.write(json.dumps({"pid": os.getpid(), "repo": str(source.resolve()), "base": base, "head": head}) + "\n")
             stream.flush()
-            yield
+            yield waited
         finally:
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-def preflight(args: argparse.Namespace) -> int:
+def remove_containers(run_id: str | None = None) -> None:
+    label = CONTAINER_LABEL + ("=" + run_id if run_id else "")
+    identifiers = subprocess.check_output(["docker", "ps", "-aq", "--filter", "label=" + label], text=True).split()
+    if identifiers:
+        subprocess.run(["docker", "rm", "-f", *identifiers], check=True, stdout=subprocess.DEVNULL)
+
+
+def cleanup_old_images() -> None:
+    tags = subprocess.check_output(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], text=True).splitlines()
+    tags = sorted({tag for tag in tags if tag.split(":")[0] in {
+        "shared-datasets-preflight", "shared-datasets-preflight-arm", "shared-datasets-native", "shared-datasets-native-arm",
+    } or tag.startswith("shared-datasets-preflight/") if not tag.endswith(":<none>")})
+    if not tags:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    images = json.loads(subprocess.check_output(["docker", "image", "inspect", *tags], text=True))
+    expired = sorted({tag for image in images if datetime.fromisoformat(image["Created"].replace("Z", "+00:00")) < cutoff
+                      for tag in image["RepoTags"] or [] if tag in tags})
+    if expired:
+        subprocess.run(["docker", "image", "rm", *expired], check=True, stdout=subprocess.DEVNULL)
+
+
+def run_host_suite(command, *, cwd, env, cancelled):
+    """Interrupt the image driver, allowing its producer cleanup to finish."""
+    with subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True) as process:
+        while process.poll() is None:
+            if cancelled.wait(0.1):
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                break
+        return subprocess.CompletedProcess(command, process.wait())
+
+
+def local_evidence_path(base: str, head: str) -> Path:
+    if any(re.fullmatch(r"[0-9a-f]{40}", value) is None for value in (base, head)):
+        raise ValueError("local evidence requires resolved commit identities")
+    return LOCAL_COORDINATION_DIRECTORY / f"validated-{base}-{head}.json"
+
+
+def local_coverage(base: str, head: str, digest: str, seen=None) -> tuple[dict, set[str], set[str]]:
+    """Read local receipts without rebinding an older result to a new SHA."""
+    seen = set() if seen is None else seen
+    if head in seen:
+        raise ValueError("cyclic local validation evidence")
+    seen.add(head)
+    path = local_evidence_path(base, head)
+    try:
+        evidence = json.loads(path.read_text())
+        if (evidence.get("status") != "success" or evidence.get("scope") != "local"
+                or evidence.get("base") != base or evidence.get("head") != head
+                or evidence.get("contract_digest") != digest):
+            raise ValueError("local evidence base/head/contract differs; a full run is required")
+        execution = evidence["execution_plan"]
+        if any(execution.get(key) != evidence.get(key) for key in ("base", "head", "tested_sha", "tree", "contract_digest")):
+            raise ValueError("local execution identity differs from its plan")
+        verify_results(execution, evidence["results"], local=True)
+        previous_suites, previous_images = set(), set()
+        if evidence.get("since"):
+            _, previous_suites, previous_images = local_coverage(base, evidence["since"], digest, seen)
+        fresh = set(execution["suites"])
+        reused = set(evidence["suites"]) - fresh
+        if set(evidence["reused_suites"]) != reused or not reused <= previous_suites:
+            raise ValueError("local reused suite coverage is incomplete")
+        images = set(execution["production_image_targets"]) if "production-images" in fresh else previous_images
+        if not set(evidence["production_image_targets"]) <= images:
+            raise ValueError("local image coverage is incomplete")
+        return evidence, set(evidence["suites"]) | fresh, images
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid local evidence: {path}") from exc
+
+
+def local_execution_plan(root: Path, plan: dict, since: str | None) -> tuple[dict, dict]:
+    if not since:
+        return plan, {}
+    since = git(root, "rev-parse", "--verify", "--end-of-options", f"{since}^{{commit}}")
+    if since == plan["head"]:
+        raise ValueError("--since must name an earlier validated head; this head already has evidence")
+    git(root, "merge-base", "--is-ancestor", since, plan["head"])
+    _, covered, images = local_coverage(plan["base"], since, plan["contract_digest"])
+    delta = make_plan(root, since, "HEAD", original_head=plan["head"], comparison_head=plan["head"])
+    selected = set(delta["suites"]) | ALWAYS | (set(plan["suites"]) - covered)
+    if not set(plan["production_image_targets"]) <= images:
+        selected.add("production-images")
+    targets = (set(delta["production_image_targets"]) | set(plan["production_image_targets"])) if "production-images" in selected else set()
+    execution = {**plan, "suites": [suite for suite in SUITES if suite in selected],
+                 "production_image_targets": [target for target in BUILD_TARGETS if target in targets],
+                 "deployments": [], "delta_paths": delta["changed_paths"]}
+    reused = {suite: {"head": since, "evidence": str(local_evidence_path(plan["base"], since))}
+              for suite in plan["suites"] if suite not in selected}
+    return execution, reused
+
+
+def append_ledger(record: dict) -> None:
+    LOCAL_COORDINATION_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    with (LOCAL_COORDINATION_DIRECTORY / "preflight-runs.jsonl").open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def preflight(args: argparse.Namespace, *, slot_wait_s=0, record=None) -> int:
     source = Path(args.repo).resolve()
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", Path(tempfile.gettempdir()) / "shared-datasets-1")) / "_scratch"
     work_root.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="ci-preflight-", dir=work_root))
     print(f"Preflight evidence: {work}", flush=True)
-    root, base, original_head = isolated_merge(source, args.base, args.head, work / "repo")
-    plan = make_plan(root, base, "HEAD", original_head=original_head)
-    write_json(work / "plan.json", plan)
-    subprocess.run([sys.executable, "scripts/publication_runtime_check.py"], cwd=root, check=True, timeout=40)
-    if shutil.which("docker") is None:
-        raise ValueError("Docker is required for the pinned Linux preflight toolchain")
-    runtime = local_runtime()
-    write_json(work / "runtime.json", runtime)
-    suffix = "-arm" if runtime["server_architecture"] == "arm64" else ""
-    image = f"shared-datasets-preflight{suffix}:{plan['contract_digest'][:16]}"
-    subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
-    native_image = f"shared-datasets-native{suffix}:{plan['contract_digest'][:16]}"
-    if "geospatial-integration" in plan["suites"]:
-        subprocess.run(["docker", "build", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
-    results = []
-    runtime["suites"] = {}
-
-    def execute(suite):
-        output = work / suite
-        output.mkdir()
-        if suite == "production-images":
-            # Host imports must not write caches into other suites' source.
-            image_root = work / "production-image-repo"
-            shutil.copytree(root, image_root, symlinks=True)
-            # The host owns Docker and source paths. A nested container would
-            # need privileged Docker access and paths outside its namespace.
-            with isolated_host_environment(work, dict(os.environ)) as environment:
-                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"],
-                                    "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
-                command = ["uv", "run", "--no-project", "--isolated", "--managed-python", "--python", TOOLCHAIN["python"],
-                           "python", "-I", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
-                completed = subprocess.run(command, cwd=image_root, env=environment, check=False)
-            report = output / "result.json"
-            if not report.exists():
-                raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
-            suite_runtime = {"transport": "host-docker", "exit_code": completed.returncode}
-        else:
-            selected_image = native_image if suite == "geospatial-integration" else image
-            suite_runtime = run_container(root, work, suite, selected_image, runtime["platform"])
-        report = output / "result.json"
-        if not report.exists():
-            raise ValueError(f"{suite} did not produce evidence")
-        result = json.loads(report.read_text())
-        if result.get("status") != "success":
-            raise ValueError(f"{suite} failed; retained evidence: {report}")
-        return result, suite_runtime
-
-    # Start the longest suite first; keep at most two isolated suites active.
-    order = sorted(plan["suites"], key=lambda suite: suite != "production-images")
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        for result, suite_runtime in executor.map(execute, order):
-            results.append(result)
-            runtime["suites"][result["suite"]] = suite_runtime
-            write_json(work / "runtime.json", runtime)
-    verified = verify_results(plan, results)
-    # Recheck the source identities after potentially lengthy validation.
-    if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
-        raise ValueError("base or head changed during preflight; evidence is stale")
-    if git(source, "status", "--porcelain", "--untracked-files=normal"):
-        raise ValueError("source changed during preflight; evidence is stale")
-    if "production-images" in verified:
-        for image in verified["production-images"]["production_images"]["images"].values():
-            (work / "production-images/images" / image["archive"]).unlink()
-        runtime["production_image_archives_retained"] = False
+    record = {} if record is None else record
+    record.update(evidence=str(work), per_suite_s={})
+    phases = {}
+    started = monotonic()
+    cancelled = Event()
+    succeeded = False
+    try:
+        root, base, original_head = isolated_merge(source, args.base, args.head, work / "repo")
+        record.update(base=base, head=original_head)
+        plan = make_plan(root, base, "HEAD", original_head=original_head)
+        execution, reused = local_execution_plan(root, plan, args.since)
+        write_json(work / "plan.json", execution)
+        phases["clone_plan_s"] = round(monotonic() - started, 3)
+        started = monotonic()
+        subprocess.run([sys.executable, "scripts/publication_runtime_check.py"], cwd=root, check=True, timeout=40)
+        phases["runtime_check_s"] = round(monotonic() - started, 3)
+        if shutil.which("docker") is None:
+            raise ValueError("Docker is required for the pinned Linux preflight toolchain")
+        runtime = local_runtime()
+        runtime.update(slot_wait_s=slot_wait_s, suites={}, phases=phases)
         write_json(work / "runtime.json", runtime)
-    write_json(work / "preflight.json", {**plan, "status": "success", "results": results, "runtime": runtime})
-    print(f"All {len(results)} selected suites passed. Evidence: {work / 'preflight.json'}")
-    return 0
+        remove_containers()
+        cleanup_old_images()
+        suffix = "-arm" if runtime["server_architecture"] == "arm64" else ""
+        image = f"shared-datasets-preflight{suffix}:{plan['contract_digest'][:16]}"
+        started = monotonic()
+        subprocess.run(["docker", "build", "--builder", "default", "--platform", runtime["platform"], "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
+        native_image = f"shared-datasets-native{suffix}:{plan['contract_digest'][:16]}"
+        if "geospatial-integration" in execution["suites"]:
+            subprocess.run(["docker", "build", "--builder", "default", "--platform", runtime["platform"], "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
+        phases["toolchain_build_s"] = round(monotonic() - started, 3)
+        results = []
+        failures = []
+
+        def execute(suite):
+            if cancelled.is_set():
+                raise ValueError(f"{suite}: preflight cancelled before execution")
+            suite_started = monotonic()
+            try:
+                output = work / suite
+                output.mkdir()
+                if suite == "production-images":
+                    image_root = work / "production-image-repo"
+                    shutil.copytree(root, image_root, symlinks=True)
+                    with isolated_host_environment(work, dict(os.environ)) as environment:
+                        environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"],
+                                            "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python"),
+                                            "SHARED_DATASETS_PREFLIGHT_RUN": work.name})
+                        command = ["uv", "run", "--no-project", "--isolated", "--managed-python", "--python", TOOLCHAIN["python"],
+                                   "python", "-I", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite,
+                                   "--local-images", "--output", str(output)]
+                        completed = run_host_suite(command, cwd=image_root, env=environment, cancelled=cancelled)
+                    suite_runtime = {"transport": "host-docker", "exit_code": completed.returncode}
+                    if completed.returncode:
+                        raise ValueError(f"{suite}: host suite failed ({completed.returncode})")
+                else:
+                    selected_image = native_image if suite == "geospatial-integration" else image
+                    suite_runtime = run_container(root, work, suite, selected_image, runtime["platform"], cancelled=cancelled)
+                report = output / "result.json"
+                if not report.exists():
+                    raise ValueError(f"{suite} did not produce evidence")
+                result = json.loads(report.read_text())
+                if result.get("status") != "success":
+                    raise ValueError(f"{suite} failed; retained evidence: {report}")
+                return result, suite_runtime
+            except BaseException as exc:
+                failures.append(exc)
+                cancelled.set()
+                raise
+            finally:
+                record["per_suite_s"][suite] = round(monotonic() - suite_started, 3)
+                print(f"Preflight {suite}: {record['per_suite_s'][suite]:.3f}s", flush=True)
+
+        # Larger VMs start browser beside images and lint. Two-worker hosts
+        # retain the original ordering so lint can fail before costly suites.
+        priority = {"production-images": 0, "browser": 1} if runtime["suite_workers"] == 3 else {"production-images": 0}
+        order = sorted(execution["suites"], key=lambda suite: priority.get(suite, 2))
+        executor = ThreadPoolExecutor(max_workers=runtime["suite_workers"])
+        futures = []
+        started = monotonic()
+        try:
+            futures = [executor.submit(execute, suite) for suite in order]
+            for future in as_completed(futures):
+                try:
+                    result, suite_runtime = future.result()
+                except BaseException:
+                    # A queued task may observe cancellation before the driver
+                    # consumes the original failure. Retain that first cause.
+                    if failures:
+                        raise failures[0]
+                    raise
+                results.append(result)
+                runtime["suites"][result["suite"]] = suite_runtime
+                write_json(work / "runtime.json", runtime)
+        finally:
+            cancelled.set()
+            for future in futures:
+                future.cancel()
+            try:
+                remove_containers(work.name)
+            finally:
+                executor.shutdown(wait=True, cancel_futures=True)
+                phases["suites_s"] = round(monotonic() - started, 3)
+        started = monotonic()
+        verify_results(execution, results, local=True)
+        if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
+            raise ValueError("base or head changed during preflight; evidence is stale")
+        if git(source, "status", "--porcelain", "--untracked-files=normal"):
+            raise ValueError("source changed during preflight; evidence is stale")
+        remove_containers(work.name)
+        runtime["production_image_archives_retained"] = False
+        phases["verify_cleanup_s"] = round(monotonic() - started, 3)
+        write_json(work / "runtime.json", runtime)
+        evidence = {**plan, "status": "success", "scope": "local", "execution_plan": execution,
+                    "results": results, "runtime": runtime, "since": git(root, "rev-parse", args.since) if args.since else None,
+                    "reused_suites": reused}
+        write_json(work / "preflight.json", evidence)
+        write_json(local_evidence_path(base, original_head), evidence)
+        succeeded = True
+        print(f"All {len(results)} selected suites passed; {len(reused)} reused. Evidence: {work / 'preflight.json'}")
+        return 0
+    finally:
+        cancelled.set()
+        if not succeeded and shutil.which("docker"):
+            remove_containers(work.name)
+        if not succeeded:
+            for archive in work.rglob("*.docker.tar"):
+                archive.unlink()
+        record["phases"] = phases
 
 
 def load_plan(path: Path) -> dict:
@@ -672,11 +860,42 @@ def load_plan(path: Path) -> dict:
     return candidates[0]
 
 
+def run_local_preflight(args) -> int:
+    record = {"head": args.head, "base": args.base, "start": datetime.now(timezone.utc).isoformat(),
+              "slot_wait_s": 0, "per_suite_s": {}, "outcome": "failure"}
+    def interrupt(*_):
+        raise KeyboardInterrupt
+    # Noninteractive shells can start background jobs with SIGINT ignored.
+    # Explicit handlers make the documented driver-only stop reliable there.
+    previous = {kind: signal.signal(kind, interrupt) for kind in (signal.SIGINT, signal.SIGTERM)}
+    slot_started = monotonic()
+    acquired = False
+    try:
+        with local_preflight_slot(Path(args.repo), args.base, args.head, wait=args.wait) as waited:
+            acquired = True
+            record["slot_wait_s"] = waited
+            code = preflight(args, slot_wait_s=waited, record=record)
+            record["outcome"] = "success" if code == 0 else "failure"
+            return code
+    except KeyboardInterrupt:
+        record["outcome"] = "cancelled"
+        raise
+    finally:
+        for kind, handler in previous.items():
+            signal.signal(kind, handler)
+        if not acquired:
+            record["slot_wait_s"] = round(monotonic() - slot_started, 3)
+        record["end"] = datetime.now(timezone.utc).isoformat()
+        append_ledger(record)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("--repo", default=".")
+    parser.add_argument("--wait", action="store_true", help="Wait for the exclusive local preflight slot")
+    parser.add_argument("--since", help="Reuse compatible passing local evidence for this validated SHA")
     commands = parser.add_subparsers(dest="command")
     plan_parser = commands.add_parser("plan")
     plan_parser.add_argument("--base", required=True)
@@ -689,6 +908,7 @@ def main() -> int:
     runner.add_argument("--suite", choices=SUITES, required=True)
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument("--image-target")
+    runner.add_argument("--local-images", action="store_true")
     group_runner = commands.add_parser("run-image-group")
     group_runner.add_argument("--plan", type=Path, required=True)
     group_runner.add_argument("--group", choices=("short", "wdpa"), required=True)
@@ -721,7 +941,7 @@ def main() -> int:
             return 0
         if args.command == "run-suite":
             plan = load_plan(args.plan)
-            return 0 if run_suite(root, plan, args.suite, args.output, image_target=args.image_target)["status"] == "success" else 1
+            return 0 if run_suite(root, plan, args.suite, args.output, image_target=args.image_target, local_images=args.local_images)["status"] == "success" else 1
         if args.command == "run-image-group":
             return 0 if run_image_group(root, load_plan(args.plan), args.group, args.output) else 1
         if args.command == "verify":
@@ -757,8 +977,10 @@ def main() -> int:
             return 0
         if not args.base or not args.head:
             parser.error("--base and --head are required for isolated preflight")
-        with local_preflight_slot(Path(args.repo), args.base, args.head):
-            return preflight(args)
+        return run_local_preflight(args)
+    except KeyboardInterrupt:
+        print("Preflight cancelled; owned work cleaned up.", file=sys.stderr)
+        return 130
     except (DeploymentError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"Preflight failed: {exc}", file=sys.stderr)
         return 1

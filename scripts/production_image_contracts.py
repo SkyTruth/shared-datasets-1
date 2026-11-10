@@ -11,13 +11,14 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.terraform_target_contracts import registry, production_image_limits
-from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, load_image, pack_image
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, inspect_image, load_image, pack_image, source_tag, validate_local_manifest
 
 HOST_PROBE_FILES = dict(usage_probe="scripts/dataset_usage_cold_start.py",
     fixture_script="scripts/installed_ingestion_fixture.py", smoke="scripts/local_ingestion_smoke.py")
@@ -131,7 +132,7 @@ def verify_viewer_image(image, limits=None):
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
     try:
-        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer", limits), "--name", name, image], check=True)
+        subprocess.run(["docker", "run", *container_options(), "--platform", "linux/amd64", "--detach", "--network", "none", "--tmpfs", "/tmp", *resource_limits("catalog-viewer", limits), "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -145,13 +146,17 @@ def resource_limits(target, limits=None):
     return production_image_limits(ROOT)[target] if limits is None else limits
 
 
+def container_options():
+    return ["--init", "--label", "shared-datasets-preflight=" + os.environ.get("SHARED_DATASETS_PREFLIGHT_RUN", f"standalone-{os.getpid()}")]
+
+
 def commands(target, executor, *, image_id=None, limits=None):
     image = f"shared-datasets-preflight/{target}:{executor}"
     tested_image = image_id or image
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg",
              f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", RECIPES[target], "-t", image, "."]
     limits = resource_limits(target, limits)
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *limits]
+    run = ["docker", "run", *container_options(), "--platform", "linux/amd64", "--rm", "--network", "none", "--tmpfs", "/tmp", *limits]
     checks = registry(section="image_checks")[target]
     if not checks or set(checks) - {"host", "container"} or any(not rows or any(not args for args in rows) for rows in checks.values()):
         raise ValueError("Invalid registered installed image checks")
@@ -181,7 +186,11 @@ def main():
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
     parser.add_argument("--limits", type=json.loads, help="Serialized production caps from the validation plan")
+    parser.add_argument("--local-images", action="store_true", help="Record local immutable IDs without exporting or loading TARs")
     args = parser.parse_args()
+    if args.local_images and (not args.output or os.environ.get("GITHUB_RUN_ID")):
+        parser.error("local image receipts require local output and cannot be used in Actions")
+    os.environ.setdefault("SHARED_DATASETS_PREFLIGHT_RUN", "standalone-" + uuid.uuid4().hex)
     if args.viewer_image:
         if args.target or args.output:
             parser.error("viewer-image cannot be combined with build targets")
@@ -197,17 +206,25 @@ def main():
         for command in commands(target, executor, image_id=image_id, limits=args.limits)[1:]:
             subprocess.run(command, check=True)
         if args.output:
-            retained[target] = pack_image(target, executor, image_id, args.output / "images")
-            # Exercise the deployment loader on this CI daemon before admitting
-            # the handoff. Docker's exporter/store representation can differ
-            # from the locally tested image's identity.
-            load_image(args.output / "images" / retained[target]["archive"], retained[target])
+            if args.local_images:
+                tag = source_tag(target, executor)
+                inspected = inspect_image(tag)
+                if inspected["Id"] != image_id or tag not in inspected.get("RepoTags", []):
+                    raise ValueError("local tested image tag changed during installed probes")
+                retained[target] = {"image_id": image_id, "source_tag": tag, "platform": "linux/amd64"}
+            else:
+                retained[target] = pack_image(target, executor, image_id, args.output / "images")
+                # Hosted runs exercise the exact deployment TAR loader.
+                load_image(args.output / "images" / retained[target]["archive"], retained[target])
     if args.output:
+        manifest = {"schema_version": 1, "tested_sha": executor, "images": retained}
+        if args.local_images:
+            manifest["transport"] = "local-daemon"
+            validate_local_manifest(manifest, executor)
         (args.output / "images").mkdir(parents=True, exist_ok=True)
-        (args.output / "images/manifest.json").write_text(json.dumps(
-            {"schema_version": 1, "tested_sha": executor, "images": retained}, sort_keys=True
-        ) + "\n")
+        (args.output / "images/manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     main()

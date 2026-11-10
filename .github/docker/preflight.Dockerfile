@@ -33,4 +33,12 @@ ENV PATH="/opt/ci/node22/bin:/opt/ci/bin:${PATH}" \
     SHARED_DATASETS_WORKDIR="/work/shared-datasets-1" \
     PYTHONUNBUFFERED="1"
 
+# The package lock pins the browser revision; suite containers reuse these
+# binaries while retaining their own npm dependencies and test evidence.
+ENV PLAYWRIGHT_BROWSERS_PATH="/opt/ms-playwright"
+COPY tests/browser/package.json tests/browser/package-lock.json /opt/ci-browser/
+RUN cd /opt/ci-browser && npm ci --ignore-scripts \
+    && npx --no-install playwright install chromium \
+    && rm -rf /opt/ci-browser
+
 WORKDIR /workspace

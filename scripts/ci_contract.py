@@ -20,7 +20,7 @@ from scripts.ingestion_targets import DEPLOY_TARGETS, TARGETS as INGESTION_CONFI
 from scripts.catalog_csv import read_catalog_rows_text
 from scripts.production_image_contracts import HOST_PROBE_FILES
 from scripts.terraform_target_contracts import registry, resource_index, scope_inputs
-from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest, dependency_graph, dependency_closure, repository_files
+from scripts.tested_image_bundle import BUILD_TARGETS, RECIPES, ROOT, ImageError, TARGETS as IMAGE_TARGETS, validate_manifest, validate_local_manifest, dependency_graph, dependency_closure, repository_files
 
 
 SUITES = (
@@ -157,7 +157,7 @@ def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]
             "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
             ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
             "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py",
-        } or path.startswith("tests/fixtures/") and path.endswith(".md")):
+        }):
         return "component" if path in {"pyproject.toml", "uv.lock"} else "shared", set(SUITES)
     images, native, browser, sources, _ = inputs or dependency_inputs(root=root)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
@@ -167,6 +167,14 @@ def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]
         return "metadata", suites
     if path == "api/typescript/README.md":
         return "component", {"sdk-node22", "sdk-node24", "browser"}
+    if path.startswith("tests/") and not path.endswith(".py"):
+        # Test data still follows image/browser consumers before this floor.
+        suites = {"geospatial-integration"}
+        if any(matches(path, copied) for copied in images.values()):
+            suites.add("production-images")
+        if path.startswith("tests/browser/") or path in browser:
+            suites.update({"sdk-node22", "sdk-node24", "browser"})
+        return "component", suites
     if path.endswith(".md") or path == "LICENSE":
         return "documentation", set()
     suites = set()
@@ -363,8 +371,10 @@ def contract_digest(root: Path) -> str:
 def verify_results(
     plan: dict, results: list[dict], jobs: dict | None = None, *,
     source_proofs: dict[int, set[str]] | None = None,
-    run_id: str | None = None, run_attempt: int | None = None,
+    run_id: str | None = None, run_attempt: int | None = None, local: bool = False,
 ) -> dict[str, dict]:
+    if local and (jobs is not None or source_proofs is not None or run_id is not None):
+        raise ValueError("local image receipts cannot authorize hosted validation")
     if plan.get("schema_version") != 1 or not plan.get("suites"):
         raise ValueError("invalid validation plan")
     selected = plan["suites"]
@@ -422,7 +432,8 @@ def verify_results(
             raise ValueError("cross-run validation reuse is not supported")
         if suite == "production-images":
             try:
-                images = validate_manifest(result.get("production_images"), plan["tested_sha"])
+                validator = validate_local_manifest if local else validate_manifest
+                images = validator(result.get("production_images"), plan["tested_sha"])
             except ImageError as exc:
                 raise ValueError(f"invalid production-image evidence: {exc}") from exc
             expected_images = {result["image_target"]} if matrix else set(targets) & IMAGE_TARGETS

@@ -193,6 +193,22 @@ def validate_manifest(manifest, sha):
     return images
 
 
+def validate_local_manifest(manifest, sha):
+    """Local daemon IDs prove installed probes, never a deployable TAR handoff."""
+    require(isinstance(manifest, dict) and set(manifest) == {"schema_version", "transport", "tested_sha", "images"}
+            and type(manifest["schema_version"]) is int and manifest["schema_version"] == 1
+            and manifest["transport"] == "local-daemon" and manifest["tested_sha"] == sha
+            and SHA.fullmatch(sha), "invalid local image manifest identity")
+    images = manifest["images"]
+    require(isinstance(images, dict) and set(images) <= TARGETS, "invalid local image selection")
+    for target, image in images.items():
+        require(isinstance(image, dict) and set(image) == {"image_id", "source_tag", "platform"}
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(image["image_id"]))
+                and image["source_tag"] == source_tag(target, sha)
+                and image["platform"] == "linux/amd64", "invalid local tested image identity or platform")
+    return images
+
+
 @contextmanager
 def saved_image(path, *, canonical=False):
     """One bounded TAR/JSON parser for Docker exports and retained archives."""

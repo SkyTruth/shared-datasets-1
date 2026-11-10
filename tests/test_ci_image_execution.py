@@ -10,9 +10,9 @@ import zipfile
 import pytest
 
 from scripts import ci_preflight as preflight
-from scripts.ci_contract import expected_tools, resolve_selection
+from scripts.ci_contract import expected_tools, resolve_selection, verify_results
 from ci_result_fixtures import production_images
-from test_ci_preflight import fixture_repo
+from test_ci_preflight import fixture_repo, results_for
 from test_tested_image_handoff import download, handoff as handoff, zipped
 from scripts.deployment_revision import DeploymentError
 
@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--target', action='append')
 parser.add_argument('--output', type=Path)
 parser.add_argument('--limits', type=json.loads, required=True)
+parser.add_argument('--local-images', action='store_true')
 args = parser.parse_args()
 assert len(args.target) == 1, 'one independent target per command'
 target = args.target[0]
@@ -56,20 +57,64 @@ try:
         time.sleep(30)  # Must be terminated when the other target fails.
     sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     images = {target: dict(IMAGES[target], source_tag=f'shared-datasets-preflight/{target}:{sha}')}
+    if args.local_images:
+        images = {name: dict(image_id=image['config_digest'], source_tag=image['source_tag'], platform=image['platform']) for name, image in images.items()}
     if target == BROKEN and DEFECT == 'wrong-set':
         images = {}
     directory = args.output / 'images'
     directory.mkdir(parents=True)
-    if not (target == BROKEN and DEFECT == 'missing-tar'):
+    if not args.local_images and not (target == BROKEN and DEFECT == 'missing-tar'):
         (directory / f'{target}.docker.tar').write_bytes(target.encode())
     if not (target == BROKEN and DEFECT == 'missing-manifest'):
         (directory / 'manifest.json').write_text(json.dumps({
             'schema_version': 1, 'tested_sha': 'f' * 40 if target == BROKEN and DEFECT == 'stale' else sha,
             'images': images,
+            **({'transport': 'local-daemon'} if args.local_images else {}),
         }))
 finally:
     update(-1)
 '''
+
+
+@pytest.mark.parametrize('paths', [['ingestion/eamlis_monthly/run.py'], ['pyproject.toml']])
+@pytest.mark.parametrize('defect', [None, 'wrong-set', 'stale', 'command'])
+def test_local_image_cli_serializes_ids_and_keeps_hosted_tar_gate_strict(tmp_path, monkeypatch, paths, defect):
+    source, git = fixture_repo(tmp_path)
+    targets = resolve_selection(paths)['production_image_targets']
+    producer = source / 'scripts/production_image_contracts.py'
+    producer.write_text(f'COUNT={len(targets)!r}\nBROKEN={targets[0]!r}\nDEFECT={defect!r}\n'
+                        f'IMAGES={production_images("a" * 40)["images"]!r}\n' + PRODUCER)
+    git('add', '.')
+    git('commit', '-m', 'external producer fixture')
+    base = git('rev-parse', 'HEAD')
+    for path in paths:
+        file = source / path
+        file.write_text(file.read_text() + '\n# selected input\n')
+    git('add', '.')
+    git('commit', '-m', 'selected inputs')
+    monkeypatch.chdir(source)
+    monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
+    plan = preflight.make_plan(source, base, 'HEAD')
+    plan_path, output = tmp_path / 'plan.json', tmp_path / 'local-results'
+    preflight.write_json(plan_path, plan)
+    original = preflight.subprocess.check_output
+    monkeypatch.setattr(preflight.subprocess, 'check_output', lambda argv, **kwargs:
+                        '{}' if argv[:2] == ['docker', 'version'] else original(argv, **kwargs))
+    monkeypatch.setattr(preflight, 'probe_tools', lambda suite, environment: expected_tools(suite))
+    monkeypatch.setattr(sys, 'argv', ['preflight', 'run-suite', '--suite', 'production-images', '--local-images', '--plan', str(plan_path), '--output', str(output)])
+    assert preflight.main() == (1 if defect else 0)
+    result = json.loads((output / 'result.json').read_text())
+    assert not list(output.rglob('*.tar'))
+    if defect:
+        assert result['status'] == 'failure' and 'production_images' not in result
+    else:
+        reports = [row for row in results_for(plan) if row['suite'] != 'production-images'] + [result]
+        verify_results(plan, reports, local=True)
+        with pytest.raises(ValueError, match='invalid production-image evidence'):
+            verify_results(plan, reports)
+        assert result['production_images'] == json.loads((output / 'images/manifest.json').read_text())
+        assert result['production_images']['transport'] == 'local-daemon'
+        assert set(result['production_images']['images']) == set(targets)
 
 
 def test_empty_image_selection_cannot_start_a_producer(tmp_path):

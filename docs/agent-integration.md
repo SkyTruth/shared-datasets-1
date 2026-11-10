@@ -21,10 +21,9 @@ perform any authorized current-main merge required by strict checks. Complete
 [publication readiness](publication-readiness.md) before expensive publication
 builds/validation; an early checkpoint stays provisional.
 
-The local full-preflight slot is exclusive across worktrees. A busy result is a
-coordination failure: inspect the named owner and use focused checks elsewhere,
-without polling/retry loops or editing the validating checkout. Different task
-work directories do not create extra slots. The
+The local full-preflight slot is exclusive across worktrees. Use `--wait` to queue
+on a busy slot and record the wait; do not edit or commit in the validating
+checkout. Different task work directories do not create extra slots. The
 [preflight isolation contract](ci-preflight.md#isolation-and-tools) owns lock
 release and surviving process-owned Docker work after interruption.
 
@@ -45,13 +44,19 @@ prerequisites, purpose, terminal condition and retry budget. On each wake, read
 the live PR head, main and run attempt; saved SHAs are observations, not authority.
 Stay quiet while prerequisites are unchanged. Stop acting when the PR is merged,
 closed or superseded, and disable its own completed schedule when authorized.
-Never mutate an unrelated automation. A new commit invalidates old validation;
-it is not a reason to retry the old run.
+Never mutate an unrelated automation. Run `uv run ruff check .` before every
+commit. A new commit requires local evidence for that head: use a full run for
+the first push and after contract or toolchain changes, or `--since <validated-sha>` with passing evidence on the same
+base and contract. Conflict-free base-only movement, PR-body edits and hosted
+waits need no local rerun. Hosted CI still runs the full PR selection; do not
+retry an old hosted run for a new commit.
 
 ## Preserved boundaries
 
-Local and hosted validation remain separate. No evidence may cross incompatible
-heads, bases, tested trees, toolchains, contracts or Actions provenance. Missing,
+Local and hosted validation remain separate. Hosted evidence may not cross
+incompatible heads, bases, tested trees, toolchains, contracts or Actions provenance. Local
+`--since` explicitly records prior suite coverage without rebinding prior
+receipts to the new SHA; it requires the same base, contract and toolchain. Missing,
 failed, cancelled and unexpectedly skipped evidence still fails the gate.
 Full-history checks, native fixtures, Node 22/24, browser no-skips/no-retries,
 exact tested images and protected deployment authorization remain required.

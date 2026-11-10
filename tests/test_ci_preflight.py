@@ -70,14 +70,14 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     "services/catalog_viewer/README.md", "services/nested/docs/operations.md",
     "api/python/README.md", "api/nested/package/README.md",
     "scripts/nested/README.md", ".github/README.md", "terraform/modules/cloud_run_job/README.md",
-    "web/README.md", "tests/browser/README.md", "api/python/notes.md",
+    "web/README.md", "api/python/notes.md",
 ])
 def test_component_documentation_only_selects_always(path):
     assert set(resolve_selection([path])["suites"]) == ALWAYS
 
 
 @pytest.mark.parametrize("path", [
-    "tests/fixtures/README.md", "scripts/README.md.py", "pyproject.toml",
+    "scripts/README.md.py", "pyproject.toml",
 ])
 def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
     assert resolve_selection([path])["suites"] == list(SUITES)
@@ -528,8 +528,9 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
 
 
 @pytest.mark.parametrize("suites", [SUITES, ("lint", "tests", "tests-control-plane")])
+@pytest.mark.parametrize("workers", [2, 3])
 @pytest.mark.parametrize("outcome", ["success", "failure", "missing", "crash", "stale", "source-change"])
-def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome):
+def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_path, monkeypatch, suites, outcome, workers):
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo" / "source.txt").write_text("tracked fixture")
     (tmp_path / "repo" / "source-link").symlink_to("source.txt")
@@ -537,7 +538,12 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
     unrelated.write_bytes(b"prior run")
     validation = plan(suites)
     reports = {report["suite"]: report for report in results_for(validation)}
-    barrier, lock = Barrier(2), Lock()
+    if "production-images" in reports:
+        manifest = reports["production-images"]["production_images"]
+        manifest["transport"] = "local-daemon"
+        manifest["images"] = {target: {"image_id": image["config_digest"], "source_tag": image["source_tag"], "platform": image["platform"]}
+                              for target, image in manifest["images"].items()}
+    barrier, lock = Barrier(workers), Lock()
     calls, outputs = [], []
     active = peak = 0
 
@@ -547,7 +553,7 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
             calls.append(suite)
             active += 1
             peak = max(peak, active)
-            first_pair = len(calls) <= 2
+            first_pair = len(calls) <= workers
         try:
             if first_pair:
                 barrier.wait(timeout=5)
@@ -567,7 +573,7 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
             with lock:
                 active -= 1
 
-    def container(root, work, suite, image, platform):
+    def container(root, work, suite, image, platform, *, cancelled=None):
         execute(suite, work)
         return {"transport": "container", "exit_code": 0}
 
@@ -579,8 +585,8 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
             (kwargs["cwd"] / "host-cache").write_text("host-only")
             images = output / "images"
             images.mkdir()
-            for image in reports["production-images"]["production_images"]["images"].values():
-                (images / image["archive"]).write_bytes(b"verified fixture")
+            if outcome != "success":
+                (images / "failed-run.docker.tar").write_bytes(b"disposable fixture")
             (images / "manifest.json").write_text(json.dumps(reports["production-images"]["production_images"]))
             execute("production-images", output.parent)
         return subprocess.CompletedProcess(argv, 0)
@@ -590,9 +596,12 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
     monkeypatch.setattr(preflight, "isolated_merge", lambda *args: (tmp_path / "repo", validation["base"], validation["head"]))
     monkeypatch.setattr(preflight, "make_plan", lambda *args, **kwargs: validation)
     monkeypatch.setattr(preflight.shutil, "which", lambda _: "/tools/docker")
-    monkeypatch.setattr(preflight, "local_runtime", lambda: {"server_architecture": "amd64", "platform": "linux/amd64"})
+    monkeypatch.setattr(preflight, "local_runtime", lambda: {"server_architecture": "amd64", "platform": "linux/amd64", "suite_workers": workers})
     monkeypatch.setattr(preflight, "isolated_host_environment", lambda *args: nullcontext({}))
     monkeypatch.setattr(preflight, "run_container", container)
+    monkeypatch.setattr(preflight, "run_host_suite", command)
+    monkeypatch.setattr(preflight, "remove_containers", lambda *args: None)
+    monkeypatch.setattr(preflight, "cleanup_old_images", lambda: None)
     monkeypatch.setattr(preflight.subprocess, "run", command)
     monkeypatch.setattr(preflight, "git", lambda root, *args: ("changed" if outcome == "source-change" else "") if args[0] == "status" else args[-1].split("^")[0])
     monkeypatch.setattr(preflight.sys, "argv", ["ci_preflight.py", "--base", validation["base"], "--head", validation["head"]])
@@ -600,22 +609,24 @@ def test_local_driver_bounds_parallel_suites_and_requires_complete_evidence(tmp_
     assert len(calls) == len(set(calls)) and set(calls) <= set(suites)
     if outcome in {"success", "stale", "source-change"}:
         assert set(calls) == set(suites)
-    assert active == 0 and peak == 2
+    assert active == 0 and peak == workers
     assert not (tmp_path / "repo" / "host-cache").exists()
     assert unrelated.read_bytes() == b"prior run"
     assert len(set(outputs)) == len(outputs)
     if "production-images" in suites:
-        assert "production-images" in calls[:2]
+        assert "production-images" in calls[:workers]
+        if workers == 3:
+            assert "browser" in calls[:workers]
         image_dirs = list((tmp_path / "_scratch").glob("ci-preflight-*/production-images/images"))
         assert len(image_dirs) == 1
         archives = list(image_dirs[0].glob("*.docker.tar"))
-        assert len(archives) == (0 if outcome == "success" else 7)
+        assert len(archives) == 0
         assert json.loads((image_dirs[0] / "manifest.json").read_text()) == reports["production-images"]["production_images"]
     evidence = list(tmp_path.rglob("preflight.json"))
     assert len(evidence) == (1 if outcome == "success" else 0)
     if evidence:
         final = json.loads(evidence[0].read_text())
-        verify_results(validation, final["results"])
+        verify_results(validation, final["results"], local=True)
         assert set(final["runtime"]["suites"]) == set(suites)
         if "production-images" in suites:
             assert final["runtime"]["production_image_archives_retained"] is False
@@ -774,12 +785,14 @@ def test_browser_releases_only_its_download_cache_before_installing_chromium(tmp
 
 
 @pytest.mark.parametrize('architecture', ['amd64', 'arm64'])
-def test_local_runtime_uses_the_actual_linux_server_architecture(architecture):
+@pytest.mark.parametrize('cpus,workers', [(4, 2), (7, 2), (8, 3), (16, 3)])
+def test_local_runtime_uses_the_actual_linux_server_architecture(architecture, cpus, workers):
     server = {'Os': 'linux', 'Arch': architecture, 'Version': '29.8.2'}
-    with mock.patch.object(preflight.subprocess, 'check_output', return_value=json.dumps(server)) as execute:
+    with mock.patch.object(preflight.subprocess, 'check_output', side_effect=[json.dumps(server), str(cpus)]) as execute:
         record = preflight.local_runtime()
-    assert record == {'platform': f'linux/{architecture}', 'server_architecture': architecture, 'docker_version': '29.8.2'}
-    execute.assert_called_once_with(['docker', 'version', '--format', '{{json .Server}}'], text=True)
+    assert record == {'platform': f'linux/{architecture}', 'server_architecture': architecture, 'docker_version': '29.8.2', 'cpus': cpus, 'suite_workers': workers}
+    assert execute.call_args_list == [mock.call(['docker', 'version', '--format', '{{json .Server}}'], text=True),
+                                      mock.call(['docker', 'info', '--format', '{{.NCPU}}'], text=True)]
 
 
 @pytest.mark.parametrize('operating_system,architecture', [('darwin', 'arm64'), ('windows', 'amd64'), ('linux', 'riscv64'), ('linux', 'ppc64le')])
@@ -1109,7 +1122,7 @@ def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, 
     git("commit", "-m", "remove module and import")
     selected, emitted = emit_plan(source, base, tmp_path)
     if consumer == "unproved":
-        assert selected["suites"] == list(SUITES)
+        assert set(selected["suites"]) == ALWAYS | {"geospatial-integration"}
         return
     assert selected["production_image_targets"] == (["mpatlas-monthly"] if consumer == "image" else [])
     assert emitted["production-images"] == str(consumer == "image").lower()
