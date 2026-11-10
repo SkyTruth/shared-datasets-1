@@ -127,7 +127,12 @@ def test_registry_migration_preserves_all_signed_and_historical_routing_facts():
     assert {key: sorted(value) for key, value in alerts.WORKFLOW_EVENTS.items()} == expected['events']
     assert sorted(alerts.PUBLICATION_JOBS) == expected['publication_jobs']
     assert {name: row['prerequisites'] for name, row in registry().items()} == expected['prerequisites']
-    assert {name: row['retired_resources'] for name, row in registry().items() if 'retired_resources' in row} == expected['retired_resources']
+    # Preserve the historical retirements and recognize the rejected reader's
+    # absent address, retained by the writer solely for static ownership.
+    expected_retired = {**expected['retired_resources'], 'Artifact Registry writer binding sync': [
+        'google_storage_bucket_iam_member.github_readonly_object_viewer_scoped']}
+    assert {name: row['retired_resources'] for name, row in registry().items() if 'retired_resources' in row} == expected_retired
+    assert registry()['Artifact Registry writer binding sync']['block_deletes'] is True
     assert not (ROOT / 'terraform/iam-plan-prerequisites.json').exists()
     assert 'record_workflows' not in json.loads((ROOT / '.github/terraform-targets.json').read_text())
     exceptions = registry(section='selection_exceptions')
