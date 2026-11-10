@@ -391,7 +391,7 @@ jobs:
         run: uv run --frozen --no-dev python scripts/repo_alerts.py select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
 
   refresh-reviewed-catalog:
-    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
+    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn, artifact-registry-iam]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').refresh-reviewed-catalog && needs.dataset-mutation-selection.outputs.has_catalog_changes == 'true' }}
     permissions:
       contents: read
@@ -422,7 +422,7 @@ jobs:
 
   publish-reviewed-dataset:
     name: "Publish PR #${{ matrix.pr_number }}"
-    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn]
+    needs: [ci-ready, dataset-mutation-selection, pmtiles-cdn, artifact-registry-iam]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').publish-reviewed-dataset && needs.dataset-mutation-selection.outputs.has_mutations == 'true' }}
     strategy:
       fail-fast: false
@@ -497,7 +497,7 @@ jobs:
     secrets: inherit
 
   pmtiles-cdn:
-    needs: ci-ready
+    needs: [ci-ready, artifact-registry-iam]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').pmtiles-cdn }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/pmtiles-cdn-sync.yml
@@ -555,7 +555,7 @@ jobs:
     secrets: inherit
 
   identity-decision-reconcile:
-    needs: [ci-ready, cron-alert-policy]
+    needs: [ci-ready, ingestion-iam, artifact-registry-iam, cron-alert-policy]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').identity-decision-reconcile }}
     permissions:
       contents: read

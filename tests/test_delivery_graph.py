@@ -10,8 +10,54 @@ import yaml
 from scripts import ci_contract as ci, deployment_receipt_contracts as receipts
 from scripts import deployment_revision as revisions, workflow_failure_alert as alerts
 from scripts.terraform_target_contracts import registry
+from workflow_helpers import deployment_prerequisites, identity_sync_needs
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_delivery_callers_wait_for_created_identities_in_nested_reusable_workflows():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    missing = {name: sorted(required - set([needs] if isinstance(needs := jobs[name].get('needs', []), str) else needs))
+               for name, required in identity_sync_needs(ROOT).items()}
+    assert not {name: needs for name, needs in missing.items() if needs}
+
+
+@pytest.mark.parametrize('create_account', [False, True])
+def test_identity_ordering_follows_created_accounts_through_multiple_reusable_hops(tmp_path, create_account):
+    directory = tmp_path / '.github/workflows'
+    directory.mkdir(parents=True)
+    inventory = tmp_path / 'terraform/envs/prod/github-workflow-identities.json'
+    inventory.parent.mkdir(parents=True)
+    inventory.write_text(json.dumps({'fresh': ['authenticate.yml'], 'existing': ['existing.yml']}))
+    resources = ['google_project_iam_custom_role.github_job["existing"]']
+    if create_account:
+        resources.append('google_service_account.github_job["fresh"]')
+    (directory.parent / 'terraform-targets.json').write_text(json.dumps({'schema_version': 1, 'targets': {
+        'GitHub workflow identity sync': {'workflow': 'create.yml', 'resources': resources}}}))
+    def call(filename):
+        return {'uses': './.github/workflows/' + filename}
+    documents = {
+        'ci.yml': {'creator': call('create.yml'), 'direct': call('authenticate.yml'),
+                   'nested': call('wrapper.yml'), 'existing': call('existing.yml')},
+        'wrapper.yml': {'nested': call('inner.yml')},
+        'inner.yml': {'nested': call('authenticate.yml'), 'external': {'uses': 'org/repo/.github/workflows/other.yml@main'}},
+        **dict.fromkeys(('create.yml', 'authenticate.yml', 'existing.yml'), {}),
+    }
+    for filename, jobs in documents.items():
+        (directory / filename).write_text(yaml.safe_dump({'jobs': jobs}))
+    assert identity_sync_needs(tmp_path) == ({'direct': {'creator'}, 'nested': {'creator'}} if create_account else {})
+
+
+def test_every_post_gate_job_directly_needs_all_post_gate_ancestors():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
+    graph = {name: set([needs] if isinstance(needs := job.get('needs', []), str) else needs)
+             for name, job in jobs.items()}
+    ancestors = {}
+    for name in TopologicalSorter(graph).static_order():
+        ancestors[name] = graph[name] | set().union(*(ancestors[parent] for parent in graph[name]))
+    post_gate = {name for name in graph if 'ci-ready' in ancestors[name]}
+    missing = {name: sorted((ancestors[name] & post_gate) - graph[name]) for name in post_gate}
+    assert not {name: needs for name, needs in missing.items() if needs}
 
 
 def test_registry_migration_preserves_all_signed_and_historical_routing_facts():
@@ -29,7 +75,7 @@ def test_registry_migration_preserves_all_signed_and_historical_routing_facts():
 
 def test_every_selected_prerequisite_runs_or_has_failed_or_cancelled_ancestry():
     jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
-    graph = {name: row['terraform_prerequisites'] for name, row in registry(section='deployments').items()}
+    graph = deployment_prerequisites(ROOT)
     order = list(TopologicalSorter(graph).static_order())
     # Bind the scheduler truth table to the exact checked-in expression, rather
     # than parsing a second expression language in Python. failure() is transitive:

@@ -11,7 +11,7 @@ import pytest
 from scripts.ci_contract import ALWAYS, DEPLOYMENTS, select_deployments, resolve_selection
 from scripts import ci_preflight
 from scripts.ci_preflight import suite_commands
-from workflow_helpers import load_workflow, workflow_triggers, workflow_steps_by_name
+from workflow_helpers import deployment_prerequisites, load_workflow, workflow_triggers, workflow_steps_by_name
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -413,7 +413,7 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
     from scripts.terraform_target_contracts import registry
     declarations = registry(section="deployments")
     name = job_id.replace('-', '_')
-    optional = [parent.replace('_', '-') for parent in declarations[name]['terraform_prerequisites']] if name in declarations else [parent for parent in needs if parent.replace('-', '_') in declarations]
+    optional = [parent.replace('_', '-') for parent in deployment_prerequisites(ROOT)[name]] if name in declarations else [parent for parent in needs if parent.replace('-', '_') in declarations]
     assert set(optional) == {parent for parent in needs if parent.replace('-', '_') in declarations}
     values = {
         "github.event_name": "push", "github.ref": "refs/heads/main",

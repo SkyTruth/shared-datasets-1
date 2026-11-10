@@ -3,9 +3,31 @@ import json
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('event,source_event,allocated', [
+    ('workflow_run', 'pull_request', True),
+    ('workflow_run', 'push', False),
+    ('workflow_run', 'workflow_dispatch', False),
+    ('workflow_run', 'schedule', False),
+    ('pull_request_review', '', True),
+    ('pull_request_target', '', True),
+])
+def test_owner_acceptance_refresh_allocates_only_relevant_events(event, source_event, allocated):
+    workflow = yaml.safe_load((ROOT / '.github/workflows/owner-acceptance-refresh.yml').read_text())
+    # Bind this truth table to the scheduler's job-level condition, before a runner is allocated.
+    job = workflow['jobs']['refresh']
+    condition = job['if'].removeprefix('${{').removesuffix('}}').strip()
+    github = {'event_name': event, 'event': {'workflow_run': {'event': source_event}}} if event == 'workflow_run' else {'event_name': event, 'event': {}}
+    result = subprocess.run(['node', '-e',
+        'process.stdout.write(String(Function("github", "return " + process.argv[1])(JSON.parse(process.argv[2]))))',
+        condition, json.dumps(github)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(allocated).lower()
 
 
 def test_review_refresh_targets_only_latest_exact_head_acceptance_and_its_dependents():

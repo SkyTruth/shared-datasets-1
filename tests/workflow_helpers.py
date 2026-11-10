@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 import os
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from scripts.terraform_target_contracts import workflow as resolved_workflow
+from scripts.terraform_target_contracts import registry, workflow as resolved_workflow
 from scripts.deployment_receipt_contracts import expanded_steps
 
 
@@ -22,6 +23,42 @@ def load_workflow(path: Path) -> dict[str, Any]:
 def workflow_triggers(workflow: dict[str, Any]) -> dict[str, Any]:
     # PyYAML follows YAML 1.1 and treats the GitHub Actions key `on` as a bool.
     return workflow.get("on") or workflow.get(True) or {}
+
+
+def identity_sync_needs(root: Path) -> dict[str, set[str]]:
+    """Derive first-run ordering from created identities and reusable callers."""
+    sync = registry(root)['GitHub workflow identity sync']
+    inventory = json.loads((root / 'terraform/envs/prod/github-workflow-identities.json').read_text())
+    consumers = {workflow for identity, workflows in inventory.items()
+                 if f'google_service_account.github_job["{identity}"]' in sync['resources']
+                 for workflow in workflows}
+    directory = root / '.github/workflows'
+    jobs = yaml.safe_load((directory / 'ci.yml').read_text())['jobs']
+    prefix = './.github/workflows/'
+    creator, = [name for name, job in jobs.items() if job.get('uses') == prefix + sync['workflow']]
+
+    def workflow_closure(filename):
+        seen, pending = set(), [filename]
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            workflow = yaml.safe_load((directory / current).read_text())
+            pending.extend(job['uses'].removeprefix(prefix) for job in workflow['jobs'].values()
+                           if job.get('uses', '').startswith(prefix))
+        return seen
+
+    return {name: {creator} for name, job in jobs.items()
+            if job.get('uses', '').startswith(prefix)
+            and consumers & workflow_closure(job['uses'].removeprefix(prefix))}
+
+
+def deployment_prerequisites(root: Path) -> dict[str, set[str]]:
+    identities = identity_sync_needs(root)
+    return {name: set(row['terraform_prerequisites']) | {
+                parent.replace('-', '_') for parent in identities.get(name.replace('_', '-'), set())}
+            for name, row in registry(root, section='deployments').items()}
 
 
 def workflow_steps_by_name(

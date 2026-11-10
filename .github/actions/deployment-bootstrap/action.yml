@@ -11,7 +11,12 @@ runs:
   - name: Validate main ref
     env: {WORKFLOW_FILE: "${{ inputs.workflow }}"}
     run: |
-      if [[ "${GITHUB_REF}" != "refs/heads/main" || ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main" && "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then exit 1; fi
+      expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/$WORKFLOW_FILE@refs/heads/main"
+      ci_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main"
+      if [[ "${GITHUB_REF}" != "refs/heads/main" || ("${GITHUB_WORKFLOW_REF}" != "$expected_workflow_ref" && "${GITHUB_WORKFLOW_REF}" != "$ci_workflow_ref") ]]; then
+        echo "::error::Deployment bootstrap expected GITHUB_REF=refs/heads/main and GITHUB_WORKFLOW_REF=$expected_workflow_ref or $ci_workflow_ref; actual GITHUB_REF=${GITHUB_REF} and GITHUB_WORKFLOW_REF=${GITHUB_WORKFLOW_REF}"
+        exit 1
+      fi
     shell: bash
   - name: Verify owner acceptance before candidate checkout
     env:

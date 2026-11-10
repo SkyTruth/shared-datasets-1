@@ -111,7 +111,7 @@ def test_catalog_worker_allocation_requires_mutation_completion_index_rebuild_or
     assert catalog_selection['run'] == 'python scripts/catalog_web_changes.py'
     assert catalog_selection['if'] == "${{ steps.discover.outputs.has_mutations == 'false' }}"
     caller = ci['jobs']['refresh-reviewed-catalog']
-    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'pmtiles-cdn'}
+    assert set(caller['needs']) == {'ci-ready', 'dataset-mutation-selection', 'pmtiles-cdn', 'artifact-registry-iam'}
     assert caller["if"] == delivery_condition("refresh-reviewed-catalog")
     assert caller['uses'] == './.github/workflows/catalog-web-deploy.yml'
     assert caller['with'] == {'executor_sha': '${{ needs.ci-ready.outputs.tested_sha }}',

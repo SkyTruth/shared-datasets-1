@@ -3,9 +3,43 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+import yaml
+
 from scripts import terraform_target_contracts as contracts
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('ref,workflow,allowed', [
+    ('refs/heads/main', 'artifact-registry-iam-sync.yml@refs/heads/main', True),
+    ('refs/heads/main', 'ci.yml@refs/heads/main', True),
+    ('refs/heads/topic', 'ci.yml@refs/heads/main', False),
+    ('refs/heads/main', 'ci.yml@refs/heads/topic', False),
+    ('refs/heads/main', 'foreign.yml@refs/heads/main', False),
+    ('refs/heads/topic', 'foreign.yml@refs/heads/topic', False),
+])
+def test_main_ref_guard_reports_expected_and_actual_refs_before_rejecting(ref, workflow, allowed):
+    action = yaml.safe_load((ROOT / '.github/actions/deployment-bootstrap/action.yml').read_text())
+    guard = next(step for step in action['runs']['steps'] if step.get('name') == 'Validate main ref')
+    repository = 'SkyTruth/shared-datasets-1'
+    actual_workflow = f'{repository}/.github/workflows/{workflow}'
+    result = subprocess.run(['bash', '-eu', '-c', guard['run']], capture_output=True, text=True,
+                            env={**os.environ, 'WORKFLOW_FILE': 'artifact-registry-iam-sync.yml',
+                                 'GITHUB_REPOSITORY': repository, 'GITHUB_REF': ref,
+                                 'GITHUB_WORKFLOW_REF': actual_workflow})
+    assert (result.returncode == 0) is allowed
+    if allowed:
+        assert not result.stdout and not result.stderr
+    else:
+        assert result.returncode == 1
+        diagnostic = result.stdout + result.stderr
+        assert '::error::' in diagnostic
+        assert 'expected GITHUB_REF=refs/heads/main' in diagnostic
+        assert f'GITHUB_WORKFLOW_REF={repository}/.github/workflows/artifact-registry-iam-sync.yml@refs/heads/main' in diagnostic
+        assert f'{repository}/.github/workflows/ci.yml@refs/heads/main' in diagnostic
+        assert f'actual GITHUB_REF={ref}' in diagnostic
+        assert f'GITHUB_WORKFLOW_REF={actual_workflow}' in diagnostic
 
 
 def test_terraform_bootstrap_declares_caller_inputs_and_ignores_conflicting_ambient_values(tmp_path):

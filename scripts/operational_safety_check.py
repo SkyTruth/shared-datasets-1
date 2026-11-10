@@ -236,6 +236,7 @@ def incident_problems():
 
 
 def deployed_image_lag(api, *, now):
+    """Compare live images with admitted protected starts."""
     from scripts import deployment_revision as deployments
     holds = json.loads((ROOT / INGESTION_ROLLOUT_HOLDS).read_text())
     validate_suspensions(holds)
@@ -259,6 +260,7 @@ def deployed_image_lag(api, *, now):
 
 
 def audit_freshness(api, *, now):
+    """Require successful weekly audits within nine days."""
     problems = []
     for filename in ("bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"):
         query = urlencode({"branch": "main", "status": "success", "per_page": 100,
@@ -273,6 +275,7 @@ def audit_freshness(api, *, now):
 
 
 def recovery_identity(api):
+    """Missing signed manual provisioning and failed recovery auth stay visible."""
     from scripts import deployment_revision as deployments
     target = "terraform-" + hashlib.sha256(b"PR plan identity provisioning").hexdigest()[:16]
     records = api.pages(f"{API_ROOT}/deployments?environment=production-{target}&per_page=100")

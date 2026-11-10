@@ -28,6 +28,14 @@ START = NOW - timedelta(hours=24)
 
 @pytest.fixture(autouse=True)
 def receipt_workspace(tmp_path, monkeypatch):
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+    # Source windows and claim ages must use the same clock as the dated receipts.
+    monkeypatch.setattr(safety, "datetime", FixtureClock)
+    monkeypatch.setattr(safety.alerts, "datetime", FixtureClock)
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(START))

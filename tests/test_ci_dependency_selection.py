@@ -11,6 +11,7 @@ import yaml
 from scripts import ci_contract as ci, pr_terraform_plan as planner, production_image_contracts as images
 from scripts import terraform_target_contracts as contracts, tested_image_bundle as bundle
 from scripts.terraform_target_contracts import registry
+from workflow_helpers import deployment_prerequisites
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,7 +24,7 @@ def test_deployment_prerequisites_match_ci_needs_and_conditions(name):
     if name == 'dataset_usage':
         assert jobs['dataset-usage']['needs'] == job['needs']
         assert jobs['dataset-usage']['if'] == job['if']
-    expected = set(declarations[name].get('terraform_prerequisites', []))
+    expected = deployment_prerequisites(ROOT)[name]
     assert expected == {parent.replace('-', '_') for parent in job['needs'] if parent.replace('-', '_') in declarations}
     from scripts.ci_contract import delivery_condition
     assert job['if'] == delivery_condition(name.replace('_', '-'))
