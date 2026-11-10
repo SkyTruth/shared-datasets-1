@@ -167,7 +167,9 @@ assert "hcl2" not in sys.modules and "yaml" not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_health_main_reports_missing_probe_dependencies_in_empty_interpreter(isolated_python, tmp_path):
+@pytest.mark.parametrize("previous", ["failure", "success"])
+def test_health_main_reports_missing_probe_dependencies_in_empty_interpreter(isolated_python, tmp_path, previous):
+    """A setup failure after a failed run alerts; after a successful run it carries the report forward quietly."""
     program = '''
 import json, os, sys
 from unittest.mock import Mock
@@ -175,7 +177,9 @@ from pathlib import Path
 sys.path.insert(0, sys.argv.pop(1))
 from scripts import operational_safety_check as s, slack_notify
 s.GitHub = Mock()
-s.alerts.context = Mock(return_value={"id": 1})
+s.alerts.context = Mock(return_value={"id": 2, "run_attempt": 1})
+s.alerts.verify_source_event = Mock(return_value=True)
+s.prior_runs = Mock(return_value=[{"id": 1, "conclusion": os.environ["PREVIOUS"], "event": "schedule"}])
 s.policy_warnings = Mock(return_value=([], []))
 s.audit_freshness = Mock(return_value=[])
 s.deployed_image_lag = Mock(return_value=[])
@@ -184,13 +188,17 @@ slack_notify.notify = Mock()
 s.subprocess.check_call = Mock()
 s.main()
 report = json.loads((Path(sys.argv[-1]) / "health/cache.json").read_text())
-assert any("(freshness): ModuleNotFoundError" in p for p in report["problems"])
-slack_notify.notify.assert_called_once()
+if os.environ["PREVIOUS"] == "success":
+    assert report == {"scope": s.HEALTH_SCOPE, "problems": [], "warnings": [], "notified_at": None}
+    slack_notify.notify.assert_not_called()
+else:
+    assert any("(freshness): ModuleNotFoundError" in p for p in report["problems"])
+    slack_notify.notify.assert_called_once()
 s.subprocess.check_call.assert_not_called()
 '''
     result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT),
         '--health', '--work-dir', str(tmp_path)], cwd=ROOT,
-        env={**os.environ, 'SAFETY_PROBE_OUTCOME': 'skipped'}, capture_output=True, text=True)
+        env={**os.environ, 'SAFETY_PROBE_OUTCOME': 'skipped', 'PREVIOUS': previous}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 

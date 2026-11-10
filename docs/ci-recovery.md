@@ -80,7 +80,7 @@ signed record with that digest; never guess it or rewrite historical evidence.
 | Same read-only outage after bounded retries | Stop identical retries until new provider recovery evidence appears; do not rebuild locally or manufacture a push to compensate. |
 | Mutation started, partial apply or uncertain transport result | Inspect durable records and live effects, then use protected target-specific reconciliation; never blanket-rerun. |
 | Stale/missing authority, artifact or signed evidence | Preserve the failed record and obtain reviewed recovery; a newer success cannot silently replace missing proof. |
-| Failed safety setup/discovery or incomplete health read | Inspect its retained health report; setup and health findings use change-plus-daily reminders. Missing heartbeat series means absence detection is unestablished. |
+| Failed safety setup/discovery or incomplete health read | Inspect its retained health report; setup and health findings use change-plus-daily reminders. A setup failure right after a successful run alerts only if the next run also fails; its cause is in the run's warning annotation, because its retained report is the previous run's. Missing heartbeat series means absence detection is unestablished. |
 | Uncertain Slack send/claim | Use [delivery reconciliation](slack-incidents.md#configure-and-reconcile); inspect the exact parent/checkpoint instead of blindly resending. |
 
 Follow-ups belong to the same owner and must refresh live head/run identity.

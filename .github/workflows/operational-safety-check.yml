@@ -51,6 +51,14 @@ jobs:
       - name: Install locked probe dependencies
         id: dependencies
         run: uv sync --locked --no-dev
+      # The gh release download returned a 504 on 2026-11-09. The installer
+      # re-checks this archive's SHA-256, so a cached copy needs no trust.
+      # Python and uv stay uncached: setup actions do not verify cache hits.
+      - name: Restore pinned verifier archive
+        uses: actions/cache@v4
+        with:
+          key: safety-gh-verifier-2.96.0-linux-amd64
+          path: ${{ runner.temp }}/deployment-receipts/tools/gh_2.96.0_linux_amd64.tar.gz
       - name: Install pinned durable receipt verifier
         id: verifier
         run: python scripts/install_deployment_verifier.py
