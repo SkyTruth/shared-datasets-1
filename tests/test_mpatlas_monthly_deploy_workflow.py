@@ -92,12 +92,18 @@ def test_hold_runtime_iam_is_owned_by_ordered_bootstrap_and_sync():
     assert "google_project_iam_member.github_actions_mpatlas_quality_iam_manager" in bootstrap
     assert "google_cloud_run_v2_job_iam_member.mpatlas_quality_execution_reader" in sync
     assert "google_secret_manager_secret_iam_member.mpatlas_hold_notice" in sync
+    assert "google_storage_bucket_iam_member.mpatlas_source_quality_object_user" in sync
     text = (ROOT / "terraform/envs/prod/mpatlas_monthly.tf").read_text()
-    storage = terraform_resource_block(text, "google_storage_bucket_iam_member", "mpatlas_job_object_user")
-    for prefix in ("shared_bucket_object_resource_prefix", "shared_bucket_folder_resource_prefix"):
-        assert f"${{local.{prefix}}}_scratch/pending-publishes/mpatlas-zone-assessments/" in storage
-        assert f"${{local.{prefix}}}_catalog/ingestion-holds/" in storage
-    assert "_catalog/ingestion-holds/mpatlas-zone-assessments.json" in storage
+    storage = terraform_resource_block(text, "google_storage_bucket_iam_member", "mpatlas_source_quality_object_user")
+    assert 'role   = "roles/storage.objectUser"' in storage
+    assert "member = module.mpatlas_job_service_account.member" in storage
+    assert re.findall(r'"(resource.name[^"\n]+)"', storage) == [
+        "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/ingestion-holds/mpatlas-zone-assessments.json'",
+        "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/ingestion-holds/')",
+        "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/mpatlas-zone-assessments/source-loss-')",
+        "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/mpatlas-zone-assessments/')",
+    ]
+    assert "google_storage_bucket_iam_member.mpatlas_source_quality_object_user," in text
     assert "SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id" in text
     reader = terraform_resource_block(text, "google_cloud_run_v2_job_iam_member", "mpatlas_quality_execution_reader")
     assert '"roles/run.viewer"' in reader and '"mpatlas-monthly"' in reader

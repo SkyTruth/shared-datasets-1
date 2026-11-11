@@ -107,7 +107,7 @@ def test_exclusions_equal_exact_secret_refresh_dependency_closures(tmp_path):
             secret_scopes.add(scope['name'])
     exclusions = contracts.registry(section='pr_plan_exclusions')
     assert set(exclusions) == secret_scopes
-    assert len(exclusions) == 6 and all(reason.strip() for reason in exclusions.values())
+    assert len(exclusions) == 7 and all(reason.strip() for reason in exclusions.values())
     # Exemptions cannot skip static IaC declaration/permission checks.
     commands = [argv for argv, _ in suite_commands('lint', ROOT, {'base': 'a'*40, 'tested_sha': 'b'*40}, tmp_path)]
     assert any('scripts/deployment_permissions.py' in argv and '--static-base' in argv for argv in commands)

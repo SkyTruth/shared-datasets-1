@@ -27,12 +27,25 @@ resource "google_storage_bucket_iam_member" "mpatlas_job_object_user" {
 
   condition {
     title       = "mpatlas_owned_dataset_objects"
-    description = "Restrict MPAtlas monthly job writes to its dataset, index, quality control and held candidates."
+    description = "Restrict MPAtlas monthly job writes to its asset root and release index."
     expression = join(" || ", [
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/')",
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}100-geographic-reference/130-protected-areas/mpatlas-zone-assessments/')",
       "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/mpatlas-zone-assessments.json'",
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')",
+    ])
+  }
+}
+
+resource "google_storage_bucket_iam_member" "mpatlas_source_quality_object_user" {
+  bucket = data.google_storage_bucket.shared_bucket_iam.name
+  role   = "roles/storage.objectUser"
+  member = module.mpatlas_job_service_account.member
+
+  condition {
+    title       = "mpatlas_source_quality_objects"
+    description = "Restrict MPAtlas source-quality writes to its hold object and held candidates."
+    expression = join(" || ", [
       "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/ingestion-holds/mpatlas-zone-assessments.json'",
       "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/ingestion-holds/')",
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/mpatlas-zone-assessments/source-loss-')",
@@ -67,6 +80,7 @@ module "mpatlas_monthly_job" {
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_storage_bucket_iam_member.mpatlas_job_object_user,
+    google_storage_bucket_iam_member.mpatlas_source_quality_object_user,
     google_secret_manager_secret_iam_member.mpatlas_hold_notice,
   ]
 }

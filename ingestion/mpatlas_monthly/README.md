@@ -141,7 +141,8 @@ without rebuilding, and applies a saved plan constrained to the MPAtlas Cloud
 Run job, its scheduler invoker binding, scheduler and the optional canonical
 destructive-action deny policy (adding the approved MPAtlas writer exception).
 The IAM sync owns the two MPAtlas service accounts, their scoped actAs grants and dataset-root storage
-binding, its exact hold object and candidate-prefix storage grants, Slack secret
+binding, the separate `google_storage_bucket_iam_member.mpatlas_source_quality_object_user`
+grant for its exact hold object and candidate prefix, Slack secret
 access, and viewer access on the existing `mpatlas-monthly` job. The existing
 **Translation notice secret IAM bootstrap** scope first grants policy management
 restricted to that job, then **Scheduled ingestion deploy IAM sync** installs the

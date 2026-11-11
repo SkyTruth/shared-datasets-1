@@ -166,9 +166,12 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "google_storage_bucket_iam_member.publisher_translation_debt_writer",
                 "google_storage_bucket_iam_member.eamlis_job_object_user",
                 "google_cloud_run_v2_job_iam_member.eamlis_quality_execution_reader",
+                "google_cloud_run_v2_job_iam_member.mpatlas_quality_execution_reader",
+                "google_secret_manager_secret_iam_member.mpatlas_hold_notice",
                 "module.mpatlas_job_service_account.google_service_account.this",
                 "module.mpatlas_scheduler_service_account.google_service_account.this",
                 "google_storage_bucket_iam_member.mpatlas_job_object_user",
+                "google_storage_bucket_iam_member.mpatlas_source_quality_object_user",
                 'google_service_account_iam_member.mpatlas_deployer_act_as["job"]',
                 'google_service_account_iam_member.mpatlas_deployer_act_as["scheduler"]',
             },
@@ -188,11 +191,13 @@ class TargetApplyCallerTests(unittest.TestCase):
             "google_project_iam_member.github_actions_translation_notice_iam_manager",
             "google_project_iam_custom_role.eamlis_quality_iam_manager",
             "google_project_iam_member.github_actions_eamlis_quality_iam_manager",
+            "google_project_iam_custom_role.mpatlas_quality_iam_manager",
+            "google_project_iam_member.github_actions_mpatlas_quality_iam_manager",
         }
         self.assertEqual(set(inputs["targets"].split()), expected)
         self.assertEqual(set(inputs["allowed_exact"].split()), expected)
         self.assertEqual(inputs["post_apply_wait_seconds"], 30)
-        for name in ("eamlis-monthly-deploy.yml", "wdpa-monthly-deploy.yml"):
+        for name in ("eamlis-monthly-deploy.yml", "wdpa-monthly-deploy.yml", "mpatlas-monthly-deploy.yml"):
             with self.subTest(workflow=name):
                 jobs = load_workflow(REPO_ROOT / ".github/workflows" / name)["jobs"]
                 self.assertNotIn("iam", jobs)

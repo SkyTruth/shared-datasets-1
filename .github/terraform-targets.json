@@ -106,6 +106,7 @@
         "google_cloud_run_v2_job_iam_member.mpatlas_quality_execution_reader", "google_secret_manager_secret_iam_member.mpatlas_hold_notice",
         "module.mpatlas_job_service_account.google_service_account.this",
         "module.mpatlas_scheduler_service_account.google_service_account.this", "google_storage_bucket_iam_member.mpatlas_job_object_user",
+        "google_storage_bucket_iam_member.mpatlas_source_quality_object_user",
         "google_service_account_iam_member.mpatlas_deployer_act_as[\"job\"]", "google_service_account_iam_member.mpatlas_deployer_act_as[\"scheduler\"]"
       ]
     },
@@ -446,7 +447,8 @@
     "Scheduled ingestion deploy IAM sync": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required.",
     "catalog-viewer-deploy.yml/runtime": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required.",
     "wdpa-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required.",
-    "eamlis-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required."
+    "eamlis-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required.",
+    "mpatlas-monthly": "Secret Manager refresh is forbidden for the read-only PR identity; protected planning and static IaC checks remain required."
   },
   "selection_exceptions": {
     "terraform/envs/prod/.terraform.lock.hcl": {"kind": "include", "deployments": {"mpatlas": "Locked providers affect every production Terraform consumer", "eamlis": "Locked providers affect every production Terraform consumer", "wdpa": "Locked providers affect every production Terraform consumer", "sea_ice": "Locked providers affect every production Terraform consumer", "ingestion_iam": "Locked providers affect every production Terraform consumer", "pmtiles_cdn": "Locked providers affect every production Terraform consumer", "catalog_viewer": "Locked providers affect every production Terraform consumer", "dataset_usage": "Locked providers affect every production Terraform consumer", "artifact_registry_iam": "Locked providers affect every production Terraform consumer", "preview_terraform_iam": "Locked providers affect every production Terraform consumer", "scratch_cleanup_iam": "Locked providers affect every production Terraform consumer", "cron_alert_policy": "Locked providers affect every production Terraform consumer"}},
