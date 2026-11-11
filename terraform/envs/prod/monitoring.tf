@@ -451,7 +451,7 @@ resource "google_monitoring_alert_policy" "operational_safety_absent" {
   project               = var.project_id
   display_name          = "Shared datasets operational safety heartbeat missing"
   combiner              = "OR"
-  enabled               = var.cron_alerts_enabled && var.operational_safety_absent_enabled
+  enabled               = var.cron_alerts_enabled
   notification_channels = local.cron_alert_notification_channels
   conditions {
     display_name = "No safety check completed for 49 hours"

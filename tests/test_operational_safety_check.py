@@ -625,7 +625,7 @@ def test_health_report_posts_changes_and_daily_reminders_without_changing_proble
     previous = {'problems': [], 'warnings': [], 'notified_at': None}
     monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
     for hour, problems, sends in [(0, ['paused'], 1), (3, ['paused'], 1), (24, ['paused'], 2),
-                                  (25, ['expired', 'paused'], 3), (26, [], 3), (27, ['paused'], 4)]:
+                                  (25, ['expired', 'paused'], 3), (26, [], 4), (27, [], 4), (28, ['paused'], 5)]:
         safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
         previous = json.loads((tmp_path / 'health/cache.json').read_text())
         assert previous['problems'] == sorted(problems)
@@ -723,9 +723,9 @@ def test_independent_heartbeat_has_49_hour_absence_and_step_only_webhooks():
     assert 'log="operational-safety-heartbeat"' in absence['query']
     assert 'monitored_resource="global"' in absence['query']
     assert 'logging.googleapis.com/user/' not in absence['query']
-    assert resources['operational_safety_absent']['enabled'] == '${var.cron_alerts_enabled && var.operational_safety_absent_enabled}'
+    assert resources['operational_safety_absent']['enabled'] == '${var.cron_alerts_enabled}'
     variables = hcl2.loads((safety.ROOT/'terraform/envs/prod/monitoring_variables.tf').read_text(), serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
-    assert next(item['operational_safety_absent_enabled'] for item in variables['variable'] if 'operational_safety_absent_enabled' in item)['default'] is False
+    assert not any('operational_safety_absent_enabled' in item for item in variables['variable'])
     assert 'operational-safety-check.yml' in resources['operational_safety_heartbeat']['filter']
     assert 'operational-safety-heartbeat' in Path(safety.__file__).read_text()
 
@@ -752,3 +752,71 @@ def test_failed_probe_health_uses_change_plus_daily_deduplication_without_result
         assert previous['problems'] == ['Operational discovery failure; inspect Check operational work']
         assert slack_notify.notify.call_count == sends
     safety.subprocess.check_call.assert_not_called()  # No false success heartbeat.
+
+
+@pytest.mark.parametrize('previous,problems,warnings,sends,status', [
+    ({'problems': [], 'warnings': [], 'notified_at': None}, [], [], 0, None),
+    ({'problems': [], 'warnings': [], 'notified_at': NOW.isoformat()}, [], [], 0, None),
+    ({'problems': ['failed'], 'warnings': [], 'notified_at': NOW.isoformat()}, [], [], 1, 'success'),
+    ({'problems': [], 'warnings': ['warn'], 'notified_at': NOW.isoformat()}, [], [], 1, 'success'),
+    ({'problems': ['failed'], 'warnings': ['warn'], 'notified_at': NOW.isoformat()}, [], [], 1, 'success'),
+    ({'problems': ['failed'], 'warnings': [], 'notified_at': None}, [], [], 0, None),
+    ({'problems': [], 'warnings': [], 'notified_at': None}, ['failed'], [], 1, 'error'),
+    ({'problems': [], 'warnings': [], 'notified_at': None}, [], ['warn'], 1, 'warning'),
+])
+def test_health_transitions_from_old_schema_cache(tmp_path, monkeypatch, previous, problems, warnings, sends, status):
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    safety.report_health(None, {'id': 300}, tmp_path, problems, warnings, NOW)
+    assert slack_notify.notify.call_count == sends
+    if sends:
+        kwargs = slack_notify.notify.call_args.kwargs
+        assert kwargs['status'] == status and kwargs['strict'] is True
+        assert kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
+        assert '/actions/runs/300' in kwargs['body']
+        if status == 'success':
+            assert safety.HEALTH_SCOPE in kwargs['body']
+    retained = json.loads((tmp_path / 'health/cache.json').read_text())
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: retained)
+    safety.report_health(None, {'id': 301}, tmp_path, problems, warnings, NOW)
+    assert slack_notify.notify.call_count == sends
+
+
+@pytest.mark.parametrize('previous,problems', [
+    ({'problems': ['failed'], 'warnings': [], 'notified_at': NOW.isoformat()}, []),
+    ({'problems': [], 'warnings': [], 'notified_at': None}, ['failed']),
+])
+def test_health_delivery_failure_does_not_retain_transition(tmp_path, monkeypatch, previous, problems):
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    slack_notify.notify.side_effect = RuntimeError('delivery failed')
+    with pytest.raises(RuntimeError, match='delivery failed'):
+        safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW)
+    assert not (tmp_path / 'health/cache.json').exists()
+
+
+def test_first_clean_health_run_without_retained_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(safety, 'prior_runs', lambda *_: [])
+    safety.report_health(None, {'id': 300}, tmp_path, [], [], NOW)
+    slack_notify.notify.assert_not_called()
+    assert json.loads((tmp_path / 'health/cache.json').read_text()) == {
+        'scope': safety.HEALTH_SCOPE, 'problems': [], 'warnings': [], 'notified_at': None,
+    }
+
+
+@pytest.mark.parametrize('scoped', [False, True])
+def test_retained_old_health_report_can_resolve(tmp_path, monkeypatch, scoped):
+    producer = {'id': 299, 'run_attempt': 1, 'event': 'schedule'}
+    previous = {'problems': ['failed'], 'warnings': [], 'notified_at': NOW.isoformat()}
+    if scoped:
+        previous['scope'] = safety.HEALTH_SCOPE
+    monkeypatch.setattr(safety, 'prior_runs', lambda *_: [producer])
+    monkeypatch.setattr(safety.alerts, 'verify_source_event', lambda *_: True)
+    monkeypatch.setattr(safety.native, 'artifact_payload', lambda *_: previous)
+    api = mock.Mock()
+    api.pages.side_effect = [
+        [{'name': 'safety-health-299-1', 'expired': False}],
+        [{'name': safety.JOB, 'started_at': stamp(NOW), 'completed_at': stamp(NOW),
+          'steps': [{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'success'}]}],
+    ]
+    safety.report_health(api, {'id': 300}, tmp_path, [], [], NOW)
+    slack_notify.notify.assert_called_once()
+    assert slack_notify.notify.call_args.kwargs['status'] == 'success'
