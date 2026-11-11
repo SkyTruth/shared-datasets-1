@@ -7,6 +7,30 @@ import pytest
 from ingestion.eamlis_monthly import identity as ids
 
 
+@pytest.mark.parametrize("count", [0, 1, 40])
+def test_ledger_id_projection_is_built_once_and_cannot_be_mutated(count):
+    class Entries(tuple):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    entries = Entries(("problem", f"P{n}", "A1", str(n + 1)) for n in range(count))
+    ledger = ids.Ledger(entries, count + 1)
+    entries.iterations = 0
+    assignments = ledger.ids
+    for n in range(count):
+        assert ledger.ids[("problem", f"P{n}")] == str(n + 1)
+    assert entries.iterations == 1
+    assert ledger.ids is assignments
+    with pytest.raises(TypeError):
+        assignments[("problem", "injected")] = "999"
+    replacement = ledger.reserve((ids.SourceIdentity("problem", "NEW", "A1"),))
+    assert replacement.ids[("problem", "NEW")] == str(count + 1)
+    assert ("problem", "NEW") not in ledger.ids
+
+
 def area(key="AL000133", **changes):
     return {**dict.fromkeys(ids.PROBLEM_FIELDS), "AMLIS_KEY": key, "PROBLEM_KEY": None,
             "OBJECTID": 1, "PA_NAME": "Example area", **changes}

@@ -6,8 +6,10 @@ never reconstruct keys. Absent keys remain allocated so reappearance is stable.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 import json
 import re
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 from scripts import release_feature_model as model
@@ -125,9 +127,9 @@ class Ledger:
         return {"schema_version": 1, "contract_id": CONTRACT, "next_feature_id": self.next_feature_id,
                 "entries": [dict(zip(("kind", "source_key", "area_key", "feature_id"), row)) for row in self.entries]}
 
-    @property
-    def ids(self) -> dict[tuple[str, str], str]:
-        return {(kind, key): feature_id for kind, key, _area, feature_id in self.entries}
+    @cached_property
+    def ids(self) -> Mapping[tuple[str, str], str]:
+        return MappingProxyType({(kind, key): feature_id for kind, key, _area, feature_id in self.entries})
 
     def reserve(self, rows: tuple[SourceIdentity, ...]) -> Ledger:
         require(bool(rows) and len({row.key for row in rows}) == len(rows), "allocation requires a nonempty unique release")

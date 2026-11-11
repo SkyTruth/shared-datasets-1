@@ -79,6 +79,7 @@ supports a reviewed `PROBLEM_KEY`/area-key cutover with a permanent decimal-ID
 ledger; deploying code alone preserves legacy behavior. Lost-object counting
 compares source-field IDs in legacy mode and permanent ledger IDs in keyed mode.
 The first keyed comparison maps the baseline's reviewed keys through that ledger.
+Each ledger caches one immutable key-to-ID mapping for baseline and source rows.
 The [identity evidence and cutover runbook](../../docs/eamlis-feature-identity.md)
 owns installation and activation.
 Published `feature_id` values are plain alphanumeric strings such as
