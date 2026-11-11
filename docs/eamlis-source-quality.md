@@ -27,15 +27,22 @@ Legacy releases compare source-field `OBJECTID` feature IDs. The installed
 the first keyed release maps the baseline's reviewed keys through that ledger.
 Colocated mining problems remain distinct objects. The shared baseline reader
 reads the dated manifest pinned by the Guard's captured release-index entry.
-The manifest's canonical metadata and schema references must match the indexed
-paths, generations, sizes and SHA-256 hashes. Their pinned bytes, sidecar records
-and counts must satisfy the manifest and indexed row count. Every reference
-requires a generation; older manifest references may omit SHA-256. Run records
-and `latest/` bytes provide no baseline authority. Missing or invalid baseline
-objects or references stop the run for reviewed repair. The latest successful
-run record supplies the stored source fingerprint and check-in paths; a missing
-record forces a changed-source comparison, and a record naming another release
-requires reviewed repair.
+The index pins the manifest generation and optionally its size; index hashes
+provide no authority and can be stale after reviewed metadata updates. The
+validated manifest pins dated canonical metadata and schema by generation, size
+and SHA-256. Validated sidecar counts must equal the manifest count and the
+index's positive row count. A counted, generation-pinned baseline needs no run
+record for authentication; an uncounted manual release fails at the Guard.
+Run records and `latest/` bytes provide no baseline authority. Missing or invalid
+published objects or references require reviewed repair before acquisition.
+The successful run record supplies the stored source fingerprint and check-in
+paths. Record validation checks release identity, release path, optional latest
+paths, fingerprint hash and fingerprint/input object shapes before acquisition.
+A missing record or a record without fingerprint fields forces a changed-source
+comparison; a malformed record requires reviewed repair. Identity comparison and
+fingerprint computation errors retain their original exception. Completed success
+retries preserve an index already naming their release, including reviewed
+metadata updates; missing release-index entries retain run-record recovery.
 An unchanged upstream source cannot trigger automatic baseline repair.
 
 The scheduled job continues checking the source. A hold stays active even after

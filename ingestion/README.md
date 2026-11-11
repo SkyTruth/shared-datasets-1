@@ -66,14 +66,21 @@ details. `HoldFlow` stages immutable candidates and validates exact `source_loss
 plans; the protected publisher clears a hold only after finalized-byte and
 release-index verification. Both jobs use the lifecycle's lost-object limit:
 new objects never offset missing baseline feature IDs. EAMLIS retains its
-identity discovery, reservation and activation checks. Broken baselines require
-reviewed repair before source acquisition. `ingestion/common/published_baseline.py`
-reads the dated manifest pinned by the Guard's release-index snapshot, then
-requires its canonical schema and metadata references to match the index's
-paths, generations, sizes and SHA-256 hashes. Sidecar records and counts must
-satisfy the manifest and indexed row count. Every reference requires a generation;
-older manifest references may omit SHA-256. Run records and `latest/` bytes
-provide no baseline authority. Each job owns its identity checks and fingerprint definition; `lifecycle.py` owns stage order and gates. See
+identity discovery, reservation and activation checks. Published-state contract
+failures require reviewed repair before source acquisition.
+`ingestion/common/published_baseline.py` reads the dated manifest at the generation
+pinned by the Guard's release-index snapshot and checks its indexed size when
+present. Index hashes can be stale after reviewed metadata updates and provide
+no authority. The validated manifest pins the dated canonical schema and metadata
+by generation, size and SHA-256. Validated sidecar counts must equal the manifest
+count and the index's positive row count. A counted, generation-pinned baseline
+needs no run record for authentication; an uncounted manual release fails at the
+Guard. Run records and `latest/` bytes provide no baseline authority. Completed
+success retries preserve an index already naming their release, including reviewed
+metadata updates; missing release-index entries still use run-record recovery.
+Fingerprint computation errors retain their original exception. Each job owns
+its identity checks and fingerprint definition; `lifecycle.py` owns stage order
+and gates. See
 [EAMLIS hold state and review](../docs/eamlis-source-quality.md) and
 [MPAtlas commands](mpatlas_monthly/README.md#review-a-held-release).
 

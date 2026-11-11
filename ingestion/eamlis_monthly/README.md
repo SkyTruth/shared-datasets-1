@@ -57,8 +57,11 @@ for state, staging, approval, interrupted execution recovery, and rollout.
 
 The job first checks the requested date's run record. An existing `success` or
 `skipped` record is a completed outcome: retries return that original record
-without polling ArcGIS, rebuilding artifacts, or replacing the record. This also
-applies when the source changes later that day. A persisted hold or conflicting
+without polling ArcGIS, rebuilding artifacts, or replacing the record, even when
+the source changes later that day. A success
+retry preserves the index when its release is already current, including reviewed
+metadata updates. A success retry whose release is not current still uses the
+existing index-recovery path. A persisted hold or conflicting
 publication claim takes precedence over completed-date index repair. Such changes require a different,
 unused `RUN_DATE`, normally the next scheduled run. Other existing statuses fail
 and require investigation rather than being treated as completed.
@@ -70,16 +73,22 @@ and reconciles translation reuse before fingerprinting the final CSV. Equality
 skips native artifact building and publication, writes an immutable skipped run
 against the baseline release and updates the release-index check-in. Edit
 metadata and summary statistics remain diagnostics. The shared baseline reader
-reads the dated manifest pinned by the Guard's release-index snapshot. Its
-canonical schema and metadata references must match the index's paths,
-generations, sizes and SHA-256 hashes. Validated sidecar counts must equal the
-manifest and indexed row count. Every reference requires a generation; older
-manifest references may omit SHA-256. The latest successful run record supplies
-only the stored source fingerprint and check-in paths. A missing record supplies
-no fingerprint and forces a changed-source comparison; a record naming another
-release requires reviewed repair. Run records and `latest/` bytes provide no
-baseline authority. An invalid baseline stops the run for reviewed repair before
-source acquisition; an unchanged source cannot repair or republish that baseline. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
+reads the dated manifest at the generation pinned by the Guard's release-index
+snapshot and checks its indexed size when present. Index hashes can be stale
+after reviewed metadata updates and provide no authority. The validated manifest
+pins dated canonical schema and metadata by generation, size and SHA-256.
+Validated sidecar counts must equal the manifest count and the index's positive
+row count. A counted, generation-pinned baseline needs no run record for
+authentication; an uncounted manual release fails at the Guard. The successful
+run record supplies only the stored source fingerprint and check-in paths.
+Record validation checks the release identity, release path, optional latest
+paths, fingerprint hash and fingerprint/input object shapes before acquisition.
+A missing record or a record without fingerprint fields forces a changed-source
+comparison. A malformed record requires reviewed repair. Run records and
+`latest/` bytes provide no baseline authority. Published-state contract failures
+stop the run for reviewed repair before source acquisition. Identity comparison
+and fingerprint computation errors retain their original exception; an unchanged
+source cannot repair or republish a broken baseline. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
 
 Before explicit identity installation, release feature identity is copied from
 the source `OBJECTID`. These IDs can be renumbered between releases. The code
