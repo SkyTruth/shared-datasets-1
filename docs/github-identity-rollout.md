@@ -65,11 +65,13 @@ retirements and temporary-authority revocation remain separate scopes.
 
 ## Receipt compatibility during rollback
 
-The phase-1 merge keeps `dataset_usage` in
-[the rollout holds](../.github/ingestion-rollout-holds.json), owned by `jonaraphael`
-through `2026-11-19T00:00:00Z`. A separate reviewed PR must remove it; expiry does
-not release a hold automatically. Image validation still runs while delivery is
-held. The four publication producers retain their existing holds.
+The owner closed the plain-revert window on 2026-11-11 in
+[PR #394](https://github.com/SkyTruth/shared-datasets-1/pull/394).
+The reviewed `dataset_usage` hold release enables merge-push delivery through
+`ingestion-deploy.yml`; its receipts require the current reader. The four
+publication producers retain their existing
+[rollout holds](../.github/ingestion-rollout-holds.json). Expiry does not release
+a hold automatically, and image validation still runs while delivery is held.
 
 The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
 
@@ -77,7 +79,7 @@ The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
 | --- | --- | --- |
 | `catalog-viewer` | `catalog-viewer-deploy.yml` | Compatible schema, signer and `started`/`verified` phases. |
 | `pmtiles-cdn` | `pmtiles-cdn-sync.yml` | Compatible schema, signer and `started`/`applied`/`verified` phases. |
-| `dataset-usage` | `ingestion-deploy.yml` | Rejected: old main requires `dataset-usage-deploy.yml`; held during the rollback window. |
+| `dataset-usage` | `ingestion-deploy.yml` | Rejected: old main requires `dataset-usage-deploy.yml`; the rollback window is closed. |
 
 Old `deployment_revision.check` parses all records for its exact target
 environment, but verifies provenance only for the same revision or a
