@@ -11,12 +11,12 @@ import subprocess
 import tempfile
 from typing import Any, Iterable, Mapping
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import GoogleAPIError
 from google.cloud import storage
 
 from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints, publication_readiness
 from ingestion.common import lifecycle, published_baseline
-from ingestion.common.source_quality import MPATLAS as quality
+from ingestion.common.source_quality import MPATLAS as quality, SourceLossError
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
@@ -71,28 +71,31 @@ def source_fingerprint(records: Iterable[Mapping[str, Any]]) -> fingerprints.Fin
     })
 
 
-def load_baseline(publisher: GcsPublisher) -> Baseline:
-    """Use authenticated publication metadata without changing source equality."""
+def load_baseline(publisher: GcsPublisher, release=...) -> Baseline:
+    """Read the claimed release; standalone schedule checks capture their own index."""
     try:
-        verified = published_baseline.read(publisher, ASSET)
+        if release is ...:
+            before = quality.baseline(publisher.bucket)
+            release = before["release"] if before else None
+        verified = published_baseline.read(publisher, ASSET, release)
+        manifest, records = verified.manifest, verified.records
+        release = manifest["release"]
+        if manifest["identity"]["strategy"] != "source_field" or manifest["identity"]["source_fields"] != ["zone_id"]:
+            raise ValueError("Published MPAtlas identity must remain source_field:zone_id")
+        fingerprint = source_fingerprint(records)
+        sources = [item for item in manifest["source_inputs"] if item.get("uri") == SOURCE_URL]
+        stored_hashes = [item["source_fingerprint_hash"] for item in sources if "source_fingerprint_hash" in item]
+        # A byte shortcut also binds the normalized-hash definition. Legacy manual
+        # releases use their verified published sidecar for the first comparison.
+        source_hashes = [item["sha256"] for item in sources
+                         if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
+        return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
+                        source_hashes[0] if source_hashes else None, len(records),
+                        frozenset(row["feature_id"] for row in records))
     except published_baseline.MissingManifest as exc:
         raise RuntimeError("MPAtlas refresh requires a published manifest; reviewed repair required") from exc
-    except (NotFound, ValueError, KeyError) as exc:
+    except (GoogleAPIError, SourceLossError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
         raise RuntimeError(f"MPAtlas baseline failed its contract; reviewed repair required: {exc}") from exc
-    manifest, records = verified.manifest, verified.records
-    release = manifest["release"]
-    if manifest["identity"]["strategy"] != "source_field" or manifest["identity"]["source_fields"] != ["zone_id"]:
-        raise RuntimeError("Published MPAtlas identity must remain source_field:zone_id")
-    fingerprint = source_fingerprint(records)
-    sources = [item for item in manifest["source_inputs"] if item.get("uri") == SOURCE_URL]
-    stored_hashes = [item["source_fingerprint_hash"] for item in sources if "source_fingerprint_hash" in item]
-    # A byte shortcut also binds the normalized-hash definition. Legacy manual
-    # releases use their verified published sidecar for the first comparison.
-    source_hashes = [item["sha256"] for item in sources
-                     if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
-    return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
-                    source_hashes[0] if source_hashes else None, len(records),
-                    frozenset(row["feature_id"] for row in records))
 
 
 def prepare_source(source: Path, output: Path) -> dict[str, int]:
@@ -247,7 +250,7 @@ class Refresh:
         return existing
 
     def baseline(self) -> lifecycle.Baseline:
-        self.published = load_baseline(self.publisher)
+        self.published = load_baseline(self.publisher, self.gate.before["release"] if self.gate.before else None)
         return lifecycle.Baseline(dt.date.fromisoformat(self.published.release), self.published.fingerprint_hash,
                                   self.published.row_count,
                                   self.gate.state["hold"]["reason"] if self.gate.held else None)

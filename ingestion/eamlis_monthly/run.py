@@ -17,14 +17,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, lifecycle, publication_readiness, published_baseline
+from ingestion.common import feature_metadata, lifecycle, publication_readiness, published_baseline, release_index
 from ingestion.common import source_fingerprint as fingerprints
 from ingestion.common.source_fingerprint import digest as stable_hash
 from ingestion.common import vector_pipeline
-from ingestion.common.source_quality import EAMLIS as source_loss
+from ingestion.common.source_quality import EAMLIS as source_loss, SourceLossError
 from ingestion.eamlis_monthly import identity as keyed_identity, identity_state
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
@@ -729,10 +729,20 @@ class Refresh:
             return None
         release = self.gate.before["release"]["date"]
         try:
-            verified = published_baseline.read(self.publisher, ASSET)
-            self.previous, manifest, records = verified.record, verified.manifest, verified.records
-            lifecycle.require(manifest["release"] == release and len(records) == self.gate.before["release"]["rows"],
-                              "baseline differs from the claimed publication")
+            verified = published_baseline.read(self.publisher, ASSET, self.gate.before["release"])
+            manifest, records = verified.manifest, verified.records
+            record_uri = self.gate.before["release"].get("run_record_path")
+            if record_uri:
+                bucket, name = release_index.split_gs_uri(record_uri)
+                lifecycle.require(bucket == self.publisher.bucket.name and name.startswith(ASSET.runs_prefix),
+                                  "baseline run record is outside the asset's run prefix")
+                self.previous = self.publisher.load_json(name)
+            if self.previous is not None:
+                lifecycle.require(isinstance(self.previous, dict) and self.previous.get("status") == "success"
+                    and self.previous.get("asset_slug", ASSET.slug) == ASSET.slug,
+                    "baseline record must describe a successful publication of this asset")
+                lifecycle.require((self.previous.get("release_date") or self.previous["run_date"]) == release,
+                                  "baseline record names another release")
             descriptor = manifest["identity"]
             ledger = identity_state.selected_ledger(self.gate)
             if descriptor.get("contract_id") == keyed_identity.CONTRACT:
@@ -745,9 +755,9 @@ class Refresh:
             # Compare both releases in the installed permanent key space.
             self.baseline_ids = frozenset(ledger.ids[key.key] for key in keyed_identity.classify_release(
                 row["properties"] for row in records)) if ledger is not None else frozenset(row["feature_id"] for row in records)
-        except (NotFound, ValueError, KeyError, lifecycle.LifecycleError) as exc:
+        except (GoogleAPIError, SourceLossError, ValueError, KeyError, TypeError, AttributeError, IndexError, lifecycle.LifecycleError) as exc:
             raise RuntimeError(f"e-AMLIS baseline failed its contract; reviewed repair required: {exc}") from exc
-        return lifecycle.Baseline(dt.date.fromisoformat(release), self.previous.get("source_fingerprint_hash"),
+        return lifecycle.Baseline(dt.date.fromisoformat(release), self.previous.get("source_fingerprint_hash") if self.previous else None,
             len(records), self.gate.state["hold"]["reason"] if self.gate.held else None)
 
     def acquire(self, attempt: dt.date) -> lifecycle.Source:

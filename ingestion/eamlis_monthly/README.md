@@ -70,11 +70,16 @@ and reconciles translation reuse before fingerprinting the final CSV. Equality
 skips native artifact building and publication, writes an immutable skipped run
 against the baseline release and updates the release-index check-in. Edit
 metadata and summary statistics remain diagnostics. The shared baseline reader
-binds the latest manifest bytes to the indexed successful run record's manifest
-SHA-256 before reading hash-verified schema and metadata at pinned dated
-generations. A missing manifest hash or invalid baseline
-contract stops the run for reviewed repair before source acquisition; an unchanged
-source cannot repair or republish that baseline. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
+reads the dated manifest pinned by the Guard's release-index snapshot. Its
+canonical schema and metadata references must match the index's paths,
+generations, sizes and SHA-256 hashes. Validated sidecar counts must equal the
+manifest and indexed row count. Every reference requires a generation; older
+manifest references may omit SHA-256. The latest successful run record supplies
+only the stored source fingerprint and check-in paths. A missing record supplies
+no fingerprint and forces a changed-source comparison; a record naming another
+release requires reviewed repair. Run records and `latest/` bytes provide no
+baseline authority. An invalid baseline stops the run for reviewed repair before
+source acquisition; an unchanged source cannot repair or republish that baseline. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
 
 Before explicit identity installation, release feature identity is copied from
 the source `OBJECTID`. These IDs can be renumbered between releases. The code

@@ -26,10 +26,16 @@ Legacy releases compare source-field `OBJECTID` feature IDs. The installed
 [permanent-key contract](eamlis-feature-identity.md) compares permanent ledger IDs;
 the first keyed release maps the baseline's reviewed keys through that ledger.
 Colocated mining problems remain distinct objects. The shared baseline reader
-authenticates the latest manifest bytes against the indexed successful run
-record's manifest SHA-256 before reading its pinned, hash-verified dated schema
-and metadata. A missing manifest hash or missing or invalid baseline
-manifest, schema, metadata or counted index stops the run for reviewed repair.
+reads the dated manifest pinned by the Guard's captured release-index entry.
+The manifest's canonical metadata and schema references must match the indexed
+paths, generations, sizes and SHA-256 hashes. Their pinned bytes, sidecar records
+and counts must satisfy the manifest and indexed row count. Every reference
+requires a generation; older manifest references may omit SHA-256. Run records
+and `latest/` bytes provide no baseline authority. Missing or invalid baseline
+objects or references stop the run for reviewed repair. The latest successful
+run record supplies the stored source fingerprint and check-in paths; a missing
+record forces a changed-source comparison, and a record naming another release
+requires reviewed repair.
 An unchanged upstream source cannot trigger automatic baseline repair.
 
 The scheduled job continues checking the source. A hold stays active even after

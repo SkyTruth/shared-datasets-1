@@ -126,10 +126,11 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
 def baseline_fixture(job, output, records, day, bucket):
     """Read the current publisher's serialized baseline inside each job image."""
     from types import SimpleNamespace
-    from ingestion.common import published_baseline, source_quality, vector_pipeline
+    from ingestion.common import published_baseline, release_index, source_quality, vector_pipeline
     from ingestion.common.gcs import GcsPublisher
 
-    publisher = GcsPublisher(SimpleNamespace(bucket=lambda name: bucket), bucket.name)
+    bucket.client = SimpleNamespace(bucket=lambda name: bucket)
+    publisher = GcsPublisher(bucket.client, bucket.name)
     if job.ASSET.slug == "mpatlas-zone-assessments":
         identity = model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"])
         algorithm = model.GEOMETRY_HASH_ALGORITHM
@@ -138,16 +139,15 @@ def baseline_fixture(job, output, records, day, bucket):
     bundle = vector_pipeline.publish_vector_bundle(publisher=publisher, asset=job.ASSET, run_date=day,
         outputs=output, object_metadata={}, source_inputs=[], identity=identity,
         geometry_hash_algorithm=algorithm)
-    source_quality.put(bucket, job.ASSET.run_record_object(day), source_quality.encode({
-        "status": "success", "asset_slug": job.ASSET.slug, "run_date": day.isoformat(),
-        "release_date": day.isoformat(), "sha256": bundle.sha256}), generation=0)
-    source_quality.put(bucket, f"_catalog/releases/{job.ASSET.slug}.json", source_quality.encode({
-        "latest_release": {"date": day.isoformat(), "rows": len(records),
-            "run_record_path": f"gs://{bucket.name}/{job.ASSET.run_record_object(day)}"}}), generation=0)
-    verified = published_baseline.read(publisher, job.ASSET)
+    release_index.record_successful_release(bucket, job.ASSET.slug, {
+        "schema_version": 1, "status": "success", "asset_slug": job.ASSET.slug,
+        "release_date": day.isoformat(), "row_count": len(records),
+        "release_paths": bundle.release_paths, "sha256": bundle.sha256})
+    release = source_quality.FLOWS[job.ASSET.slug].baseline(bucket)["release"]
+    verified = published_baseline.read(publisher, job.ASSET, release)
     assert verified.records == tuple(records)
     if job.ASSET.slug == "mpatlas-zone-assessments":
-        assert job.load_baseline(publisher).fingerprint_hash == job.source_fingerprint(records).sha256
+        assert job.load_baseline(publisher, release).fingerprint_hash == job.source_fingerprint(records).sha256
 
 if __name__ == "__main__":
     work = Path("/tmp/shared-datasets-1/_scratch/installed-fixture")

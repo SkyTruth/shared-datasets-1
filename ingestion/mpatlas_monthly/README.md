@@ -12,12 +12,15 @@ readable if this job is paused or retired.
 
 ## Change detection
 
-The shared baseline reader authenticates `latest/*.manifest.json`, read at its
-observed generation, against the indexed successful run record's manifest
-SHA-256. The manifest pins the dated schema and metadata generations and hashes;
-the reader verifies both artifacts and validates sidecar records and counts.
-A missing hash, missing manifest or corrupt baseline fails before source acquisition;
-this refresh job does not initialize a dataset or repair its publication state.
+The shared baseline reader uses the Guard's captured `latest_release` index
+entry to read the dated manifest at its indexed generation and size, with a
+SHA-256 check when the entry carries a hash. The manifest's canonical schema and
+metadata references must match the index's paths, generations, sizes and SHA-256
+hashes. Sidecar records and counts must satisfy the manifest and indexed row
+count. Every reference requires a generation. Run records and `latest/` bytes
+provide no baseline authority. A missing manifest or invalid baseline stops the
+run for reviewed repair before source acquisition; this refresh requires an
+existing publication.
 
 1. Download the complete API response and compute SHA-256. If it matches the
    source SHA-256 in the published manifest and its normalized fingerprint uses

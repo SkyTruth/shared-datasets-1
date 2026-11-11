@@ -131,6 +131,7 @@ class FakeBucket:
 class FakeClient:
     def __init__(self, bucket: FakeBucket) -> None:
         self._bucket = bucket
+        bucket.client = self
 
     def bucket(self, _name: str) -> FakeBucket:
         return self._bucket

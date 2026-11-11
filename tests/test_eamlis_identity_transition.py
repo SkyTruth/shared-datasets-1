@@ -435,3 +435,77 @@ def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_p
     manifest_ref = next(ref for ref in candidate["files"] if ref["role"] == "manifest")
     manifest = json.loads(quality.pinned(client, manifest_ref))
     assert manifest["hashes"]["geometry_hash_algorithm"] == feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM_V2
+
+
+def test_reviewed_translation_promotion_allows_next_changed_source_run(tmp_path):
+    from ingestion.common import release_index
+    from ingestion.common.runtime import content_type_for
+
+    client, installation_plan, _ = prepared(tmp_path)
+    install(client, installation_plan, tmp_path)
+    prior = run(client, rows(), "2026-05-02")
+    bucket = client.bucket(quality.BUCKET)
+    run_blob = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
+    run_before = (run_blob.generation, run_blob.data)
+    manifest = json.loads(bucket.blob(eamlis.ASSET.latest_object(".manifest.json")).data)
+    canonical = tmp_path / "canonical.metadata.ndjson.gz"
+    canonical.write_bytes(bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.ndjson.gz")).data)
+    translation = tmp_path / "reviewed.metadata-translations.csv"
+    with translation.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=eamlis.translation_reuse.COLUMNS)
+        writer.writeheader()
+        writer.writerow({"feature_id": "1", "field": "PA_NAME", "locale": "es",
+            "source_value_hash": localization.source_value_hash("Example area"),
+            "value": "Área revisada", "review_state": "human_reviewed", "notes": "reviewed update"})
+    reports = localization.materialize_locale_sidecars(canonical_sidecar=canonical, translation_source=translation,
+        output_dir=tmp_path, locales=("es",), translatable_fields=set(eamlis.TRANSLATION_FIELDS),
+        expected_asset_slug=quality.SLUG, expected_release="2026-05-02")
+    files = {".metadata-translations.csv": translation, ".metadata.es.ndjson.gz": Path(reports[0].output_sidecar)}
+    staged = {suffix: quality.immutable_file(bucket,
+        f"_scratch/pending-publishes/{quality.SLUG}/reviewed-translations/{path.name}", path)
+        for suffix, path in files.items()}
+    for ref in manifest["artifacts"]:
+        for suffix, source in staged.items():
+            if ref["path"].endswith(suffix):
+                ref.update(generation=int(source["generation"]), size=source["size"], sha256=source["sha256"])
+    manifest["translations"] = localization.translations_payload(reports)
+    manifest_path = tmp_path / "reviewed.manifest.json"
+    manifest_path.write_bytes(quality.encode(manifest))
+    staged[".manifest.json"] = quality.immutable_file(bucket,
+        f"_scratch/pending-publishes/{quality.SLUG}/reviewed-translations/{manifest_path.name}", manifest_path)
+    promotions = []
+    for folder in ("releases/2026-05-02", "latest"):
+        for suffix, source in staged.items():
+            destination = bucket.blob(f"{quality.ROOT}/{folder}/{quality.SLUG}{suffix}")
+            promotions.append({"source_uri": source["path"], "source_generation": str(source["generation"]),
+                "destination_uri": f"gs://{quality.BUCKET}/{destination.name}",
+                "destination_generation": str(destination.generation),
+                "content_type": content_type_for(Path(destination.name)), "cache_control": quality.NO_CACHE})
+    plan = {"asset_slug": quality.SLUG, "promotions": promotions, "release_index_asset_slugs": []}
+    path = tmp_path / "translation-plan.json"
+    path.write_bytes(quality.encode(plan))
+    with mock.patch.object(quality, "protected_authority", return_value="reviewed-translations"), \
+         mock.patch.object(gcs_asset, "get_client", return_value=client), \
+         mock.patch.dict("os.environ", {"SHARED_DATASETS_ALLOW_CANONICAL_MUTATION": "1", "SHARED_DATASETS_BUCKET": quality.BUCKET}):
+        transport, copied = copy_transport(client)
+        with mock.patch.object(publish_workflow.subprocess, "run", side_effect=transport):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        assert len(copied) == 6
+        finalized = finalizer.finalize_promoted_release_metadata(plan, client=client)
+        assert len(finalized["finalized_manifests"]) == 2 and finalized["finalized_run_records"] == []
+        # The finalized release entry pins the new manifest; the original run
+        # remains the source-fingerprint record and is not a promotion target.
+        record = json.loads(run_before[1])
+        record.pop("sha256")
+        record["release_paths"] = [quality.read(bucket, ref["path"].split("/", 3)[3])[1]
+                                   for ref in quality.baseline(bucket)["release"]["files"]]
+        release_index.record_successful_release(bucket, quality.SLUG, record,
+            run_record_info={"path": f"gs://{bucket.name}/{run_blob.name}", "generation": run_blob.generation})
+        index = json.loads(quality.read(bucket, quality.INDEX)[0])
+        quality.finish_promotion(client, plan)
+    assert (run_blob.generation, run_blob.data) == run_before
+    ref = next(f for f in index["latest_release"]["files"] if f["path"].endswith(".manifest.json"))
+    assert quality.digest(quality.pinned(client, ref)) != prior["sha256"]["manifest"]
+    result = run(client, rows(), "2026-05-03")
+    assert result["status"] == "success" and result["lost_objects"] == 0
+    assert result["source_fingerprint_hash"] != prior["source_fingerprint_hash"]

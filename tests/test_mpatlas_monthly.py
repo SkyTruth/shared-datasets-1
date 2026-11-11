@@ -146,8 +146,8 @@ def test_bad_baseline_checksum_fails_before_comparison(tmp_path, suffix):
 
     publisher, _ = seed(Client(), tmp_path / "baseline")
     publisher.bucket.blob(job.ASSET.release_object(dt.date(2026, 10, 16), suffix)).data = b"corrupted"
-    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
-        job.load_baseline(publisher)
+    with pytest.raises(RuntimeError, match="baseline.*reviewed repair required.*corrupt"):
+        job.load_baseline(publisher, job.quality.baseline(publisher.bucket)["release"])
 
 
 @pytest.mark.skipif(os.environ.get("RUN_GDAL_INTEGRATION_TESTS") != "1", reason="native geospatial fixture")
@@ -190,7 +190,7 @@ def test_byte_shortcut_is_bound_to_normalized_fingerprint_definition(tmp_path, m
     if marker != "missing":
         source["source_fingerprint_hash"] = fingerprint if marker == "current" else "b" * 64
     publisher, _ = seed(Client(), tmp_path / "baseline", records=records, source_inputs=[source])
-    baseline = job.load_baseline(publisher)
+    baseline = job.load_baseline(publisher, job.quality.baseline(publisher.bucket)["release"])
     assert baseline.feature_ids == frozenset({"1"}) and baseline.row_count == 1
     assert baseline.fingerprint_hash == source.get("source_fingerprint_hash", fingerprint)
     assert baseline.source_sha256 == ("a" * 64 if marker == "current" else None)
@@ -282,21 +282,29 @@ def fixture_outputs(directory, records):
                        sha256={r: job.sha256_file(paths[r]) for r in job.vector_pipeline.CORE_BUNDLE_ROLES})
 
 
-@pytest.mark.parametrize("broken", ["replacement_pair", "missing_manifest_hash"])
+@pytest.mark.parametrize("broken", ["replacement_pair", "replacement_triple", "missing_manifest_generation"])
 def test_indexed_publication_authenticates_baseline_before_download(tmp_path, broken):
     from tests.test_shared_hold_flow import seed
     from tests.test_source_loss import Client, replace_baseline_sidecar
 
     publisher, _ = seed(Client(), tmp_path / "baseline")
-    if broken == "replacement_pair":
+    if broken.startswith("replacement"):
         records = sidecar([feature(n) for n in range(41, 81)])
         replace_baseline_sidecar(publisher.bucket, job.ASSET, records, tmp_path)
+        if broken == "replacement_triple":
+            prior = dt.date(2026, 10, 16)
+            record_blob = publisher.bucket.blob(job.ASSET.run_record_object(prior))
+            record = json.loads(record_blob.data)
+            record["sha256"]["manifest"] = hashlib.sha256(
+                publisher.bucket.blob(job.ASSET.latest_object(".manifest.json")).data).hexdigest()
+            record_blob.upload_from_string(json.dumps(record), if_generation_match=record_blob.generation)
     else:
-        blob = publisher.bucket.blob(job.ASSET.run_record_object(dt.date(2026, 10, 16)))
-        record = json.loads(blob.data)
-        del record["sha256"]["manifest"]
-        blob.upload_from_string(json.dumps(record), if_generation_match=blob.generation)
-    features = [feature(n) for n in (range(41, 81) if broken == "replacement_pair" else range(1, 41))]
+        blob = publisher.bucket.blob(job.quality.INDEX)
+        index = json.loads(blob.data)
+        ref = next(ref for ref in index["latest_release"]["files"] if ref["path"].endswith(".manifest.json"))
+        del ref["generation"]
+        blob.upload_from_string(json.dumps(index), if_generation_match=blob.generation)
+    features = [feature(n) for n in (range(41, 81) if broken.startswith("replacement") else range(1, 41))]
     records = sidecar(features, DAY.isoformat())
     with mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_text(json.dumps(features))) as download, \
          mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, {"published_rows": 40})), \
@@ -312,4 +320,4 @@ def test_missing_manifest_retains_reviewed_repair_error(tmp_path):
     from tests.test_source_loss import Client
     publisher = job.GcsPublisher(Client(), job.quality.BUCKET)
     with pytest.raises(RuntimeError, match="^MPAtlas refresh requires a published manifest; reviewed repair required$"):
-        job.load_baseline(publisher)
+        job.load_baseline(publisher, None)

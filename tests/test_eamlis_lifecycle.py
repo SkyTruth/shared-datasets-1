@@ -2,6 +2,7 @@
 import csv
 import datetime as dt
 import io
+import hashlib
 import json
 from pathlib import Path
 from unittest import mock
@@ -64,7 +65,7 @@ def test_broken_baseline_stops_before_source_read_or_rebuild(broken):
     client = Client()
     execute(client, 2, "2026-04-02")
     bucket = client.bucket(quality.BUCKET)
-    name = job.ASSET.latest_object(".manifest.json") if broken in {"manifest", "count"} else job.ASSET.release_object(
+    name = job.ASSET.release_object(dt.date(2026, 4, 2), ".manifest.json") if broken in {"manifest", "count"} else job.ASSET.release_object(
         dt.date(2026, 4, 2), ".metadata.ndjson.gz" if broken == "metadata" else ".schema.json")
     blob = bucket.blob(name)
     if broken == "manifest":
@@ -87,7 +88,7 @@ def test_broken_baseline_stops_before_source_read_or_rebuild(broken):
     assert not bucket.blob(job.ASSET.run_record_object(dt.date(2026, 5, 2))).exists
 
 
-@pytest.mark.parametrize("broken", ["replacement_pair", "missing_manifest_hash"])
+@pytest.mark.parametrize("broken", ["replacement_pair", "replacement_triple", "missing_manifest_generation"])
 def test_indexed_publication_authenticates_baseline_before_source_read(tmp_path, broken):
     from tests.test_source_loss import replace_baseline_sidecar
 
@@ -95,16 +96,24 @@ def test_indexed_publication_authenticates_baseline_before_source_read(tmp_path,
     run_features(client, features([1, 2, 3]), "2026-04-02")
     bucket = client.bucket(quality.BUCKET)
     fgb = bucket.blob(job.ASSET.release_object(dt.date(2026, 4, 2), ".fgb")).data
-    if broken == "replacement_pair":
+    if broken.startswith("replacement"):
         _, records = job.feature_metadata.enrich_features_with_source_field_ids(features([4, 5, 6]),
             asset_slug=job.ASSET.slug, release="2026-04-02", id_field="OBJECTID", provenance={"source": "fixture"})
         replace_baseline_sidecar(bucket, job.ASSET, records, tmp_path)
+        if broken == "replacement_triple":
+            prior = dt.date(2026, 4, 2)
+            record_blob = bucket.blob(job.ASSET.run_record_object(prior))
+            record = json.loads(record_blob.data)
+            record["sha256"]["manifest"] = hashlib.sha256(
+                bucket.blob(job.ASSET.latest_object(".manifest.json")).data).hexdigest()
+            record_blob.upload_from_string(json.dumps(record), if_generation_match=record_blob.generation)
     else:
-        blob = bucket.blob(job.ASSET.run_record_object(dt.date(2026, 4, 2)))
-        record = json.loads(blob.data)
-        del record["sha256"]["manifest"]
-        blob.upload_from_string(quality.encode(record), if_generation_match=blob.generation)
-    rows = features([4, 5, 6] if broken == "replacement_pair" else [1, 2, 3])
+        blob = bucket.blob(quality.INDEX)
+        index = json.loads(blob.data)
+        ref = next(ref for ref in index["latest_release"]["files"] if ref["path"].endswith(".manifest.json"))
+        del ref["generation"]
+        blob.upload_from_string(json.dumps(index), if_generation_match=blob.generation)
+    rows = features([4, 5, 6] if broken.startswith("replacement") else [1, 2, 3])
     def acquire(*, source, dest, page_size):
         dest.write_bytes(quality.encode({"type": "FeatureCollection", "features": rows}))
         return job.SourceExtract(dest, len(rows), 0)
@@ -411,7 +420,7 @@ def test_previous_image_candidate_promotes_through_reviewed_plan(tmp_path):
     state, _ = quality.Guard(client.bucket(quality.BUCKET)).load()
     assert state["hold"] is None and state["owner"] is None
     assert quality.baseline(client.bucket(quality.BUCKET))["release"]["date"] == "2026-05-02"
-    verified = job.published_baseline.read(job.GcsPublisher(client, quality.BUCKET), job.ASSET)
+    verified = job.published_baseline.read(job.GcsPublisher(client, quality.BUCKET), job.ASSET, quality.baseline(client.bucket(quality.BUCKET))["release"])
     assert len(verified.records) == 2
 
 
@@ -430,3 +439,33 @@ def test_installed_image_baseline_probe_reads_keyed_publisher_output(tmp_path):
         workdir=tmp_path, release_date=day,
         identity_reservation=identity_state.Reservation(ledger, {"path": "fixture"}, 1, None))
     baseline_fixture(job, built, built.sidecar_records, day, Client().bucket(quality.BUCKET))
+
+
+@pytest.mark.parametrize("record_state", ["no_pointer", "no_record", "wrong_release"])
+def test_success_record_supplies_fingerprint_but_not_baseline_authority(tmp_path, record_state):
+    client = Client()
+    run_features(client, features([1, 2]), "2026-04-02")
+    bucket = client.bucket(quality.BUCKET)
+    if record_state == "no_pointer":
+        blob = bucket.blob(quality.INDEX)
+        index = json.loads(blob.data)
+        index["latest_release"]["run_record_path"] = None
+        blob.upload_from_string(quality.encode(index), if_generation_match=blob.generation)
+    else:
+        blob = bucket.blob(job.ASSET.run_record_object(dt.date(2026, 4, 2)))
+        if record_state == "no_record":
+            blob.exists = False
+        else:
+            record = json.loads(blob.data)
+            record["release_date"] = "2026-04-01"
+            blob.upload_from_string(quality.encode(record), if_generation_match=blob.generation)
+    if record_state == "wrong_release":
+        with mock.patch.object(job, "fetch_source_state") as fetch, \
+             mock.patch.object(job, "toolchain", return_value=TOOLS), \
+             pytest.raises(RuntimeError, match="baseline.*reviewed repair required.*another release"):
+            job.ingest(job.GcsPublisher(client, quality.BUCKET), dt.date(2026, 5, 2), tmp_path,
+                layer_url=job.DEFAULT_LAYER_URL, where=job.DEFAULT_WHERE, page_size=2000)
+        fetch.assert_not_called()
+    else:
+        result = run_features(client, features([1, 2]), "2026-05-02")
+        assert result["status"] == "success" and result["lost_objects"] == 0

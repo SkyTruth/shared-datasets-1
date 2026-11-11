@@ -157,7 +157,7 @@ def test_mpatlas_hold_reruns_and_exact_reviewed_promotion(tmp_path):
     state, _ = flow.Guard(publisher.bucket).load()
     assert state["hold"] is None and state["owner"] is None
     assert flow.baseline(publisher.bucket)["release"]["date"] == DAY.isoformat()
-    assert job.load_baseline(publisher).row_count == 40
+    assert job.load_baseline(publisher, job.quality.baseline(publisher.bucket)["release"]).row_count == 40
 
 
 def test_empty_mpatlas_source_is_held_without_a_build(tmp_path):
@@ -264,3 +264,52 @@ def test_hold_raised_after_a_recorded_run_still_asks_once(tmp_path):
     send.assert_called_once()
     state, _ = flow.Guard(publisher.bucket).load()
     assert state["owner"] is None
+
+
+@pytest.mark.parametrize("fingerprinted", [False, True], ids=["legacy", "fingerprinted"])
+def test_finalized_manual_mpatlas_baseline_without_run_record_checks_in(tmp_path, fingerprinted):
+    from ingestion.common import release_index
+    from ingestion.common.runtime import content_type_for
+
+    client = Client()
+    publisher, original_source = seed(client, tmp_path / "manual",
+        source_inputs=None if fingerprinted else [{"uri": job.SOURCE_URL, "sha256": "a" * 64}])
+    bucket, flow = publisher.bucket, job.quality
+    prior = dt.date(2026, 10, 16)
+    promotions = []
+    for suffix in job.fm.ROLE_SUFFIXES.values():
+        original = bucket.blob(job.ASSET.release_object(prior, suffix))
+        local = tmp_path / (job.ASSET.slug + suffix)
+        local.write_bytes(original.data)
+        source = source_quality.immutable_file(bucket,
+            f"_scratch/pending-publishes/{flow.SLUG}/manual/{local.name}", local)
+        for name in (job.ASSET.release_object(prior, suffix), job.ASSET.latest_object(suffix)):
+            bucket.blob(name).exists = False
+            promotions.append({"source_uri": source["path"], "source_generation": str(source["generation"]),
+                "destination_uri": f"gs://{bucket.name}/{name}", "destination_generation": "0",
+                "content_type": content_type_for(local), "cache_control": flow.NO_CACHE})
+    bucket.blob(job.ASSET.run_record_object(prior)).exists = False
+    bucket.blob(flow.INDEX).exists = False
+    plan = {"asset_slug": flow.SLUG, "promotions": promotions, "release_index_asset_slugs": []}
+    path = tmp_path / "manual-plan.json"
+    path.write_bytes(source_quality.encode(plan))
+    with mock.patch.object(flow, "protected_authority", return_value="reviewed-manual"), \
+         mock.patch.object(gcs_asset, "get_client", return_value=client), \
+         mock.patch.dict("os.environ", {"SHARED_DATASETS_ALLOW_CANONICAL_MUTATION": "1", "SHARED_DATASETS_BUCKET": flow.BUCKET}):
+        transport, copied = copy_transport(client)
+        with mock.patch.object(publish_workflow.subprocess, "run", side_effect=transport):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        assert len(copied) == 10
+        finalized = finalizer.finalize_promoted_release_metadata(plan, client=client)
+        assert finalized["finalized_run_records"] == []
+        files = [source_quality.read(bucket, job.ASSET.release_object(prior, suffix))[1]
+                 for suffix in job.fm.ROLE_SUFFIXES.values()]
+        release_index.record_successful_release(bucket, job.ASSET.slug,
+            {"schema_version": 1, "asset_slug": job.ASSET.slug, "release_date": prior.isoformat(), "status": "success", "row_count": 40,
+             "release_path": f"gs://{bucket.name}/{job.ASSET.release_prefix(prior)}/", "release_paths": files})
+        source_quality.finish_promotion(client, plan)
+    assert publisher.load_json(job.ASSET.run_record_object(prior)) is None
+    result, prepared, built = execute(publisher, tmp_path / "next", range(1, 41), raw=original_source)
+    assert (result["status"], result["release_date"]) == ("skipped", prior.isoformat())
+    assert prepared.call_count == (0 if fingerprinted else 1)
+    built.assert_not_called()
