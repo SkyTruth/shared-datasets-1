@@ -757,15 +757,20 @@ class Refresh:
                                       "baseline record source_fingerprint and inputs must be objects")
             descriptor = manifest["identity"]
             ledger = identity_state.selected_ledger(self.gate)
-            if descriptor.get("contract_id") == keyed_identity.CONTRACT:
+            keyed = descriptor.get("contract_id") == keyed_identity.CONTRACT
+            if keyed:
                 lifecycle.require(ledger is not None, "keyed baseline has no installed ledger")
-                identity_state.validate_records(ledger, records)
             else:
                 lifecycle.require(descriptor["strategy"] == "source_field" and descriptor["source_fields"] == ["OBJECTID"],
                                   "baseline has an unsupported identity contract")
         except (GoogleAPIError, SourceLossError, release_index.ReleaseIndexError, ValueError, KeyError, TypeError,
                 AttributeError, IndexError, lifecycle.LifecycleError) as exc:
             raise RuntimeError(f"e-AMLIS baseline failed its contract; reviewed repair required: {exc}") from exc
+        # Identity comparison runs outside the published-state mapping. A record
+        # that contradicts the ledger raises IdentityError and holds publication;
+        # any other exception is a defect in this code, not a broken baseline.
+        if keyed:
+            identity_state.validate_records(ledger, records)
         # During the reviewed cutover the baseline still has legacy IDs.
         # Compare both releases in the installed permanent key space.
         self.baseline_ids = frozenset(ledger.ids[key.key] for key in keyed_identity.classify_release(

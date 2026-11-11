@@ -328,6 +328,21 @@ def test_keyed_gate_counts_permanent_ids_after_cutover(tmp_path, lost, status):
         assert ledger.ids[("problem", original[0]["PROBLEM_KEY"])]
 
 
+def test_keyed_identity_defect_is_not_reported_as_a_broken_baseline(tmp_path):
+    from tests.test_eamlis_identity_transition import prepared, install, run
+    from tests.test_eamlis_identity import problem
+    from ingestion.eamlis_monthly import identity_state
+    original = [problem(f"P{n:03}", OBJECTID=100-n) for n in range(40)]
+    client, plan, _ = prepared(tmp_path, history=[original])
+    install(client, plan, tmp_path)
+    assert run(client, original, "2026-05-02")["status"] == "success"
+    # The second attempt compares a published keyed baseline with its ledger.
+    with mock.patch.object(identity_state, "validate_records", side_effect=TypeError("identity implementation bug")) as compare, \
+         pytest.raises(TypeError, match="identity implementation bug"):
+        run(client, original, "2026-05-03")
+    compare.assert_called_once()
+
+
 def test_discovery_failure_precedes_reservation_and_persists_identity_hold():
     client = Client()
     with mock.patch.object(job.publication_readiness, "discover_batch", return_value={"state": "BLOCKED"}), \
