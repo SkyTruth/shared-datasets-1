@@ -285,20 +285,23 @@ def test_cli_overall_deadline_stops_transport_and_emits_unchanged_full_plan(main
         f"{prefix}/actions/runs/123/attempts/2/jobs?per_page=100": [{"total_count": 1, "jobs": api.jobs}],
         f"{prefix}/actions/runs/123/artifacts?per_page=100": [{"total_count": 1, "artifacts": api.artifacts}],
     }
-    (tmp_path / "responses.json").write_text(json.dumps(responses))
+    # A shell transport keeps each metadata call to milliseconds, so the 1 s
+    # deadline always reaches the stalled call, even on a loaded runner.
+    fixtures = tmp_path / "responses"
+    fixtures.mkdir()
+    names = {path: path.translate(str.maketrans("/?&=", "____")) for path in responses}
+    assert len(set(names.values())) == len(names)
+    for path, value in responses.items():
+        (fixtures / names[path]).write_text(json.dumps(value) + "\n")
     shim = tmp_path / "gh"
-    shim.write_text(f"#!{sys.executable}\n" + """
-import json, os, pathlib, sys, time
-root = pathlib.Path(os.environ['TRANSPORT_FIXTURE'])
-path = sys.argv[-1]
-stall = os.environ['STALL']
-if stall != 'archive' or path.endswith('/zip'):
-    (root / 'transport-pid').write_text(str(os.getpid()))
-    if stall == 'retry':
-        sys.stderr.write('gh: Service Unavailable (HTTP 503)\\n')
-        sys.exit(1)
-    time.sleep(30)
-print(json.dumps(json.loads((root / 'responses.json').read_text())[path]))
+    shim.write_text("""#!/bin/sh
+for path; do :; done
+if [ "$STALL" != archive ] || [ "${path%/zip}" != "$path" ]; then
+  echo $$ > "$TRANSPORT_FIXTURE/transport-pid"
+  if [ "$STALL" = retry ]; then echo 'gh: Service Unavailable (HTTP 503)' >&2; exit 1; fi
+  exec sleep 30
+fi
+exec cat "$TRANSPORT_FIXTURE/responses/$(printf '%s' "$path" | tr '/?&=' '____')"
 """)
     shim.chmod(0o755)
     plan_path, output = tmp_path / "plan.json", tmp_path / "outputs"
