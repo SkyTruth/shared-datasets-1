@@ -21,6 +21,9 @@ consecutive reconciliation dispatches fail health; unchanged health findings nev
 enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
 owns scoped non-red reports, deduplication, reminders and missing-run detection.
 Failed discovery uses the same retained, change-plus-daily health report.
+When notified safety findings clear, its incoming webhook posts one top-level
+success with the health scope and resolving run link; subsequent clean runs stay
+quiet. This separate health report does not use the workflow incident bot lifecycle.
 Infrastructure failures that prevent reporting retain a direct webhook signal.
 
 Each safety probe cheaply inspects the exact pending WDPA execution for terminal

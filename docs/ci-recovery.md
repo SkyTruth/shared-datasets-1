@@ -49,9 +49,8 @@ refresh live resources with `-lock=false` and never apply or write state.
 Phase 1 automatic **Artifact Registry writer binding sync** adds workflow attributes and
 grants beside the unchanged legacy access. Follow the [two-phase identity rollout](github-identity-rollout.md);
 phase 2 must wait for successful main authentication evidence, including recovery.
-The new PR-plan/recovery scopes are held during the plain-revert window. After a
-separate reviewed PR explicitly closes that window and removes their
-`deployment_hold` reasons, manually run protected `terraform-state-read-iam-sync.yml` from the
+The plain-revert window closed on 2026-11-11 and the PR-plan/recovery scopes are
+released. Manually run protected `terraform-state-read-iam-sync.yml` from the
 exact successful main-push CI source triple: **PR plan identity IAM bootstrap**
 precedes **PR plan identity provisioning**. That manual scope installs the PR
 planning roles and the recovery identity's login, metadata/IAM-policy reads

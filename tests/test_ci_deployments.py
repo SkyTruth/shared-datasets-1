@@ -33,7 +33,9 @@ def test_usage_hold_blocks_delivery_but_preserves_validation_and_reviewed_releas
 
     root, git = fixture_repo(tmp_path)
     path = root / ci_preflight.INGESTION_ROLLOUT_HOLDS
-    path.write_text((ROOT / ci_preflight.INGESTION_ROLLOUT_HOLDS).read_text())
+    holds = json.loads((ROOT / ci_preflight.INGESTION_ROLLOUT_HOLDS).read_text())
+    holds['dataset_usage'] = dict(owner='jonaraphael', reason='review', expires_at='2099-01-01T00:00:00Z')
+    path.write_text(json.dumps(holds))
     git('add', '.')
     git('commit', '-m', 'hold merge deployments')
     base = git('rev-parse', 'HEAD')

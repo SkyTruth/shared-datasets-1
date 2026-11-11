@@ -65,11 +65,13 @@ retirements and temporary-authority revocation remain separate scopes.
 
 ## Receipt compatibility during rollback
 
-The phase-1 merge keeps `dataset_usage` in
-[the rollout holds](../.github/ingestion-rollout-holds.json), owned by `jonaraphael`
-through `2026-11-19T00:00:00Z`. A separate reviewed PR must remove it; expiry does
-not release a hold automatically. Image validation still runs while delivery is
-held. The four publication producers retain their existing holds.
+The owner closed the plain-revert window on 2026-11-11 in
+[PR #394](https://github.com/SkyTruth/shared-datasets-1/pull/394).
+The reviewed `dataset_usage` hold release enables merge-push delivery through
+`ingestion-deploy.yml`; its receipts require the current reader. The four
+publication producers retain their existing
+[rollout holds](../.github/ingestion-rollout-holds.json). Expiry does not release
+a hold automatically, and image validation still runs while delivery is held.
 
 The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
 
@@ -77,7 +79,7 @@ The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
 | --- | --- | --- |
 | `catalog-viewer` | `catalog-viewer-deploy.yml` | Compatible schema, signer and `started`/`verified` phases. |
 | `pmtiles-cdn` | `pmtiles-cdn-sync.yml` | Compatible schema, signer and `started`/`applied`/`verified` phases. |
-| `dataset-usage` | `ingestion-deploy.yml` | Rejected: old main requires `dataset-usage-deploy.yml`; held during the rollback window. |
+| `dataset-usage` | `ingestion-deploy.yml` | Rejected: old main requires `dataset-usage-deploy.yml`; the rollback window is closed. |
 
 Old `deployment_revision.check` parses all records for its exact target
 environment, but verifies provenance only for the same revision or a
@@ -108,22 +110,25 @@ reader code changes it and triggers full receipt revalidation rather than reject
 the checkpoint. Retained resolved checkpoints undergo that same target validation.
 
 The new-only `PR plan identity IAM bootstrap` and `PR plan identity provisioning`
-scopes have checked-in `deployment_hold` reasons. Registry export refuses them
-before cloud authentication, and deployment admission rejects both `check` and
-`start` before any API read/write. Manual dispatch cannot create their deployment
-checkpoints during phase 1. Remove the holds only in a separately reviewed PR
-that explicitly closes the plain-revert window; then provision these identities
+scopes were held with `deployment_hold` reasons until the plain-revert window
+closed on 2026-11-11. Their checkpoints are unreadable by pre-rollout main, so a
+plain revert of the rollout is no longer supported. Provision these identities
 and collect their authentication evidence before removing legacy access.
+
+Google can reject a bucket binding to a custom role created seconds earlier in
+the same apply (`Role ... does not exist in the resource's hierarchy`). The first
+provisioning apply (run 42962218558, 2026-11-11) created 13 of 14 resources and
+hit this for `google_storage_bucket_iam_member.recovery_state_reader`. A failed
+attempt bars same-revision replay, so the remaining binding applies from a
+dispatch at a newer main commit; the role then already exists.
 
 `tests/test_deployment_checkpoint_revert.py` runs the current deployment and
 incident writers against a pinned `4aa19c71` reader snapshot, with only external
 API/attestation transport replaced. It exercises retained open and resolved
 checkpoints for every enabled Terraform scope through receipt verification,
 incident reconciliation and the scheduled safety dry-run, plus refusal of
-altered environment/resource/signer/digest evidence and both held manual scopes.
-Thus a plain Git revert needs no incident-state cleanup for checkpoints this
-phase can write. This guarantee ends when a later reviewed change lifts these
-holds or enables an incompatible receipt signer.
+altered environment/resource/signer/digest evidence. It excludes the two released
+new-only scopes, which ended the plain-revert guarantee for their checkpoints.
 
 ## Phase 2: contract
 
