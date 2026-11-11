@@ -98,12 +98,13 @@ def published(slug: str, *, attempt: dt.date, source: Source, content: Content, 
     counted = {} if lost is None else {"lost_objects": lost}
     return _record(slug, "success", attempt, source.release, source=source.uri, source_version=source.version,
                    row_count=built.rows, tools=dict(built.tools), release_path=built.release_path,
-                   **counted, **source.extra, **content.fingerprint)
+                   **counted, **source.extra, **content.extra, **content.fingerprint)
 
 
 def unchanged(slug: str, *, attempt: dt.date, baseline: Baseline, source: Source, content: Content) -> dict[str, Any]:
     return _record(slug, "skipped", attempt, baseline.release, reason=UNCHANGED, source=source.uri,
-                   source_version=source.version, row_count=baseline.rows, **source.extra, **content.fingerprint)
+                   source_version=source.version, row_count=baseline.rows,
+                   **source.extra, **content.extra, **content.fingerprint)
 
 
 def unavailable(slug: str, *, attempt: dt.date, missing: Unavailable) -> dict[str, Any]:
@@ -162,6 +163,7 @@ class Content:
     rows: int | None  # None when rows exist only after the build (raster sources)
     lost: int | None = None  # baseline objects absent from this source, when its keys are the identity
     hold: str | None = None  # job-specific gate reason
+    extra: Mapping[str, Any] = field(default_factory=dict)  # job-specific record fields
 
 
 @dataclass(frozen=True)

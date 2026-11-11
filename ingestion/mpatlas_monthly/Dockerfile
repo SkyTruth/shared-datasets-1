@@ -49,6 +49,7 @@ ENV PATH="/app/.venv/bin:${PATH}"
 COPY ingestion/__init__.py ./ingestion/__init__.py
 COPY ingestion/common ./ingestion/common
 COPY ingestion/mpatlas_monthly ./ingestion/mpatlas_monthly
+COPY catalog/ingestion-quality.json ./catalog/ingestion-quality.json
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py

@@ -12,6 +12,7 @@ def vector_build(target, fixture, work):
     source = work / "source.geojson"
     if target == "mpatlas-monthly":
         from ingestion.mpatlas_monthly import run as job
+        job.Refresh(None, work)  # the image must carry the loss-limit policy its lifecycle reads
         source.write_text(json.dumps(fixture))
         enriched, records, _ = job.prepare_metadata(source, work, day)
         output = job.build_outputs(enriched, records, work, day)

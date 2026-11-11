@@ -30,13 +30,23 @@ this refresh job does not initialize a dataset or repair its publication state.
    response whitespace, object-key order, feature order, retrieval provenance and
    release dates. Coordinate ordering and array ordering remain meaningful.
 4. On a match, write only `runs/YYYY-MM-DD.json` and the release-index check-in.
-   `latest_release`, `releases/` and `latest/` artifacts stay unchanged. The raw
-   hash in a semantically equivalent response can differ from the published raw
-   hash, so a later check may need normalization again.
-5. On a change, build and validate the complete FGB/PMTiles/metadata/schema bundle,
+   The record's `run_date` is the day of the check and its `release_date` is the
+   published release that stays current. `latest_release`, `releases/` and
+   `latest/` artifacts stay unchanged. The raw hash in a semantically equivalent
+   response can differ from the published raw hash, so a later check may need
+   normalization again.
+5. On a change, count the published zones whose `zone_id` is absent from the
+   source. More than the asset's loss limit (5% of published zones unless
+   `catalog/ingestion-quality.json` sets `maximum_lost_object_percent`) stops the
+   run with an error before any publication; added zones never offset lost ones.
+6. Otherwise build and validate the complete FGB/PMTiles/metadata/schema bundle,
    then publish with shared generation-preconditioned helpers. Dated artifacts
    precede `latest/`; the final manifest and successful run record complete the
-   publication and release-index update.
+   publication and release-index update. The run record carries `lost_objects`.
+
+The stage order and the rules between stages are those of
+[`ingestion/common/lifecycle.py`](../common/lifecycle.py); `run.py` supplies the
+MPAtlas stages.
 
 The first monthly run compares against the existing manually published sidecar;
 it does not require an earlier monthly-job run record. Same-day completed runs

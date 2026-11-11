@@ -17,6 +17,7 @@ from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints, publication_readiness
+from ingestion.common import lifecycle
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
@@ -45,6 +46,7 @@ class Baseline:
     fingerprint_hash: str
     source_sha256: str | None
     row_count: int
+    feature_ids: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,8 @@ def load_baseline(publisher: GcsPublisher) -> Baseline:
     source_hashes = [item["sha256"] for item in sources
                      if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
     return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
-                    source_hashes[0] if source_hashes else None, len(records))
+                    source_hashes[0] if source_hashes else None, len(records),
+                    frozenset(row["feature_id"] for row in records))
 
 
 def prepare_source(source: Path, output: Path) -> dict[str, int]:
@@ -230,56 +233,80 @@ def _build_outputs(enriched: Path, records: list[dict[str, Any]], workdir: Path,
                    sha256={role: sha256_file(paths[role]) for role in vector_pipeline.CORE_BUNDLE_ROLES})
 
 
-def write_record(publisher: GcsPublisher, run_date: dt.date, record: dict[str, Any]) -> dict[str, Any]:
-    publisher.write_run_record(asset=ASSET, run_date=run_date, payload=record)
-    return record
+class Refresh:
+    """The MPAtlas stages of `lifecycle.run`; the order and rules live there."""
+    slug = ASSET.slug
 
+    def __init__(self, publisher: GcsPublisher, workdir: Path):
+        self.publisher, self.workdir = publisher, workdir
+        self.loss_limit = lifecycle.loss_limit(ASSET.slug)
 
-def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[str, Any]:
-    existing = publisher.load_json(ASSET.run_record_object(run_date))
-    if existing is not None:
+    def resume(self, attempt: dt.date) -> dict[str, Any] | None:
+        existing = self.publisher.load_json(ASSET.run_record_object(attempt))
+        if existing is None:
+            self.publisher.assert_no_partial_release(ASSET, attempt)
+            return None
         if existing.get("status") not in {"success", "skipped"}:
             raise RuntimeError("Existing MPAtlas run requires investigation before retry")
         if existing["status"] == "success":
-            publisher.record_existing_successful_release(ASSET, run_date)
+            self.publisher.record_existing_successful_release(ASSET, attempt)
         else:
-            publisher.update_latest_run_index(asset=ASSET, payload=existing,
-                run_record_info={"path": f"gs://{publisher.bucket.name}/{ASSET.run_record_object(run_date)}"})
+            self.publisher.update_latest_run_index(asset=ASSET, payload=existing,
+                run_record_info={"path": f"gs://{self.publisher.bucket.name}/{ASSET.run_record_object(attempt)}"})
         return existing
-    publisher.assert_no_partial_release(ASSET, run_date)
-    baseline = load_baseline(publisher)
-    if run_date.isoformat() <= baseline.release:
-        raise RuntimeError("MPAtlas RUN_DATE must be newer than the latest published release")
-    source = workdir / "source.geojson"
-    download_file(SOURCE_URL, source, user_agent="shared-datasets-1-mpatlas-monthly/1.0", timeout_seconds=300)
-    source_hash = sha256_file(source)
-    record = {"schema_version": 1, "asset_slug": ASSET.slug, "run_date": run_date.isoformat(),
-              "release_date": run_date.isoformat(), "source": SOURCE_URL, "source_version": source_hash,
-              "source_sha256": source_hash}
-    if source_hash == baseline.source_sha256:
-        record.update(status="skipped", reason="source fingerprint unchanged", row_count=baseline.row_count,
-                      source_fingerprint_hash=baseline.fingerprint_hash)
-        return write_record(publisher, run_date, record)
-    enriched, records, counts = prepare_metadata(source, workdir, run_date)
-    fingerprint = source_fingerprint(records)
-    record.update(**fingerprint.record_fields(), source_stats=counts, row_count=len(records))
-    if fingerprint.sha256 == baseline.fingerprint_hash:
-        record.update(status="skipped", reason="source fingerprint unchanged")
-        return write_record(publisher, run_date, record)
-    outputs = build_outputs(enriched, records, workdir, run_date)
-    tools = toolchain()
-    record["tools"] = tools
-    bundle = vector_pipeline.publish_vector_bundle(
-        publisher=publisher, asset=ASSET, run_date=run_date, outputs=outputs,
-        object_metadata={"asset_slug": ASSET.slug, "run_date": run_date.isoformat(),
-                         "source_sha256": source_hash, "source_fingerprint_hash": fingerprint.sha256},
-        source_inputs=[{"uri": SOURCE_URL, "sha256": source_hash, "size": source.stat().st_size,
-                        "source_fingerprint_hash": fingerprint.sha256, "tools": tools}],
-        identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
-    )
-    record.update(status="success", release_path=f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
-                  release_paths=bundle.release_paths, latest_paths=bundle.latest_paths, sha256=bundle.sha256)
-    return write_record(publisher, run_date, record)
+
+    def baseline(self) -> lifecycle.Baseline:
+        self.published = load_baseline(self.publisher)
+        return lifecycle.Baseline(dt.date.fromisoformat(self.published.release), self.published.fingerprint_hash,
+                                  self.published.row_count)
+
+    def acquire(self, attempt: dt.date) -> lifecycle.Source:
+        if attempt.isoformat() <= self.published.release:
+            raise RuntimeError("MPAtlas RUN_DATE must be newer than the latest published release")
+        self.source = self.workdir / "source.geojson"
+        download_file(SOURCE_URL, self.source, user_agent="shared-datasets-1-mpatlas-monthly/1.0", timeout_seconds=300)
+        source_hash = sha256_file(self.source)
+        return lifecycle.Source(attempt, SOURCE_URL, source_hash, {"source_sha256": source_hash})
+
+    def describe(self, source: lifecycle.Source, baseline: lifecycle.Baseline) -> lifecycle.Content:
+        if source.version == self.published.source_sha256:
+            return lifecycle.Content({"source_fingerprint_hash": self.published.fingerprint_hash},
+                                     self.published.row_count, lost=0)
+        self.enriched, self.records, counts = prepare_metadata(self.source, self.workdir, source.release)
+        lost = len(self.published.feature_ids - {row["feature_id"] for row in self.records})
+        return lifecycle.Content(source_fingerprint(self.records).record_fields(), len(self.records), lost,
+                                 extra={"source_stats": counts})
+
+    def build(self, source: lifecycle.Source, content: lifecycle.Content, baseline: lifecycle.Baseline) -> lifecycle.Built:
+        self.outputs = build_outputs(self.enriched, self.records, self.workdir, source.release)
+        return lifecycle.Built(self.outputs.row_count, toolchain(),
+                               f"gs://{self.publisher.bucket.name}/{ASSET.release_prefix(source.release)}/")
+
+    def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
+        release = dt.date.fromisoformat(record["release_date"])
+        bundle = vector_pipeline.publish_vector_bundle(
+            publisher=self.publisher, asset=ASSET, run_date=release, outputs=self.outputs,
+            object_metadata={"asset_slug": ASSET.slug, "run_date": release.isoformat(),
+                             "source_sha256": record["source_sha256"],
+                             "source_fingerprint_hash": record["source_fingerprint_hash"]},
+            source_inputs=[{"uri": SOURCE_URL, "sha256": record["source_sha256"], "size": self.source.stat().st_size,
+                            "source_fingerprint_hash": record["source_fingerprint_hash"], "tools": record["tools"]}],
+            identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
+        )
+        record.update(release_paths=bundle.release_paths, latest_paths=bundle.latest_paths, sha256=bundle.sha256)
+        return self.check_in(record)
+
+    def check_in(self, record: dict[str, Any]) -> dict[str, Any]:
+        self.publisher.write_run_record(asset=ASSET, run_date=dt.date.fromisoformat(record["run_date"]), payload=record)
+        return record
+
+    def hold(self, reason: str, source: lifecycle.Source, content: lifecycle.Content, built) -> dict[str, Any]:
+        raise RuntimeError(f"MPAtlas release held for review ({reason}): {content.lost} of "
+                           f"{self.published.row_count} published zones are absent from the source; nothing published")
+
+
+def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[str, Any]:
+    return lifecycle.run(Refresh(publisher, workdir), run_date)
 
 
 def toolchain() -> dict[str, dict[str, str]]:

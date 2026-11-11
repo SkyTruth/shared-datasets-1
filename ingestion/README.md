@@ -42,9 +42,16 @@ the owning job package.
 
 `ingestion/common/lifecycle.py` defines the release lifecycle: the stage order,
 the rules between stages and the run-record shape. `tests/test_lifecycle.py`
-holds one test per rule. No job runs through `lifecycle.run` yet; the four jobs
-below still orchestrate their own stages. `wdpa_monthly` fingerprints after its
-build, so it keeps its own orchestrator until it has a pre-build fingerprint.
+holds one test per rule. `mpatlas_monthly` runs through `lifecycle.run`;
+`eamlis_monthly` and `sea_ice_daily` still orchestrate their own stages.
+`wdpa_monthly` fingerprints after its build, so it keeps its own orchestrator
+until it has a pre-build fingerprint.
+
+The release index takes `latest_run.date` from a record's `run_date`. A
+check-in record keeps the day the job ran in `run_date` and the release it
+describes in `release_date`. Successful sea ice, WDPA and manual records still
+write the release date in both fields, so after a success `latest_run.date` is
+the release date.
 
 ## Default Publishing Semantics
 

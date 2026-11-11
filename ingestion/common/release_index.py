@@ -361,7 +361,9 @@ def run_entry_from_record(
     if not release_date:
         raise ReleaseIndexError("run record is missing release_date")
     entry: dict[str, Any] = {
-        "date": release_date,
+        # The day the job ran. Records without run_date predate the split and
+        # carry the attempt date as release_date (WDPA check-ins, old history).
+        "date": str(record.get("run_date") or release_date),
         "status": str(record.get("status") or ""),
         "source_version": str(record.get("source_version") or ""),
         "reason": str(record.get("reason") or ""),

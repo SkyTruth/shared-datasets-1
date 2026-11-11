@@ -243,3 +243,14 @@ def test_loss_limit_reads_the_per_asset_policy_with_a_default(tmp_path, monkeypa
     assert lc.loss_limit("unlisted") == lc.DEFAULT_LOSS_LIMIT
     with pytest.raises(lc.LifecycleError, match="lost-object limit"):
         lc.loss_limit("broken")
+
+
+def test_release_index_reports_the_attempt_date_as_the_latest_run():
+    from ingestion.common import release_index
+
+    check_in = lc.run(FakeJob(content=content(fingerprint=PUBLISHED_HASH)), ATTEMPT)
+    entry = release_index.run_entry_from_record(check_in)
+    assert (entry["date"], entry["status"]) == ("2026-11-03", "skipped")
+    # Records written before run_date existed carry the attempt date as release_date.
+    legacy = {"schema_version": 1, "status": "skipped", "release_date": "2026-11-02", "reason": "source not ready"}
+    assert release_index.run_entry_from_record(legacy)["date"] == "2026-11-02"
