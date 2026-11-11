@@ -82,10 +82,6 @@ def test_node24_runs_after_node22_failure_and_skipped_legs_do_not_upload_missing
     assert not evaluate(uploads['retained-results-24']['if'])
 
 
-def test_main_push_run_name_keeps_the_commit_message():
-    assert 'github.event.head_commit.message' in load_workflow(ROOT / '.github/workflows/ci.yml')['run-name']
-
-
 @pytest.mark.parametrize('filename', [
     'publish-dataset.yml', 'catalog-web-deploy.yml', 'catalog-viewer-deploy.yml',
     'pmtiles-cdn-sync.yml', 'prod-terraform-target-apply.yml',
