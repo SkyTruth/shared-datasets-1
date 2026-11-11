@@ -106,6 +106,9 @@ class Ledger:
             keys.add(row.key)
         require(self.next_feature_id == len(self.entries) + 1, "ledger high-water differs from permanent assignments")
 
+    def __reduce__(self):
+        return type(self), (self.entries, self.next_feature_id)
+
     @classmethod
     def genesis(cls) -> Ledger:
         """Offline/review preparation only; runtime never infers genesis."""
