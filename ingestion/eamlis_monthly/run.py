@@ -878,14 +878,13 @@ def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path, *, layer_u
             return lifecycle.run(refresh, run_date)
         except Exception as exc:
             reservation = refresh.reservation
-            if isinstance(exc, keyed_identity.IdentityError) or refresh.publication_started or (reservation is not None and
-                    reservation.ledger.next_feature_id > reservation.before):
-                observation = {"geometry_count": None, "error": str(exc)[:1000], "checked_at": source_loss.now()}
-                refresh.gate.block(refresh.gate.state["hold"]["reason"] if refresh.gate.held else "identity_publication_requires_review", observation)
-            if refresh.gate.held:
-                observation = dict(refresh.gate.state["hold"]["observation"])
+            requires_review = isinstance(exc, keyed_identity.IdentityError) or refresh.publication_started or (reservation is not None and
+                    reservation.ledger.next_feature_id > reservation.before)
+            if refresh.gate.held or requires_review:
+                hold = refresh.gate.state["hold"]
+                observation = dict(hold["observation"]) if hold else {"geometry_count": None}
                 observation.update(error=str(exc)[:1000], checked_at=source_loss.now())
-                refresh.gate.block(refresh.gate.state["hold"]["reason"], observation)
+                refresh.gate.block(hold["reason"] if hold else "identity_publication_requires_review", observation)
                 refresh.gate.notify()
             raise
 

@@ -229,8 +229,6 @@ class Guard(AbstractContextManager):
         hold = self.state["hold"]
         if hold["notification"] != "pending":
             return
-        hold["notification"] = "sending"
-        self.save()  # Claim before external delivery. A crash cannot duplicate the post.
         old = hold["baseline"]["release"]["rows"] if hold["baseline"] else None
         count = hold["observation"].get("geometry_count")
         loss = f"{100 * (old - count) / old:.2f}%" if old and count is not None else "unavailable"
@@ -250,8 +248,11 @@ class Guard(AbstractContextManager):
                      "https://github.com/SkyTruth/shared-datasets-1/actions/workflows/eamlis-held-candidate-preview.yml\n")
         else:
             body += "No valid candidate bundle is available; inspect the recorded source failure.\n"
+        title = f"{self.flow.label} source-quality review required"
+        hold["notification"] = "sending"
+        self.save()  # Claim the complete message before external delivery.
         try:
-            slack_notify.notify(title=f"{self.flow.label} source-quality review required", body=body, status="decision", strict=True)
+            slack_notify.notify(title=title, body=body, status="decision", strict=True)
         except Exception:
             hold["notification"] = "unknown"  # A lost response does not establish nondelivery.
             self.save()

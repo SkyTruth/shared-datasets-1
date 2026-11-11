@@ -36,6 +36,25 @@ def test_shared_claim_and_single_notification_with_asset_scoped_paths(flow):
     assert other.Guard(bucket).load()[0]["hold"] is None
 
 
+@pytest.mark.parametrize("flow", list(source_quality.FLOWS.values()), ids=lambda f: f.SLUG)
+def test_notification_format_failure_does_not_claim_delivery(flow):
+    bucket = Client().bucket(flow.BUCKET)
+    with mock.patch.object(slack_notify, "notify") as send:
+        with flow.Guard(bucket) as guard:
+            guard.block(lifecycle.OBJECTS_LOST, {"geometry_count": 1})
+            with pytest.raises(KeyError, match="lost_objects"):
+                guard.notify()
+            assert guard.load()[0]["hold"]["notification"] == "pending"
+            send.assert_not_called()
+        with flow.Guard(bucket) as guard:
+            guard.block(lifecycle.OBJECTS_LOST,
+                {"geometry_count": 1, "lost_objects": 2, "maximum_lost_object_percent": 5})
+            guard.notify()
+            guard.notify()
+            assert guard.load()[0]["hold"]["notification"] == "sent"
+        send.assert_called_once()
+
+
 def seed(client, directory):
     directory.mkdir()
     publisher = GcsPublisher(client, job.quality.BUCKET)

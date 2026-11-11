@@ -60,7 +60,8 @@ records retain their stored dates.
 `ingestion/common/source_quality.py` supplies one retained-candidate hold flow
 for EAMLIS and MPAtlas. The registry binds asset paths, labels, Cloud Run jobs
 and optional job-owned identity hooks. `Guard` persists holds and observations,
-serializes publication and claims one Slack request before delivery. `HoldFlow`
+serializes publication and formats one Slack request before claiming delivery.
+Candidate failures preserve the hold's observation and add failure details. `HoldFlow`
 stages immutable candidates and validates exact `source_loss_review` promotion
 plans; the protected publisher clears a hold only after finalized-byte and
 release-index verification. Both jobs use the lifecycle's lost-object limit:

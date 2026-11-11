@@ -278,6 +278,45 @@ def test_discovery_failure_precedes_reservation_and_persists_identity_hold():
     send.assert_called_once()
 
 
+def test_keyed_candidate_staging_failure_preserves_loss_request_and_original_error(tmp_path):
+    from tests.test_eamlis_identity_transition import prepared, install, run, output
+    from tests.test_eamlis_identity import problem, feature
+    from ingestion.eamlis_monthly import identity_state
+
+    original = [problem(f"P{n:03}", OBJECTID=100-n) for n in range(40)]
+    client, plan, _ = prepared(tmp_path, history=[original])
+    install(client, plan, tmp_path)
+    run(client, original, "2026-05-02")
+    replacement = [*original[3:], *(problem(f"NEW{n}", OBJECTID=200+n) for n in range(3))]
+    rows = [feature(p) for p in replacement]
+    def download(*, source, dest, page_size):
+        dest.write_bytes(quality.encode({"type": "FeatureCollection", "features": rows}))
+        return job.SourceExtract(dest, len(rows), 0)
+    error = RuntimeError("candidate staging failed")
+    bucket = client.bucket(quality.BUCKET)
+    with mock.patch.object(job, "toolchain", return_value=TOOLS), \
+         mock.patch.object(job, "fetch_source_state", return_value=sample_source_state(feature_count=40)), \
+         mock.patch.object(job, "download_source_geojson", side_effect=download), \
+         mock.patch.object(job, "build_asset_output", side_effect=output), \
+         mock.patch.object(quality, "stage_candidate", side_effect=error), \
+         mock.patch.object(slack_notify, "notify") as send:
+        with pytest.raises(RuntimeError, match="candidate staging failed") as raised:
+            job.ingest(job.GcsPublisher(client, quality.BUCKET), dt.date(2026, 5, 3), tmp_path,
+                layer_url=job.DEFAULT_LAYER_URL, where=job.DEFAULT_WHERE, page_size=2000)
+        assert raised.value is error
+        with quality.Guard(bucket) as gate:
+            assert identity_state.selected_ledger(gate).next_feature_id == 44
+            hold = gate.state["hold"]
+            assert hold["reason"] == "objects_lost"
+            assert hold["observation"]["error"] == str(error)
+            assert hold["observation"]["lost_objects"] == 3
+            assert hold["observation"]["maximum_lost_object_percent"] == 5
+            assert hold["notification"] == "sent"
+            gate.notify()
+        send.assert_called_once()
+        assert "Lost objects: 3 of 40 published; limit: 5%" in send.call_args.kwargs["body"]
+
+
 def test_legacy_skipped_record_returns_its_original_dates_without_tools():
     client = Client()
     execute(client, 2, "2026-04-02")

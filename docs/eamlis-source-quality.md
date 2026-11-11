@@ -50,8 +50,11 @@ Completed-date retries also respect this claim and any hold.
 The first held check attempts one Slack decision alert using the existing job
 webhook. An `objects_lost` request names lost objects, baseline objects and the
 percentage limit. A hold raised after the attempt's run record was written still
-gets its one request on a completed-date retry. Delivery is claimed before
-sending. An uncertain response or crashed send remains `unknown`/`sending`; subsequent checks do not duplicate it. Delivery
+gets its one request on a completed-date retry. Candidate failures add error
+details to the hold's observation while retaining its loss counts and limit.
+The complete message is formatted before delivery is claimed; formatting errors
+leave the request pending. An uncertain response or crashed send remains
+`unknown`/`sending`; subsequent checks do not duplicate it. Delivery
 failure never releases the hold and propagates as a job failure through existing
 monitoring. The control object is the authority for investigation, even if no
 Slack post was delivered. This decision alert is separate from editable GitHub
