@@ -610,13 +610,14 @@ def build_run_record_payload(
     notes: str,
 ) -> dict[str, Any]:
     release_info_by_path = {entry["path"]: entry for entry in release_objects}
+    published_at = dt.datetime.now(dt.UTC)
     payload = {
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
         "asset_slug": plan.asset_slug,
-        "run_date": plan.release_date,
+        "run_date": published_at.date().isoformat(),
         "release_date": plan.release_date,
-        "published_at": dt.datetime.now(dt.UTC).isoformat(),
+        "published_at": published_at.isoformat(),
         "status": "success",
         "source_version": source_version,
         "release_path": plan.release_path,

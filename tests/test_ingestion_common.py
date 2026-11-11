@@ -531,6 +531,7 @@ class GcsPublisherTests(unittest.TestCase):
         bucket = FakeBucket()
         asset = FakeAsset()
         record = seed_valid_metadata_contract(bucket, asset, "2026-05-01")
+        record["run_date"] = "2026-05-08"
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
 
         self.assertIsNone(publisher.release_metadata_contract_issue(asset, record))

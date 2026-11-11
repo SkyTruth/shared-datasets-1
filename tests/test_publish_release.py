@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import csv
 import hashlib
@@ -471,17 +472,20 @@ class PublishReleaseTests(unittest.TestCase):
             schema_updates = []
             notifications = []
 
-            result = publish_release.execute_publish_plan(
-                plan,
-                client=FakeClient(bucket),
-                source_version="source-v1",
-                row_count=3,
-                notes="published in test",
-                schema_reader=lambda _path: [],
-                schema_compatibility_checker=pass_schema_compatibility,
-                schema_updater=lambda slug, path: schema_updates.append((slug, path.name)),
-                notifier=lambda publish_plan, count: notifications.append((publish_plan.asset_slug, count)),
-            )
+            with mock.patch.object(publish_release.dt, "datetime", wraps=dt.datetime) as clock:
+                clock.now.return_value = dt.datetime(2026, 5, 8, 0, 30, tzinfo=dt.UTC)
+                result = publish_release.execute_publish_plan(
+                    plan,
+                    client=FakeClient(bucket),
+                    source_version="source-v1",
+                    row_count=3,
+                    notes="published in test",
+                    schema_reader=lambda _path: [],
+                    schema_compatibility_checker=pass_schema_compatibility,
+                    schema_updater=lambda slug, path: schema_updates.append((slug, path.name)),
+                    notifier=lambda publish_plan, count: notifications.append((publish_plan.asset_slug, count)),
+                )
+                clock.now.assert_called_with(dt.UTC)
 
         release = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb")
         release_manifest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.manifest.json")
@@ -491,12 +495,16 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(latest.uploads[0][1], 12)
         self.assertEqual(run_record.uploads[0][1], 0)
         payload = json.loads(run_record.text)
+        self.assertEqual(payload["run_date"], "2026-05-08")
+        self.assertEqual(payload["release_date"], "2026-05-01")
+        self.assertEqual(payload["published_at"], "2026-05-08T00:30:00+00:00")
         self.assertEqual(payload["source_version"], "source-v1")
         self.assertEqual(payload["row_count"], 3)
         release_index_blob = bucket.blob("_catalog/releases/example-asset.json")
         self.assertTrue(release_index_blob.exists)
         release_index_payload = json.loads(release_index_blob.text)
         self.assertEqual(release_index_payload["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(release_index_payload["latest_run"]["date"], "2026-05-08")
         self.assertEqual(result.run_record["release_index"]["path"], "gs://test-bucket/_catalog/releases/example-asset.json")
         self.assertEqual(schema_updates, [("example-asset", "example-asset.fgb")])
         self.assertEqual(notifications, [("example-asset", 3)])

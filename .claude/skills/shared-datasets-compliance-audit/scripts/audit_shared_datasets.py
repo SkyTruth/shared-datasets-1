@@ -1594,15 +1594,15 @@ def validate_release_integrity(
                 run_payload = json.loads(download_object_text(bucket, run_blob.name, run_blob.generation))
             except (json.JSONDecodeError, OSError):
                 continue
-            run_date = str(run_payload.get("run_date") or Path(run_blob.name).stem)
-            if run_payload.get("status") == "success" and run_date not in indexed_success_dates:
+            release_date = str(run_payload.get("release_date") or run_payload.get("run_date") or Path(run_blob.name).stem)
+            if run_payload.get("status") == "success" and release_date not in indexed_success_dates:
                 run_record_uri = f"gs://{bucket}/{run_blob.name}"
                 findings.append(
                     Finding(
                         severity,
                         run_record_uri,
                         "release-index-success-run-indexed",
-                        f"Successful run record {run_date} is not present in the release index.",
+                        f"Successful run record for release {release_date} is not present in the release index.",
                         uploader_hint(run_blob),
                         release_index_repair_next_step(slug),
                         "Successful scheduled runs are invisible to release-history consumers until indexed.",

@@ -47,11 +47,12 @@ holds one test per rule. `mpatlas_monthly` runs through `lifecycle.run`;
 `wdpa_monthly` fingerprints after its build, so it keeps its own orchestrator
 until it has a pre-build fingerprint.
 
-The release index takes `latest_run.date` from a record's `run_date`. A
-check-in record keeps the day the job ran in `run_date` and the release it
-describes in `release_date`. Successful sea ice, WDPA and manual records still
-write the release date in both fields, so after a success `latest_run.date` is
-the release date.
+Every run record keeps the day the job ran in `run_date` and the release it
+describes in `release_date`. The release index takes `latest_run.date` from
+`run_date` and `latest_release.date` from `release_date`. Manual releases use the
+UTC day their run record is prepared. Release paths and run-record object names
+use the release date. Historical records without `run_date` use `release_date`
+for `latest_run.date`.
 
 ## Default Publishing Semantics
 

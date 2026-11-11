@@ -498,6 +498,7 @@ def test_sea_ice_persisted_completed_item_migration(tmp_path, monkeypatch, case)
         asset=asset,
         outputs=outputs,
         source=old_source,
+        attempt_date=DATE,
         asset_readme=readme,
         fingerprint=original
         if case == "current_changed"

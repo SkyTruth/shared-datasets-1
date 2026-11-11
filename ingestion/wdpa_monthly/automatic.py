@@ -20,6 +20,7 @@ def check_in(publisher, month, attempt, reason):
     for asset in wdpa.ASSETS:
         record = {
             "schema_version": 1, "asset_slug": asset.slug, "status": "skipped",
+            "run_date": attempt.isoformat(),
             "release_date": attempt.isoformat(), "target_release_date": month.isoformat(),
             "reason": reason, "source": wdpa.build_source_url(os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), month),
             "source_version": wdpa.source_version_for(month),
@@ -63,7 +64,8 @@ def run():
         # Only this execution's complete validated descriptor can reach publication.
         artifact_bundle.check_reference(reference, execution=os.environ["CLOUD_RUN_EXECUTION"])
         return artifact_bundle.promote(client, publisher, reference, root / "publish",
-                                       producer_source=gate.source_digest(), requested_date=month)
+                                       producer_source=gate.source_digest(), requested_date=month,
+                                       attempt_date=attempt)
 
 
 def main():
