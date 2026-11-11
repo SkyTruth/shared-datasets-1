@@ -70,14 +70,29 @@ resource "google_storage_bucket_iam_member" "github_readonly_object_viewer" {
   depends_on = [google_storage_bucket.shared_bucket]
 }
 
-resource "google_storage_bucket_iam_member" "github_readonly_object_viewer_scoped" {
+# Separate the existing condition sets instead of exceeding IAM's 12 logical
+# operator limit when listing, canonical reads and staging reads are combined.
+resource "google_storage_bucket_iam_member" "github_readonly_canonical_object_viewer" {
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
   member = module.github_readonly_service_account.member
 
   condition {
-    title      = "advisory_and_audit_objects"
-    expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.canonical_mutation_publisher_condition}) || (${local.pending_publish_source_condition})"
+    title      = "advisory_and_audit_canonical_objects"
+    expression = local.canonical_mutation_publisher_condition
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
+resource "google_storage_bucket_iam_member" "github_readonly_pending_publish_viewer" {
+  bucket = var.bucket_name
+  role   = "roles/storage.objectViewer"
+  member = module.github_readonly_service_account.member
+
+  condition {
+    title      = "advisory_and_audit_pending_publishes"
+    expression = "resource.name == 'projects/_/buckets/${var.bucket_name}' || (${local.pending_publish_source_condition})"
   }
 
   depends_on = [google_storage_bucket.shared_bucket]

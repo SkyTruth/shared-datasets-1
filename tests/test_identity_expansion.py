@@ -82,9 +82,10 @@ def test_readonly_provider_still_accepts_all_legacy_display_names(workflow):
 def test_every_non_retirement_iam_target_rejects_deletes_and_both_replacement_orders():
     registry = json.loads((ROOT / '.github/terraform-targets.json').read_text())
     for name, scope in registry['targets'].items():
-        # Existing exact obsolete-resource retirements and temporary-authority
-        # revocation are separate contracts, never permission to retire live IAM.
-        if scope.get('retired_resources') or scope.get('delete_only'):
+        # An absent target can retain static ownership while deletes remain
+        # blocked. Only deletion-capable retirement/revocation scopes may omit
+        # this refusal check, and those scopes must never own legacy grants.
+        if scope.get('delete_only') or (scope.get('retired_resources') and not scope.get('block_deletes')):
             assert not set(scope['resources']) & BASELINE['grants'].keys(), name
             continue
         if scope.get('state_only'):

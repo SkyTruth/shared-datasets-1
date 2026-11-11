@@ -32,8 +32,32 @@ explicit dependency on the updated provider. It must not own the entire
 was created outside Terraform and must remain untouched in this phase.
 
 Publisher, preview, read-only WIF and reconciler access get separate companion
-resources. The reader gets a conditional companion beside its unconditional
-legacy bucket grant; its effective access stays broad until phase 2.
+resources. The reader gets two conditional companions beside its unconditional
+legacy bucket grant; its effective access stays broad until phase 2. Canonical
+reads reuse `canonical_mutation_publisher_condition`; bucket listing and staging
+reads reuse `pending_publish_source_condition` in a separate grant. Their union
+preserves the original scoped read set without combining all clauses into one
+expression. Keep both companions when removing the legacy grant in phase 2.
+The rejected `github_readonly_object_viewer_scoped` address remains in the
+writer's exact scope as a `retired_resources` entry for static deletion checks.
+The graph contract requires it to stay absent; `block_deletes: true` still
+rejects any deletion in a saved plan.
+
+[IAM limits](https://cloud.google.com/iam/quotas#limits) allow at most 12 logical
+operators (`&&`, `||`, `!`) per role-binding condition, and 20 bindings for the
+same role and principal with different conditions in one policy. Google
+[recommends](https://cloud.google.com/iam/docs/conditions-overview#conditions_in_allow_policies)
+at most 100 conditional bindings per policy; that is guidance, not the 20-binding
+per-role/principal limit. The canonical companion currently uses 9 operators
+and the listing/staging companion uses 3. The canonical publisher also uses 9;
+the observer and viewer grants use 10. New taxonomy prefixes must pass the
+Terraform-rendered condition budget tests before deployment. Those tests also
+enforce a conservative repository budget of 2048 UTF-8 bytes per binding
+expression. The IAM allow-policy and `Expr` references do not document a
+separate expression-length maximum; this budget is not an asserted API limit.
+WIF provider attribute conditions have a separate
+[4096-character limit](https://cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools.providers),
+which the same tests enforce without applying the binding operator limit.
 Non-retirement IAM syncs use `block_deletes: true`: the saved-plan allowlist
 rejects any action containing `delete`, including either replacement order,
 even for an otherwise allowlisted address. Existing exact obsolete-resource
@@ -134,7 +158,7 @@ addresses below omit the common `google_` prefix.
 | `iam_workload_identity_pool_provider.github_readonly` | Legacy mappings unchanged; token condition union adds the new reader. |
 | `service_account_iam_member.shared_datasets_publisher_github_wif` | Unchanged; `_workflow` companion added. |
 | `service_account_iam_member.github_readonly_wif` | Unchanged; `_workflow` companion added. |
-| `storage_bucket_iam_member.github_readonly_object_viewer` | Unchanged; `_scoped` companion added; narrowing deferred. |
+| `storage_bucket_iam_member.github_readonly_object_viewer` | Unchanged; `github_readonly_canonical_object_viewer` and `github_readonly_pending_publish_viewer` companions added; narrowing deferred. |
 | `service_account_iam_member.feature_preview_loader_github_wif` | Unchanged; `_workflow` companion added. |
 | `storage_bucket_iam_member.monitoring_slack_recovery` | Unchanged; `monitoring_slack_reconciler` companion added; SA swap deferred. |
 | `storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer` | Policy unchanged; same bucket through IAM-only data source. |
