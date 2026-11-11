@@ -1,5 +1,6 @@
 name: CI / Validate and deliver
-run-name: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Draft CI' || 'CI' }} / ${{ github.event.pull_request.title || github.event.head_commit.message || github.sha }}"
+# Alerting, incident scopes and deployment sources key on the run name; only drafts differ.
+run-name: "${{ github.event_name == 'pull_request' && github.event.pull_request.draft && format('Draft CI / {0}', github.event.pull_request.title) || 'CI / Validate and deliver' }}"
 
 on:
   pull_request:
