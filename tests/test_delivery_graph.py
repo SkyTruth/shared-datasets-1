@@ -60,27 +60,24 @@ def test_terraform_boundary_requires_the_claim_computed_propagation_wait():
         assert receipts.terraform_boundary(changed)
 
 
-def test_merge_rollout_holds_the_receipt_signer_incompatible_with_old_main():
-    # 4aa19c71 deployment_revision.verify_receipt trusts these original leaves.
-    old_signers = {'catalog-viewer': 'catalog-viewer-deploy.yml', 'pmtiles-cdn': 'pmtiles-cdn-sync.yml',
-                   'dataset-usage': 'dataset-usage-deploy.yml'}
+@pytest.mark.parametrize('target,expected_signer', [
+    ('catalog-viewer', 'catalog-viewer-deploy.yml'),
+    ('pmtiles-cdn', 'pmtiles-cdn-sync.yml'),
+    ('dataset-usage', 'ingestion-deploy.yml'),
+])
+def test_merge_receipt_signers_after_plain_revert_window(target, expected_signer):
     from unittest.mock import Mock
     api = Mock()
     api.get.return_value = {'id': 13, 'run_attempt': 1, 'head_sha': 'a' * 40, 'referenced_workflows': [{
         'path': 'SkyTruth/shared-datasets-1/.github/workflows/ingestion-deploy.yml@refs/heads/main',
         'sha': 'a' * 40, 'ref': 'refs/heads/main',
     }]}
+    assert revisions.receipt_signer(api, 'SkyTruth/shared-datasets-1', target, 13, 1) == '.github/workflows/' + expected_signer
+
+
+def test_only_publication_producers_remain_held():
     holds = json.loads((ROOT / ci.INGESTION_ROLLOUT_HOLDS).read_text())
-    for target, old_signer in old_signers.items():
-        signer = revisions.receipt_signer(api, 'SkyTruth/shared-datasets-1', target, 13, 1)
-        if target == 'dataset-usage':
-            assert signer == revisions.INGESTION_SIGNER
-            assert signer != '.github/workflows/' + old_signer
-            assert 'dataset_usage' in ci.rollout_holds(holds)
-            assert holds['dataset_usage']['owner'] == 'jonaraphael'
-            assert holds['dataset_usage']['expires_at'] == '2026-11-19T00:00:00Z'
-        else:
-            assert signer == '.github/workflows/' + old_signer
+    assert set(ci.rollout_holds(holds)) == {'mpatlas', 'eamlis', 'wdpa', 'sea_ice'}
 
 
 @pytest.mark.parametrize('create_account', [False, True])
