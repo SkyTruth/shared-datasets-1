@@ -13,7 +13,11 @@ from ingestion.common import release_index, source_quality
 from scripts import release_feature_model as model
 
 
-class MissingManifest(ValueError):
+class BaselineContractError(ValueError):
+    """Published baseline bytes or references fail their persisted contract."""
+
+
+class MissingManifest(BaselineContractError):
     """The indexed publication has no dated manifest."""
 
 
@@ -28,24 +32,27 @@ def _require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
-def _reference(ref, *, require_hash=True):
-    """Normalize the persisted reference once before comparison or storage I/O."""
-    generation = ref["generation"]
+def _generation(generation):
     _require(type(generation) in {int, str} and str(generation).isdigit() and int(generation) > 0,
              "baseline reference needs a positive generation")
+    return int(generation)
+
+
+def _reference(ref):
+    """Normalize a manifest artifact reference before storage I/O."""
     _require(type(ref["size"]) is int and ref["size"] >= 0, "baseline reference needs a byte size")
-    value = {"path": ref["path"], "generation": int(generation), "size": ref["size"]}
-    if require_hash or "sha256" in ref:
-        value["sha256"] = release_index.normalize_sha256(ref["sha256"], label=ref["path"])
-    return value
+    return {"path": ref["path"], "generation": _generation(ref["generation"]), "size": ref["size"],
+            "sha256": release_index.normalize_sha256(ref["sha256"], label=ref["path"])}
 
 
 def read(publisher, asset, release) -> PublishedBaseline:
-    """Read the Guard's dated manifest, schema and metadata, pinned by its index.
+    """Read the Guard's dated manifest generation, then its pinned artifacts.
 
-    Older manifests may be pinned by generation and size alone. Canonical
-    metadata and schema require hashes in both the index and manifest. No run
-    record or latest object supplies publication authority.
+    The generation identifies the manifest bytes; the manifest pins dated schema
+    and metadata by generation and hash. Replacing metadata, a latest manifest
+    and a run-record hash cannot substitute that chain. Index hashes can be stale
+    after reviewed metadata updates and supply no authority. No run record or
+    latest object is consulted.
     """
     try:
         if release is None:
@@ -56,21 +63,19 @@ def read(publisher, asset, release) -> PublishedBaseline:
                  "baseline index files must be objects")
         _require(type(release["rows"]) is int and release["rows"] > 0, "baseline index needs a positive row count")
 
-        def indexed(suffix, *, require_hash=True):
-            path = f"gs://{publisher.bucket.name}/{asset.release_object(day, suffix)}"
-            refs = [ref for ref in files if ref.get("path") == path]
-            if not refs and suffix == ".manifest.json":
-                raise MissingManifest("published manifest is missing from the index")
-            _require(len(refs) == 1, f"baseline index must pin exactly one {suffix} object")
-            return _reference(refs[0], require_hash=require_hash)
+        def dated_path(suffix):
+            return f"gs://{publisher.bucket.name}/{asset.release_object(day, suffix)}"
 
-        ref = indexed(".manifest.json", require_hash=False)
-        if "sha256" in ref:
-            raw = source_quality.pinned(publisher.bucket.client, ref)
-        else:
-            name = ref["path"].split("/", 3)[3]
-            raw = publisher.bucket.blob(name, generation=ref["generation"]).download_as_bytes(
-                if_generation_match=ref["generation"])
+        refs = [ref for ref in files if ref.get("path") == dated_path(".manifest.json")]
+        if not refs:
+            raise MissingManifest("published manifest is missing from the index")
+        _require(len(refs) == 1, "baseline index must pin exactly one .manifest.json object")
+        ref = refs[0]
+        generation = _generation(ref["generation"])
+        raw = publisher.bucket.blob(asset.release_object(day, ".manifest.json"), generation=generation).download_as_bytes(
+            if_generation_match=generation)
+        if "size" in ref:
+            _require(type(ref["size"]) is int and ref["size"] >= 0, "baseline manifest needs a byte size")
             _require(len(raw) == ref["size"], "baseline manifest size differs from the index")
         manifest = json.loads(raw)
         _require(isinstance(manifest, dict), "baseline manifest must be an object")
@@ -78,8 +83,8 @@ def read(publisher, asset, release) -> PublishedBaseline:
             expected_release=release["date"], require_generations=True)
 
         def artifact(role, suffix):
-            ref = indexed(suffix)
-            _require(_reference(artifacts[role]) == ref, f"baseline {role} differs from its indexed object")
+            ref = _reference(artifacts[role])
+            _require(ref["path"] == dated_path(suffix), f"baseline {role} must name its dated release object")
             return source_quality.pinned(publisher.bucket.client, ref)
 
         schema = json.loads(artifact("schema", ".schema.json"))
@@ -93,6 +98,6 @@ def read(publisher, asset, release) -> PublishedBaseline:
         return PublishedBaseline(manifest, records)
     except MissingManifest:
         raise
-    except (GoogleAPIError, source_quality.SourceLossError, ValueError, KeyError, TypeError,
+    except (GoogleAPIError, source_quality.SourceLossError, release_index.ReleaseIndexError, ValueError, KeyError, TypeError,
             AttributeError, IndexError, OSError, EOFError, zlib.error) as exc:
-        raise ValueError(f"invalid indexed baseline: {exc}") from exc
+        raise BaselineContractError(f"invalid indexed baseline: {exc}") from exc

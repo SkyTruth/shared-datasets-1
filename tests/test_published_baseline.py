@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from ingestion.common import published_baseline, source_quality
+from ingestion.common import published_baseline, release_index, source_quality
 from ingestion.eamlis_monthly import run as eamlis
 from ingestion.mpatlas_monthly import run as mpatlas
 from tests.test_shared_hold_flow import seed
@@ -63,25 +63,33 @@ def test_malformed_pinned_json_shapes_require_reviewed_repair(publication, suffi
 
 @pytest.mark.parametrize("suffix", [".metadata.ndjson.gz", ".schema.json"])
 @pytest.mark.parametrize("field", ["generation", "size", "sha256", "path"])
-def test_manifest_canonical_references_must_match_index(publication, suffix, field):
+def test_manifest_canonical_references_must_authenticate_dated_bytes(publication, suffix, field):
     job, publisher, release = publication
     manifest = deepcopy(published_baseline.read(publisher, job.ASSET, release).manifest)
     artifact = next(ref for ref in manifest["artifacts"] if ref["path"].endswith(suffix))
     artifact[field] = {"generation": 999, "size": 999, "sha256": "0" * 64,
                        "path": f"gs://{publisher.bucket.name}/unrelated/object"}[field]
     replace_indexed_json(publisher, release, ".manifest.json", manifest)
-    with pytest.raises(RuntimeError, match="baseline.*reviewed repair required.*differs from its indexed object"):
+    with pytest.raises(RuntimeError, match="baseline.*reviewed repair required"):
         read(job, publisher, release)
 
 
-@pytest.mark.parametrize("suffix", [".manifest.json", ".metadata.ndjson.gz", ".schema.json"])
-@pytest.mark.parametrize("failure", ["missing_generation", "missing_size", "corrupt_bytes", "not_found", "precondition"])
+@pytest.mark.parametrize("suffix,failure", [(suffix, failure)
+    for suffix in [".manifest.json", ".metadata.ndjson.gz", ".schema.json"]
+    for failure in ["missing_generation", "missing_size", "corrupt_bytes", "not_found", "precondition"]
+    if (suffix, failure) != (".manifest.json", "missing_size")])
 def test_bad_pinned_objects_always_require_reviewed_repair(publication, suffix, failure):
     job, publisher, release = publication
     ref = next(ref for ref in release["files"] if ref["path"].endswith(suffix))
     blob = publisher.bucket.blob(ref["path"].split("/", 3)[3])
     if failure.startswith("missing_"):
-        del ref[failure.removeprefix("missing_")]
+        if suffix == ".manifest.json":
+            del ref[failure.removeprefix("missing_")]
+        else:
+            manifest = deepcopy(published_baseline.read(publisher, job.ASSET, release).manifest)
+            artifact = next(item for item in manifest["artifacts"] if item["path"].endswith(suffix))
+            del artifact[failure.removeprefix("missing_")]
+            replace_indexed_json(publisher, release, ".manifest.json", manifest)
     elif failure == "corrupt_bytes":
         blob.data = b"corrupt"
     elif failure == "not_found":
@@ -118,13 +126,59 @@ def test_shared_reader_uses_only_supplied_snapshot(publication):
         assert len(published_baseline.read(publisher, job.ASSET, release).records) == release["rows"]
 
 
-@pytest.mark.parametrize("suffix", [".metadata.ndjson.gz", ".schema.json"])
-def test_canonical_index_references_require_sha256(publication, suffix):
+@pytest.mark.parametrize("index_hash", [None, "stale", "malformed"])
+def test_index_hashes_are_not_baseline_authority(publication, index_hash):
     job, publisher, release = publication
-    ref = next(ref for ref in release["files"] if ref["path"].endswith(suffix))
-    del ref["sha256"]
-    with pytest.raises(RuntimeError, match="baseline.*reviewed repair required"):
-        read(job, publisher, release)
+    # Exercise the real bucket-listing producer, including legacy objects whose
+    # listing and run record both lack checksum declarations.
+    record_blob = publisher.bucket.blob(job.ASSET.run_record_object(dt.date.fromisoformat(release["date"])))
+    record = publisher.load_json(record_blob.name)
+    record.pop("sha256", None)
+    for ref in record["release_paths"]:
+        ref.pop("sha256", None)
+    record_blob.upload_from_string(source_quality.encode(record), if_generation_match=record_blob.generation)
+    rebuilt = release_index.rebuild_index_from_bucket(publisher.bucket, catalog_row(job, publisher))
+    release = rebuilt["latest_release"]
+    assert all("sha256" not in ref and "generation" in ref and "size" in ref for ref in release["files"])
+    for ref in release["files"]:
+        if index_hash is not None:
+            ref["sha256"] = "0" * 64 if index_hash == "stale" else "not-a-hash"
+    baseline = read(job, publisher, release)
+    assert (baseline.rows if job is eamlis else baseline.row_count) == release["rows"]
+
+
+def catalog_row(job, publisher):
+    return {"asset_slug": job.ASSET.slug, "canonical_format": "fgb",
+            "canonical_path": f"gs://{publisher.bucket.name}/{job.ASSET.latest_object('.fgb')}"}
+
+
+def test_manifest_index_size_is_optional(publication):
+    job, publisher, release = publication
+    ref = next(ref for ref in release["files"] if ref["path"].endswith(".manifest.json"))
+    del ref["size"]
+    assert read(job, publisher, release)
+
+
+def test_manifest_owns_artifact_references_without_index_copies(publication):
+    job, publisher, release = publication
+    release["files"] = [ref for ref in release["files"] if ref["path"].endswith(".manifest.json")]
+    assert read(job, publisher, release)
+
+
+def test_release_index_parse_errors_are_baseline_contract_failures(publication):
+    job, publisher, release = publication
+    with mock.patch.object(published_baseline.model, "validate_release_manifest",
+             side_effect=release_index.ReleaseIndexError("invalid artifact reference")), \
+         pytest.raises(ValueError, match="invalid indexed baseline.*invalid artifact reference"):
+        published_baseline.read(publisher, job.ASSET, release)
+
+
+def test_mpatlas_fingerprint_programming_error_is_not_a_baseline_failure(tmp_path):
+    publisher, _ = seed(Client(), tmp_path / "baseline")
+    release = mpatlas.quality.baseline(publisher.bucket)["release"]
+    with mock.patch.object(mpatlas, "source_fingerprint", side_effect=TypeError("fingerprint bug")), \
+         pytest.raises(TypeError, match="fingerprint bug"):
+        read(mpatlas, publisher, release)
 
 
 def test_valid_metadata_count_must_equal_index(publication):

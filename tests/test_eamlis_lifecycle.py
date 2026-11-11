@@ -95,6 +95,8 @@ def test_indexed_publication_authenticates_baseline_before_source_read(tmp_path,
     client = Client()
     run_features(client, features([1, 2, 3]), "2026-04-02")
     bucket = client.bucket(quality.BUCKET)
+    authority_paths = (quality.INDEX, job.ASSET.release_object(dt.date(2026, 4, 2), ".manifest.json"))
+    authority = {name: (bucket.blob(name).generation, bucket.blob(name).data) for name in authority_paths}
     fgb = bucket.blob(job.ASSET.release_object(dt.date(2026, 4, 2), ".fgb")).data
     if broken.startswith("replacement"):
         _, records = job.feature_metadata.enrich_features_with_source_field_ids(features([4, 5, 6]),
@@ -107,6 +109,7 @@ def test_indexed_publication_authenticates_baseline_before_source_read(tmp_path,
             record["sha256"]["manifest"] = hashlib.sha256(
                 bucket.blob(job.ASSET.latest_object(".manifest.json")).data).hexdigest()
             record_blob.upload_from_string(json.dumps(record), if_generation_match=record_blob.generation)
+            assert {name: (bucket.blob(name).generation, bucket.blob(name).data) for name in authority_paths} == authority
     else:
         blob = bucket.blob(quality.INDEX)
         index = json.loads(blob.data)
@@ -441,7 +444,7 @@ def test_installed_image_baseline_probe_reads_keyed_publisher_output(tmp_path):
     baseline_fixture(job, built, built.sidecar_records, day, Client().bucket(quality.BUCKET))
 
 
-@pytest.mark.parametrize("record_state", ["no_pointer", "no_record", "wrong_release"])
+@pytest.mark.parametrize("record_state", ["no_pointer", "no_record", "no_fingerprint", "wrong_release"])
 def test_success_record_supplies_fingerprint_but_not_baseline_authority(tmp_path, record_state):
     client = Client()
     run_features(client, features([1, 2]), "2026-04-02")
@@ -457,7 +460,11 @@ def test_success_record_supplies_fingerprint_but_not_baseline_authority(tmp_path
             blob.exists = False
         else:
             record = json.loads(blob.data)
-            record["release_date"] = "2026-04-01"
+            if record_state == "no_fingerprint":
+                del record["source_fingerprint"]
+                del record["source_fingerprint_hash"]
+            else:
+                record["release_date"] = "2026-04-01"
             blob.upload_from_string(quality.encode(record), if_generation_match=blob.generation)
     if record_state == "wrong_release":
         with mock.patch.object(job, "fetch_source_state") as fetch, \
@@ -469,3 +476,25 @@ def test_success_record_supplies_fingerprint_but_not_baseline_authority(tmp_path
     else:
         result = run_features(client, features([1, 2]), "2026-05-02")
         assert result["status"] == "success" and result["lost_objects"] == 0
+
+
+@pytest.mark.parametrize("malformed", ["release_path", "source_fingerprint", "inputs"])
+def test_auxiliary_record_contract_fails_before_acquisition(tmp_path, malformed):
+    client = Client()
+    run_features(client, features([1, 2]), "2026-04-02")
+    bucket = client.bucket(quality.BUCKET)
+    blob = bucket.blob(job.ASSET.run_record_object(dt.date(2026, 4, 2)))
+    record = json.loads(blob.data)
+    if malformed == "release_path":
+        del record["release_path"]
+    elif malformed == "source_fingerprint":
+        record["source_fingerprint"] = None
+    else:
+        record["source_fingerprint"]["inputs"] = None
+    blob.upload_from_string(quality.encode(record), if_generation_match=blob.generation)
+    with mock.patch.object(job, "fetch_source_state", side_effect=AssertionError("source acquired")) as fetch, \
+         mock.patch.object(job, "toolchain", return_value=TOOLS), \
+         pytest.raises(RuntimeError, match="baseline.*reviewed repair required"):
+        job.ingest(job.GcsPublisher(client, quality.BUCKET), dt.date(2026, 5, 2), tmp_path,
+            layer_url=job.DEFAULT_LAYER_URL, where=job.DEFAULT_WHERE, page_size=2000)
+    fetch.assert_not_called()

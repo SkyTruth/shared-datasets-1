@@ -82,20 +82,23 @@ def load_baseline(publisher: GcsPublisher, release=...) -> Baseline:
         release = manifest["release"]
         if manifest["identity"]["strategy"] != "source_field" or manifest["identity"]["source_fields"] != ["zone_id"]:
             raise ValueError("Published MPAtlas identity must remain source_field:zone_id")
-        fingerprint = source_fingerprint(records)
-        sources = [item for item in manifest["source_inputs"] if item.get("uri") == SOURCE_URL]
+        inputs = manifest["source_inputs"]
+        if not isinstance(inputs, list) or not all(isinstance(item, dict) for item in inputs):
+            raise ValueError("Published MPAtlas source inputs must be objects")
+        sources = [item for item in inputs if item.get("uri") == SOURCE_URL]
         stored_hashes = [item["source_fingerprint_hash"] for item in sources if "source_fingerprint_hash" in item]
-        # A byte shortcut also binds the normalized-hash definition. Legacy manual
-        # releases use their verified published sidecar for the first comparison.
-        source_hashes = [item["sha256"] for item in sources
-                         if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
-        return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
-                        source_hashes[0] if source_hashes else None, len(records),
-                        frozenset(row["feature_id"] for row in records))
     except published_baseline.MissingManifest as exc:
         raise RuntimeError("MPAtlas refresh requires a published manifest; reviewed repair required") from exc
     except (GoogleAPIError, SourceLossError, ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
         raise RuntimeError(f"MPAtlas baseline failed its contract; reviewed repair required: {exc}") from exc
+    fingerprint = source_fingerprint(records)
+    # A byte shortcut also binds the normalized-hash definition. Legacy counted
+    # releases use their verified published sidecar for the first comparison.
+    source_hashes = [item["sha256"] for item in sources
+                     if "sha256" in item and item.get("source_fingerprint_hash") == fingerprint.sha256]
+    return Baseline(release, stored_hashes[0] if stored_hashes else fingerprint.sha256,
+                    source_hashes[0] if source_hashes else None, len(records),
+                    frozenset(row["feature_id"] for row in records))
 
 
 def prepare_source(source: Path, output: Path) -> dict[str, int]:
@@ -243,7 +246,8 @@ class Refresh:
         if existing.get("status") not in {"success", "skipped"}:
             raise RuntimeError("Existing MPAtlas run requires investigation before retry")
         if existing["status"] == "success":
-            self.publisher.record_existing_successful_release(ASSET, attempt)
+            if self.gate.before is None or self.gate.before["release"]["date"] != attempt.isoformat():
+                self.publisher.record_existing_successful_release(ASSET, attempt)
         else:
             self.publisher.update_latest_run_index(asset=ASSET, payload=existing,
                 run_record_info={"path": f"gs://{self.publisher.bucket.name}/{ASSET.run_record_object(attempt)}"})

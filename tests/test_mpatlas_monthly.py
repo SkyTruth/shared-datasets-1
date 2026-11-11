@@ -128,6 +128,7 @@ def test_completed_run_is_idempotent_and_partial_run_is_not_bypassed(tmp_path):
     with mock.patch.object(job, "download_file") as download:
         assert job.ingest(publisher, DAY, tmp_path) == {"status": "success"}
         download.assert_not_called()
+        publisher.record_existing_successful_release.assert_called_once_with(job.ASSET, DAY)
     publisher.load_json.return_value = None
     publisher.assert_no_partial_release.side_effect = RuntimeError("partial release")
     with mock.patch.object(job, "load_baseline", return_value=job.Baseline("2026-10-16", "changed", None, 1, frozenset({"1"}))), \
@@ -288,6 +289,8 @@ def test_indexed_publication_authenticates_baseline_before_download(tmp_path, br
     from tests.test_source_loss import Client, replace_baseline_sidecar
 
     publisher, _ = seed(Client(), tmp_path / "baseline")
+    authority_paths = (job.quality.INDEX, job.ASSET.release_object(dt.date(2026, 10, 16), ".manifest.json"))
+    authority = {name: (publisher.bucket.blob(name).generation, publisher.bucket.blob(name).data) for name in authority_paths}
     if broken.startswith("replacement"):
         records = sidecar([feature(n) for n in range(41, 81)])
         replace_baseline_sidecar(publisher.bucket, job.ASSET, records, tmp_path)
@@ -298,6 +301,8 @@ def test_indexed_publication_authenticates_baseline_before_download(tmp_path, br
             record["sha256"]["manifest"] = hashlib.sha256(
                 publisher.bucket.blob(job.ASSET.latest_object(".manifest.json")).data).hexdigest()
             record_blob.upload_from_string(json.dumps(record), if_generation_match=record_blob.generation)
+            assert {name: (publisher.bucket.blob(name).generation, publisher.bucket.blob(name).data)
+                    for name in authority_paths} == authority
     else:
         blob = publisher.bucket.blob(job.quality.INDEX)
         index = json.loads(blob.data)

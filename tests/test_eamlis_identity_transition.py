@@ -437,7 +437,7 @@ def test_candidate_identity_changes_when_only_the_reserved_ledger_advances(tmp_p
     assert manifest["hashes"]["geometry_hash_algorithm"] == feature_metadata.release_feature_model.GEOMETRY_HASH_ALGORITHM_V2
 
 
-def test_reviewed_translation_promotion_allows_next_changed_source_run(tmp_path):
+def reviewed_translation_promotion(tmp_path):
     from ingestion.common import release_index
     from ingestion.common.runtime import content_type_for
 
@@ -495,17 +495,38 @@ def test_reviewed_translation_promotion_allows_next_changed_source_run(tmp_path)
         assert len(finalized["finalized_manifests"]) == 2 and finalized["finalized_run_records"] == []
         # The finalized release entry pins the new manifest; the original run
         # remains the source-fingerprint record and is not a promotion target.
-        record = json.loads(run_before[1])
-        record.pop("sha256")
-        record["release_paths"] = [quality.read(bucket, ref["path"].split("/", 3)[3])[1]
-                                   for ref in quality.baseline(bucket)["release"]["files"]]
-        release_index.record_successful_release(bucket, quality.SLUG, record,
-            run_record_info={"path": f"gs://{bucket.name}/{run_blob.name}", "generation": run_blob.generation})
+        rebuilt = release_index.rebuild_index_from_bucket(bucket, {
+            "asset_slug": quality.SLUG, "canonical_format": "fgb",
+            "canonical_path": f"gs://{bucket.name}/{eamlis.ASSET.latest_object('.fgb')}"})
+        current = release_index.load_release_index(bucket, quality.SLUG)
+        release_index.write_release_index(bucket, quality.SLUG, rebuilt, generation=current.generation)
         index = json.loads(quality.read(bucket, quality.INDEX)[0])
         quality.finish_promotion(client, plan)
     assert (run_blob.generation, run_blob.data) == run_before
     ref = next(f for f in index["latest_release"]["files"] if f["path"].endswith(".manifest.json"))
-    assert quality.digest(quality.pinned(client, ref)) != prior["sha256"]["manifest"]
+    assert ref["sha256"] == prior["sha256"]["manifest"]
+    manifest_blob = bucket.blob(ref["path"].split("/", 3)[3])
+    assert ref["generation"] == manifest_blob.generation and ref["size"] == manifest_blob.size
+    assert quality.digest(manifest_blob.data) != ref["sha256"]
+    return client, prior
+
+
+def test_reviewed_translation_promotion_allows_next_changed_source_run(tmp_path):
+    client, prior = reviewed_translation_promotion(tmp_path)
     result = run(client, rows(), "2026-05-03")
     assert result["status"] == "success" and result["lost_objects"] == 0
     assert result["source_fingerprint_hash"] != prior["source_fingerprint_hash"]
+
+
+def test_resume_preserves_reviewed_translation_index_for_following_attempt(tmp_path):
+    client, prior = reviewed_translation_promotion(tmp_path)
+    bucket = client.bucket(quality.BUCKET)
+    index = bucket.blob(quality.INDEX)
+    before = (index.generation, index.data)
+    with mock.patch.object(eamlis.GcsPublisher, "record_existing_successful_release",
+                           wraps=eamlis.GcsPublisher(client, quality.BUCKET).record_existing_successful_release) as replay:
+        result = run(client, rows(), "2026-05-02")
+    assert result["source_fingerprint_hash"] == prior["source_fingerprint_hash"]
+    assert (index.generation, index.data) == before
+    replay.assert_not_called()
+    assert run(client, rows(), "2026-05-03")["status"] == "success"

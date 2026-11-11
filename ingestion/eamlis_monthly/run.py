@@ -707,9 +707,10 @@ class Refresh:
         self.gate.check_publication()
         existing = dict(existing)
         if existing["status"] == "success":
-            info = self.publisher.record_existing_successful_release(ASSET, attempt)
-            if info:
-                existing["release_index"] = info
+            if self.gate.before is None or self.gate.before["release"]["date"] != attempt.isoformat():
+                info = self.publisher.record_existing_successful_release(ASSET, attempt)
+                if info:
+                    existing["release_index"] = info
         else:
             blob = self.publisher.bucket.blob(ASSET.run_record_object(attempt))
             blob.reload()
@@ -743,6 +744,17 @@ class Refresh:
                     "baseline record must describe a successful publication of this asset")
                 lifecycle.require((self.previous.get("release_date") or self.previous["run_date"]) == release,
                                   "baseline record names another release")
+                lifecycle.require(isinstance(self.previous.get("release_path"), str) and bool(self.previous["release_path"]),
+                                  "baseline record needs a release_path")
+                lifecycle.require(isinstance(self.previous.get("latest_paths", []), list),
+                                  "baseline record latest_paths must be an array")
+                if "source_fingerprint_hash" in self.previous:
+                    feature_metadata.release_feature_model.validate_artifact_hash(
+                        self.previous["source_fingerprint_hash"], label="baseline source fingerprint")
+                if "source_fingerprint" in self.previous:
+                    fingerprint = self.previous["source_fingerprint"]
+                    lifecycle.require(isinstance(fingerprint, dict) and isinstance(fingerprint.get("inputs", {}), dict),
+                                      "baseline record source_fingerprint and inputs must be objects")
             descriptor = manifest["identity"]
             ledger = identity_state.selected_ledger(self.gate)
             if descriptor.get("contract_id") == keyed_identity.CONTRACT:
@@ -751,12 +763,13 @@ class Refresh:
             else:
                 lifecycle.require(descriptor["strategy"] == "source_field" and descriptor["source_fields"] == ["OBJECTID"],
                                   "baseline has an unsupported identity contract")
-            # During the reviewed cutover the baseline still has legacy IDs.
-            # Compare both releases in the installed permanent key space.
-            self.baseline_ids = frozenset(ledger.ids[key.key] for key in keyed_identity.classify_release(
-                row["properties"] for row in records)) if ledger is not None else frozenset(row["feature_id"] for row in records)
-        except (GoogleAPIError, SourceLossError, ValueError, KeyError, TypeError, AttributeError, IndexError, lifecycle.LifecycleError) as exc:
+        except (GoogleAPIError, SourceLossError, release_index.ReleaseIndexError, ValueError, KeyError, TypeError,
+                AttributeError, IndexError, lifecycle.LifecycleError) as exc:
             raise RuntimeError(f"e-AMLIS baseline failed its contract; reviewed repair required: {exc}") from exc
+        # During the reviewed cutover the baseline still has legacy IDs.
+        # Compare both releases in the installed permanent key space.
+        self.baseline_ids = frozenset(ledger.ids[key.key] for key in keyed_identity.classify_release(
+            row["properties"] for row in records)) if ledger is not None else frozenset(row["feature_id"] for row in records)
         return lifecycle.Baseline(dt.date.fromisoformat(release), self.previous.get("source_fingerprint_hash") if self.previous else None,
             len(records), self.gate.state["hold"]["reason"] if self.gate.held else None)
 
