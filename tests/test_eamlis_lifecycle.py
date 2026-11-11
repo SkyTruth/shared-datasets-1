@@ -26,12 +26,13 @@ def run_features(client, rows, date, *, source=None, builder=fixture_output):
         return job.SourceExtract(dest, len(rows), 0)
     with mock.patch.dict("os.environ", {"RUN_DATE": date}, clear=True), \
          mock.patch.object(job.storage, "Client", return_value=client), \
-         mock.patch.object(job, "require_binary"), \
-         mock.patch.object(job, "toolchain", return_value=TOOLS, create=True), \
+         mock.patch.object(job, "toolchain", return_value=TOOLS) as tools, \
          mock.patch.object(job, "fetch_source_state", return_value=source or sample_source_state(feature_count=len(rows))), \
          mock.patch.object(job, "download_source_geojson", side_effect=download), \
          mock.patch.object(job, "build_asset_output", side_effect=builder):
-        return job.run()[0]
+        result = job.run()[0]
+        tools.assert_called_once()
+        return result
 
 
 @pytest.mark.parametrize("ids,status,lost", [(range(11, 111), "held", 10), (range(1, 99), "success", 2)])
@@ -97,7 +98,7 @@ def test_broken_baseline_stops_before_source_read_or_rebuild(broken):
          pytest.raises(RuntimeError, match="reviewed repair required"):
         # The real entrypoint uses the corrupted persisted publication.
         with mock.patch.dict("os.environ", {"RUN_DATE": "2026-05-02"}, clear=True), \
-             mock.patch.object(job.storage, "Client", return_value=client), mock.patch.object(job, "require_binary"):
+             mock.patch.object(job.storage, "Client", return_value=client), mock.patch.object(job, "toolchain", return_value=TOOLS):
             job.run()
     fetch.assert_not_called()
     build.assert_not_called()
@@ -241,6 +242,36 @@ def test_toolchain_records_every_native_binary_and_suite_version(tmp_path, monke
         assert value["version"] == ("tippecanoe 1.0" if name == "tippecanoe-decode" else f"{name} 1.0")
 
 
+def test_missing_native_tool_precedes_keyed_reservation_and_control_writes(tmp_path):
+    from tests.test_eamlis_identity_transition import prepared, install, run, output
+    from tests.test_eamlis_identity import problem, feature
+
+    original = [problem("P1", OBJECTID=1)]
+    client, plan, _ = prepared(tmp_path, history=[original])
+    install(client, plan, tmp_path)
+    run(client, original, "2026-05-02")
+    bucket = client.bucket(quality.BUCKET)
+    before = {name: (blob.generation, blob.data) for name, blob in bucket.blobs.items() if blob.exists}
+    rows = [feature(p) for p in [*original, problem("NEW", OBJECTID=2)]]
+    def download(*, source, dest, page_size):
+        dest.write_bytes(quality.encode({"type": "FeatureCollection", "features": rows}))
+        return job.SourceExtract(dest, len(rows), 0)
+    with mock.patch.object(job.shutil, "which", return_value=None), \
+         mock.patch.object(job, "fetch_source_state", return_value=sample_source_state(feature_count=2)), \
+         mock.patch.object(job, "download_source_geojson", side_effect=download), \
+         mock.patch.object(job, "build_asset_output", side_effect=output), \
+         mock.patch.object(job.identity_state, "reserve", wraps=job.identity_state.reserve) as reserve, \
+         mock.patch.object(slack_notify, "notify") as send:
+        with pytest.raises(RuntimeError, match="Required executable not found on PATH: ogr2ogr"):
+            job.ingest(job.GcsPublisher(client, quality.BUCKET), dt.date(2026, 5, 3), tmp_path,
+                layer_url=job.DEFAULT_LAYER_URL, where=job.DEFAULT_WHERE, page_size=2000)
+        reserve.assert_not_called()
+        send.assert_not_called()
+    state = json.loads(bucket.blob(quality.CONTROL).data)
+    assert state["hold"] is None
+    assert {name: (blob.generation, blob.data) for name, blob in bucket.blobs.items() if blob.exists} == before
+
+
 @pytest.mark.parametrize("lost,status", [(1, "success"), (3, "held")])
 def test_keyed_gate_counts_permanent_ids_after_cutover(tmp_path, lost, status):
     from tests.test_eamlis_identity_transition import prepared, install, run
@@ -329,7 +360,7 @@ def test_legacy_skipped_record_returns_its_original_dates_without_tools():
     blob.text = blob.data.decode()
     with mock.patch.object(job, "fetch_source_state", side_effect=AssertionError("completed attempt polled source")):
         with mock.patch.dict("os.environ", {"RUN_DATE": "2026-05-02"}, clear=True), \
-             mock.patch.object(job.storage, "Client", return_value=client):
+             mock.patch.object(job.storage, "Client", return_value=client), mock.patch.object(job, "toolchain", return_value=TOOLS):
             result = job.run()[0]
     assert result["release_date"] == "2026-05-02" and "tools" not in result
     assert blob.data == quality.encode(record)

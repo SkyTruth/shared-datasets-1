@@ -458,7 +458,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 current.exists, current.text = True, json.dumps(record)
                 with (
                     mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-                    mock.patch.object(eamlis, "require_binary"),
+                    mock.patch.object(eamlis, "toolchain", return_value=TOOLS),
                     mock.patch.object(eamlis.storage, "Client", return_value=FakeClient(bucket)),
                     mock.patch.object(eamlis, "fetch_source_state", return_value=sample_source_state(
                         fingerprint_hash="later-source", feature_count=3,
@@ -487,7 +487,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 current.exists, current.text = True, json.dumps(record)
                 with (
                     mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-                    mock.patch.object(eamlis, "require_binary"),
+                    mock.patch.object(eamlis, "toolchain", return_value=TOOLS),
                     mock.patch.object(eamlis.storage, "Client", return_value=FakeClient(bucket)),
                     mock.patch.object(eamlis, "fetch_source_state") as fetch,
                     self.assertRaisesRegex(RuntimeError, "Run record already exists"),

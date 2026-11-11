@@ -422,14 +422,14 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
 
 
 def test_eamlis_partial_release_cannot_be_converted_to_a_skip(monkeypatch):
-    from tests.test_eamlis_monthly import FakeBucket
+    from tests.test_eamlis_monthly import FakeBucket, TOOLS
     publisher = Mock(spec=eamlis.GcsPublisher)
     publisher.bucket = FakeBucket()
     publisher.load_json.return_value = None
     publisher.assert_no_partial_release.side_effect = RuntimeError("partial release")
     monkeypatch.setattr(eamlis, "GcsPublisher", Mock(return_value=publisher))
     monkeypatch.setattr(eamlis.storage, "Client", Mock())
-    monkeypatch.setattr(eamlis, "require_binary", Mock())
+    monkeypatch.setattr(eamlis, "toolchain", Mock(return_value=TOOLS))
     source = Mock(
         side_effect=AssertionError("incomplete publication must fail before polling")
     )

@@ -117,7 +117,9 @@ protected recovery checks.
 Successful records include `lost_objects` when a baseline exists and `tools`
 with the resolved path and version of `ogr2ogr`, `ogrinfo`, `pmtiles` and
 `tippecanoe-decode`. The decoder version comes from the installed Tippecanoe
-suite. `source_version` is the acquired GeoJSON SHA-256; source equality uses
+suite. Native prerequisites resolve once before the attempt acquires its durable
+claim, reserves IDs or writes a hold; the same tool evidence enters the record.
+`source_version` is the acquired GeoJSON SHA-256; source equality uses
 `source_fingerprint_hash`. Earlier records without `tools` remain readable.
 
 When changed, the job writes:

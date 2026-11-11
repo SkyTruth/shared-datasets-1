@@ -832,7 +832,7 @@ class Refresh:
         self.reports = prepare_changed_asset(self.output, self.translation_source, source.release)
         self.source_inputs = [{"uri": source.uri, "where": self.source.where,
             "source_fingerprint_hash": self.source.fingerprint_hash}, *self.translation_inputs]
-        return lifecycle.Built(self.output.row_count, toolchain(),
+        return lifecycle.Built(self.output.row_count, self.tools,
             f"gs://{self.publisher.bucket.name}/{ASSET.release_prefix(source.release)}/")
 
     def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
@@ -873,6 +873,7 @@ class Refresh:
 
 def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path, *, layer_url: str, where: str, page_size: int):
     refresh = Refresh(publisher, workdir, layer_url=layer_url, where=where, page_size=page_size)
+    refresh.tools = toolchain()
     with source_loss.Guard(publisher.bucket) as refresh.gate:
         try:
             return lifecycle.run(refresh, run_date)
