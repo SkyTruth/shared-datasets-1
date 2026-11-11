@@ -20,9 +20,9 @@ from typing import Any, Iterable, Mapping, Sequence
 from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, lifecycle, publication_readiness
+from ingestion.common import feature_metadata, lifecycle, publication_readiness, published_baseline
 from ingestion.common import source_fingerprint as fingerprints
-from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
+from ingestion.common.source_fingerprint import digest as stable_hash
 from ingestion.common import vector_pipeline
 from ingestion.common.source_quality import EAMLIS as source_loss
 from ingestion.eamlis_monthly import identity as keyed_identity, identity_state
@@ -720,41 +720,19 @@ class Refresh:
         return existing
 
     def baseline(self) -> lifecycle.Baseline | None:
-        self.previous = latest_success_record(self.publisher, ASSET)
+        self.previous = None
         self.baseline_ids = frozenset()
         if self.gate.before is None:
-            lifecycle.require(self.previous is None and not any(self.publisher.bucket.list_blobs(prefix=ASSET.root + "/releases/"))
+            lifecycle.require(not any(self.publisher.bucket.list_blobs(prefix=ASSET.root + "/releases/"))
                 and not any(self.publisher.bucket.list_blobs(prefix=ASSET.root + "/latest/")),
                 "existing e-AMLIS artifacts have no verified baseline; reviewed repair required")
             return None
-        lifecycle.require(self.previous is not None, "e-AMLIS baseline has no successful run record; reviewed repair required")
         release = self.gate.before["release"]["date"]
-        lifecycle.require((self.previous.get("release_date") or self.previous["run_date"]) == release,
-                          "e-AMLIS baseline record names another release; reviewed repair required")
-        model = feature_metadata.release_feature_model
-        manifest_blob = self.publisher.bucket.blob(ASSET.latest_object(".manifest.json"))
         try:
-            manifest_blob.reload()
-            manifest = json.loads(manifest_blob.download_as_bytes(if_generation_match=int(manifest_blob.generation)))
-            artifacts = model.validate_release_manifest(manifest, expected_asset_slug=self.slug,
-                expected_release=release, require_generations=True)
-            def read_artifact(role, suffix):
-                ref = artifacts[role]
-                name = ASSET.release_object(dt.date.fromisoformat(release), suffix)
-                lifecycle.require(ref["path"] == f"gs://{self.publisher.bucket.name}/{name}",
-                                  "baseline artifact must belong to its dated release")
-                data = self.publisher.bucket.blob(name, generation=ref["generation"]).download_as_bytes(
-                    if_generation_match=ref["generation"])
-                lifecycle.require(source_loss.digest(data) == ref["sha256"].removeprefix("sha256:"),
-                                  f"baseline {role} SHA-256 mismatch")
-                return data
-            schema = json.loads(read_artifact("schema", ".schema.json"))
-            model.validate_release_schema(schema, expected_asset_slug=self.slug, expected_release=release)
-            records = list(model.read_metadata_sidecar_bytes(read_artifact("metadata", ".metadata.ndjson.gz")))
-            validation = model.validate_sidecar_records(records, expected_asset_slug=self.slug, expected_release=release)
-            lifecycle.require(validation.valid, f"invalid baseline metadata: {validation.errors}")
-            lifecycle.require(validation.feature_count == manifest["validation"]["feature_count"] == self.gate.before["release"]["rows"],
-                              "baseline metadata count differs from the published manifest/index")
+            verified = published_baseline.read(self.publisher, ASSET)
+            self.previous, manifest, records = verified.record, verified.manifest, verified.records
+            lifecycle.require(manifest["release"] == release and len(records) == self.gate.before["release"]["rows"],
+                              "baseline differs from the claimed publication")
             descriptor = manifest["identity"]
             ledger = identity_state.selected_ledger(self.gate)
             if descriptor.get("contract_id") == keyed_identity.CONTRACT:

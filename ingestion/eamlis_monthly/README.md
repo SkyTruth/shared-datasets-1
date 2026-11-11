@@ -69,7 +69,10 @@ successful publication. `describe` prepares identity-bound canonical metadata
 and reconciles translation reuse before fingerprinting the final CSV. Equality
 skips native artifact building and publication, writes an immutable skipped run
 against the baseline release and updates the release-index check-in. Edit
-metadata and summary statistics remain diagnostics. A missing or invalid baseline
+metadata and summary statistics remain diagnostics. The shared baseline reader
+binds the latest manifest bytes to the indexed successful run record's manifest
+SHA-256 before reading hash-verified schema and metadata at pinned dated
+generations. A missing manifest hash or invalid baseline
 contract stops the run for reviewed repair before source acquisition; an unchanged
 source cannot repair or republish that baseline. See the [fingerprint definition and limitations](../../docs/source-fingerprints.md#e-amlis-eamlis-content-v1).
 

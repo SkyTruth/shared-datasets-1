@@ -139,22 +139,15 @@ def test_completed_run_is_idempotent_and_partial_run_is_not_bypassed(tmp_path):
         build.assert_not_called()
 
 
-def test_bad_baseline_checksum_fails_before_comparison():
-    publisher = mock.Mock(spec=job.GcsPublisher)
-    publisher.bucket = FakeBucket()
-    publisher.bucket.name = job.quality.BUCKET
-    publisher.bucket = mock.Mock()
-    publisher.bucket.name = "skytruth-shared-datasets-1"
-    publisher.bucket.blob.return_value.generation = 1
-    publisher.bucket.blob.return_value.download_as_bytes.side_effect = [json.dumps({
-        "release": "2026-10-16", "identity": {"strategy": "source_field", "source_fields": ["zone_id"]},
-    }).encode(), b"corrupted"]
-    with mock.patch.object(job.model, "validate_release_manifest", return_value={"metadata": {
-        "path": f"gs://skytruth-shared-datasets-1/{job.ASSET.release_object(dt.date(2026, 10, 16), '.metadata.ndjson.gz')}",
-        "generation": 2, "sha256": "0" * 64,
-    }}):
-        with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
-            job.load_baseline(publisher)
+@pytest.mark.parametrize("suffix", [".metadata.ndjson.gz", ".schema.json"])
+def test_bad_baseline_checksum_fails_before_comparison(tmp_path, suffix):
+    from tests.test_shared_hold_flow import seed
+    from tests.test_source_loss import Client
+
+    publisher, _ = seed(Client(), tmp_path / "baseline")
+    publisher.bucket.blob(job.ASSET.release_object(dt.date(2026, 10, 16), suffix)).data = b"corrupted"
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        job.load_baseline(publisher)
 
 
 @pytest.mark.skipif(os.environ.get("RUN_GDAL_INTEGRATION_TESTS") != "1", reason="native geospatial fixture")
@@ -188,28 +181,17 @@ def test_mixed_geometry_bundle_has_source_ids_valid_tiles_and_stored_hashes():
 
 @pytest.mark.parametrize("marker", ["current", "older", "missing"])
 def test_byte_shortcut_is_bound_to_normalized_fingerprint_definition(tmp_path, marker):
+    from tests.test_shared_hold_flow import seed
+    from tests.test_source_loss import Client
+
     records = sidecar([feature()])
-    metadata = tmp_path / "metadata.ndjson.gz"
-    fm.write_sidecar(records, metadata)
-    raw = metadata.read_bytes()
     fingerprint = job.source_fingerprint(records).sha256
     source = {"uri": job.SOURCE_URL, "sha256": "a" * 64}
     if marker != "missing":
         source["source_fingerprint_hash"] = fingerprint if marker == "current" else "b" * 64
-    manifest = {"release": "2026-10-16", "identity": {"strategy": "source_field", "source_fields": ["zone_id"]},
-                "source_inputs": [source], "validation": {"feature_count": len(records)}}
-    publisher = mock.Mock(spec=job.GcsPublisher)
-    publisher.bucket = FakeBucket()
-    publisher.bucket.name = job.quality.BUCKET
-    publisher.bucket = mock.Mock()
-    publisher.bucket.name = "bucket"
-    publisher.bucket.blob.return_value.generation = 1
-    publisher.bucket.blob.return_value.download_as_bytes.side_effect = [json.dumps(manifest).encode(), raw]
-    with mock.patch.object(job.model, "validate_release_manifest", return_value={"metadata": {
-        "path": f"gs://bucket/{job.ASSET.release_object(dt.date(2026, 10, 16), '.metadata.ndjson.gz')}",
-        "generation": 2, "sha256": hashlib.sha256(raw).hexdigest(),
-    }}):
-        baseline = job.load_baseline(publisher)
+    publisher, _ = seed(Client(), tmp_path / "baseline", records=records, source_inputs=[source])
+    baseline = job.load_baseline(publisher)
+    assert baseline.feature_ids == frozenset({"1"}) and baseline.row_count == 1
     assert baseline.fingerprint_hash == source.get("source_fingerprint_hash", fingerprint)
     assert baseline.source_sha256 == ("a" * 64 if marker == "current" else None)
 
@@ -298,3 +280,36 @@ def fixture_outputs(directory, records):
     fm.write_schema(schema, paths["schema"])
     return job.Outputs(**paths, row_count=len(records), schema_payload=schema,
                        sha256={r: job.sha256_file(paths[r]) for r in job.vector_pipeline.CORE_BUNDLE_ROLES})
+
+
+@pytest.mark.parametrize("broken", ["replacement_pair", "missing_manifest_hash"])
+def test_indexed_publication_authenticates_baseline_before_download(tmp_path, broken):
+    from tests.test_shared_hold_flow import seed
+    from tests.test_source_loss import Client, replace_baseline_sidecar
+
+    publisher, _ = seed(Client(), tmp_path / "baseline")
+    if broken == "replacement_pair":
+        records = sidecar([feature(n) for n in range(41, 81)])
+        replace_baseline_sidecar(publisher.bucket, job.ASSET, records, tmp_path)
+    else:
+        blob = publisher.bucket.blob(job.ASSET.run_record_object(dt.date(2026, 10, 16)))
+        record = json.loads(blob.data)
+        del record["sha256"]["manifest"]
+        blob.upload_from_string(json.dumps(record), if_generation_match=blob.generation)
+    features = [feature(n) for n in (range(41, 81) if broken == "replacement_pair" else range(1, 41))]
+    records = sidecar(features, DAY.isoformat())
+    with mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_text(json.dumps(features))) as download, \
+         mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, {"published_rows": 40})), \
+         mock.patch.object(job, "build_outputs", side_effect=lambda *args: fixture_outputs(tmp_path, records)) as build, \
+         mock.patch.object(job, "toolchain", return_value=TOOLS), \
+         pytest.raises(RuntimeError, match="baseline.*reviewed repair required"):
+        job.ingest(publisher, DAY, tmp_path)
+    download.assert_not_called()
+    build.assert_not_called()
+
+
+def test_missing_manifest_retains_reviewed_repair_error(tmp_path):
+    from tests.test_source_loss import Client
+    publisher = job.GcsPublisher(Client(), job.quality.BUCKET)
+    with pytest.raises(RuntimeError, match="^MPAtlas refresh requires a published manifest; reviewed repair required$"):
+        job.load_baseline(publisher)

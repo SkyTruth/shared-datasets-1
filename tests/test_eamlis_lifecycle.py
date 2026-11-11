@@ -105,6 +105,43 @@ def test_broken_baseline_stops_before_source_read_or_rebuild(broken):
     assert not bucket.blob(job.ASSET.run_record_object(dt.date(2026, 5, 2))).exists
 
 
+@pytest.mark.parametrize("broken", ["replacement_pair", "missing_manifest_hash"])
+def test_indexed_publication_authenticates_baseline_before_source_read(tmp_path, broken):
+    from tests.test_source_loss import replace_baseline_sidecar
+
+    client = Client()
+    run_features(client, features([1, 2, 3]), "2026-04-02")
+    bucket = client.bucket(quality.BUCKET)
+    fgb = bucket.blob(job.ASSET.release_object(dt.date(2026, 4, 2), ".fgb")).data
+    if broken == "replacement_pair":
+        _, records = job.feature_metadata.enrich_features_with_source_field_ids(features([4, 5, 6]),
+            asset_slug=job.ASSET.slug, release="2026-04-02", id_field="OBJECTID", provenance={"source": "fixture"})
+        replace_baseline_sidecar(bucket, job.ASSET, records, tmp_path)
+    else:
+        blob = bucket.blob(job.ASSET.run_record_object(dt.date(2026, 4, 2)))
+        record = json.loads(blob.data)
+        del record["sha256"]["manifest"]
+        blob.upload_from_string(quality.encode(record), if_generation_match=blob.generation)
+    rows = features([4, 5, 6] if broken == "replacement_pair" else [1, 2, 3])
+    def acquire(*, source, dest, page_size):
+        dest.write_bytes(quality.encode({"type": "FeatureCollection", "features": rows}))
+        return job.SourceExtract(dest, len(rows), 0)
+    with mock.patch.object(job, "toolchain", return_value=TOOLS), \
+         mock.patch.object(job, "fetch_source_state", return_value=sample_source_state(feature_count=3)) as fetch, \
+         mock.patch.object(job, "download_source_geojson", side_effect=acquire) as download, \
+         mock.patch.object(job, "build_asset_output", side_effect=fixture_output) as build, \
+         mock.patch.object(slack_notify, "notify") as send:
+        with pytest.raises(RuntimeError, match="baseline.*reviewed repair required"):
+            job.ingest(job.GcsPublisher(client, quality.BUCKET), dt.date(2026, 5, 2), tmp_path,
+                layer_url=job.DEFAULT_LAYER_URL, where=job.DEFAULT_WHERE, page_size=2000)
+        fetch.assert_not_called()
+        download.assert_not_called()
+        build.assert_not_called()
+        send.assert_not_called()
+    assert bucket.blob(job.ASSET.release_object(dt.date(2026, 4, 2), ".fgb")).data == fgb
+    assert quality.Guard(bucket).load()[0]["hold"] is None
+
+
 def test_publish_then_rerun_fingerprints_reconciled_translation_source():
     client = Client()
     run_features(client, features([1]), "2026-04-02")
@@ -392,3 +429,22 @@ def test_previous_image_candidate_promotes_through_reviewed_plan(tmp_path):
     state, _ = quality.Guard(client.bucket(quality.BUCKET)).load()
     assert state["hold"] is None and state["owner"] is None
     assert quality.baseline(client.bucket(quality.BUCKET))["release"]["date"] == "2026-05-02"
+    verified = job.published_baseline.read(job.GcsPublisher(client, quality.BUCKET), job.ASSET)
+    assert len(verified.records) == 2
+
+
+def test_installed_image_baseline_probe_reads_keyed_publisher_output(tmp_path):
+    from ingestion.eamlis_monthly import identity as ids, identity_state
+    from scripts.installed_ingestion_fixture import baseline_fixture
+    from tests.test_eamlis_identity import problem, feature
+    from tests.test_eamlis_identity_transition import output
+
+    rows = [feature(problem(f"P{n}", OBJECTID=n)) for n in (1, 2, 3)]
+    ledger = ids.Ledger.genesis().reserve(ids.classify_release(row["properties"] for row in rows))
+    source = tmp_path / "source.geojson"
+    source.write_bytes(quality.encode({"type": "FeatureCollection", "features": rows}))
+    day = dt.date(2026, 5, 2)
+    built = output(source=sample_source_state(feature_count=3), extract=job.SourceExtract(source, 3, 0),
+        workdir=tmp_path, release_date=day,
+        identity_reservation=identity_state.Reservation(ledger, {"path": "fixture"}, 1, None))
+    baseline_fixture(job, built, built.sidecar_records, day, Client().bucket(quality.BUCKET))

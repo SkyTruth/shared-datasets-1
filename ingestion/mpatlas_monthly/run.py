@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime as dt
-import hashlib
-import json
 import logging
 import os
 from pathlib import Path
@@ -17,7 +15,7 @@ from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints, publication_readiness
-from ingestion.common import lifecycle
+from ingestion.common import lifecycle, published_baseline
 from ingestion.common.source_quality import MPATLAS as quality
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
@@ -74,32 +72,17 @@ def source_fingerprint(records: Iterable[Mapping[str, Any]]) -> fingerprints.Fin
 
 
 def load_baseline(publisher: GcsPublisher) -> Baseline:
-    """Use the generation-bound published manifest and verified metadata bytes."""
-    blob = publisher.bucket.blob(ASSET.latest_object(".manifest.json"))
+    """Use authenticated publication metadata without changing source equality."""
     try:
-        blob.reload()
-    except NotFound as exc:
+        verified = published_baseline.read(publisher, ASSET)
+    except published_baseline.MissingManifest as exc:
         raise RuntimeError("MPAtlas refresh requires a published manifest; reviewed repair required") from exc
-    manifest = json.loads(blob.download_as_bytes(if_generation_match=int(blob.generation)))
+    except (NotFound, ValueError, KeyError) as exc:
+        raise RuntimeError(f"MPAtlas baseline failed its contract; reviewed repair required: {exc}") from exc
+    manifest, records = verified.manifest, verified.records
     release = manifest["release"]
-    artifacts = model.validate_release_manifest(
-        manifest, expected_asset_slug=ASSET.slug, expected_release=release, require_generations=True,
-    )
     if manifest["identity"]["strategy"] != "source_field" or manifest["identity"]["source_fields"] != ["zone_id"]:
         raise RuntimeError("Published MPAtlas identity must remain source_field:zone_id")
-    metadata = artifacts["metadata"]
-    name = ASSET.release_object(dt.date.fromisoformat(release), ".metadata.ndjson.gz")
-    if metadata["path"] != f"gs://{publisher.bucket.name}/{name}":
-        raise RuntimeError("MPAtlas baseline metadata must belong to its dated release")
-    raw = publisher.bucket.blob(name, generation=metadata["generation"]).download_as_bytes(
-        if_generation_match=metadata["generation"],
-    )
-    if hashlib.sha256(raw).hexdigest() != metadata["sha256"].removeprefix("sha256:"):
-        raise RuntimeError("MPAtlas baseline metadata SHA-256 mismatch")
-    records = list(model.read_metadata_sidecar_bytes(raw, label=name))
-    validation = model.validate_sidecar_records(records, expected_asset_slug=ASSET.slug, expected_release=release)
-    if not validation.valid or validation.feature_count != manifest["validation"]["feature_count"]:
-        raise RuntimeError(f"Invalid MPAtlas baseline metadata: {validation.errors}")
     fingerprint = source_fingerprint(records)
     sources = [item for item in manifest["source_inputs"] if item.get("uri") == SOURCE_URL]
     stored_hashes = [item["source_fingerprint_hash"] for item in sources if "source_fingerprint_hash" in item]

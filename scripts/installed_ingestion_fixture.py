@@ -47,8 +47,12 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
     from scripts import slack_notify
 
     class Blob:
-        generation = 0
-        data = None
+        def __init__(self, name):
+            self.name, self.generation, self.data = name, 0, None
+
+        @property
+        def size(self):
+            return len(self.data or b"")
 
         def reload(self):
             if self.data is None:
@@ -59,9 +63,13 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
             self.reload()
             return self.data
 
+        def download_as_text(self):
+            self.reload()
+            return self.data.decode()
+
         def upload_from_string(self, data, *, content_type, if_generation_match):
             assert if_generation_match == self.generation
-            self.data = data
+            self.data = data.encode() if isinstance(data, str) else data
             self.generation += 1
 
         def upload_from_filename(self, path, **kwargs):
@@ -75,8 +83,10 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
         def __init__(self):
             self.objects = {}
 
-        def blob(self, name):
-            return self.objects.setdefault(name, Blob())
+        def blob(self, name, *, generation=None):
+            blob = self.objects.setdefault(name, Blob(name))
+            assert generation is None or generation == blob.generation
+            return blob
 
     bucket = Bucket()
     flow.put(bucket, flow.INDEX, flow.encode({"latest_release": {"date": "2026-04-02", "rows": 40}}), generation=0)
@@ -110,6 +120,34 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
         send.assert_called_once()
     state, _ = flow.Guard(bucket).load()
     assert state["owner"] is None and state["hold"]["notification"] == "sent"
+    baseline_fixture(job, output, records, day, Bucket())
+
+
+def baseline_fixture(job, output, records, day, bucket):
+    """Read the current publisher's serialized baseline inside each job image."""
+    from types import SimpleNamespace
+    from ingestion.common import published_baseline, source_quality, vector_pipeline
+    from ingestion.common.gcs import GcsPublisher
+
+    publisher = GcsPublisher(SimpleNamespace(bucket=lambda name: bucket), bucket.name)
+    if job.ASSET.slug == "mpatlas-zone-assessments":
+        identity = model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"])
+        algorithm = model.GEOMETRY_HASH_ALGORITHM
+    else:
+        identity, algorithm = output.identity_metadata, output.geometry_hash_algorithm
+    bundle = vector_pipeline.publish_vector_bundle(publisher=publisher, asset=job.ASSET, run_date=day,
+        outputs=output, object_metadata={}, source_inputs=[], identity=identity,
+        geometry_hash_algorithm=algorithm)
+    source_quality.put(bucket, job.ASSET.run_record_object(day), source_quality.encode({
+        "status": "success", "asset_slug": job.ASSET.slug, "run_date": day.isoformat(),
+        "release_date": day.isoformat(), "sha256": bundle.sha256}), generation=0)
+    source_quality.put(bucket, f"_catalog/releases/{job.ASSET.slug}.json", source_quality.encode({
+        "latest_release": {"date": day.isoformat(), "rows": len(records),
+            "run_record_path": f"gs://{bucket.name}/{job.ASSET.run_record_object(day)}"}}), generation=0)
+    verified = published_baseline.read(publisher, job.ASSET)
+    assert verified.records == tuple(records)
+    if job.ASSET.slug == "mpatlas-zone-assessments":
+        assert job.load_baseline(publisher).fingerprint_hash == job.source_fingerprint(records).sha256
 
 if __name__ == "__main__":
     work = Path("/tmp/shared-datasets-1/_scratch/installed-fixture")

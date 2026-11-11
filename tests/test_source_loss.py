@@ -41,6 +41,26 @@ def seed_baseline(bucket, count=100):
         "latest_release": {"date": "2026-04-02", "rows": count, "files": []}, "releases": []}), generation=0)
 
 
+def replace_baseline_sidecar(bucket, asset, records, directory):
+    """Replace a self-consistent sidecar/manifest pair without changing the indexed record."""
+    path = directory / "replacement.metadata.ndjson.gz"
+    feature_metadata.write_sidecar(records, path)
+    manifest_blob = bucket.blob(asset.latest_object(".manifest.json"))
+    manifest = json.loads(manifest_blob.data)
+    ref = next(item for item in manifest["artifacts"] if item["role"] == "metadata")
+    metadata_blob = bucket.blob(ref["path"].split("/", 3)[3])
+    metadata_blob.upload_from_filename(path, if_generation_match=metadata_blob.generation)
+    ref.update(generation=metadata_blob.generation, size=metadata_blob.size, sha256=loss.digest(metadata_blob.data))
+    manifest_blob.upload_from_string(loss.encode(manifest), if_generation_match=manifest_blob.generation)
+    # The replacement pair still satisfies the independent manifest/sidecar contracts.
+    model = feature_metadata.release_feature_model
+    model.validate_release_manifest(manifest, expected_asset_slug=asset.slug,
+        expected_release=records[0]["release"], require_generations=True)
+    validation = model.validate_sidecar_records(model.read_metadata_sidecar_bytes(metadata_blob.data),
+        expected_asset_slug=asset.slug, expected_release=records[0]["release"])
+    assert validation.valid and validation.feature_count == manifest["validation"]["feature_count"]
+
+
 @pytest.mark.parametrize("count,blocked", [(101, False), (100, False), (96, False), (95, False), (94, True), (0, True)])
 def test_strict_five_percent_boundary_is_persisted(count, blocked):
     client = Client()

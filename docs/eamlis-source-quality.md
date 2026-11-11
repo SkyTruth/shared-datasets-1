@@ -25,7 +25,10 @@ losses, including equal-sized swaps. `maximum_lost_object_percent` in
 Legacy releases compare source-field `OBJECTID` feature IDs. The installed
 [permanent-key contract](eamlis-feature-identity.md) compares permanent ledger IDs;
 the first keyed release maps the baseline's reviewed keys through that ledger.
-Colocated mining problems remain distinct objects. A missing or invalid baseline
+Colocated mining problems remain distinct objects. The shared baseline reader
+authenticates the latest manifest bytes against the indexed successful run
+record's manifest SHA-256 before reading its pinned, hash-verified dated schema
+and metadata. A missing manifest hash or missing or invalid baseline
 manifest, schema, metadata or counted index stops the run for reviewed repair.
 An unchanged upstream source cannot trigger automatic baseline repair.
 

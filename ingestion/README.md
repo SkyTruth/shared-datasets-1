@@ -67,7 +67,12 @@ plans; the protected publisher clears a hold only after finalized-byte and
 release-index verification. Both jobs use the lifecycle's lost-object limit:
 new objects never offset missing baseline feature IDs. EAMLIS retains its
 identity discovery, reservation and activation checks. Broken baselines require
-reviewed repair before source acquisition. See
+reviewed repair before source acquisition. `ingestion/common/published_baseline.py`
+authenticates the latest manifest against the indexed successful record's
+manifest SHA-256, then reads the dated schema and metadata at their pinned
+generations, verifies their hashes and validates the sidecar records and counts.
+Missing manifest hashes require reviewed repair. Each job owns its identity
+checks and fingerprint definition; `lifecycle.py` owns stage order and gates. See
 [EAMLIS hold state and review](../docs/eamlis-source-quality.md) and
 [MPAtlas commands](mpatlas_monthly/README.md#review-a-held-release).
 

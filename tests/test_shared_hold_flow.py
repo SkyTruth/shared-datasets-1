@@ -55,21 +55,21 @@ def test_notification_format_failure_does_not_claim_delivery(flow):
         send.assert_called_once()
 
 
-def seed(client, directory):
+def seed(client, directory, *, records=None, source_inputs=None):
     directory.mkdir()
     publisher = GcsPublisher(client, job.quality.BUCKET)
     prior = dt.date(2026, 10, 16)
-    records = sidecar([feature(z) for z in range(1, 41)])
+    records = sidecar([feature(z) for z in range(1, 41)]) if records is None else records
     output = fixture_outputs(directory, records)
     raw = json.dumps({"type": "FeatureCollection", "features": [feature(z) for z in range(1, 41)]}).encode()
     fingerprint = job.source_fingerprint(records).record_fields()
     bundle = job.vector_pipeline.publish_vector_bundle(publisher=publisher, asset=job.ASSET, run_date=prior,
-        outputs=output, object_metadata={}, source_inputs=[{"uri": job.SOURCE_URL,
+        outputs=output, object_metadata={}, source_inputs=source_inputs if source_inputs is not None else [{"uri": job.SOURCE_URL,
             "sha256": source_quality.digest(raw), "source_fingerprint_hash": fingerprint["source_fingerprint_hash"]}],
         identity=job.model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]))
     record = {"schema_version": 1, "asset_slug": job.ASSET.slug, "status": "success", "source": job.SOURCE_URL,
         "source_version": "prior", "run_date": prior.isoformat(), "release_date": prior.isoformat(),
-        "row_count": 40, "release_path": f"gs://{publisher.bucket.name}/{job.ASSET.release_prefix(prior)}/",
+        "row_count": len(records), "release_path": f"gs://{publisher.bucket.name}/{job.ASSET.release_prefix(prior)}/",
         "release_paths": bundle.release_paths, "latest_paths": bundle.latest_paths, "sha256": bundle.sha256,
         "tools": TOOLS, **fingerprint}
     publisher.write_run_record(asset=job.ASSET, run_date=prior, payload=record)
@@ -157,6 +157,7 @@ def test_mpatlas_hold_reruns_and_exact_reviewed_promotion(tmp_path):
     state, _ = flow.Guard(publisher.bucket).load()
     assert state["hold"] is None and state["owner"] is None
     assert flow.baseline(publisher.bucket)["release"]["date"] == DAY.isoformat()
+    assert job.load_baseline(publisher).row_count == 40
 
 
 def test_empty_mpatlas_source_is_held_without_a_build(tmp_path):

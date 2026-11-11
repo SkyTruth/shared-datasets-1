@@ -12,9 +12,11 @@ readable if this job is paused or retired.
 
 ## Change detection
 
-The comparison baseline is the published `latest/*.manifest.json`, read with its
-observed generation, and the manifest's hash-verified, generation-bound dated
-metadata sidecar. A missing or corrupt baseline fails before any publication;
+The shared baseline reader authenticates `latest/*.manifest.json`, read at its
+observed generation, against the indexed successful run record's manifest
+SHA-256. The manifest pins the dated schema and metadata generations and hashes;
+the reader verifies both artifacts and validates sidecar records and counts.
+A missing hash, missing manifest or corrupt baseline fails before source acquisition;
 this refresh job does not initialize a dataset or repair its publication state.
 
 1. Download the complete API response and compute SHA-256. If it matches the
