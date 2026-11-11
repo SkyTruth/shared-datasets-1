@@ -359,13 +359,16 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
         FakeBucket,
         FakeClient,
         fixture_download,
-        fake_asset_output,
+        TOOLS,
     )
+    from tests.test_source_loss import fixture_output
+    from ingestion.common import release_index
 
     bucket = FakeBucket()
     monkeypatch.setenv("RUN_DATE", "2026-05-02")
     monkeypatch.setenv("SHARED_DATASETS_BUCKET", bucket.name)
     monkeypatch.setattr(eamlis, "require_binary", Mock())
+    monkeypatch.setattr(eamlis, "toolchain", Mock(return_value=TOOLS))
     monkeypatch.setattr(eamlis.storage, "Client", Mock(return_value=FakeClient(bucket)))
     monkeypatch.setattr(
         eamlis, "fetch_source_state", Mock(return_value=sample_source_state())
@@ -373,11 +376,7 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
     download = Mock(side_effect=fixture_download)
     monkeypatch.setattr(eamlis, "download_source_geojson", download)
     monkeypatch.setattr(
-        eamlis, "build_asset_output", Mock(return_value=fake_asset_output(tmp_path))
-    )
-    # Contract fixture validation is covered independently by the publisher tests.
-    monkeypatch.setattr(
-        eamlis.GcsPublisher, "release_metadata_contract_issue", Mock(return_value=None)
+        eamlis, "build_asset_output", Mock(side_effect=fixture_output)
     )
     original = eamlis.run()[0]
     assert original["status"] == "success"
@@ -389,10 +388,10 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
         and ("/releases/" in name or "/latest/" in name)
     }
     monkeypatch.setenv("RUN_DATE", "2026-05-03")
-    update = eamlis.GcsPublisher.update_latest_run_index
+    update = release_index.record_latest_run
     monkeypatch.setattr(
-        eamlis.GcsPublisher,
-        "update_latest_run_index",
+        release_index,
+        "record_latest_run",
         Mock(side_effect=RuntimeError("lost index response")),
     )
     with pytest.raises(RuntimeError, match="lost index response"):
@@ -401,7 +400,7 @@ def test_eamlis_interrupted_skip_repairs_index_without_polling(tmp_path, monkeyp
     skipped = json.loads(run.text)
     assert skipped["status"] == "skipped"
     assert skipped["source_fingerprint_hash"] == published_fingerprint
-    monkeypatch.setattr(eamlis.GcsPublisher, "update_latest_run_index", update)
+    monkeypatch.setattr(release_index, "record_latest_run", update)
     monkeypatch.setattr(
         eamlis,
         "fetch_source_state",

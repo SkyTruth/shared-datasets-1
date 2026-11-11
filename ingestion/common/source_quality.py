@@ -209,9 +209,6 @@ class Guard(AbstractContextManager):
         self.state["hold"]["observation"] = observation
         self.save()
 
-    def assess(self, *args, **kwargs):
-        return self.flow.hooks.assess(self, *args, **kwargs)
-
     def attach(self, ref):
         require(self.held, "cannot attach a candidate without a hold")
         self.state["hold"]["candidate"] = ref
@@ -238,8 +235,9 @@ class Guard(AbstractContextManager):
         count = hold["observation"].get("geometry_count")
         loss = f"{100 * (old - count) / old:.2f}%" if old and count is not None else "unavailable"
         candidate = hold["candidate"]
+        drop = "" if hold["reason"] == "objects_lost" else f"; drop: {loss}"
         body = (f"Automatic {self.flow.label} publishing is held. Review the published baseline before resuming.\n"
-                f"Geometry records: {old} → {count}; drop: {loss}; reason: {hold['reason']}.\n"
+                f"Geometry records: {old} → {count}{drop}; reason: {hold['reason']}.\n"
                 f"Hold: `{hold['id']}`\n"
                 f"Inspect: `uv run python scripts/eamlis_source_loss_review.py{self.flow.cli_asset} status`\n")
         if hold["reason"] == "objects_lost":

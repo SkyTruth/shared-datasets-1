@@ -23,11 +23,11 @@ from scripts import eamlis_source_loss_review as source_review, publish_workflow
 from scripts import finalize_promoted_release_metadata as finalizer
 from ingestion.common.gcs import GcsPublisher
 from tests.test_eamlis_identity import area, feature, problem
-from tests.test_eamlis_monthly import sample_source_state
+from tests.test_eamlis_monthly import sample_source_state, TOOLS
 from tests.test_source_loss import Client, copy_transport
 
 
-def output(*, source, extract, workdir, release_date, previous_records, identity_reservation=None):
+def output(*, source, extract, workdir, release_date, previous_records=None, identity_reservation=None):
     features = feature_metadata.iter_geojson_features(extract.geojson)
     args = dict(asset_slug=quality.SLUG, release=release_date.isoformat(), provenance={"source": "fixture"})
     if identity_reservation is None:
@@ -54,6 +54,7 @@ def run(client, properties, date, *, builder=output):
         return eamlis.SourceExtract(dest, len(properties), 0)
     with mock.patch.dict("os.environ", {"RUN_DATE": date}, clear=True), \
          mock.patch.object(eamlis, "require_binary"), \
+         mock.patch.object(eamlis, "toolchain", return_value=TOOLS, create=True), \
          mock.patch.object(eamlis.storage, "Client", return_value=client), \
          mock.patch.object(eamlis, "fetch_source_state", return_value=sample_source_state(feature_count=len(properties))), \
          mock.patch.object(eamlis, "download_source_geojson", side_effect=download), \

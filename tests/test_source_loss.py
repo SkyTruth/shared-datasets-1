@@ -17,7 +17,7 @@ from scripts import catalog_site, compare_releases, eamlis_source_loss_review as
 from scripts import finalize_promoted_release_metadata as finalizer
 from scripts import publish_workflow, reviewed_dataset_plan, slack_notify
 from scripts import gcs_asset
-from tests.test_eamlis_monthly import FakeBucket, sample_source_state, fixture_download
+from tests.test_eamlis_monthly import FakeBucket, sample_source_state, fixture_download, TOOLS
 
 
 class Client:
@@ -44,38 +44,31 @@ def seed_baseline(bucket, count=100):
 @pytest.mark.parametrize("count,blocked", [(101, False), (100, False), (96, False), (95, False), (94, True), (0, True)])
 def test_strict_five_percent_boundary_is_persisted(count, blocked):
     client = Client()
+    execute(client, 100, "2026-04-02")
+    outcome = execute(client, count, "2026-05-02")
+    assert (outcome["status"] == "held") is blocked
     bucket = client.bucket(loss.BUCKET)
-    seed_baseline(bucket)
-    with loss.Guard(bucket) as gate:
-        assert gate.assess(count, selection={"where": "same"}) is blocked
-        if blocked:
-            with pytest.raises(loss.SourceLossError, match="forbids"):
-                gate.check_publication()
-        else:
-            gate.check_publication()
     with loss.Guard(bucket) as next_run:
         assert next_run.held is blocked
-        # A healthy subsequent download never clears a hold automatically.
-        assert next_run.assess(100, selection={"where": "same"}) is blocked
+    # An unchanged, healthy response never clears a persisted hold.
+    again = execute(client, 100, "2026-05-03")
+    assert (again["status"] == "held") is blocked
 
 
 def test_baseline_is_published_release_not_latest_attempt():
-    bucket = Client().bucket(loss.BUCKET)
-    seed_baseline(bucket)
-    payload, ref = loss.read(bucket, loss.INDEX)
-    data = json.loads(payload)
-    data["latest_run"] = {"status": "failed", "row_count": 40}
-    loss.put(bucket, loss.INDEX, loss.encode(data), generation=int(ref["generation"]))
-    with loss.Guard(bucket) as gate:
-        assert gate.assess(94, selection={})
-        assert gate.state["hold"]["baseline"]["release"]["rows"] == 100
+    client = Client()
+    execute(client, 100, "2026-04-02")
+    execute(client, 100, "2026-04-03")
+    held = execute(client, 94, "2026-05-02")
+    assert held["status"] == "held"
+    assert held["hold"]["baseline"]["release"]["rows"] == 100
 
 
 def test_selection_change_and_baseline_race_block_publication():
     bucket = Client().bucket(loss.BUCKET)
     seed_baseline(bucket)
     with loss.Guard(bucket) as gate:
-        assert gate.assess(100, selection={"where": "new"}, previous_selection={"where": "old"})
+        gate.block("source_selection_changed", {"geometry_count": 100})
         assert gate.state["hold"]["reason"] == "source_selection_changed"
     other = Client().bucket(loss.BUCKET)
     seed_baseline(other)
@@ -109,7 +102,7 @@ def test_confirmed_dead_execution_is_reclaimed_only_into_a_hold():
         with loss.Guard(bucket, owner="next") as gate:
             assert gate.held
             assert gate.state["hold"]["reason"] == "interrupted_execution"
-            assert gate.assess(100, selection={})
+            assert gate.held
             with pytest.raises(loss.SourceLossError, match="forbids"):
                 gate.check_publication()
 
@@ -150,20 +143,20 @@ def test_one_alert_claim_survives_delivery_failure_and_repeated_checks(fails):
     seed_baseline(bucket)
     with mock.patch.object(slack_notify, "notify", side_effect=OSError("lost response") if fails else None) as send:
         with loss.Guard(bucket) as gate:
-            gate.assess(90, selection={})
+            gate.block("objects_lost", {"geometry_count": 90, "lost_objects": 10, "maximum_lost_object_percent": 5})
             if fails:
                 with pytest.raises(OSError):
                     gate.notify()
             else:
                 gate.notify()
         with loss.Guard(bucket) as again:
-            assert again.assess(100, selection={})
+            assert again.held
             again.notify()
             assert again.state["hold"]["notification"] == ("unknown" if fails else "sent")
         assert send.call_count == 1
 
 
-def fixture_output(*, source, extract, workdir, release_date, previous_records):
+def fixture_output(*, source, extract, workdir, release_date, previous_records=None):
     """Native builders are external here; real metadata, schema and manifest flow through."""
     enriched, records = feature_metadata.enrich_features_with_source_field_ids(
         feature_metadata.iter_geojson_features(extract.geojson), asset_slug=loss.SLUG,
@@ -186,6 +179,7 @@ def fixture_output(*, source, extract, workdir, release_date, previous_records):
 def execute(client, count, date, *, build=fixture_output):
     with mock.patch.dict(eamlis.os.environ, {"RUN_DATE": date}, clear=True), \
          mock.patch.object(eamlis, "require_binary"), \
+         mock.patch.object(eamlis, "toolchain", return_value=TOOLS, create=True), \
          mock.patch.object(eamlis.storage, "Client", return_value=client), \
          mock.patch.object(eamlis, "fetch_source_state", return_value=sample_source_state(feature_count=count)), \
          mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download), \

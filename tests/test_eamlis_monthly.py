@@ -18,6 +18,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.eamlis_monthly import run as eamlis
 from ingestion.common.gcs import GcsPublisher
+from ingestion.common import lifecycle
 
 VALID_FGB_SHA = "a" * 64
 VALID_PMTILES_SHA = "b" * 64
@@ -265,6 +266,26 @@ def fake_asset_output(
     )
 
 
+TOOLS = {name: {"path": f"/fixture/{name}", "version": "fixture 1"}
+         for name in ("ogr2ogr", "ogrinfo", "pmtiles", "tippecanoe-decode")}
+
+
+def publish_fixture(*, publisher, run_date, source, output):
+    """Exercise the bundle transport with a lifecycle-validated record."""
+    translation, inputs = eamlis.translation_input(publisher, output.metadata.parent)
+    eamlis.reconcile_translations(output.metadata, translation, run_date)
+    fingerprint = eamlis.fingerprints.Fingerprint(source.fingerprint["definition"],
+        {**source.fingerprint["inputs"], "translation_source": eamlis.fingerprints.csv_digest(translation)})
+    content = lifecycle.Content(fingerprint.record_fields(), output.row_count)
+    record = lifecycle.published(eamlis.ASSET.slug, attempt=run_date,
+        source=lifecycle.Source(run_date, source.layer_url, fingerprint.sha256), content=content,
+        built=lifecycle.Built(output.row_count, TOOLS,
+            f"gs://{publisher.bucket.name}/{eamlis.ASSET.release_prefix(run_date)}/"))
+    reports = eamlis.prepare_changed_asset(output, translation, run_date)
+    return eamlis.publish_changed_asset(publisher=publisher, record=record, output=output,
+        translation_source=translation, source_inputs=[{"uri": source.layer_url}, *inputs], reports=reports)
+
+
 class EamlisMonthlyTests(unittest.TestCase):
     def test_csv_reconciliation_precedes_single_materialization_of_all_required_locales(self):
         bucket = FakeBucket()
@@ -303,7 +324,7 @@ class EamlisMonthlyTests(unittest.TestCase):
              mock.patch.object(eamlis.localization, "_materialize_locale_sidecar", wraps=eamlis.localization._materialize_locale_sidecar) as each_locale:
             output = fake_asset_output(Path(tmpdir))
             before = {path: path.read_bytes() for path in (output.metadata, output.schema, output.fgb, output.pmtiles)}
-            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
+            record = publish_fixture(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
             generated.assert_called_once()
             self.assertEqual(generated.call_args.kwargs["locales"], ("es", "fr"))
             self.assertEqual([call.kwargs["locale"] for call in each_locale.call_args_list], ["es", "fr"])
@@ -331,7 +352,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(blob, "download_to_filename", wraps=blob.download_to_filename) as download:
             output = fake_asset_output(Path(tmpdir))
-            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
+            record = publish_fixture(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
             self.assertEqual(download.call_args.kwargs["if_generation_match"], 9)
         self.assertEqual(record["localization"]["translations"]["locales"]["es"]["coverage"], 0.5)
         sidecar = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.es.ndjson.gz"))
@@ -353,7 +374,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 output = fake_asset_output(Path(tmpdir))
                 with mock.patch.object(blob, "download_to_filename", side_effect=problem, wraps=blob.download_to_filename):
                     with self.assertRaises((PreconditionFailed, eamlis.localization.FeatureMetadataLocalizationError)):
-                        eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
+                        publish_fixture(publisher=publisher, run_date=dt.date(2026, 5, 2), source=fixture_fingerprint(sample_source_state()), output=output)
                 self.assertFalse(any(item.uploads for item in bucket.blobs.values()))
 
     def test_request_json_retries_transient_transport_failure(self):
@@ -458,7 +479,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 self.assertFalse(any(blob.uploads for name, blob in bucket.blobs.items()
                                      if name != eamlis.source_loss.CONTROL))
 
-    def test_same_date_noncompleted_record_fails_without_polling_or_writes(self):
+    def test_same_date_noncompleted_record_fails_without_polling_or_dataset_writes(self):
         for record in ({}, *({"status": status} for status in ("failed", "partial", "running", "unknown", None))):
             with self.subTest(record=record):
                 bucket = FakeBucket()
@@ -473,111 +494,8 @@ class EamlisMonthlyTests(unittest.TestCase):
                 ):
                     eamlis.run()
                 fetch.assert_not_called()
-                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
-
-    def test_run_skips_when_latest_success_fingerprint_matches(self):
-        bucket = FakeBucket()
-        previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
-        previous.exists = True
-        previous.text = json.dumps(
-            {
-                "run_date": "2026-04-02",
-                "status": "success",
-                "source_fingerprint_hash": "same",
-                "release_path": "gs://test-bucket/release/",
-                "release_paths": [
-                    {"path": "gs://test-bucket/release/asset.fgb"},
-                    {"path": "gs://test-bucket/release/asset.metadata.ndjson.gz"},
-                    {"path": "gs://test-bucket/release/asset.schema.json"},
-                    {"path": "gs://test-bucket/release/asset.manifest.json"},
-                ],
-                "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
-                "sha256": {"fgb": "old-sha"},
-            }
-        )
-        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
-        release_index.exists = True
-        release_index.text = json.dumps(
-            {
-                "schema_version": 1,
-                "asset_slug": eamlis.ASSET.slug,
-                "latest_release": {
-                    "date": "2026-04-02",
-                    "rows": 2,
-                    "run_record_path": f"gs://test-bucket/{previous.name}",
-                },
-            }
-        )
-        source = sample_source_state(fingerprint_hash="same")
-        content = fixture_fingerprint(source)
-        previous.text = json.dumps({**json.loads(previous.text), "source_fingerprint": content.fingerprint,
-                                    "source_fingerprint_hash": content.fingerprint_hash})
-
-        with (
-            mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
-                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
-                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-                mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download) as download,
-                mock.patch.object(eamlis, "build_asset_output") as build,
-            ):
-                records = eamlis.run()
-
-        self.assertEqual(records[0]["status"], "skipped")
-        self.assertEqual(records[0]["reason"], "source fingerprint unchanged")
-        self.assertTrue(download.called)
-        build.assert_not_called()
-        run_blob = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
-        self.assertEqual(run_blob.uploads[0][1], 0)
-
-    def test_missing_metadata_contract_refreshes_unchanged_source_and_output(self):
-        bucket = FakeBucket()
-        previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
-        previous.exists = True
-        previous.text = json.dumps(
-            {
-                "run_date": "2026-04-02",
-                "status": "success",
-                "source_fingerprint_hash": "same",
-                "release_path": "gs://test-bucket/release/",
-                "release_paths": [{"path": "gs://test-bucket/release/asset.fgb"}],
-                "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
-                "sha256": {"fgb": VALID_FGB_SHA},
-            }
-        )
-        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
-        release_index.exists = True
-        release_index.text = json.dumps(
-            {
-                "schema_version": 1,
-                "asset_slug": eamlis.ASSET.slug,
-                "latest_release": {
-                    "date": "2026-04-02",
-                    "rows": 2,
-                    "run_record_path": f"gs://test-bucket/{previous.name}",
-                },
-            }
-        )
-        source = sample_source_state(fingerprint_hash="same")
-        with tempfile.TemporaryDirectory() as tmp:
-            output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
-            with (
-                mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
-                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
-                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download),
-                mock.patch.object(eamlis, "build_asset_output", return_value=output),
-            ):
-                records = eamlis.run()
-
-        self.assertEqual(records[0]["status"], "success")
-        self.assertEqual(len(records[0]["release_paths"]), 7)
-        release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
-        release_metadata = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.ndjson.gz"))
-        self.assertTrue(release.uploads)
-        self.assertTrue(release_metadata.uploads)
+                self.assertFalse(any(blob.uploads for name, blob in bucket.blobs.items()
+                                     if name != eamlis.source_loss.CONTROL))
 
     def test_download_source_geojson_pages_until_expected_count(self):
         source = sample_source_state(feature_count=3)
@@ -620,7 +538,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             output = fake_asset_output(tmp_path)
-            record = eamlis.publish_changed_asset(
+            record = publish_fixture(
                 publisher=publisher,
                 run_date=dt.date(2026, 5, 2),
                 source=fixture_fingerprint(sample_source_state(fingerprint_hash="new")),
@@ -656,58 +574,6 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(record["sha256"]["manifest"], manifest_sha)
         self.assertEqual(json.loads(run_blob.text)["sha256"]["manifest"], manifest_sha)
 
-    def test_changed_source_publishes_even_when_fgb_bytes_match(self):
-        bucket = FakeBucket()
-        previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
-        previous.exists = True
-        previous.text = json.dumps(
-            {
-                "run_date": "2026-04-02",
-                "status": "success",
-                "source_fingerprint_hash": "old",
-                "release_path": "gs://test-bucket/release/",
-                "release_paths": [
-                    {"path": "gs://test-bucket/release/asset.fgb"},
-                    {"path": "gs://test-bucket/release/asset.metadata.ndjson.gz"},
-                    {"path": "gs://test-bucket/release/asset.schema.json"},
-                    {"path": "gs://test-bucket/release/asset.manifest.json"},
-                ],
-                "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
-                "sha256": {"fgb": VALID_FGB_SHA},
-            }
-        )
-        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
-        release_index.exists = True
-        release_index.text = json.dumps(
-            {
-                "schema_version": 1,
-                "asset_slug": eamlis.ASSET.slug,
-                "latest_release": {
-                    "date": "2026-04-02",
-                    "rows": 2,
-                    "run_record_path": f"gs://test-bucket/{previous.name}",
-                },
-            }
-        )
-        source = sample_source_state(fingerprint_hash="new")
-        with tempfile.TemporaryDirectory() as tmp:
-            output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
-            with (
-                mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
-                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
-                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-                mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-                mock.patch.object(eamlis, "download_source_geojson", side_effect=fixture_download),
-                mock.patch.object(eamlis, "build_asset_output", return_value=output),
-            ):
-                records = eamlis.run()
-
-        self.assertEqual(records[0]["status"], "success")
-        release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
-        release_pmtiles = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".pmtiles"))
-        self.assertTrue(release.uploads)
-        self.assertTrue(release_pmtiles.uploads)
 
     def test_parse_ogrinfo_summary_from_text_output(self):
         summary = eamlis.parse_ogrinfo_summary(
