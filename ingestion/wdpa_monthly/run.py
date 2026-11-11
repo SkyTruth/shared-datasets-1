@@ -589,22 +589,6 @@ def build_filtered_gpkg(
         run_command(args)
 
 
-def convert_gpkg_to_fgb(gpkg: Path, asset: AssetSpec, output: Path) -> None:
-    remove_if_exists(output)
-    run_command(
-        [
-            "ogr2ogr",
-            "-f",
-            "FlatGeobuf",
-            str(output),
-            str(gpkg),
-            asset.tile_layer,
-            "-nlt",
-            "GEOMETRY",
-        ]
-    )
-
-
 def convert_geojsonseq_to_fgb(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
     remove_if_exists(output)
     run_command(

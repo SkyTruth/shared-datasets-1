@@ -40,6 +40,12 @@ Keep source-specific parsing, filtering, schema choices, asset slugs, canonical
 paths, conversion rules, environment variables, and scheduler configuration in
 the owning job package.
 
+`ingestion/common/lifecycle.py` defines the release lifecycle: the stage order,
+the rules between stages and the run-record shape. `tests/test_lifecycle.py`
+holds one test per rule. No job runs through `lifecycle.run` yet; the four jobs
+below still orchestrate their own stages. `wdpa_monthly` fingerprints after its
+build, so it keeps its own orchestrator until it has a pre-build fingerprint.
+
 ## Default Publishing Semantics
 
 The [source fingerprint contract](../docs/source-fingerprints.md) defines each
