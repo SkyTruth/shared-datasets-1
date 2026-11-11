@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import urllib.parse
 import urllib.request
@@ -15,14 +17,14 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, publication_readiness
+from ingestion.common import feature_metadata, lifecycle, publication_readiness, published_baseline, release_index
 from ingestion.common import source_fingerprint as fingerprints
-from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
+from ingestion.common.source_fingerprint import digest as stable_hash
 from ingestion.common import vector_pipeline
-from ingestion.common.source_quality import EAMLIS as source_loss
+from ingestion.common.source_quality import EAMLIS as source_loss, SourceLossError
 from ingestion.eamlis_monthly import identity as keyed_identity, identity_state
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
@@ -469,14 +471,14 @@ def stage_inputs(source, release_date, identity_reservation):
 
 
 def build_asset_output(
-    *, source, extract, workdir, release_date, previous_records=None, identity_reservation=None,
+    *, source, extract, workdir, release_date, identity_reservation=None,
 ):
     from ingestion.common.stage_checkpoints import cached_build, native_tools
     inputs = {**stage_inputs(source, release_date, identity_reservation),
         "tools": native_tools(("ogr2ogr", "ogrinfo", "tippecanoe-decode", "pmtiles"))}
     return cached_build("eamlis-artifacts", inputs, workdir,
         lambda directory: _build_asset_output(source=source, extract=extract, workdir=directory,
-            release_date=release_date, previous_records=previous_records, identity_reservation=identity_reservation),
+            release_date=release_date, identity_reservation=identity_reservation),
         files={"source": extract.geojson}, result_type=AssetOutput if identity_reservation is None else KeyedAssetOutput,
         extra={} if identity_reservation is None else {"reservation": identity_reservation},
         code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
@@ -509,18 +511,22 @@ def _prepare_metadata(source, extract, workdir, release_date, identity_reservati
     return enriched_geojsonseq, metadata, schema, schema_payload, tuple(sidecar_records)
 
 
-def _build_asset_output(
-    *, source: SourceState, extract: SourceExtract, workdir: Path, release_date: dt.date,
-    previous_records: Sequence[Mapping[str, Any]] | None = None,
-    identity_reservation: identity_state.Reservation | None = None,
-) -> AssetOutput:
+def prepare_metadata(source, extract, workdir, release_date, identity_reservation):
     from ingestion.common.stage_checkpoints import cached_build
-    enriched_geojsonseq, metadata, schema, schema_payload, sidecar_records = cached_build(
+    return cached_build(
         "eamlis-metadata", stage_inputs(source, release_date, identity_reservation), workdir,
         lambda directory: _prepare_metadata(source, extract, directory, release_date, identity_reservation),
         files={"source": extract.geojson}, result_type=None,
         code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
             "ingestion/common/feature_metadata.py", "scripts/release_feature_model.py"))
+
+
+def _build_asset_output(
+    *, source: SourceState, extract: SourceExtract, workdir: Path, release_date: dt.date,
+    identity_reservation: identity_state.Reservation | None = None,
+) -> AssetOutput:
+    enriched_geojsonseq, metadata, schema, schema_payload, sidecar_records = prepare_metadata(
+        source, extract, workdir, release_date, identity_reservation)
     fgb = workdir / f"{ASSET.slug}.fgb"
     pmtiles = workdir / f"{ASSET.slug}.pmtiles"
     manifest = workdir / f"{ASSET.slug}.manifest.json"
@@ -577,99 +583,6 @@ def _build_asset_output(
     return AssetOutput(**values) if identity_reservation is None else KeyedAssetOutput(**values, reservation=identity_reservation)
 
 
-def load_current_run_record(
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-    run_date: dt.date,
-) -> dict[str, Any] | None:
-    return publisher.load_json(asset.run_record_object(run_date))
-
-
-def write_run_record_once(
-    *,
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-    run_date: dt.date,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    object_name = asset.run_record_object(run_date)
-    blob = publisher.bucket.blob(object_name)
-    blob.metadata = {
-        "asset_slug": asset.slug,
-        "run_date": run_date.isoformat(),
-    }
-    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    try:
-        blob.upload_from_string(
-            serialized,
-            content_type="application/json",
-            if_generation_match=0,
-        )
-    except PreconditionFailed as exc:
-        existing = publisher.load_json(object_name)
-        if existing and existing == payload:
-            blob.reload()
-        else:
-            raise RuntimeError(
-                f"Run record already exists with different content: "
-                f"gs://{publisher.bucket.name}/{object_name}"
-            ) from exc
-    blob.reload()
-    return {
-        "path": f"gs://{publisher.bucket.name}/{object_name}",
-        "generation": int(blob.generation),
-        "size": int(blob.size or 0),
-    }
-
-
-def skipped_record(
-    *,
-    publisher: GcsPublisher,
-    run_date: dt.date,
-    source: SourceState,
-    previous_record: dict[str, Any] | None,
-    reason: str,
-    identity_contract: str | None = None,
-) -> dict[str, Any]:
-    record = {
-        "schema_version": 1,
-        "record_version": RUN_RECORD_VERSION,
-        "asset_slug": ASSET.slug,
-        "run_date": run_date.isoformat(),
-        "release_date": run_date.isoformat(),
-        "status": "skipped",
-        "reason": reason,
-        "source": source.layer_url,
-        "source_version": source.fingerprint_hash,
-        "source_fingerprint": source.fingerprint,
-        "source_fingerprint_hash": source.fingerprint_hash,
-        "source_stats": {
-            "feature_count": source.stats.feature_count,
-            "max_date_revised": source.stats.max_date_revised,
-            "max_objectid": source.stats.max_objectid,
-        },
-        "release_path": (previous_record or {}).get("release_path", ""),
-        "latest_paths": (previous_record or {}).get("latest_paths", []),
-        "row_count": source.stats.feature_count,
-        "notes": "Generated by monthly e-AMLIS job; source unchanged.",
-    }
-    if identity_contract:
-        record["identity_contract"] = identity_contract
-    run_record = write_run_record_once(
-        publisher=publisher,
-        asset=ASSET,
-        run_date=run_date,
-        payload=record,
-    )
-    record["run_record"] = run_record
-    record["release_index"] = publisher.update_latest_run_index(
-        asset=ASSET,
-        payload=record,
-        run_record_info=run_record,
-    )
-    return record
-
-
 def translation_input(publisher: GcsPublisher, workdir: Path, *, gate=None):
     translation_source = workdir / f"{ASSET.slug}.metadata-translations.csv"
     source_inputs = []
@@ -708,299 +621,294 @@ def fingerprint_source(source: SourceState, extract: SourceExtract, translation_
     return replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
 
 
-def prepare_changed_asset(
-    *,
-    publisher: GcsPublisher,
-    run_date: dt.date,
-    source: SourceState,
-    output: AssetOutput,
-    translation_source: Path | None = None,
-    translation_inputs: Sequence[Mapping[str, Any]] = (),
-) -> tuple[SourceState, list[dict[str, Any]], Path, list[localization.LocalizationReport]]:
-    # Prepare the whole language bundle before the first canonical write. A
-    # missing source CSV is initial translation debt, not a failed dataset build.
-    if translation_source is None:
-        translation_source, translation_inputs = translation_input(publisher, output.metadata.parent)
-    source_inputs = [{"uri": source.layer_url, "where": source.where}, *translation_inputs]
+def reconcile_translations(metadata: Path, translation_source: Path, release: dt.date) -> None:
     reconciliation = translation_reuse.reconcile_translation_source(
-        canonical_sidecar=output.metadata, translation_source=translation_source,
+        canonical_sidecar=metadata, translation_source=translation_source,
         fields=TRANSLATION_FIELDS, locales=TRANSLATION_LOCALES,
-        asset_slug=ASSET.slug, release=run_date.isoformat(),
+        asset_slug=ASSET.slug, release=release.isoformat(),
     )
     LOGGER.info("translation reconciliation: %s", reconciliation)
-    fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], {
-        **source.fingerprint["inputs"], "translation_source": fingerprints.csv_digest(translation_source),
-    })
-    source = replace(source, fingerprint=fingerprint.payload, fingerprint_hash=fingerprint.sha256)
-    reports = localization.materialize_locale_sidecars(
+
+
+def prepare_changed_asset(output: AssetOutput, translation_source: Path, release: dt.date):
+    # The reconciled source is already fingerprinted by describe. Materialize the
+    # complete language bundle before either staging or the first canonical write.
+    return localization.materialize_locale_sidecars(
         canonical_sidecar=output.metadata, translation_source=translation_source,
         output_dir=output.metadata.parent, locales=TRANSLATION_LOCALES,
         translatable_fields=set(TRANSLATION_FIELDS), expected_asset_slug=ASSET.slug,
-        expected_release=run_date.isoformat(), protected_inputs=[output.schema],
+        expected_release=release.isoformat(), protected_inputs=[output.schema],
     )
-    return source, source_inputs, translation_source, reports
 
 
 def publish_changed_asset(
-    *, publisher: GcsPublisher, run_date: dt.date, source: SourceState,
-    output: AssetOutput, translation_source: Path | None = None,
-    translation_inputs: Sequence[Mapping[str, Any]] = (),
+    *, publisher: GcsPublisher, record: dict[str, Any], output: AssetOutput,
+    translation_source: Path, source_inputs: Sequence[Mapping[str, Any]],
+    reports: Sequence[localization.LocalizationReport],
 ) -> dict[str, Any]:
-    source, source_inputs, translation_source, reports = prepare_changed_asset(
-        publisher=publisher, run_date=run_date, source=source, output=output,
-        translation_source=translation_source, translation_inputs=translation_inputs)
-    metadata = metadata_for_source(run_date=run_date, source=source)
+    release = dt.date.fromisoformat(record["release_date"])
     bundle = vector_pipeline.publish_vector_bundle(
-        publisher=publisher,
-        asset=ASSET,
-        run_date=run_date,
-        outputs=output,
-        object_metadata=metadata,
-        source_inputs=source_inputs,
-        translations=localization.translations_payload(reports),
+        publisher=publisher, asset=ASSET, run_date=release, outputs=output,
+        object_metadata={"asset_slug": ASSET.slug, "run_date": record["run_date"],
+                         "source_fingerprint_hash": record["source_fingerprint_hash"]},
+        source_inputs=source_inputs, translations=localization.translations_payload(reports),
         extra_suffix_paths=[(".metadata-translations.csv", translation_source),
-                            *((f".metadata.{report.locale}.ndjson.gz", Path(report.output_sidecar)) for report in reports)],
-        identity=output.identity_metadata,
-        geometry_hash_algorithm=output.geometry_hash_algorithm,
+                            *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in reports)],
+        identity=output.identity_metadata, geometry_hash_algorithm=output.geometry_hash_algorithm,
     )
-
-    record = {
-        "schema_version": 1,
-        "record_version": RUN_RECORD_VERSION,
-        "asset_slug": ASSET.slug,
-        "run_date": run_date.isoformat(),
-        "release_date": run_date.isoformat(),
-        "status": "success",
-        "source": source.layer_url,
-        "source_version": source.fingerprint_hash,
-        "source_fingerprint": source.fingerprint,
-        "source_fingerprint_hash": source.fingerprint_hash,
-        "source_stats": {
-            "feature_count": source.stats.feature_count,
-            "max_date_revised": source.stats.max_date_revised,
-            "max_objectid": source.stats.max_objectid,
-        },
-        "release_path": f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
-        "release_paths": bundle.release_paths,
-        "latest_paths": bundle.latest_paths,
-        "row_count": output.row_count,
-        "sha256": bundle.sha256,
-        "localization": localization.batch_report_payload(canonical_sidecar=output.metadata,
-            translation_source=translation_source, output_dir=output.metadata.parent, reports=reports),
-        "field_count": len(source.fields),
-        "notes": "Generated by monthly e-AMLIS job from the public ArcGIS hosted feature layer.",
-    }
-    if isinstance(output, KeyedAssetOutput):
-        record["identity_contract"] = keyed_identity.CONTRACT
-    run_record = publisher.write_run_record(asset=ASSET, run_date=run_date, payload=record)
-    record["run_record"] = run_record
-    LOGGER.info("published %s", ASSET.slug)
+    record.update(release_paths=bundle.release_paths, latest_paths=bundle.latest_paths, sha256=bundle.sha256,
+        localization=localization.batch_report_payload(canonical_sidecar=output.metadata,
+            translation_source=translation_source, output_dir=output.metadata.parent, reports=reports))
+    record["run_record"] = publisher.write_run_record(asset=ASSET,
+        run_date=dt.date.fromisoformat(record["run_date"]), payload=record)
     return record
 
 
-def metadata_for_source(*, run_date: dt.date, source: SourceState) -> dict[str, str]:
-    return {
-        "asset_slug": ASSET.slug,
-        "run_date": run_date.isoformat(),
-        "source_fingerprint_hash": source.fingerprint_hash,
-    }
+def toolchain() -> dict[str, dict[str, str]]:
+    tools = {}
+    for name, arg in (("ogr2ogr", "--version"), ("ogrinfo", "--version"),
+                      ("pmtiles", "version"), ("tippecanoe-decode", "--version")):
+        require_binary(name)
+        path = str(Path(shutil.which(name)).resolve())
+        # The decoder has no version flag; its sibling executable identifies
+        # the installed suite that supplied it.
+        version_path = str(Path(path).with_name("tippecanoe")) if name == "tippecanoe-decode" else path
+        completed = subprocess.run([version_path, arg], check=True, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        version = completed.stdout.strip()
+        if not version:
+            raise RuntimeError(f"Native tool returned no version: {path}")
+        tools[name] = {"path": path, "version": version}
+    return tools
 
 
-def assert_current_record_allows_run(
-    current_record: dict[str, Any] | None,
-    *,
-    run_date: dt.date,
-) -> dict[str, Any] | None:
-    if current_record is None:
-        return None
-    status = current_record.get("status")
-    if status in {"success", "skipped"}:
-        LOGGER.info(
-            "%s already has a %s run record for %s; source changes require a different RUN_DATE",
-            ASSET.slug, status, run_date,
-        )
-        return current_record
-    raise RuntimeError(
-        f"Run record already exists for {run_date.isoformat()} with status {status!r}. "
-        "Investigate the existing record before choosing a different RUN_DATE."
-    )
+class Refresh:
+    """The e-AMLIS stages of lifecycle.run; ordering and gate rules live there."""
+    slug = ASSET.slug
+
+    def __init__(self, publisher: GcsPublisher, workdir: Path, *, layer_url: str, where: str, page_size: int):
+        self.publisher, self.workdir = publisher, workdir
+        self.layer_url, self.where, self.page_size = layer_url, where, page_size
+        self.loss_limit = lifecycle.loss_limit(self.slug)
+        self.reservation = None
+        self.publication_started = False
+
+    def resume(self, attempt: dt.date) -> dict[str, Any] | None:
+        existing = self.publisher.load_json(ASSET.run_record_object(attempt))
+        identity_state.require_run_date(self.gate, attempt.isoformat(), existing)
+        if existing is None:
+            self.publisher.assert_no_partial_release(ASSET, attempt, suffixes=RELEASE_SUFFIXES)
+            return None
+        if self.gate.held:
+            self.gate.notify()
+            return self.gate.record()
+        if existing.get("status") not in {"success", "skipped"}:
+            raise RuntimeError(f"Run record already exists for {attempt} with status {existing.get('status')!r}; reviewed investigation required")
+        self.gate.check_publication()
+        existing = dict(existing)
+        if existing["status"] == "success":
+            if self.gate.before is None or self.gate.before["release"]["date"] != attempt.isoformat():
+                info = self.publisher.record_existing_successful_release(ASSET, attempt)
+                if info:
+                    existing["release_index"] = info
+        else:
+            blob = self.publisher.bucket.blob(ASSET.run_record_object(attempt))
+            blob.reload()
+            info = {"path": f"gs://{self.publisher.bucket.name}/{blob.name}",
+                    "generation": int(blob.generation), "size": int(blob.size or 0)}
+            existing["release_index"] = self.publisher.update_latest_run_index(
+                asset=ASSET, payload=existing, run_record_info=info)
+        return existing
+
+    def baseline(self) -> lifecycle.Baseline | None:
+        self.previous = None
+        self.baseline_ids = frozenset()
+        if self.gate.before is None:
+            lifecycle.require(not any(self.publisher.bucket.list_blobs(prefix=ASSET.root + "/releases/"))
+                and not any(self.publisher.bucket.list_blobs(prefix=ASSET.root + "/latest/")),
+                "existing e-AMLIS artifacts have no verified baseline; reviewed repair required")
+            return None
+        release = self.gate.before["release"]["date"]
+        try:
+            verified = published_baseline.read(self.publisher, ASSET, self.gate.before["release"])
+            manifest, records = verified.manifest, verified.records
+            record_uri = self.gate.before["release"].get("run_record_path")
+            if record_uri:
+                bucket, name = release_index.split_gs_uri(record_uri)
+                lifecycle.require(bucket == self.publisher.bucket.name and name.startswith(ASSET.runs_prefix),
+                                  "baseline run record is outside the asset's run prefix")
+                self.previous = self.publisher.load_json(name)
+            if self.previous is not None:
+                lifecycle.require(isinstance(self.previous, dict) and self.previous.get("status") == "success"
+                    and self.previous.get("asset_slug", ASSET.slug) == ASSET.slug,
+                    "baseline record must describe a successful publication of this asset")
+                lifecycle.require((self.previous.get("release_date") or self.previous["run_date"]) == release,
+                                  "baseline record names another release")
+                lifecycle.require(isinstance(self.previous.get("release_path"), str) and bool(self.previous["release_path"]),
+                                  "baseline record needs a release_path")
+                lifecycle.require(isinstance(self.previous.get("latest_paths", []), list),
+                                  "baseline record latest_paths must be an array")
+                if "source_fingerprint_hash" in self.previous:
+                    feature_metadata.release_feature_model.validate_artifact_hash(
+                        self.previous["source_fingerprint_hash"], label="baseline source fingerprint")
+                if "source_fingerprint" in self.previous:
+                    fingerprint = self.previous["source_fingerprint"]
+                    lifecycle.require(isinstance(fingerprint, dict) and isinstance(fingerprint.get("inputs", {}), dict),
+                                      "baseline record source_fingerprint and inputs must be objects")
+            descriptor = manifest["identity"]
+            ledger = identity_state.selected_ledger(self.gate)
+            keyed = descriptor.get("contract_id") == keyed_identity.CONTRACT
+            if keyed:
+                lifecycle.require(ledger is not None, "keyed baseline has no installed ledger")
+            else:
+                lifecycle.require(descriptor["strategy"] == "source_field" and descriptor["source_fields"] == ["OBJECTID"],
+                                  "baseline has an unsupported identity contract")
+        except (GoogleAPIError, SourceLossError, release_index.ReleaseIndexError, ValueError, KeyError, TypeError,
+                AttributeError, IndexError, lifecycle.LifecycleError) as exc:
+            raise RuntimeError(f"e-AMLIS baseline failed its contract; reviewed repair required: {exc}") from exc
+        # Identity comparison runs outside the published-state mapping. A record
+        # that contradicts the ledger raises IdentityError and holds publication;
+        # any other exception is a defect in this code, not a broken baseline.
+        if keyed:
+            identity_state.validate_records(ledger, records)
+        # During the reviewed cutover the baseline still has legacy IDs.
+        # Compare both releases in the installed permanent key space.
+        self.baseline_ids = frozenset(ledger.ids[key.key] for key in keyed_identity.classify_release(
+            row["properties"] for row in records)) if ledger is not None else frozenset(row["feature_id"] for row in records)
+        return lifecycle.Baseline(dt.date.fromisoformat(release), self.previous.get("source_fingerprint_hash") if self.previous else None,
+            len(records), self.gate.state["hold"]["reason"] if self.gate.held else None)
+
+    def acquire(self, attempt: dt.date) -> lifecycle.Source:
+        self.source = fetch_source_state(self.layer_url, self.where)
+        self.extract = download_source_geojson(source=self.source,
+            dest=self.workdir / f"{ASSET.slug}.geojson", page_size=self.page_size)
+        return lifecycle.Source(attempt, self.source.layer_url, sha256_file(self.extract.geojson))
+
+    def describe(self, source: lifecycle.Source, baseline: lifecycle.Baseline | None) -> lifecycle.Content:
+        selection = {key: getattr(self.source, key) for key in ("layer_url", "where", "service_item_id")}
+        previous_inputs = (self.previous or {}).get("source_fingerprint", {}).get("inputs", {})
+        selection_changed = "layer_url" in previous_inputs and selection != {key: previous_inputs.get(key) for key in selection}
+        held = self.gate.state["hold"]["reason"] if self.gate.held else None
+        reason = held or ("source_selection_changed" if selection_changed else None)
+        if selection_changed:
+            self.gate.block("source_selection_changed", {"geometry_count": self.extract.row_count,
+                "selection": selection, "checked_at": source_loss.now()})
+        if self.extract.row_count == 0:
+            return lifecycle.Content({"source_fingerprint_hash": source.version}, 0,
+                len(self.baseline_ids) if baseline else None, reason)
+        def discover_identity(directory):
+            features = list(feature_metadata.iter_geojson_features(self.extract.geojson))
+            if len(features) != self.extract.row_count:
+                raise RuntimeError("complete EAMLIS extract count changed before identity reservation")
+            if self.gate.state.get("identity") is not None:
+                keyed_identity.classify_release(row["properties"] for row in features)
+                strategy = keyed_identity.CONTRACT
+            else:
+                keys = [feature_metadata.source_field_feature_id("OBJECTID", row["properties"].get("OBJECTID")) for row in features]
+                if len(set(keys)) != len(keys):
+                    raise RuntimeError("duplicate EAMLIS source IDs")
+                strategy = "source_field"
+            return {"rows": len(features), "identity_strategy": strategy}
+        discovery = publication_readiness.discover_batch([
+            publication_readiness.Target(self.slug, source.release.isoformat(),
+                {"source_sha256": source.version, "expected_rows": self.extract.row_count,
+                 "producer": sha256_file(Path(__file__)), "identity_state": self.gate.state.get("identity")},
+                discover_identity)
+        ], self.workdir / "analysis")
+        keyed_identity.require(discovery["state"] == "READY",
+            "publication identity discovery did not complete: " + json.dumps(discovery, sort_keys=True))
+        self.reservation = identity_state.reserve(self.gate,
+            (feature["properties"] for feature in feature_metadata.iter_geojson_features(self.extract.geojson)), self.workdir)
+        self.translation_source, self.translation_inputs = translation_input(self.publisher, self.workdir, gate=self.gate)
+        contract = keyed_identity.CONTRACT if self.reservation is not None else None
+        _, metadata, _, _, records = prepare_metadata(self.source, self.extract, self.workdir, source.release, self.reservation)
+        reconcile_translations(metadata, self.translation_source, source.release)
+        lost = len(self.baseline_ids - {row["feature_id"] for row in records}) if baseline else None
+        self.source = fingerprint_source(self.source, self.extract, self.translation_source, identity_contract=contract)
+        return lifecycle.Content({"source_fingerprint": self.source.fingerprint,
+                                  "source_fingerprint_hash": self.source.fingerprint_hash},
+            self.extract.row_count, lost, reason,
+            {"record_version": RUN_RECORD_VERSION, **({"identity_contract": contract} if contract else {}),
+             "source_stats": {"feature_count": self.extract.row_count, "max_date_revised": self.source.stats.max_date_revised,
+                              "max_objectid": self.source.stats.max_objectid}, "field_count": len(self.source.fields)})
+
+    def build(self, source: lifecycle.Source, content: lifecycle.Content, baseline) -> lifecycle.Built:
+        self.output = build_asset_output(source=self.source, extract=self.extract, workdir=self.workdir,
+            release_date=source.release, **({"identity_reservation": self.reservation} if self.reservation is not None else {}))
+        self.reports = prepare_changed_asset(self.output, self.translation_source, source.release)
+        self.source_inputs = [{"uri": source.uri, "where": self.source.where,
+            "source_fingerprint_hash": self.source.fingerprint_hash}, *self.translation_inputs]
+        return lifecycle.Built(self.output.row_count, self.tools,
+            f"gs://{self.publisher.bucket.name}/{ASSET.release_prefix(source.release)}/")
+
+    def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
+        self.gate.check_publication()
+        self.publication_started = True
+        record = publish_changed_asset(publisher=self.publisher, record=record, output=self.output,
+            translation_source=self.translation_source, source_inputs=self.source_inputs, reports=self.reports)
+        if self.reservation is not None:
+            identity_state.activate(self.gate)
+        return record
+
+    def check_in(self, record: dict[str, Any]) -> dict[str, Any]:
+        record.update(release_path=self.previous["release_path"], latest_paths=self.previous.get("latest_paths", []))
+        record["run_record"] = self.publisher.write_run_record(asset=ASSET,
+            run_date=dt.date.fromisoformat(record["run_date"]), payload=record)
+        return record
+
+    def hold(self, reason: str, source: lifecycle.Source, content: lifecycle.Content, built) -> dict[str, Any]:
+        self.gate.block(reason, {"geometry_count": content.rows, "lost_objects": content.lost,
+            "maximum_lost_object_percent": self.loss_limit,
+            "selection": {key: getattr(self.source, key) for key in ("layer_url", "where", "service_item_id")},
+            "checked_at": source_loss.now()})
+        if built is not None:
+            record = lifecycle.published(self.slug, attempt=source.release, source=source, content=content,
+                                         built=built, lost=content.lost)
+            source_loss.stage_candidate(self.gate, output=self.output, fingerprint=self.source.fingerprint,
+                release=source.release.isoformat(), identity=self.output.identity_metadata,
+                geometry_hash_algorithm=self.output.geometry_hash_algorithm,
+                record=record,
+                source_inputs=self.source_inputs, translations=localization.translations_payload(self.reports),
+                extra_files=[(".metadata-translations.csv", self.translation_source),
+                             *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in self.reports)],
+                source_input=self.extract.geojson,
+                evidence={"lifecycle_record": source_loss.digest(source_loss.encode(record))})
+        self.gate.notify()
+        return self.gate.record()
 
 
-def needs_metadata_contract_refresh(
-    publisher: GcsPublisher,
-    record: dict[str, Any] | None,
-) -> bool:
-    if not record:
-        return False
-    issue = publisher.release_metadata_contract_issue(ASSET, record)
-    if issue:
-        LOGGER.info(
-            "%s previous release metadata contract needs refresh: %s",
-            ASSET.slug,
-            issue,
-        )
-        return True
-    return False
+def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path, *, layer_url: str, where: str, page_size: int):
+    refresh = Refresh(publisher, workdir, layer_url=layer_url, where=where, page_size=page_size)
+    refresh.tools = toolchain()
+    with source_loss.Guard(publisher.bucket) as refresh.gate:
+        try:
+            return lifecycle.run(refresh, run_date)
+        except Exception as exc:
+            reservation = refresh.reservation
+            requires_review = isinstance(exc, keyed_identity.IdentityError) or refresh.publication_started or (reservation is not None and
+                    reservation.ledger.next_feature_id > reservation.before)
+            if refresh.gate.held or requires_review:
+                hold = refresh.gate.state["hold"]
+                observation = dict(hold["observation"]) if hold else {"geometry_count": None}
+                observation.update(error=str(exc)[:1000], checked_at=source_loss.now())
+                refresh.gate.block(hold["reason"] if hold else "identity_publication_requires_review", observation)
+                refresh.gate.notify()
+            raise
 
 
 def run() -> list[dict[str, Any]]:
     configure_logging()
-    for binary in ("ogrinfo", "ogr2ogr", "pmtiles", "tippecanoe-decode"):
-        require_binary(binary)
-
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
-    bucket_name = os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET)
     run_date = parse_run_date(os.environ.get("RUN_DATE"))
-    layer_url = os.environ.get("EAMLIS_LAYER_URL", DEFAULT_LAYER_URL).rstrip("/")
-    where = os.environ.get("EAMLIS_WHERE", DEFAULT_WHERE)
-    page_size = parse_page_size(os.environ.get("EAMLIS_PAGE_SIZE"))
-
-    publisher = GcsPublisher(
-        storage.Client(project=project_id),
-        bucket_name,
-        release_suffixes=RELEASE_SUFFIXES,
-        logger=LOGGER,
-    )
-
-    current_record = load_current_run_record(publisher, ASSET, run_date)
-    existing_record = assert_current_record_allows_run(
-        current_record,
-        run_date=run_date,
-    )
-    if existing_record:
-        with source_loss.Guard(publisher.bucket) as gate:
-            identity_state.require_run_date(gate, run_date.isoformat(), existing_record)
-            if gate.held:
-                return [gate.record()]
-            gate.check_publication()
-            if existing_record.get("status") == "success":
-                existing_record = dict(existing_record)
-                release_index_info = publisher.record_existing_successful_release(
-                    ASSET,
-                    run_date,
-                )
-                if release_index_info:
-                    existing_record["release_index"] = release_index_info
-            else:
-                existing_record = dict(existing_record)
-                blob = publisher.bucket.blob(ASSET.run_record_object(run_date))
-                blob.reload()
-                info = {"path": f"gs://{publisher.bucket.name}/{blob.name}", "generation": int(blob.generation), "size": int(blob.size or 0)}
-                existing_record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=existing_record, run_record_info=info)
-            return [existing_record]
-
-    with source_loss.Guard(publisher.bucket) as gate:
-        reservation = None
-        publication_started = False
-        try:
-            identity_state.require_run_date(gate, run_date.isoformat())
-            publisher.assert_no_partial_release(ASSET, run_date, suffixes=RELEASE_SUFFIXES)
-            previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
-            source = fetch_source_state(layer_url, where)
-            selection = {"layer_url": source.layer_url, "where": source.where, "service_item_id": source.service_item_id}
-            previous_inputs = (previous_record or {}).get("source_fingerprint", {}).get("inputs", {})
-            previous_selection = ({key: previous_inputs.get(key) for key in selection}
-                                  if "layer_url" in previous_inputs else None)
-            source_loss.hooks.assess(gate, source.stats.feature_count, selection=selection, previous_selection=previous_selection)
-            if source.stats.feature_count == 0:
-                gate.notify()
-                return [gate.record()]
-            work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
-            work_root.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
-                workdir = Path(tmp)
-                extract = download_source_geojson(
-                    source=source,
-                    dest=workdir / f"{ASSET.slug}.geojson",
-                    page_size=page_size,
-                )
-                source_loss.hooks.assess(gate, extract.row_count, selection=selection, previous_selection=previous_selection)
-                def discover_identity(directory):
-                    features = list(feature_metadata.iter_geojson_features(extract.geojson))
-                    if len(features) != extract.row_count:
-                        raise RuntimeError("complete EAMLIS extract count changed before identity reservation")
-                    if gate.state.get("identity") is not None:
-                        keys = keyed_identity.classify_release(row["properties"] for row in features)
-                        strategy = keyed_identity.CONTRACT
-                    else:
-                        keys = [feature_metadata.source_field_feature_id("OBJECTID", row["properties"].get("OBJECTID")) for row in features]
-                        if len(set(keys)) != len(keys):
-                            raise RuntimeError("duplicate EAMLIS source IDs")
-                        strategy = "source_field"
-                    return {"rows": len(features), "identity_strategy": strategy}
-                discovery = publication_readiness.discover_batch([
-                    publication_readiness.Target(ASSET.slug, run_date.isoformat(),
-                        {"source_sha256": sha256_file(extract.geojson), "expected_rows": extract.row_count,
-                         "producer": sha256_file(Path(__file__)), "identity_state": gate.state.get("identity")},
-                        discover_identity)
-                ], workdir / "analysis")
-                # Keep the owning identity error type so the existing failure
-                # handler persists its publication hold before propagating it.
-                keyed_identity.require(discovery["state"] == "READY",
-                    "publication identity discovery did not complete: " + json.dumps(discovery, sort_keys=True))
-                reservation = identity_state.reserve(gate,
-                    (feature["properties"] for feature in feature_metadata.iter_geojson_features(extract.geojson)), workdir)
-                translation_source, translation_inputs = translation_input(publisher, workdir, gate=gate)
-                contract = keyed_identity.CONTRACT if reservation is not None else None
-                source = fingerprint_source(source, extract, translation_source, identity_contract=contract)
-                fingerprint = fingerprints.Fingerprint(source.fingerprint["definition"], source.fingerprint["inputs"])
-                if not gate.held and fingerprint.matches(previous_record) and not needs_metadata_contract_refresh(publisher, previous_record):
-                    return [skipped_record(publisher=publisher, run_date=run_date, source=source,
-                                           previous_record=previous_record, reason="source fingerprint unchanged", identity_contract=contract)]
-                identity_arguments = {"identity_reservation": reservation} if reservation is not None else {}
-                output = build_asset_output(
-                    source=source,
-                    extract=extract,
-                    workdir=workdir,
-                    release_date=run_date,
-                    # Legacy source IDs need no baseline. Installed keyed IDs
-                    # come from the durable reservation, including absent keys.
-                    previous_records=None,
-                    **identity_arguments,
-                )
-                source_loss.require(output.row_count == extract.row_count,
-                                    "built geometry count differs from complete source extract")
-                if gate.held:
-                    source, source_inputs, translation_source, reports = prepare_changed_asset(
-                        publisher=publisher, run_date=run_date, source=source, output=output,
-                        translation_source=translation_source, translation_inputs=translation_inputs)
-                    source_loss.stage_candidate(gate, output=output, fingerprint=source.fingerprint, release=run_date.isoformat(),
-                        identity=output.identity_metadata, geometry_hash_algorithm=output.geometry_hash_algorithm,
-                        record={"source": source.layer_url, "source_version": source.fingerprint_hash,
-                            "source_fingerprint_hash": source.fingerprint_hash,
-                            "source_stats": {"feature_count": output.row_count, "max_date_revised": source.stats.max_date_revised,
-                                             "max_objectid": source.stats.max_objectid}},
-                        source_inputs=source_inputs, translations=localization.translations_payload(reports),
-                        extra_files=[(".metadata-translations.csv", translation_source),
-                                     *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in reports)], source_input=extract.geojson)
-                    gate.notify()
-                    return [gate.record()]
-                gate.check_publication()
-                publication_started = True
-                record = publish_changed_asset(
-                    publisher=publisher,
-                    run_date=run_date,
-                    source=source,
-                    output=output,
-                    translation_source=translation_source,
-                    translation_inputs=translation_inputs,
-                )
-                if reservation is not None:
-                    identity_state.activate(gate)
-                remove_if_exists(output.fgb)
-                remove_if_exists(output.pmtiles)
-                return [record]
-        except Exception as exc:
-            if isinstance(exc, keyed_identity.IdentityError) or (reservation is not None and
-                    (reservation.ledger.next_feature_id > reservation.before or publication_started)):
-                observation = {"geometry_count": None, "error": str(exc)[:1000], "checked_at": source_loss.now()}
-                gate.block(gate.state["hold"]["reason"] if gate.held else "identity_publication_requires_review", observation)
-            if gate.held:
-                observation = dict(gate.state["hold"]["observation"])
-                observation.update(error=str(exc)[:1000], checked_at=source_loss.now())
-                gate.block(gate.state["hold"]["reason"], observation)
-                gate.notify()
-            raise
+    publisher = GcsPublisher(storage.Client(project=project_id),
+        os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET), release_suffixes=RELEASE_SUFFIXES, logger=LOGGER)
+    work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
+    work_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="monthly-", dir=work_root) as tmp:
+        return [ingest(publisher, run_date, Path(tmp),
+            layer_url=os.environ.get("EAMLIS_LAYER_URL", DEFAULT_LAYER_URL).rstrip("/"),
+            where=os.environ.get("EAMLIS_WHERE", DEFAULT_WHERE),
+            page_size=parse_page_size(os.environ.get("EAMLIS_PAGE_SIZE")))]
 
 
 def main() -> None:
