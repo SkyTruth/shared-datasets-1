@@ -75,9 +75,10 @@ def test_merge_receipt_signers_after_plain_revert_window(target, expected_signer
     assert revisions.receipt_signer(api, 'SkyTruth/shared-datasets-1', target, 13, 1) == '.github/workflows/' + expected_signer
 
 
-def test_only_publication_producers_remain_held():
+def test_only_unreleased_publication_producers_remain_held():
+    # MPAtlas left the holds when its lifecycle runner and hold flow were released.
     holds = json.loads((ROOT / ci.INGESTION_ROLLOUT_HOLDS).read_text())
-    assert set(ci.rollout_holds(holds)) == {'mpatlas', 'eamlis', 'wdpa', 'sea_ice'}
+    assert set(ci.rollout_holds(holds)) == {'eamlis', 'wdpa', 'sea_ice'}
 
 
 @pytest.mark.parametrize('create_account', [False, True])
