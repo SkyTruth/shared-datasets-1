@@ -711,5 +711,31 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
         self.assertEqual(output_two.sha256["fgb"], first_hash)
 
 
+def test_unchanged_source_skips_and_names_baseline_release():
+    """An unchanged source records a skipped check-in and writes no dataset artifact."""
+    # test_source_loss imports this module, so its fakes are imported here.
+    from ingestion.common.source_quality import EAMLIS as quality
+    from tests.test_source_loss import Client, execute
+
+    client = Client()
+    first = execute(client, 2, "2026-04-02")
+    bucket = client.bucket(quality.BUCKET)
+
+    def dataset_objects():
+        return {name: (blob.generation, blob.data) for name, blob in bucket.blobs.items()
+                if blob.exists and name.startswith(eamlis.ASSET.root + "/") and ("/releases/" in name or "/latest/" in name)}
+
+    before = dataset_objects()
+    result = execute(client, 2, "2026-05-02", build=mock.Mock(side_effect=AssertionError("unchanged built artifacts")))
+    assert (result["status"], result["run_date"], result["release_date"]) == ("skipped", "2026-05-02", "2026-04-02")
+    assert result["source_fingerprint_hash"] == first["source_fingerprint_hash"]
+    assert dataset_objects() == before
+    stored = json.loads(bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2))).data)
+    assert stored["release_date"] == "2026-04-02"
+    index = json.loads(bucket.blob(quality.INDEX).data)
+    assert index["latest_run"]["date"] == "2026-05-02"
+    assert index["latest_release"]["date"] == "2026-04-02"
+
+
 if __name__ == "__main__":
     unittest.main()

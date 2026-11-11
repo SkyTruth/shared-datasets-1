@@ -59,24 +59,6 @@ def test_equal_size_swap_holds_and_small_net_drop_publishes(ids, status, lost):
         send.assert_not_called()
 
 
-def test_unchanged_checkin_names_baseline_and_writes_no_dataset_artifact():
-    client = Client()
-    first = execute(client, 2, "2026-04-02")
-    bucket = client.bucket(quality.BUCKET)
-    before = {name: (blob.generation, blob.data) for name, blob in bucket.blobs.items()
-              if blob.exists and name.startswith(job.ASSET.root + "/") and ("/releases/" in name or "/latest/" in name)}
-    result = execute(client, 2, "2026-05-02", build=mock.Mock(side_effect=AssertionError("unchanged built artifacts")))
-    assert (result["status"], result["run_date"], result["release_date"]) == ("skipped", "2026-05-02", "2026-04-02")
-    assert result["source_fingerprint_hash"] == first["source_fingerprint_hash"]
-    assert {name: (blob.generation, blob.data) for name, blob in bucket.blobs.items()
-            if blob.exists and name.startswith(job.ASSET.root + "/") and ("/releases/" in name or "/latest/" in name)} == before
-    stored = json.loads(bucket.blob(job.ASSET.run_record_object(dt.date(2026, 5, 2))).data)
-    assert stored["release_date"] == "2026-04-02"
-    index = json.loads(bucket.blob(quality.INDEX).data)
-    assert index["latest_run"]["date"] == "2026-05-02"
-    assert index["latest_release"]["date"] == "2026-04-02"
-
-
 @pytest.mark.parametrize("broken", ["manifest", "metadata", "schema", "count"])
 def test_broken_baseline_stops_before_source_read_or_rebuild(broken):
     client = Client()
