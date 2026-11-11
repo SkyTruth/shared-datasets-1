@@ -113,6 +113,13 @@ closed on 2026-11-11. Their checkpoints are unreadable by pre-rollout main, so a
 plain revert of the rollout is no longer supported. Provision these identities
 and collect their authentication evidence before removing legacy access.
 
+Google can reject a bucket binding to a custom role created seconds earlier in
+the same apply (`Role ... does not exist in the resource's hierarchy`). The first
+provisioning apply (run 42962218558, 2026-11-11) created 13 of 14 resources and
+hit this for `google_storage_bucket_iam_member.recovery_state_reader`. A failed
+attempt bars same-revision replay, so the remaining binding applies from a
+dispatch at a newer main commit; the role then already exists.
+
 `tests/test_deployment_checkpoint_revert.py` runs the current deployment and
 incident writers against a pinned `4aa19c71` reader snapshot, with only external
 API/attestation transport replaced. It exercises retained open and resolved
