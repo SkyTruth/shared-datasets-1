@@ -320,7 +320,7 @@ def verify_committed_build(publisher, state, record, facts, *, run_date, source)
     )
 
 
-def promote(client, publisher, ref, workdir, *, producer_source, requested_date):
+def promote(client, publisher, ref, workdir, *, producer_source, requested_date, attempt_date):
     """Publish verified bytes with the existing owned publication semantics."""
     from ingestion.wdpa_monthly import run as wdpa
 
@@ -408,7 +408,7 @@ def promote(client, publisher, ref, workdir, *, producer_source, requested_date)
             previous = committed[asset.slug][0] if committed[asset.slug] else unchanged[asset.slug]
             record = {
                 "schema_version": 1, "asset_slug": asset.slug,
-                "run_date": os.environ.get("RUN_DATE") or wdpa.dt.datetime.now(wdpa.dt.UTC).date().isoformat(),
+                "run_date": attempt_date.isoformat(),
                 "target_release_date": run_date.isoformat(), "release_date": previous["release_date"],
                 "status": "skipped", "source": previous["source"],
                 "source_version": previous["source_version"],
@@ -443,6 +443,7 @@ def promote(client, publisher, ref, workdir, *, producer_source, requested_date)
                     asset=asset,
                     outputs=outputs,
                     run_date=run_date,
+                    attempt_date=attempt_date,
                     source_url=wdpa.build_source_url(
                         os.environ.get("WDPA_SOURCE_URL_TEMPLATE", wdpa.DEFAULT_SOURCE_URL_TEMPLATE), run_date
                     ),

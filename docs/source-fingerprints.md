@@ -182,8 +182,9 @@ Every meaningful unchanged check updates `_catalog/releases/{asset-slug}.json`;
 MPAtlas write a no-clobber dated `runs/` record. WDPA and sea ice capture the skip
 payload in an immutable owned transaction receipt and update `latest_run` through
 that transaction; they do not write over a successful dated run record. Index
-`updated_at` is the check-in time, while the skip payload retains the attempt date
-and relevant release date.
+`updated_at` is the check-in time and `latest_run.date` is the attempt date
+(`run_date`), while the skip payload retains the attempt date and relevant
+release date.
 
 Owned transactions resume **before** new equality decisions. A different owner
 cannot turn an incomplete publication into a skip, abandon its claim, or reuse its

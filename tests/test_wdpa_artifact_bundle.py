@@ -550,7 +550,60 @@ def test_equal_reviewed_content_skips_large_artifacts_and_updates_checkins(built
 def promote(store, publisher, reference, directory):
     return bundle.promote(store, publisher, reference, directory,
         producer_source=os.environ["WDPA_ACCEPTED_BUILD_SOURCE_SHA256"],
-        requested_date=wdpa.parse_run_date(os.environ.get("RUN_DATE")))
+        requested_date=wdpa.parse_run_date(os.environ.get("RUN_DATE")),
+        attempt_date=wdpa.dt.date.fromisoformat(os.environ["RUN_DATE"]))
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["success", "skip"])
+def test_promotion_uses_explicit_attempt_day_for_success_and_skip(built, tmp_path, monkeypatch, committed):
+    store, ref, report = built
+    release = wdpa.parse_run_date(report["run_date"])
+    attempt = release + wdpa.dt.timedelta(days=8)
+    monkeypatch.setenv("RUN_DATE", (release + wdpa.dt.timedelta(days=2)).isoformat())
+    publisher = completed_publisher_for(report)[0] if committed else publisher_for(report)
+    published = Mock(return_value={"status": "success"})
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+    records = bundle.promote(store, publisher, ref, tmp_path / "dated-promotion",
+        producer_source=report["source_tree_sha256"], requested_date=release, attempt_date=attempt)
+    if committed:
+        assert {record["run_date"] for record in records} == {attempt.isoformat()}
+        assert {record["release_date"] for record in records} == {release.isoformat()}
+        published.assert_not_called()
+    else:
+        assert published.call_count == len(wdpa.ASSETS)
+        for call in published.call_args_list:
+            assert call.kwargs["attempt_date"] == attempt
+            assert call.kwargs["run_date"] == release
+
+
+@pytest.mark.parametrize("built", [{"automatic": True}], indirect=True)
+def test_automatic_run_threads_attempt_day_through_bundle_promotion(built, tmp_path, monkeypatch):
+    from ingestion.wdpa_monthly import automatic
+
+    store, ref, report = built
+    release = wdpa.parse_run_date(report["run_date"])
+    attempt = release + wdpa.dt.timedelta(days=8)
+    monkeypatch.setenv("RUN_DATE", attempt.isoformat())
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", report["cloud_execution"])
+    monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
+    monkeypatch.setattr(wdpa, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(wdpa, "work_root", lambda: tmp_path)
+    monkeypatch.setattr(wdpa, "parse_sample_spec", lambda: None)
+    publisher = publisher_for(report)
+    monkeypatch.setattr(automatic.storage, "Client", Mock(return_value=store))
+    monkeypatch.setattr(wdpa.GcsPublisher, "from_runtime", Mock(return_value=publisher))
+    build_month = Mock(return_value=ref)
+    monkeypatch.setattr(automatic.build, "build_month", build_month)
+    monkeypatch.setattr(automatic.gate, "source_digest", lambda: report["source_tree_sha256"])
+    published = Mock(return_value={"status": "success"})
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+
+    assert automatic.run() == [{"status": "success"}] * len(wdpa.ASSETS)
+    assert build_month.call_args.args[1] == release
+    assert published.call_count == len(wdpa.ASSETS)
+    for call in published.call_args_list:
+        assert call.kwargs["attempt_date"] == attempt
+        assert call.kwargs["run_date"] == release
 
 
 @pytest.mark.parametrize("built", [{"automatic": True}], indirect=True)

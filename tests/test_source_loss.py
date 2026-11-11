@@ -10,7 +10,7 @@ import pytest
 from google.api_core.exceptions import PreconditionFailed
 
 from ingestion.common import feature_metadata
-from ingestion.eamlis_monthly import source_quality as loss
+from ingestion.common.source_quality import EAMLIS as loss
 from ingestion.common.gcs import GcsPublisher
 from ingestion.eamlis_monthly import run as eamlis
 from scripts import catalog_site, compare_releases, eamlis_source_loss_review as review

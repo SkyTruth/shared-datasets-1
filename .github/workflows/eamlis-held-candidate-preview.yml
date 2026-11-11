@@ -3,8 +3,16 @@ name: Inspect held EAMLIS candidate
 on:
   workflow_dispatch:
     inputs:
+      asset:
+        description: Asset with the active source-quality hold
+        required: true
+        type: choice
+        default: eamlis-abandoned-mine-land-inventory
+        options:
+          - eamlis-abandoned-mine-land-inventory
+          - mpatlas-zone-assessments
       candidate_id:
-        description: Exact 64-character candidate ID from the EAMLIS quality hold
+        description: Exact 64-character candidate ID from the asset quality hold
         required: true
         type: string
 
@@ -22,6 +30,7 @@ jobs:
     timeout-minutes: 90
     environment: shared-datasets-production
     env:
+      ASSET: ${{ inputs.asset }}
       CANDIDATE_ID: ${{ inputs.candidate_id }}
       UV_CACHE_DIR: .uv-cache
       PREVIEW_BUCKET: skytruth-shared-datasets-1-preview
@@ -52,14 +61,14 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
       - name: Download immutable candidate and published baseline
-        run: uv run python scripts/eamlis_source_loss_review.py download-preview --candidate-id "$CANDIDATE_ID" --directory "$RUNNER_TEMP/held-preview"
+        run: uv run python scripts/eamlis_source_loss_review.py --asset "$ASSET" download-preview --candidate-id "$CANDIDATE_ID" --directory "$RUNNER_TEMP/held-preview"
       - name: Authenticate preview catalog publisher
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
       - name: Load exact dataset bytes into private preview
-        run: uv run python scripts/eamlis_source_loss_review.py upload-preview --directory "$RUNNER_TEMP/held-preview"
+        run: uv run python scripts/eamlis_source_loss_review.py --asset "$ASSET" upload-preview --directory "$RUNNER_TEMP/held-preview"
       - name: Collect preview release indexes
         run: uv run python scripts/eamlis_source_loss_review.py collect-preview-indexes --directory "$RUNNER_TEMP/held-indexes"
       - name: Build staging catalog
@@ -77,7 +86,7 @@ jobs:
       - name: Retain inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: eamlis-source-loss-preview-${{ inputs.candidate_id }}
+          name: held-candidate-preview-${{ inputs.asset }}-${{ inputs.candidate_id }}
           path: |
             ${{ runner.temp }}/held-preview/preview.json
             ${{ runner.temp }}/held-preview/preview-results.json
@@ -85,10 +94,10 @@ jobs:
       - name: Report staging review
         run: |
           {
-            echo '## Held EAMLIS candidate — production is unchanged'
+            echo "## Held $ASSET candidate — production is unchanged"
             echo "Candidate: \`$CANDIDATE_ID\`"
-            echo "[Open the private staging catalog]($PREVIEW_URL) and select EAMLIS."
+            echo "[Open the private staging catalog]($PREVIEW_URL) and select $ASSET."
             echo 'The candidate and published baseline are available as separate versions.'
             echo 'After investigation, prepare the immutable approval PR with:'
-            printf '\140uv run python scripts/eamlis_source_loss_review.py prepare-plan\140\n'
+            printf '\140uv run python scripts/eamlis_source_loss_review.py --asset %s prepare-plan\140\n' "$ASSET"
           } >> "$GITHUB_STEP_SUMMARY"

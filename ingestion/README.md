@@ -28,6 +28,7 @@ terraform/envs/prod/<job_slug>.tf
 Use `ingestion/common/` for reusable internals that are not tied to one source
 or asset, such as:
 
+- retained-candidate holds, execution claims and reviewed resolution
 - generation-preconditioned GCS publishing
 - run-record writes
 - logging setup
@@ -39,6 +40,31 @@ or asset, such as:
 Keep source-specific parsing, filtering, schema choices, asset slugs, canonical
 paths, conversion rules, environment variables, and scheduler configuration in
 the owning job package.
+
+`ingestion/common/lifecycle.py` defines the release lifecycle: the stage order,
+the rules between stages and the run-record shape. `tests/test_lifecycle.py`
+holds one test per rule. `mpatlas_monthly` runs through `lifecycle.run`;
+`eamlis_monthly` and `sea_ice_daily` still orchestrate their own stages.
+`wdpa_monthly` fingerprints after its build, so it keeps its own orchestrator
+until it has a pre-build fingerprint.
+
+Every run record keeps the day the job ran in `run_date` and the release it
+describes in `release_date`. The release index takes `latest_run.date` from
+`run_date` and `latest_release.date` from `release_date`. Manual releases use the
+UTC day their run record is prepared. Release paths and run-record object names
+use the release date. Historical records without `run_date` use `release_date`
+for `latest_run.date`.
+
+`ingestion/common/source_quality.py` supplies one retained-candidate hold flow
+for EAMLIS and MPAtlas. The registry binds asset paths, labels, Cloud Run jobs
+and optional job-owned identity hooks. `Guard` persists holds and observations,
+serializes publication and claims one Slack request before delivery. `HoldFlow`
+stages immutable candidates and validates exact `source_loss_review` promotion
+plans; the protected publisher clears a hold only after finalized-byte and
+release-index verification. MPAtlas uses the lifecycle's lost-object limit;
+EAMLIS keeps its existing geometry net-count gate and identity checks. See
+[EAMLIS hold state and review](../docs/eamlis-source-quality.md) and
+[MPAtlas commands](mpatlas_monthly/README.md#review-a-held-release).
 
 ## Default Publishing Semantics
 

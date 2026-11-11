@@ -248,11 +248,13 @@ class SeaIceDailyTests(unittest.TestCase):
             readme.write_text("# Sea ice\n")
             sea_ice.publish_outputs(
                 publisher=publisher, asset=sea_ice.ASSET, outputs=outputs, source=source, asset_readme=readme,
+                attempt_date=dt.date(2026, 10, 2),
                 fingerprint=sea_ice.fingerprints.Fingerprint("ims-raster-v1", {"fixture": True}),
             )
         call = publisher.publish_generated.call_args.kwargs
         self.assertEqual(call["run_date"], dt.date(2026, 9, 30))
         self.assertEqual(call["record"]["release_date"], "2026-09-30")
+        self.assertEqual(call["record"]["run_date"], "2026-10-02")
         self.assertEqual(call["record"]["source_filename_date"], "2026-09-29")
         self.assertEqual(call["object_metadata"]["run_date"], "2026-09-30")
         self.assertEqual(call["object_metadata"]["source_filename_date"], "2026-09-29")

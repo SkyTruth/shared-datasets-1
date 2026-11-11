@@ -500,6 +500,36 @@ Initial upload.
 
         self.assertEqual(findings, [])
 
+    def test_successful_run_uses_release_date_then_legacy_dates_for_index_lookup(self):
+        row = catalog_row(update_cadence="monthly")
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        index_name = "_catalog/releases/example-asset.json"
+        run_name = f"{root}/runs/2026-05-01.json"
+        release_name = f"{root}/releases/2026-05-01/example-asset.fgb"
+        index = {
+            "asset_slug": "example-asset",
+            "latest_release": {"date": "2026-05-01"},
+            "latest_run": {"date": "2026-05-08", "status": "success"},
+            "releases": [{"date": "2026-05-01", "rows": 2,
+                "run_record_path": f"gs://skytruth-shared-datasets-1/{run_name}",
+                "files": [{"format": "fgb", "sha256": "a" * 64,
+                           "path": f"gs://skytruth-shared-datasets-1/{release_name}"}]}],
+        }
+        for dates, expected_checks in (
+            ({"release_date": "2026-05-01", "run_date": "2026-05-08"}, []),
+            ({"run_date": "2026-05-01"}, []),
+            ({}, []),
+            ({"release_date": "2026-04-01", "run_date": "2026-05-01"}, ["release-index-success-run-indexed"]),
+        ):
+            with self.subTest(dates=dates), mock.patch.object(audit, "download_object_text",
+                    side_effect=download_from({index_name: index, run_name: {"status": "success", **dates}})):
+                findings = audit.validate_release_integrity(
+                    bucket="skytruth-shared-datasets-1",
+                    blobs=[blob_info(name) for name in (index_name, run_name, release_name)],
+                    catalog_rows=[row], mode="enforce", today=dt.date(2026, 5, 8),
+                )
+                self.assertEqual([finding.check for finding in findings], expected_checks)
+
     def test_feature_metadata_readiness_flags_missing_latest_bundle(self):
         row = catalog_row(update_cadence="manual")
 

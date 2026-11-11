@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect held EAMLIS bytes, load the private staging catalog, or prepare a PR plan.
+"""Inspect held dataset bytes, load the private staging catalog, or prepare a PR plan.
 
 Only the protected approved-dataset workflow can resolve a production hold.
 Preview preparation is not publication authority and never rebuilds dataset bytes.
@@ -16,10 +16,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ingestion.eamlis_monthly import source_quality as loss
+from ingestion.common import source_quality
+from ingestion.common.source_quality import EAMLIS as loss
 
 
-def prepare_plan(client):
+def prepare_plan(client, *, asset=loss.SLUG):
+    loss = source_quality.for_asset(asset)
     guard, value, review = loss.inspection(client)
     loss.require(guard.state["owner"] is None, "wait for the current check to finish before preparing review")
     promotions = loss.expected_promotions(value)
@@ -37,14 +39,15 @@ def prepare_plan(client):
     plan = {"asset_slug": loss.SLUG, "proposal_id": "source-loss-" + value["candidate_id"],
             "promotions": promotions, "source_loss_review": review}
     loss.validate_candidate_plan(client, plan)
-    from ingestion.eamlis_monthly import identity_state
-    identity_state.validate_candidate(guard, value)
+    if loss.hooks:
+        loss.hooks.validate_candidate(guard, value)
     return plan
 
 
-def download_preview(client, directory, candidate_id):
+def download_preview(client, directory, candidate_id, *, asset=loss.SLUG):
     """Publisher/read identity downloads exact inputs; no preview or production writes."""
     directory.mkdir(parents=True, exist_ok=False)
+    loss = source_quality.for_asset(asset)
     guard, value, review = loss.inspection(client)
     loss.require(value["candidate_id"] == candidate_id, "candidate changed; inspect the current hold")
     releases = []
@@ -87,11 +90,12 @@ def download_preview(client, directory, candidate_id):
     (directory / "preview.json").write_bytes(loss.encode({"schema_version": 1, "review": review, "releases": releases}))
 
 
-def upload_preview(client, directory):
+def upload_preview(client, directory, *, asset=loss.SLUG):
     """Preview identity only: never reads or writes production during upload."""
     from google.api_core.exceptions import NotFound
     from ingestion.common import release_index
     from ingestion.common.runtime import content_type_for
+    loss = source_quality.for_asset(asset)
     snapshot = json.loads((directory / "preview.json").read_bytes())
     loss.normalize_review(snapshot["review"])
     bucket = client.bucket(loss.PREVIEW_BUCKET)
@@ -171,6 +175,7 @@ def collect_preview_indexes(client, directory):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--asset", choices=sorted(source_quality.FLOWS), default=loss.SLUG)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     plan = sub.add_parser("prepare-plan")
@@ -187,24 +192,25 @@ def main(argv=None):
     args = parser.parse_args(argv)
     from google.cloud import storage
     client = storage.Client(project="shared-datasets-1")
+    flow = source_quality.for_asset(args.asset)
     if args.command == "status":
-        guard = loss.Guard(client.bucket(loss.BUCKET))
+        guard = flow.Guard(client.bucket(loss.BUCKET))
         print(json.dumps(guard.load()[0], indent=2))
     elif args.command == "prepare-plan":
         from scripts import reviewed_dataset_plan
         document = {"plan_version": 1, "finalization_version": reviewed_dataset_plan.FINALIZATION_VERSION,
-                    "publish": prepare_plan(client)}
+                    "publish": prepare_plan(client, asset=args.asset)}
         reviewed_dataset_plan.write_document(document, repo_root=args.repo_root)
         print(reviewed_dataset_plan.render_document(document))
     elif args.command == "download-preview":
         loss.require(re.fullmatch(r"[0-9a-f]{64}", args.candidate_id), "invalid candidate ID")
-        download_preview(client, args.directory, args.candidate_id)
+        download_preview(client, args.directory, args.candidate_id, asset=args.asset)
     elif args.command == "upload-preview":
-        print(json.dumps(upload_preview(client, args.directory), indent=2))
+        print(json.dumps(upload_preview(client, args.directory, asset=args.asset), indent=2))
     elif args.command == "collect-preview-indexes":
         collect_preview_indexes(client, args.directory)
     else:
-        loss.finish_promotion(client, json.loads(args.plan_json.read_bytes()))
+        source_quality.finish_promotion(client, json.loads(args.plan_json.read_bytes()))
     return 0
 
 

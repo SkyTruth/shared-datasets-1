@@ -12,7 +12,8 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from ingestion.eamlis_monthly import identity as ids, identity_installation as installation
-from ingestion.eamlis_monthly import identity_state, source_quality as quality
+from ingestion.common.source_quality import EAMLIS as quality
+from ingestion.eamlis_monthly import identity_state
 
 
 def require_published(client):

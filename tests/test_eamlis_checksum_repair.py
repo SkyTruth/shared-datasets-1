@@ -17,10 +17,10 @@ from ingestion.common import release_index
 from ingestion.eamlis_monthly import (
     checksum_repair as repair,
     identity as ids,
-    source_quality as quality,
 )
 from scripts import publish_workflow, reviewed_dataset_plan as plans, gcs_asset
 from tests.test_eamlis_identity_transition import prepared, install, run, rows
+from ingestion.common.source_quality import EAMLIS as quality
 from tests.test_source_loss import copy_transport
 
 

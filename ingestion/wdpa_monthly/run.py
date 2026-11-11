@@ -589,22 +589,6 @@ def build_filtered_gpkg(
         run_command(args)
 
 
-def convert_gpkg_to_fgb(gpkg: Path, asset: AssetSpec, output: Path) -> None:
-    remove_if_exists(output)
-    run_command(
-        [
-            "ogr2ogr",
-            "-f",
-            "FlatGeobuf",
-            str(output),
-            str(gpkg),
-            asset.tile_layer,
-            "-nlt",
-            "GEOMETRY",
-        ]
-    )
-
-
 def convert_geojsonseq_to_fgb(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
     remove_if_exists(output)
     run_command(
@@ -1096,6 +1080,7 @@ def publish_asset(
     asset: AssetSpec,
     outputs: AssetOutputs,
     run_date: dt.date,
+    attempt_date: dt.date,
     source_url: str,
     source_version: str,
     source_fields: tuple[FieldSpec, ...],
@@ -1114,7 +1099,7 @@ def publish_asset(
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
         "asset_slug": asset.slug,
-        "run_date": run_date.isoformat(),
+        "run_date": attempt_date.isoformat(),
         "release_date": run_date.isoformat(),
         "status": "success",
         "source": source_url,
@@ -1380,6 +1365,7 @@ def run() -> list[dict[str, Any]]:
                         asset=asset,
                         outputs=outputs,
                         run_date=run_date,
+                        attempt_date=attempt_date,
                         source_url=source_url,
                         source_version=source_version,
                         source_fields=source_fields,

@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 import re
 
-from ingestion.eamlis_monthly import identity as ids, identity_state as state, source_quality as quality
+from ingestion.eamlis_monthly import identity as ids, identity_state as state
+from ingestion.common.source_quality import EAMLIS as quality
 
 URI = f"gs://{quality.BUCKET}/"
 CONTROL_URI = URI + quality.CONTROL

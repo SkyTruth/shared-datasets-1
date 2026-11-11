@@ -45,6 +45,10 @@ promotion; route interrupted owned publications to their original owner.
 
 ## Capture and finalization boundaries
 
+Successful run records keep the UTC day they are prepared in `run_date` and the
+published release date in `release_date`. Release paths and run-record object
+names use `release_date`. Metadata finalization preserves both date fields.
+
 `publish-release` execution copies all planned artifact/metadata inputs to a
 private temporary workspace, verifies sizes/hashes, then validates and uploads
 those copies. Allow space for the complete input set. Changes to original files

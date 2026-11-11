@@ -540,6 +540,13 @@ def test_registered_permission_probes_preserve_historical_endpoints():
     for name, expected in fixture.items():
         if name == 'monitoring-alerts':
             expected = [(url, [p for p in values if p != 'logging.logMetrics.delete']) for url, values in expected]
+        elif name == 'ingestion-iam':
+            expected = [*expected, (
+                'https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/jobs/mpatlas-monthly:testIamPermissions',
+                ['run.jobs.getIamPolicy', 'run.jobs.setIamPolicy'],
+            )]
+        elif name == 'mpatlas-monthly':
+            expected = [*expected, *fixture['translation-bootstrap']]
         assert permissions.checks(name) == [(url, tuple(values)) for url, values in expected]
     with pytest.raises(KeyError):
         permissions.checks('unregistered-target')

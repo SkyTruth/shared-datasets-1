@@ -69,14 +69,16 @@ def outputs_fixture(directory, asset, date=DATE):
     return replace(outputs, sha256=hashes, next_generated_feature_id=3, identity_contract=CONTRACT_ID)
 
 
-def publish(publisher, asset, outputs, date=DATE):
+def publish(publisher, asset, outputs, date=DATE, *, attempt_date=DATE):
     if asset.slug.startswith("wdpa-"):
         return wdpa.publish_asset(publisher=publisher, asset=asset, outputs=outputs, run_date=date,
+                                  attempt_date=attempt_date,
                                   source_url="https://example.test/source.zip", source_version="Oct2026", source_fields=())
     source_date = date - dt.timedelta(days=1)
     readme = outputs.fgb.parent / "asset_README.md"
     readme.write_text("# IMS Sea-Ice Extent\nReviewed new-contract documentation.\n")
     return sea_ice.publish_outputs(fingerprint=sea_ice.fingerprints.Fingerprint("fixture", {}), publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
+                                   attempt_date=attempt_date,
                                    source=sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date)))
 
 
@@ -100,6 +102,28 @@ def translation_plan(store, asset):
             plan["promotions"].append({"source_uri": source.path, "source_generation": str(source.generation),
                 "destination_uri": target, "destination_generation": str(store.head(target).generation)})
     return plan
+
+
+@pytest.mark.parametrize("asset", [sea_ice.ASSET, wdpa.ASSETS[0]], ids=["sea-ice", "wdpa"])
+def test_success_under_source_lag_indexes_attempt_and_release_separately(asset, tmp_path, monkeypatch):
+    monkeypatch.setattr("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+                        lambda *args: SimpleNamespace(valid=True, errors=()))
+    publisher, store = publisher_fixture(asset)
+    attempt = DATE + dt.timedelta(days=8)
+    record = publish(publisher, asset, outputs_fixture(tmp_path, asset), attempt_date=attempt)
+    run = store.read_json(record["run_record"]["path"]).value
+    assert run["run_date"] == attempt.isoformat()
+    assert run["release_date"] == DATE.isoformat()
+    assert record["run_record"]["path"] == f"gs://bucket/{asset.run_record_object(DATE)}"
+    manifest_uri = f"gs://bucket/{asset.release_object(DATE, '.manifest.json')}"
+    assert store.read_json(manifest_uri).value["release"] == DATE.isoformat()
+    index = store.read_json(release_index.release_index_uri("bucket", asset.slug)).value
+    assert index["latest_release"]["date"] == DATE.isoformat()
+    assert index["latest_run"]["date"] == attempt.isoformat()
+    normalized = release_index.normalize_rebuild_run_record(run)
+    rebuilt = release_index.build_index_from_records(asset_slug=asset.slug, records=[(normalized, record["run_record"])])
+    assert rebuilt["latest_release"]["date"] == DATE.isoformat()
+    assert rebuilt["latest_run"]["date"] == attempt.isoformat()
 
 
 class OwnedPublicationTests(unittest.TestCase):
@@ -279,6 +303,8 @@ class OwnedPublicationTests(unittest.TestCase):
                 self.assertEqual(index["latest_run"]["date"], "2026-11-02")
                 self.assertEqual(index["latest_run"]["status"], "skipped")
                 self.assertEqual(records[0]["target_release_date"], "2026-11-01")
+                self.assertEqual(records[0]["run_date"], "2026-11-02")
+                self.assertEqual(records[0]["release_date"], "2026-11-02")
                 self.assertEqual(index["latest_release"]["date"], DATE.isoformat())
                 self.assertEqual(store.read_json(checker.context(asset).state_uri).value, before)
 

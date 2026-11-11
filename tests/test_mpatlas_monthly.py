@@ -13,6 +13,8 @@ import pytest
 
 from ingestion.mpatlas_monthly import run as job
 from ingestion.common import feature_metadata as fm
+from tests.test_eamlis_monthly import FakeBucket
+from scripts import slack_notify
 
 
 DAY = dt.date(2026, 11, 2)
@@ -83,18 +85,19 @@ def test_source_boundary_preserves_nested_properties_and_counts_exclusions(tmp_p
     prepared = list(fm.iter_geojsonseq(output))
     assert prepared[0]["properties"]["classes"] == '{"fishing":["none"]}'
     assert prepared[0]["properties"]["formally_recognized"] is True
-    with pytest.raises(RuntimeError, match="no publishable"):
-        job.prepare_source(source_file(tmp_path, [missing]), output)
-    with pytest.raises(RuntimeError, match="no publishable"):
-        job.prepare_source(source_file(tmp_path, []), output)
+    assert job.prepare_source(source_file(tmp_path, [missing]), output)["published_rows"] == 0
+    assert job.prepare_source(source_file(tmp_path, []), output)["published_rows"] == 0
 
 
 @pytest.mark.parametrize("kind", ["source", "content"])
 def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path, kind):
     raw = b'{"type":"FeatureCollection","features":[]}'
     records = sidecar([feature()])
-    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256, hashlib.sha256(raw).hexdigest() if kind == "source" else "0" * 64, 1)
+    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256,
+                            hashlib.sha256(raw).hexdigest() if kind == "source" else "0" * 64, 1, frozenset({"1"}))
     publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = FakeBucket()
+    publisher.bucket.name = job.quality.BUCKET
     publisher.load_json.return_value = None
     def download(_url, destination, **kwargs):
         destination.write_bytes(raw)
@@ -107,6 +110,9 @@ def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path,
     assert result["status"] == "skipped"
     assert result["source_fingerprint_hash"] == baseline.fingerprint_hash
     assert result["reason"] == "source fingerprint unchanged"
+    # The check-in names the day it ran and the release that stays current.
+    assert (result["run_date"], result["release_date"], result["row_count"]) == (DAY.isoformat(), "2026-10-16", 1)
+    assert publisher.write_run_record.call_args.kwargs["run_date"] == DAY
     build.assert_not_called()
     publish.assert_not_called()
     publisher.write_run_record.assert_called_once()
@@ -116,13 +122,15 @@ def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path,
 
 def test_completed_run_is_idempotent_and_partial_run_is_not_bypassed(tmp_path):
     publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = FakeBucket()
+    publisher.bucket.name = job.quality.BUCKET
     publisher.load_json.return_value = {"status": "success"}
     with mock.patch.object(job, "download_file") as download:
         assert job.ingest(publisher, DAY, tmp_path) == {"status": "success"}
         download.assert_not_called()
     publisher.load_json.return_value = None
     publisher.assert_no_partial_release.side_effect = RuntimeError("partial release")
-    with mock.patch.object(job, "load_baseline", return_value=job.Baseline("2026-10-16", "changed", None, 1)), \
+    with mock.patch.object(job, "load_baseline", return_value=job.Baseline("2026-10-16", "changed", None, 1, frozenset({"1"}))), \
          mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_bytes(b"changed")), \
          mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", sidecar([feature()]), {})), \
          mock.patch.object(job, "build_outputs") as build:
@@ -133,6 +141,8 @@ def test_completed_run_is_idempotent_and_partial_run_is_not_bypassed(tmp_path):
 
 def test_bad_baseline_checksum_fails_before_comparison():
     publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = FakeBucket()
+    publisher.bucket.name = job.quality.BUCKET
     publisher.bucket = mock.Mock()
     publisher.bucket.name = "skytruth-shared-datasets-1"
     publisher.bucket.blob.return_value.generation = 1
@@ -189,6 +199,8 @@ def test_byte_shortcut_is_bound_to_normalized_fingerprint_definition(tmp_path, m
     manifest = {"release": "2026-10-16", "identity": {"strategy": "source_field", "source_fields": ["zone_id"]},
                 "source_inputs": [source], "validation": {"feature_count": len(records)}}
     publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = FakeBucket()
+    publisher.bucket.name = job.quality.BUCKET
     publisher.bucket = mock.Mock()
     publisher.bucket.name = "bucket"
     publisher.bucket.blob.return_value.generation = 1
@@ -208,7 +220,7 @@ def test_interrupted_skip_retries_only_checkin_without_losing_run_pointer(tmp_pa
     bucket = FakeBucket()
     publisher = job.GcsPublisher(FakeClient(bucket), bucket.name)
     records = sidecar([feature()])
-    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256, "a" * 64, 1)
+    baseline = job.Baseline("2026-10-16", job.source_fingerprint(records).sha256, "a" * 64, 1, frozenset({"1"}))
     def download(_url, destination, **kwargs):
         destination.write_text("downloaded source")
     with mock.patch.object(job, "load_baseline", return_value=baseline) as load, \
@@ -228,3 +240,61 @@ def test_interrupted_skip_retries_only_checkin_without_losing_run_pointer(tmp_pa
     index = json.loads(bucket.blob(f"_catalog/releases/{job.ASSET.slug}.json").text)
     assert index["latest_run"]["run_record_path"] == f"gs://{bucket.name}/{run.name}"
     assert index["latest_release"] is None
+
+
+TOOLS = {"ogr2ogr": {"path": "/usr/bin/ogr2ogr", "version": "GDAL 3.6.2"}}
+
+
+def changed_ingest(tmp_path, published_zones, source_zones):
+    """Run a changed-source refresh; the baseline's rows and IDs come from the same published zones."""
+    records = sidecar([feature(zone) for zone in source_zones], DAY.isoformat())
+    published = frozenset(str(zone) for zone in published_zones)
+    baseline = job.Baseline("2026-10-16", "0" * 64, None, len(published), published)
+    publisher = mock.Mock(spec=job.GcsPublisher)
+    publisher.bucket = FakeBucket()
+    publisher.bucket.name = job.quality.BUCKET
+    publisher.load_json.return_value = None
+    bundle = mock.Mock(release_paths=[{"path": "release"}], latest_paths=[{"path": "latest"}], sha256={"fgb": "f" * 64})
+    counts = {"published_rows": len(records)}
+    with mock.patch.object(job, "load_baseline", return_value=baseline), \
+         mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_bytes(b"changed")), \
+         mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, counts)), \
+         mock.patch.object(job, "build_outputs", side_effect=lambda *args: fixture_outputs(tmp_path, records)), \
+         mock.patch.object(job, "toolchain", return_value=TOOLS), \
+         mock.patch.object(job.vector_pipeline, "publish_vector_bundle", return_value=bundle) as publish, \
+         mock.patch.object(slack_notify, "notify"):
+        return job.ingest(publisher, DAY, tmp_path), publisher, publish
+
+
+def test_changed_source_publishes_a_record_with_tools_and_lost_zone_count(tmp_path):
+    # 40 published zones; zone 40 is gone and zone 41 is new: 2.5% lost, inside the 5% limit.
+    result, publisher, publish = changed_ingest(tmp_path, range(1, 41), [*range(1, 40), 41])
+    assert (result["status"], result["run_date"], result["release_date"]) == ("success", DAY.isoformat(), DAY.isoformat())
+    assert (result["row_count"], result["lost_objects"], result["tools"]) == (40, 1, TOOLS)
+    assert result["source_stats"] == {"published_rows": 40} and result["release_paths"] == [{"path": "release"}]
+    assert result["release_path"] == f"gs://{job.quality.BUCKET}/{job.ASSET.release_prefix(DAY)}/"
+    publish.assert_called_once()
+    assert publish.call_args.kwargs["source_inputs"][0]["tools"] == TOOLS
+    publisher.write_run_record.assert_called_once_with(asset=job.ASSET, run_date=DAY, payload=result)
+
+
+def test_lost_zones_beyond_the_limit_stop_before_any_publication(tmp_path):
+    # 40 published zones; three are replaced by three new ones. Net change is zero; 7.5% are lost.
+    result, publisher, publish = changed_ingest(tmp_path, range(1, 41), [*range(1, 38), 41, 42, 43])
+    assert result["status"] == "held" and result["reason"] == "objects_lost"
+    assert result["hold"]["candidate"] is not None
+    assert result["hold"]["observation"]["lost_objects"] == 3
+    publish.assert_not_called()
+    publisher.write_run_record.assert_not_called()
+
+
+def fixture_outputs(directory, records):
+    """Replace native builders only; use real sidecar, schema and manifest serialization."""
+    paths = {role: directory / (job.ASSET.slug + suffix) for role, suffix in fm.ROLE_SUFFIXES.items()}
+    paths["fgb"].write_bytes(b"external-native-fgb")
+    paths["pmtiles"].write_bytes((Path(__file__).parent / "browser/fixtures/old.pmtiles").read_bytes())
+    fm.write_sidecar(records, paths["metadata"])
+    schema = fm.schema_from_records(asset_slug=job.ASSET.slug, release=records[0]["release"], records=records)
+    fm.write_schema(schema, paths["schema"])
+    return job.Outputs(**paths, row_count=len(records), schema_payload=schema,
+                       sha256={r: job.sha256_file(paths[r]) for r in job.vector_pipeline.CORE_BUNDLE_ROLES})

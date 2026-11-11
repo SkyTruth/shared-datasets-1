@@ -217,7 +217,10 @@ def test_new_month_builds_then_publishes_without_acceptance_or_deployment(schedu
     assert automatic.run() == [{'status': 'success'}]
     assert scheduled.build.call_args.args[:2] == (scheduled.client, dt.date(2026, 11, 1))
     assert scheduled.promote.call_args.args[2] == scheduled.reference
-    assert scheduled.promote.call_args.kwargs == {'producer_source': gate.source_digest(), 'requested_date': dt.date(2026, 11, 1)}
+    assert scheduled.promote.call_args.kwargs == {
+        'producer_source': gate.source_digest(), 'requested_date': dt.date(2026, 11, 1),
+        'attempt_date': dt.date(2026, 11, 2),
+    }
     assert scheduled.publisher.resume.call_count == 2
 
 
