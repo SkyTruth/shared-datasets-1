@@ -20,7 +20,15 @@ const viewport = page => page.evaluate(async () => {
 // Observe the real MapLibre idle boundary, including pending source/style renders.
 const mapIdle = page => page.evaluate(() => new Promise(resolve => {
   const map = window.catalogTestMap;
-  map.once('idle', resolve);
+  // Extents visits an overview, then asynchronously fits the chosen category.
+  // Let idle consumers start that second movement before accepting readiness.
+  const settled = () => requestAnimationFrame(() => {
+    if (!map.isMoving() && map.loaded()) {
+      map.off('idle', settled);
+      resolve();
+    }
+  });
+  map.on('idle', settled);
   map.triggerRepaint();
 }));
 // Neutral raster tile preserves the real basemap layer without external traffic.
@@ -876,14 +884,16 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  await expect(legend.locator('button').first()).toBeEnabled();
   await expect(legend.locator('[data-change="metadata_changed"]')).toHaveText('Metadata changed');
   await expect(legend.locator('[data-change="novel"]')).toHaveText('Added / moved here');
   // Gray points occupy the same pixels as changes. Assert actual paint output
   // across both release sources, rather than testing style expression strings.
   await expect.poll(async () => { const image = await sampleCanvas(canvas); return comparisonColors.every(color => nearColor(image,color)); }).toBe(true);
   await testInfo.attach('comparison-overlapping-points.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
+  await mapIdle(page);
   const union = await viewport(page), hits = page.locator('#feature-inspector .feature-hit');
-  for (const [category, count, side, longitude] of [['novel',1,'After',1], ['removed',1,'Before',-1], ['metadata_changed',2,'',.1]]) {
+  for (const [category, count, side, longitude, featureId] of [['novel',1,'After',1,'new'], ['removed',1,'Before',-1,'old'], ['metadata_changed',2,'',.1,'common']]) {
     const beforeFilter = await viewport(page);
     await legend.locator(`[data-change="${category}"]`).click();
     await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(1);
@@ -895,8 +905,15 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
     }).toBe(true);
     await mapIdle(page);
-    const box = await canvas.boundingBox();
-    await canvas.click({position:{x:box.width/2,y:box.height/2}});
+    // The z4 fixture's quantized points need not land exactly at the center
+    // of bounds computed at overview zoom. Click the rendered feature itself.
+    const position = await page.evaluate(featureId => {
+      const map = window.catalogTestMap;
+      const feature = map.queryRenderedFeatures().find(item => item.properties.feature_id === featureId);
+      const point = map.project(feature.geometry.coordinates);
+      return {x:point.x, y:point.y};
+    }, featureId);
+    await canvas.click({position});
     await expect(hits).toHaveCount(count);
     if (side) await expect(hits.first()).toContainText(`${side} ·`);
     if (category === 'metadata_changed') {
@@ -912,7 +929,7 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       // Each release keeps both hits; only the matched edited object highlights.
       await legend.locator('[data-change="metadata_changed"]').click();
       await mapIdle(page);
-      await canvas.click({position:{x:box.width/2,y:box.height/2}});
+      await canvas.click({position});
       await expect(hits).toHaveCount(4);
       const unchanged = hits.filter({hasText:'grayCommon'});
       await expect(unchanged).toHaveCount(2);
@@ -929,6 +946,8 @@ test('unchanged filters survive basemap changes and release changes reset filter
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  await expect(legend.locator('button').first()).toBeEnabled();
+  await mapIdle(page);
   const union = await viewport(page);
   await legend.locator('[data-change="metadata_changed"]').click();
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
