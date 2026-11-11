@@ -19,7 +19,7 @@ locals {
     cleanup    = ["storage.objects.list", "storage.objects.get", "storage.objects.create", "storage.objects.delete"]
     runtime = concat(local.observer_permissions, [
       "run.jobs.run", "run.jobs.runWithOverrides", "run.executions.cancel", "cloudscheduler.jobs.enable", "cloudscheduler.jobs.pause",
-      "compute.urlMaps.invalidateCache", "compute.globalOperations.get",
+      "compute.urlMaps.get", "compute.urlMaps.invalidateCache", "compute.globalOperations.get",
       "artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts", "artifactregistry.repositories.uploadArtifacts",
       "artifactregistry.dockerimages.get", "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update",
     ])

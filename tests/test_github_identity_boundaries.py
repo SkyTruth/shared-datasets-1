@@ -195,6 +195,9 @@ def test_observer_permissions_and_grants_are_read_only_and_runtime_has_no_iam_ad
         assert all(permission.rsplit('.', 1)[1] in {'get', 'list'} for permission in permissions[identity])
     assert not any('setIamPolicy' in permission or 'secretmanager.versions.' in permission for row in permissions.values() for permission in row)
     assert {'run.jobs.run', 'run.executions.cancel', 'cloudscheduler.jobs.enable', 'compute.urlMaps.invalidateCache'} <= set(permissions['runtime'])
+    # gcloud compute url-maps invalidate-cdn-cache reads the URL map after the invalidation
+    # operation; run 42903675348 attempt 2 failed on the missing get after invalidating.
+    assert {'compute.urlMaps.get', 'compute.urlMaps.invalidateCache', 'compute.globalOperations.get'} <= set(permissions['runtime'])
     assert not set(permissions['observer']) & {'run.jobs.run', 'logging.logEntries.create', 'run.services.update'}
     # The sole observer storage grant has the predefined read-only object role.
     grant = attributes('github_job_identities.tf', 'google_storage_bucket_iam_member', 'github_job_reader')
