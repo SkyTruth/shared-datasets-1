@@ -16,8 +16,9 @@ use durable owned publication state and its successful receipt. MPAtlas verifies
 the generation-pinned published manifest and canonical metadata. Existing
 same-date completed requests remain idempotent; a rerun is not permission to
 replace a release. A missing legacy fingerprint cannot establish equality for a
-new release. e-AMLIS refreshes once; generated assets still require their installed
-identity contract and approved reset/recovery path.
+new release. A verified e-AMLIS baseline without a fingerprint publishes changed
+content once; a broken baseline requires reviewed repair. Generated assets still
+require their installed identity contract and approved reset/recovery path.
 
 Canonical JSON ignores object-key order. Feature rows and translation CSV rows
 are multisets of SHA-256 values sorted before hashing: row order is irrelevant,
@@ -39,19 +40,23 @@ full numeric precision and vertex order. The CSV's fields and rows, maintained
 translation fields and locales are also included.
 
 The job downloads and validates the selected source and captures the translation
-CSV generation before comparing. It builds no FGB, PMTiles or release sidecars
-on equality. The CSV used for localization is reconciled once; the successful
-fingerprint records that final consumed CSV, also published with the release.
-Consequently generated translation-debt rows do not trigger a redundant release
-on the next check. The manifest retains the original captured CSV generation and
-hash as provenance.
+CSV generation before comparing. `describe` prepares canonical metadata and
+reconciles translation reuse against it before hashing. `build` generates native
+FGB/PMTiles artifacts and locale sidecars only for changed content. The successful
+record and manifest name the fingerprint of that reconciled CSV, published in
+the same bundle. The next attempt describes the same source and published CSV
+with the same hash. Reconciled translation rows cannot trigger a redundant
+release on the next check. The manifest retains the original captured CSV
+generation and hash as provenance. `source_version` records the acquired GeoJSON SHA-256.
+An unchanged record uses the attempt for `run_date` and the baseline release for
+`release_date`, without writing dataset artifacts.
 
 ArcGIS edit dates, maximum IDs/revision dates and row statistics remain diagnostics,
 not skip authority. Identical statistics cannot hide geometry or attribute edits.
 The old FGB-only skip was removed because unchanged FGB bytes cannot establish
-unchanged localization inputs. A missing/invalid metadata contract still requires
-a refresh. Existing partial dated artifacts fail before a new comparison; they
-cannot be hidden by an unchanged-source skip.
+unchanged localization inputs. A missing/invalid baseline metadata contract requires
+reviewed repair before source acquisition. Existing partial dated artifacts fail
+before a new comparison; an unchanged-source skip cannot hide them.
 
 Limitations: paginated ArcGIS requests are not an upstream transactional snapshot.
 Row counts and null geometry are checked, but same-count edits during pagination

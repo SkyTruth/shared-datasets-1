@@ -34,7 +34,9 @@ entries below explain individual commands only.
 `eamlis_source_loss_review.py` reads persistent quality holds for registered assets
 (EAMLIS by default, or `--asset mpatlas-zone-assessments`), prepares
 their immutable approval plans, and supplies the protected staging-catalog and
-resolution workflow steps. See [source-quality review](../docs/eamlis-source-quality.md).
+resolution workflow steps. EAMLIS limits lost baseline feature IDs to 5%; additions
+do not offset losses. Earlier `geometry_count_drop` holds and candidates remain
+reviewable and approvable through the same exact-plan path. See [source-quality review](../docs/eamlis-source-quality.md).
 Interface: `uv run python scripts/eamlis_source_loss_review.py --help`.
 
 `eamlis_identity_audit.py` replays checksum-pinned local historical releases;
