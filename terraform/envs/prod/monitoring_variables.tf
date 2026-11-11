@@ -4,12 +4,6 @@ variable "cron_alerts_enabled" {
   default     = true
 }
 
-variable "operational_safety_absent_enabled" {
-  description = "Enable the independent 49-hour safety heartbeat absence alert only after the first verified daily heartbeat."
-  type        = bool
-  default     = false
-}
-
 variable "cron_alert_notification_channels" {
   description = "Existing Cloud Monitoring notification channel resource names for cron alerts, for example projects/shared-datasets-1/notificationChannels/123456789. Prefer this for Slack channels created through the Google Cloud console OAuth flow."
   type        = list(string)

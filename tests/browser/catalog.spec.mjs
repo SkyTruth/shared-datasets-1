@@ -17,6 +17,12 @@ const viewport = page => page.evaluate(async () => {
   const url = performance.getEntriesByType('resource').find(item => new URL(item.name).pathname === '/map-preview.js').name;
   return (await import(url)).captureViewport();
 });
+// Observe the real MapLibre idle boundary, including pending source/style renders.
+const mapIdle = page => page.evaluate(() => new Promise(resolve => {
+  const map = window.catalogTestMap;
+  map.once('idle', resolve);
+  map.triggerRepaint();
+}));
 // Neutral raster tile preserves the real basemap layer without external traffic.
 const basemapPNG = await readFile(resolve(packageDir, 'fixtures/basemap.png'));
 const libraries = new Map([
@@ -64,6 +70,13 @@ const test = base.extend({
       }
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
+        if (file === 'maplibre-gl/dist/maplibre-gl.js') {
+          const library = await readFile(resolve(packageDir, 'node_modules', file), 'utf8');
+          return route.fulfill({contentType, body: library + `
+            window.maplibregl.Map = class extends window.maplibregl.Map {
+              constructor(options) { super(options); window.catalogTestMap = this; }
+            };`});
+        }
         return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType });
       }
       if (/^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url.href)) return route.fulfill({ body: basemapPNG, contentType: 'image/png' });
@@ -290,6 +303,7 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   const camera = await viewport(page);
   await page.locator('#zoom-selection').click();
   await expect.poll(async () => JSON.stringify(await viewport(page))).not.toBe(JSON.stringify(camera));
+  await mapIdle(page);
   await page.locator('#feature-lookup-clear').click();
   await expect(field).toHaveValue('');
   await expect(field).toBeFocused();
@@ -297,6 +311,7 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   await expect(page.locator('#color-legend')).toBeHidden();
   // Zoom to extents restores the original camera before the next lookup.
   await page.getByRole('button', {name:'Zoom to extents', exact:true}).click();
+  await mapIdle(page);
   await field.fill('a2');
   await field.press('Enter');
   await expectMetadata(page, true);
@@ -879,7 +894,7 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       const view = await viewport(page);
       return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
     }).toBe(true);
-    await canvas.screenshot();
+    await mapIdle(page);
     const box = await canvas.boundingBox();
     await canvas.click({position:{x:box.width/2,y:box.height/2}});
     await expect(hits).toHaveCount(count);
@@ -896,6 +911,7 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
       // Reveal the distinct unchanged object at precisely the same coordinates.
       // Each release keeps both hits; only the matched edited object highlights.
       await legend.locator('[data-change="metadata_changed"]').click();
+      await mapIdle(page);
       await canvas.click({position:{x:box.width/2,y:box.height/2}});
       await expect(hits).toHaveCount(4);
       const unchanged = hits.filter({hasText:'grayCommon'});
@@ -917,6 +933,7 @@ test('unchanged filters survive basemap changes and release changes reset filter
   await legend.locator('[data-change="metadata_changed"]').click();
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => (await viewport(page)).zoom).toBeGreaterThan(union.zoom + 1);
+  await mapIdle(page);
   await legend.locator('[data-change="metadata_changed"]').click();
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
   const beforeUnchanged = await viewport(page);
@@ -925,7 +942,7 @@ test('unchanged filters survive basemap changes and release changes reset filter
   expect(await viewport(page)).toEqual(beforeUnchanged);
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => (await viewport(page)).zoom).toBeLessThan(union.zoom + 1);
-  await canvas.screenshot();
+  await mapIdle(page);
   {const image=await sampleCanvas(canvas);expect(comparisonColors.some(color=>nearColor(image,color))).toBe(false);}
   await page.locator('#basemap-select').selectOption('satellite');
   await expect(page.locator('#map-status')).toBeHidden();
@@ -940,6 +957,7 @@ test('unchanged filters survive basemap changes and release changes reset filter
   await expect(page.locator('#compare-page')).toHaveText('1–6 of 6');
   expect(await viewport(page)).toEqual(beforeUnfilter);
   await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
+  await mapIdle(page);
   await expect.poll(async () => {const image=await sampleCanvas(canvas);return comparisonColors.every(color=>nearColor(image,color));}).toBe(true);
   await legend.locator('[data-change="novel"]').click();
   await legend.locator('[data-change="removed"]').click();
@@ -961,7 +979,7 @@ test('comparison selection changes discard late polygon metadata', async ({page,
   const canvas = page.locator('#map-preview canvas'), box = await canvas.boundingBox();
   const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
   const low = mercatorY(-1.5), high = mercatorY(3), scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (low - high), 512 * 2 ** 8);
-  const clickShared = () => canvas.click({position: {x: box.width / 2 + .5 / 360 * scale, y: box.height / 2 + (mercatorY(.5) - (low + high) / 2) * scale}});
+  const clickShared = async () => { await mapIdle(page); return canvas.click({position: {x: box.width / 2 + .5 / 360 * scale, y: box.height / 2 + (mercatorY(.5) - (low + high) / 2) * scale}}); };
   const hits = page.locator('#feature-inspector .feature-hit');
   transport.holdMetadata = true;
   await clickShared();
@@ -1142,7 +1160,9 @@ test('sidecar colorization separates identifiers from measures and zooms the foc
   const before = await viewport(page);
   await page.locator('#zoom-selection').click();
   await expect.poll(async () => JSON.stringify(await viewport(page))).not.toBe(JSON.stringify(before));
+  await mapIdle(page);
   await page.getByRole('button', {name:'Zoom to extents', exact:true}).click();
+  await mapIdle(page);
   await page.locator('#colorize-select').selectOption('fatalities');
   await expect(items).toHaveCount(5);
   const measureColors = await items.evaluateAll(nodes => nodes.map(node => node.querySelector('span').style.background));

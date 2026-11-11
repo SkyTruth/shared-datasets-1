@@ -343,6 +343,9 @@ def report_health(api, run, directory, problems, warnings, now):
         notify(title="Operational safety findings", body="\n".join(findings) + f"\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
                status="error" if problems else "warning", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
         report["notified_at"] = now.isoformat()
+    elif not findings and previous["notified_at"] and (previous["problems"] or previous["warnings"]):
+        notify(title="Operational safety findings resolved", body=f"{HEALTH_SCOPE}: all findings cleared.\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
+               status="success", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
     retain_health(directory, report)
     for finding in findings:
         print("::warning::" + finding)
