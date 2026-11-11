@@ -78,3 +78,37 @@ def test_task_timeout_bounds_preserve_wdpa_batch_window(slug, seconds):
         config = hcl2.load(stream, serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
     job = next(module[slug + '_job'] for module in config['module'] if slug + '_job' in module)
     assert job['timeout'] == seconds
+
+
+def test_hold_runtime_iam_is_owned_by_ordered_bootstrap_and_sync():
+    from scripts import deployment_permissions
+    from scripts.terraform_target_contracts import registry
+    from tests.test_scheduled_ingestion_iam_tf import terraform_resource_block
+
+    targets = registry(section="targets")
+    bootstrap = targets["Translation notice secret IAM bootstrap"]["resources"]
+    sync = targets["Scheduled ingestion deploy IAM sync"]["resources"]
+    assert "google_project_iam_custom_role.mpatlas_quality_iam_manager" in bootstrap
+    assert "google_project_iam_member.github_actions_mpatlas_quality_iam_manager" in bootstrap
+    assert "google_cloud_run_v2_job_iam_member.mpatlas_quality_execution_reader" in sync
+    assert "google_secret_manager_secret_iam_member.mpatlas_hold_notice" in sync
+    text = (ROOT / "terraform/envs/prod/mpatlas_monthly.tf").read_text()
+    storage = terraform_resource_block(text, "google_storage_bucket_iam_member", "mpatlas_job_object_user")
+    for prefix in ("shared_bucket_object_resource_prefix", "shared_bucket_folder_resource_prefix"):
+        assert f"${{local.{prefix}}}_scratch/pending-publishes/mpatlas-zone-assessments/" in storage
+        assert f"${{local.{prefix}}}_catalog/ingestion-holds/" in storage
+    assert "_catalog/ingestion-holds/mpatlas-zone-assessments.json" in storage
+    assert "SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id" in text
+    reader = terraform_resource_block(text, "google_cloud_run_v2_job_iam_member", "mpatlas_quality_execution_reader")
+    assert '"roles/run.viewer"' in reader and '"mpatlas-monthly"' in reader
+    assert "module.mpatlas_monthly_job" not in reader
+    role = terraform_resource_block(text, "google_project_iam_custom_role", "mpatlas_quality_iam_manager")
+    assert 'role_id     = "sharedDatasetsMpatlasQualityIamManager"' in role
+    assert 'permissions = ["run.jobs.getIamPolicy", "run.jobs.setIamPolicy"]' in role
+    manager = terraform_resource_block(text, "google_project_iam_member", "github_actions_mpatlas_quality_iam_manager")
+    assert "startsWith" not in manager
+    assert "resource.name == 'projects/${var.project_id}/locations/${var.region}/jobs/mpatlas-monthly'" in manager
+    permissions = deployment_permissions.checks("ingestion-iam")
+    assert any(url.endswith("/jobs/mpatlas-monthly:testIamPermissions") and
+               set(names) == {"run.jobs.getIamPolicy", "run.jobs.setIamPolicy"} for url, names in permissions)
+    assert registry(section="permission_probes")["mpatlas-monthly"] == ["job-runtime", "translation-bootstrap"]

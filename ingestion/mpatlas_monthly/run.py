@@ -18,6 +18,7 @@ from google.cloud import storage
 
 from ingestion.common import feature_metadata as fm, vector_pipeline, source_fingerprint as fingerprints, publication_readiness
 from ingestion.common import lifecycle
+from ingestion.common.source_quality import MPATLAS as quality
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
@@ -144,8 +145,6 @@ def prepare_source(source: Path, output: Path) -> dict[str, int]:
                 normalized[key] = value
             handle.write(fm.canonical_json({"type": "Feature", "properties": normalized, "geometry": geometry}) + "\n")
             counts["published_rows"] += 1
-    if not counts["published_rows"]:
-        raise RuntimeError("MPAtlas source contains no publishable geometries")
     return counts
 
 
@@ -177,6 +176,10 @@ def _prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
     # Only the identity crosses GDAL; source attributes are reattached verbatim.
     properties_by_id = {fm.source_field_feature_id("zone_id", f["properties"]["zone_id"]): f["properties"]
                         for f in fm.iter_geojsonseq(normalized)}
+    if not counts["published_rows"]:
+        enriched = workdir / "enriched.geojson"
+        enriched.write_text(fm.canonical_json({"type": "FeatureCollection", "features": []}), encoding="utf-8")
+        return enriched, [], counts
     repaired = workdir / "repaired.geojsonl"
     run_command(["ogr2ogr", "-f", "GeoJSONSeq", "-select", "zone_id", "-makevalid", "-nlt", "PROMOTE_TO_MULTI",
                  "-t_srs", "EPSG:4326", "-lco", "SIGNIFICANT_FIGURES=17",
@@ -246,6 +249,8 @@ class Refresh:
         if existing is None:
             self.publisher.assert_no_partial_release(ASSET, attempt)
             return None
+        if self.gate.held:
+            return self.gate.record()
         if existing.get("status") not in {"success", "skipped"}:
             raise RuntimeError("Existing MPAtlas run requires investigation before retry")
         if existing["status"] == "success":
@@ -258,7 +263,8 @@ class Refresh:
     def baseline(self) -> lifecycle.Baseline:
         self.published = load_baseline(self.publisher)
         return lifecycle.Baseline(dt.date.fromisoformat(self.published.release), self.published.fingerprint_hash,
-                                  self.published.row_count)
+                                  self.published.row_count,
+                                  self.gate.state["hold"]["reason"] if self.gate.held else None)
 
     def acquire(self, attempt: dt.date) -> lifecycle.Source:
         if attempt.isoformat() <= self.published.release:
@@ -269,7 +275,7 @@ class Refresh:
         return lifecycle.Source(attempt, SOURCE_URL, source_hash, {"source_sha256": source_hash})
 
     def describe(self, source: lifecycle.Source, baseline: lifecycle.Baseline) -> lifecycle.Content:
-        if source.version == self.published.source_sha256:
+        if not self.gate.held and source.version == self.published.source_sha256:
             return lifecycle.Content({"source_fingerprint_hash": self.published.fingerprint_hash},
                                      self.published.row_count, lost=0)
         self.enriched, self.records, counts = prepare_metadata(self.source, self.workdir, source.release)
@@ -283,6 +289,7 @@ class Refresh:
                                f"gs://{self.publisher.bucket.name}/{ASSET.release_prefix(source.release)}/")
 
     def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
+        self.gate.check_publication()
         release = dt.date.fromisoformat(record["release_date"])
         bundle = vector_pipeline.publish_vector_bundle(
             publisher=self.publisher, asset=ASSET, run_date=release, outputs=self.outputs,
@@ -301,12 +308,26 @@ class Refresh:
         return record
 
     def hold(self, reason: str, source: lifecycle.Source, content: lifecycle.Content, built) -> dict[str, Any]:
-        raise RuntimeError(f"MPAtlas release held for review ({reason}): {content.lost} of "
-                           f"{self.published.row_count} published zones are absent from the source; nothing published")
+        self.gate.block(reason, {"geometry_count": content.rows, "lost_objects": content.lost,
+            "maximum_lost_object_percent": self.loss_limit, "checked_at": quality.now()})
+        if built is not None:
+            record = lifecycle.published(self.slug, attempt=source.release, source=source, content=content,
+                                         built=built, lost=content.lost)
+            quality.stage_candidate(self.gate, output=self.outputs,
+                fingerprint=content.fingerprint["source_fingerprint"], release=source.release.isoformat(),
+                source_inputs=[{"uri": source.uri, "sha256": source.version, "size": self.source.stat().st_size,
+                    "source_fingerprint_hash": content.fingerprint["source_fingerprint_hash"], "tools": built.tools}],
+                identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
+                geometry_hash_algorithm=model.GEOMETRY_HASH_ALGORITHM,
+                record=record, source_input=self.source)
+        self.gate.notify()
+        return self.gate.record()
 
 
 def ingest(publisher: GcsPublisher, run_date: dt.date, workdir: Path) -> dict[str, Any]:
-    return lifecycle.run(Refresh(publisher, workdir), run_date)
+    refresh = Refresh(publisher, workdir)
+    with quality.Guard(publisher.bucket) as refresh.gate:
+        return lifecycle.run(refresh, run_date)
 
 
 def toolchain() -> dict[str, dict[str, str]]:
