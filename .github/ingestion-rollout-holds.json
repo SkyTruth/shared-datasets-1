@@ -7,21 +7,21 @@
   "mpatlas": {
     "owner": "jonaraphael",
     "reason": "Existing rollout hold; maintainer must review production readiness before release.",
-    "expires_at": "2026-11-12T23:59:59Z"
+    "expires_at": "2026-12-01T23:59:59Z"
   },
   "eamlis": {
     "owner": "jonaraphael",
     "reason": "Existing rollout hold; maintainer must review production readiness before release.",
-    "expires_at": "2026-11-12T23:59:59Z"
+    "expires_at": "2026-12-01T23:59:59Z"
   },
   "wdpa": {
     "owner": "jonaraphael",
     "reason": "Existing rollout hold; maintainer must review production readiness before release.",
-    "expires_at": "2026-11-12T23:59:59Z"
+    "expires_at": "2026-12-01T23:59:59Z"
   },
   "sea_ice": {
     "owner": "jonaraphael",
     "reason": "Existing rollout hold; maintainer must review production readiness before release.",
-    "expires_at": "2026-11-12T23:59:59Z"
+    "expires_at": "2026-12-01T23:59:59Z"
   }
 }

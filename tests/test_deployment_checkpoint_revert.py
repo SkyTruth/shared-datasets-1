@@ -154,10 +154,15 @@ def write_checkpoint(tmp_path, monkeypatch, sync_name, item, resolved):
     return api, record, state, checkpoint
 
 
-# Exercise every enabled Terraform scope, including changed existing scopes and
-# manual ones. New-only held scopes are separately proven unable to emit below.
+# The plain-revert window closed on 2026-11-11: these scopes now write
+# checkpoints that the pinned pre-rollout reader cannot read.
+NEW_ONLY_TARGETS = {'PR plan identity IAM bootstrap', 'PR plan identity provisioning'}
+
+
+# Exercise every Terraform scope old main knows, including changed existing
+# scopes and manual ones.
 @pytest.mark.parametrize('sync_name,item', [(name, item) for name, item in registry().items()
-                                          if not item.get('deployment_hold')])
+                                          if name not in NEW_ONLY_TARGETS])
 @pytest.mark.parametrize('resolved', [False, True], ids=['retained-open', 'retained-resolved'])
 def test_old_main_reconciles_current_checkpoints(old_snapshot, tmp_path, monkeypatch, sync_name, item, resolved):
     api, record, state, checkpoint = write_checkpoint(tmp_path, monkeypatch, sync_name, item, resolved)
@@ -215,32 +220,15 @@ def test_old_readers_still_reject_incompatible_signed_evidence(old_snapshot, tmp
             old.slack_incidents.verify_saved_success(api, state['incident']['resolution'])
 
 
-@pytest.mark.parametrize('name', ['PR plan identity IAM bootstrap', 'PR plan identity provisioning'])
-def test_contract_phase_targets_cannot_export_or_write_checkpoints(tmp_path, name):
-    item = registry()[name]
-    assert 'contract-phase PR' in item['deployment_hold']
-    environment = tmp_path / 'github-env'
-    result = subprocess.run([sys.executable, str(ROOT / 'scripts/terraform_target_contracts.py'),
-                             '--sync-name', name, '--workflow', item['workflow']],
-                            env={'GITHUB_ENV': str(environment)}, capture_output=True, text=True)
-    assert result.returncode == 1
-    assert 'Deployment held' in result.stderr
-    assert not environment.exists()
-    api = Mock()
-    args = SimpleNamespace(target='terraform-' + hashlib.sha256(name.encode()).hexdigest()[:16])
-    for entrypoint in (deployments.check, deployments.start):
-        with pytest.raises(deployments.DeploymentError, match='deployment held'):
-            entrypoint(args, api)
-    assert api.mock_calls == []
-
-
-def test_every_new_only_target_is_held_and_legacy_identity_name_is_removed(old_snapshot):
+def test_only_released_new_scopes_are_unknown_to_old_main_and_legacy_identity_name_is_removed(old_snapshot):
     with old_readers(old_snapshot) as old:
         old_names = set(old.deployment_revision.TERRAFORM_SYNCS)
     targets = registry()
     assert 'GitHub workflow identity sync' not in targets
-    assert set(targets) - old_names == {'PR plan identity IAM bootstrap', 'PR plan identity provisioning'}
-    assert all(targets[name]['deployment_hold'] for name in set(targets) - old_names)
+    assert set(targets) - old_names == NEW_ONLY_TARGETS
+    assert not any(targets[name].get('deployment_hold') for name in NEW_ONLY_TARGETS)
+    for name in NEW_ONLY_TARGETS:
+        assert 'terraform-' + hashlib.sha256(name.encode()).hexdigest()[:16] not in deployments.TERRAFORM_DEPLOYMENT_HOLDS
 
 
 def test_identity_fold_preserves_original_scopes_and_readiness_guards():

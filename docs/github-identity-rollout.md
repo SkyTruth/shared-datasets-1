@@ -108,11 +108,9 @@ reader code changes it and triggers full receipt revalidation rather than reject
 the checkpoint. Retained resolved checkpoints undergo that same target validation.
 
 The new-only `PR plan identity IAM bootstrap` and `PR plan identity provisioning`
-scopes have checked-in `deployment_hold` reasons. Registry export refuses them
-before cloud authentication, and deployment admission rejects both `check` and
-`start` before any API read/write. Manual dispatch cannot create their deployment
-checkpoints during phase 1. Remove the holds only in a separately reviewed PR
-that explicitly closes the plain-revert window; then provision these identities
+scopes were held with `deployment_hold` reasons until the plain-revert window
+closed on 2026-11-11. Their checkpoints are unreadable by pre-rollout main, so a
+plain revert of the rollout is no longer supported. Provision these identities
 and collect their authentication evidence before removing legacy access.
 
 `tests/test_deployment_checkpoint_revert.py` runs the current deployment and
@@ -120,10 +118,8 @@ incident writers against a pinned `4aa19c71` reader snapshot, with only external
 API/attestation transport replaced. It exercises retained open and resolved
 checkpoints for every enabled Terraform scope through receipt verification,
 incident reconciliation and the scheduled safety dry-run, plus refusal of
-altered environment/resource/signer/digest evidence and both held manual scopes.
-Thus a plain Git revert needs no incident-state cleanup for checkpoints this
-phase can write. This guarantee ends when a later reviewed change lifts these
-holds or enables an incompatible receipt signer.
+altered environment/resource/signer/digest evidence. It excludes the two released
+new-only scopes, which ended the plain-revert guarantee for their checkpoints.
 
 ## Phase 2: contract
 
