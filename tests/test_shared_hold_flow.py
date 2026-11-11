@@ -210,3 +210,37 @@ def test_interrupted_execution_lookup_is_bound_to_its_registered_job(flow):
             "https://run.googleapis.com/v2/" + job_name + "/executions/" + execution, timeout=30)
         with pytest.raises(source_quality.SourceLossError, match="unrecognized interrupted claim"):
             flow.execution_completed("unregistered-job-fixture")
+
+
+def test_held_retry_with_reformatted_source_stages_another_candidate(tmp_path):
+    client = Client()
+    publisher, _ = seed(client, tmp_path / "baseline")
+    zones = [*range(1, 38), 41, 42, 43]
+    with mock.patch.object(slack_notify, "notify") as send:
+        first, _, _ = execute(publisher, tmp_path / "attempt", zones, raw=b'{"type":"FeatureCollection"}')
+        second, _, _ = execute(publisher, tmp_path / "attempt", zones, raw=b'{ "type": "FeatureCollection" }')
+    # Same zones and fingerprint, other raw bytes: the retained source, manifest and record differ.
+    assert second["status"] == "held" and second["hold"]["id"] == first["hold"]["id"]
+    assert second["hold"]["candidate"]["path"] != first["hold"]["candidate"]["path"]
+    assert send.call_count == 1
+
+
+def test_hold_raised_after_a_recorded_run_still_asks_once(tmp_path):
+    client = Client()
+    publisher, original_source = seed(client, tmp_path / "baseline")
+    flow = job.quality
+    with mock.patch.object(slack_notify, "notify") as send:
+        checked, _, _ = execute(publisher, tmp_path / "attempt", range(1, 41), raw=original_source)
+        assert checked["status"] == "skipped"
+        # An execution that recorded its run and died before releasing its claim.
+        flow.Guard(publisher.bucket, owner="mpatlas-monthly-dead1").__enter__()
+        with mock.patch.object(flow, "execution_completed", return_value=True):
+            first, prepared, _ = execute(publisher, tmp_path / "attempt", range(1, 41), raw=original_source)
+            second, _, _ = execute(publisher, tmp_path / "attempt", range(1, 41), raw=original_source)
+    assert first["status"] == "held" and first["reason"] == "interrupted_execution"
+    assert first["hold"]["candidate"] is None and first["hold"]["notification"] == "sent"
+    assert second["hold"]["id"] == first["hold"]["id"]
+    prepared.assert_not_called()
+    send.assert_called_once()
+    state, _ = flow.Guard(publisher.bucket).load()
+    assert state["owner"] is None

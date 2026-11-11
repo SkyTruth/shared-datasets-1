@@ -525,8 +525,13 @@ class HoldFlow:
         guard.save()
 
     def stage_candidate(self, guard, *, output, fingerprint, release, source_inputs, identity,
-                        geometry_hash_algorithm, record, source_input, translations=None, extra_files=()):
-        """Build once and retain all exact promotion candidates outside canonical data."""
+                        geometry_hash_algorithm, record, source_input, translations=None, extra_files=(),
+                        evidence=None):
+        """Build once and retain all exact promotion candidates outside canonical data.
+
+        `evidence` names retained bytes the fingerprint and artifact hashes do
+        not determine, so two candidates never claim one immutable prefix.
+        """
         from ingestion.common import feature_metadata
         files = {role: getattr(output, role) for role in ("fgb", "pmtiles", "metadata", "schema")}
         files.update({f"extra-{n}": path for n, (_suffix, path) in enumerate(extra_files)})
@@ -535,6 +540,8 @@ class HoldFlow:
                 "source_fingerprint": fingerprint, "hashes": hashes}
         if identity.get("contract_id"):
             seed["identity"] = identity
+        if evidence:
+            seed["evidence"] = evidence
         candidate_id = digest(encode(seed))
         prefix = f"_scratch/pending-publishes/{self.SLUG}/source-loss-{candidate_id}/"
         staged = {role: immutable_file(guard.bucket, prefix + "objects/" + path.name, path)

@@ -250,6 +250,9 @@ class Refresh:
             self.publisher.assert_no_partial_release(ASSET, attempt)
             return None
         if self.gate.held:
+            # A hold raised while this date's run was already recorded has no
+            # later stage to announce it; the request is sent at most once.
+            self.gate.notify()
             return self.gate.record()
         if existing.get("status") not in {"success", "skipped"}:
             raise RuntimeError("Existing MPAtlas run requires investigation before retry")
@@ -319,7 +322,10 @@ class Refresh:
                     "source_fingerprint_hash": content.fingerprint["source_fingerprint_hash"], "tools": built.tools}],
                 identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
                 geometry_hash_algorithm=model.GEOMETRY_HASH_ALGORITHM,
-                record=record, source_input=self.source)
+                record=record, source_input=self.source,
+                # The retained source, manifest and record carry the raw bytes'
+                # hash; an equivalent response with other bytes is another candidate.
+                evidence={"source_sha256": source.version})
         self.gate.notify()
         return self.gate.record()
 
