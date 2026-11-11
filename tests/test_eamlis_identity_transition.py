@@ -13,7 +13,8 @@ from ingestion.common import feature_metadata, reset_controls
 from ingestion.common.publication import PublicationError
 from ingestion.eamlis_monthly import identity as ids, identity_installation as installation
 from ingestion.eamlis_monthly import identity_state as state, identity_translations as translations
-from ingestion.eamlis_monthly import run as eamlis, source_quality as quality
+from ingestion.eamlis_monthly import run as eamlis
+from ingestion.common.source_quality import EAMLIS as quality
 from scripts import compare_releases, dataset_mutation_authorization as auth
 from scripts import eamlis_identity_audit as audit, eamlis_identity_transition as transition
 from scripts import feature_metadata_localization as localization, release_feature_model as model

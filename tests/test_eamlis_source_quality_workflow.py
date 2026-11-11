@@ -64,3 +64,16 @@ def test_claim_recovery_permissions_are_limited_to_the_eamlis_job():
     checks = deployment_permissions.checks("ingestion-iam")
     assert any(url.endswith("/jobs/eamlis-monthly:testIamPermissions") and
                set(permissions) == {"run.jobs.getIamPolicy", "run.jobs.setIamPolicy"} for url, permissions in checks)
+
+
+def test_preview_accepts_registered_assets_without_changing_workflow_identity():
+    from ingestion.common.source_quality import FLOWS
+    workflow = load_workflow(ROOT / ".github/workflows/eamlis-held-candidate-preview.yml")
+    asset = workflow_triggers(workflow)["workflow_dispatch"]["inputs"]["asset"]
+    assert set(asset["options"]) == set(FLOWS)
+    assert asset["default"] == "eamlis-abandoned-mine-land-inventory"
+    job = workflow["jobs"]["inspect"]
+    assert job["env"]["ASSET"] == "${{ inputs.asset }}"
+    for command in ("download-preview", "upload-preview"):
+        step = next(s for s in job["steps"] if f" {command} " in s.get("run", ""))
+        assert '--asset "$ASSET"' in step["run"]

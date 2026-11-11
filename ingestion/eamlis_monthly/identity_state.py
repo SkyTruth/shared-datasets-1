@@ -51,13 +51,13 @@ def validate(value):
 
 
 def ledger_for(guard, ref):
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     reference(ref)
     return identity.Ledger.parse(json.loads(quality.pinned(guard.bucket.client, ref)))
 
 
 def selected_ledger(guard):
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     value = guard.state.get("identity")
     marker_data, _ = quality.read(guard.bucket, MARKER)
     if marker_data is None:
@@ -103,7 +103,7 @@ class Reservation:
 
 def reserve(guard, properties, directory: Path) -> Reservation | None:
     """Persist the selected immutable mapping before a builder can consume IDs."""
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     guard.require_owner()
     ledger = selected_ledger(guard)
     if ledger is None:
@@ -153,7 +153,7 @@ def validate_records(ledger, records):
 
 def validate_candidate(guard, candidate):
     """Review cannot replace the installed contract or its reserved assignments."""
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     from scripts import release_feature_model as model
     manifest_ref = next(ref for ref in candidate["files"] if ref["role"] == "manifest")
     manifest = json.loads(quality.pinned(guard.bucket.client, manifest_ref))
@@ -182,7 +182,7 @@ def validate_candidate(guard, candidate):
 
 def require_metadata_only(guard, plan):
     """Admit reviewed metadata operations without allowing feature replacement."""
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     from scripts import release_feature_model as model
     if "historical_checksum_repair" in plan:
         from ingestion.eamlis_monthly import checksum_repair
@@ -218,7 +218,7 @@ def require_metadata_only(guard, plan):
 
 def activate(guard):
     """Confirm complete canonical evidence before marking first publication done."""
-    from ingestion.eamlis_monthly import source_quality as quality
+    from ingestion.common.source_quality import EAMLIS as quality
     from scripts import release_feature_model as model
     current = quality.baseline(guard.bucket)
     identity.require(current is not None and current["release"].get("identity_contract") == identity.CONTRACT,

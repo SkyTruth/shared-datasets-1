@@ -28,6 +28,7 @@ terraform/envs/prod/<job_slug>.tf
 Use `ingestion/common/` for reusable internals that are not tied to one source
 or asset, such as:
 
+- retained-candidate holds, execution claims and reviewed resolution
 - generation-preconditioned GCS publishing
 - run-record writes
 - logging setup
@@ -53,6 +54,17 @@ describes in `release_date`. The release index takes `latest_run.date` from
 UTC day their run record is prepared. Release paths and run-record object names
 use the release date. Historical records without `run_date` use `release_date`
 for `latest_run.date`.
+
+`ingestion/common/source_quality.py` supplies one retained-candidate hold flow
+for EAMLIS and MPAtlas. The registry binds asset paths, labels, Cloud Run jobs
+and optional job-owned identity hooks. `Guard` persists holds and observations,
+serializes publication and claims one Slack request before delivery. `HoldFlow`
+stages immutable candidates and validates exact `source_loss_review` promotion
+plans; the protected publisher clears a hold only after finalized-byte and
+release-index verification. MPAtlas uses the lifecycle's lost-object limit;
+EAMLIS keeps its existing geometry net-count gate and identity checks. See
+[EAMLIS hold state and review](../docs/eamlis-source-quality.md) and
+[MPAtlas commands](mpatlas_monthly/README.md#review-a-held-release).
 
 ## Default Publishing Semantics
 

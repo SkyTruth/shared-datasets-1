@@ -14,7 +14,8 @@ import datetime as dt
 import json
 import re
 
-from ingestion.eamlis_monthly import identity as ids, source_quality as quality
+from ingestion.eamlis_monthly import identity as ids
+from ingestion.common.source_quality import EAMLIS as quality
 
 KEY = "historical_checksum_repair"
 URI = f"gs://{quality.BUCKET}/"

@@ -1,5 +1,19 @@
 # EAMLIS source-quality review
 
+`ingestion/common/source_quality.py` owns the hold/claim, retained candidate,
+Slack delivery state machine, inspection and reviewed promotion implementation.
+Its registry enables EAMLIS and MPAtlas; `HoldFlow` binds paths and execution
+identity and `Guard` serializes a check or promotion with generation preconditions.
+`stage_candidate`, `inspection`, `validate_candidate_plan`, `begin_promotion`
+and `finish_promotion` retain and verify the exact reviewed bundle.
+EAMLIS supplies its count/selection policy and identity-state hooks from
+`ingestion/eamlis_monthly/`; its control format, candidate identity, policy key,
+reason strings and alert text retain their existing contracts.
+[MPAtlas review commands](../ingestion/mpatlas_monthly/README.md#review-a-held-release)
+use the same CLI with `--asset mpatlas-zone-assessments`. Omitting `--asset`
+selects EAMLIS. The preview workflow accepts either registered asset and retains
+its existing workflow name and filename.
+
 EAMLIS automatic publication stops when a selected download has **more than 5%**
 fewer geometry records than the last successfully published release. Exactly 5%
 is allowed. `catalog/ingestion-quality.json` owns the threshold. The count is
@@ -60,8 +74,8 @@ owns completion evidence.
    Empty or invalid downloads cannot become approval candidates. A later valid
    check may replace the hold's candidate reference without releasing the hold.
 
-3. From `main`, run **Inspect held EAMLIS candidate** with the exact candidate ID.
-   It downloads generation-pinned production inputs with the publisher identity,
+3. From `main`, run **Inspect held EAMLIS candidate** with the exact candidate ID and `asset=eamlis-abandoned-mine-land-inventory`.
+   It downloads generation-pinned production inputs with the read-only identity,
    then switches to the preview loader for all writes. It loads both baseline and
    candidate into the private preview bucket and refreshes its catalog. Dataset
    bytes stay identical; only preview manifest paths/generations change.

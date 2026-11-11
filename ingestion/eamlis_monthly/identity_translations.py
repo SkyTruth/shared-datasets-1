@@ -7,7 +7,8 @@ import gzip
 import json
 import logging
 
-from ingestion.eamlis_monthly import identity, identity_state as state, source_quality as quality
+from ingestion.eamlis_monthly import identity, identity_state as state
+from ingestion.common.source_quality import EAMLIS as quality
 from scripts import feature_metadata_localization as localization
 from scripts import release_feature_model as model
 

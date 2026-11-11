@@ -22,7 +22,7 @@ from ingestion.common import feature_metadata, publication_readiness
 from ingestion.common import source_fingerprint as fingerprints
 from ingestion.common.source_fingerprint import latest_success_record, digest as stable_hash
 from ingestion.common import vector_pipeline
-from ingestion.eamlis_monthly import source_quality as source_loss
+from ingestion.common.source_quality import EAMLIS as source_loss
 from ingestion.eamlis_monthly import identity as keyed_identity, identity_state
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
@@ -901,7 +901,7 @@ def run() -> list[dict[str, Any]]:
             previous_inputs = (previous_record or {}).get("source_fingerprint", {}).get("inputs", {})
             previous_selection = ({key: previous_inputs.get(key) for key in selection}
                                   if "layer_url" in previous_inputs else None)
-            gate.assess(source.stats.feature_count, selection=selection, previous_selection=previous_selection)
+            source_loss.hooks.assess(gate, source.stats.feature_count, selection=selection, previous_selection=previous_selection)
             if source.stats.feature_count == 0:
                 gate.notify()
                 return [gate.record()]
@@ -914,7 +914,7 @@ def run() -> list[dict[str, Any]]:
                     dest=workdir / f"{ASSET.slug}.geojson",
                     page_size=page_size,
                 )
-                gate.assess(extract.row_count, selection=selection, previous_selection=previous_selection)
+                source_loss.hooks.assess(gate, extract.row_count, selection=selection, previous_selection=previous_selection)
                 def discover_identity(directory):
                     features = list(feature_metadata.iter_geojson_features(extract.geojson))
                     if len(features) != extract.row_count:
@@ -964,10 +964,15 @@ def run() -> list[dict[str, Any]]:
                     source, source_inputs, translation_source, reports = prepare_changed_asset(
                         publisher=publisher, run_date=run_date, source=source, output=output,
                         translation_source=translation_source, translation_inputs=translation_inputs)
-                    source_loss.stage_candidate(gate, output=output, source=source, release=run_date.isoformat(),
+                    source_loss.stage_candidate(gate, output=output, fingerprint=source.fingerprint, release=run_date.isoformat(),
+                        identity=output.identity_metadata, geometry_hash_algorithm=output.geometry_hash_algorithm,
+                        record={"source": source.layer_url, "source_version": source.fingerprint_hash,
+                            "source_fingerprint_hash": source.fingerprint_hash,
+                            "source_stats": {"feature_count": output.row_count, "max_date_revised": source.stats.max_date_revised,
+                                             "max_objectid": source.stats.max_objectid}},
                         source_inputs=source_inputs, translations=localization.translations_payload(reports),
                         extra_files=[(".metadata-translations.csv", translation_source),
-                                     *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in reports)], extract=extract)
+                                     *((f".metadata.{r.locale}.ndjson.gz", Path(r.output_sidecar)) for r in reports)], source_input=extract.geojson)
                     gate.notify()
                     return [gate.record()]
                 gate.check_publication()

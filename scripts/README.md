@@ -31,7 +31,8 @@ entries below explain individual commands only.
 
 ## Dataset operations
 
-`eamlis_source_loss_review.py` reads persistent EAMLIS quality holds, prepares
+`eamlis_source_loss_review.py` reads persistent quality holds for registered assets
+(EAMLIS by default, or `--asset mpatlas-zone-assessments`), prepares
 their immutable approval plans, and supplies the protected staging-catalog and
 resolution workflow steps. See [source-quality review](../docs/eamlis-source-quality.md).
 Interface: `uv run python scripts/eamlis_source_loss_review.py --help`.
