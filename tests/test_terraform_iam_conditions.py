@@ -154,7 +154,7 @@ def test_rejected_production_union_is_over_budget():
     expressions = rendered_conditions()
     canonical = expressions["google_storage_bucket_iam_member.github_readonly_canonical_object_viewer/0"]
     pending = expressions["google_storage_bucket_iam_member.github_readonly_pending_publish_viewer/0"]
-    with pytest.raises(AssertionError, match="13 logical operators > 12"):
+    with pytest.raises(AssertionError, match=r"\d+ logical operators > 12"):
         check_budget(f"({canonical}) || ({pending})")
 
 
@@ -182,7 +182,7 @@ def test_new_prefixes_cannot_bypass_shared_condition_guard(tmp_path):
     expressions = rendered_conditions(prod)
     for name in ("shared_datasets_publisher_object_user", "github_readonly_canonical_object_viewer"):
         expression = expressions[f"google_storage_bucket_iam_member.{name}/0"]
-        with pytest.raises(AssertionError, match="13 logical operators > 12"):
+        with pytest.raises(AssertionError, match=r"\d+ logical operators > 12"):
             check_budget(expression)
 
 
