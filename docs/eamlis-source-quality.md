@@ -6,22 +6,44 @@ Its registry enables EAMLIS and MPAtlas; `HoldFlow` binds paths and execution
 identity and `Guard` serializes a check or promotion with generation preconditions.
 `stage_candidate`, `inspection`, `validate_candidate_plan`, `begin_promotion`
 and `finish_promotion` retain and verify the exact reviewed bundle.
-EAMLIS supplies its count/selection policy and identity-state hooks from
-`ingestion/eamlis_monthly/`; its control format, candidate identity, policy key,
-reason strings and alert text retain their existing contracts.
+`lifecycle.run` owns stage ordering, empty-source handling, the lost-object limit
+and unresolved-hold gating. EAMLIS supplies its source selection and identity
+hooks. Persisted holds and candidates from earlier images remain readable,
+including `geometry_count_drop` holds and records without native tool evidence.
 [MPAtlas review commands](../ingestion/mpatlas_monthly/README.md#review-a-held-release)
 use the same CLI with `--asset mpatlas-zone-assessments`. Omitting `--asset`
 selects EAMLIS. The preview workflow accepts either registered asset and retains
 its existing workflow name and filename.
 
-EAMLIS automatic publication stops when a selected download has **more than 5%**
-fewer geometry records than the last successfully published release. Exactly 5%
-is allowed. `catalog/ingestion-quality.json` owns the threshold. The count is
-records with geometry under the same source selection, not distinct coordinates:
-several mining problems can share a point. This guard does not fix ArcGIS
-`OBJECTID` reuse or establish stable feature identity across releases.
-The separately reviewed [permanent-key installation](eamlis-feature-identity.md)
-addresses that identity problem while retaining this hold and approval contract.
+EAMLIS automatic publication stops when **more than 5%** of baseline feature IDs
+are absent from the new release. Exactly 5% is allowed. Additions never offset
+losses, including equal-sized swaps. `maximum_lost_object_percent` in
+`catalog/ingestion-quality.json` explicitly sets the limit to 5, read through
+`lifecycle.loss_limit`. New loss holds use `objects_lost`; observations name
+`lost_objects`, `geometry_count` and `maximum_lost_object_percent`.
+
+Legacy releases compare source-field `OBJECTID` feature IDs. The installed
+[permanent-key contract](eamlis-feature-identity.md) compares permanent ledger IDs;
+the first keyed release maps the baseline's reviewed keys through that ledger.
+Colocated mining problems remain distinct objects. The shared baseline reader
+reads the dated manifest pinned by the Guard's captured release-index entry.
+The index pins the manifest generation and optionally its size; index hashes
+provide no authority and can be stale after reviewed metadata updates. The
+validated manifest pins dated canonical metadata and schema by generation, size
+and SHA-256. Validated sidecar counts must equal the manifest count and the
+index's positive row count. A counted, generation-pinned baseline needs no run
+record for authentication; an uncounted manual release fails at the Guard.
+Run records and `latest/` bytes provide no baseline authority. Missing or invalid
+published objects or references require reviewed repair before acquisition.
+The successful run record supplies the stored source fingerprint and check-in
+paths. Record validation checks release identity, release path, optional latest
+paths, fingerprint hash and fingerprint/input object shapes before acquisition.
+A missing record or a record without fingerprint fields forces a changed-source
+comparison; a malformed record requires reviewed repair. Identity comparison and
+fingerprint computation errors retain their original exception. Completed success
+retries preserve an index already naming their release, including reviewed
+metadata updates; missing release-index entries retain run-record recovery.
+An unchanged upstream source cannot trigger automatic baseline repair.
 
 The scheduled job continues checking the source. A hold stays active even after
 a later healthy download; recovery always requires review of an exact candidate.
@@ -42,8 +64,13 @@ scheduled checks and reviewed publication through finalization/index rebuilding.
 Completed-date retries also respect this claim and any hold.
 
 The first held check attempts one Slack decision alert using the existing job
-webhook. It claims delivery before sending. An uncertain response or crashed
-send remains `unknown`/`sending`; subsequent checks do not duplicate it. Delivery
+webhook. An `objects_lost` request names lost objects, baseline objects and the
+percentage limit. A hold raised after the attempt's run record was written still
+gets its one request on a completed-date retry. Candidate failures add error
+details to the hold's observation while retaining its loss counts and limit.
+The complete message is formatted before delivery is claimed; formatting errors
+leave the request pending. An uncertain response or crashed send remains
+`unknown`/`sending`; subsequent checks do not duplicate it. Delivery
 failure never releases the hold and propagates as a job failure through existing
 monitoring. The control object is the authority for investigation, even if no
 Slack post was delivered. This decision alert is separate from editable GitHub

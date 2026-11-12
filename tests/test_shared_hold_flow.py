@@ -36,21 +36,40 @@ def test_shared_claim_and_single_notification_with_asset_scoped_paths(flow):
     assert other.Guard(bucket).load()[0]["hold"] is None
 
 
-def seed(client, directory):
+@pytest.mark.parametrize("flow", list(source_quality.FLOWS.values()), ids=lambda f: f.SLUG)
+def test_notification_format_failure_does_not_claim_delivery(flow):
+    bucket = Client().bucket(flow.BUCKET)
+    with mock.patch.object(slack_notify, "notify") as send:
+        with flow.Guard(bucket) as guard:
+            guard.block(lifecycle.OBJECTS_LOST, {"geometry_count": 1})
+            with pytest.raises(KeyError, match="lost_objects"):
+                guard.notify()
+            assert guard.load()[0]["hold"]["notification"] == "pending"
+            send.assert_not_called()
+        with flow.Guard(bucket) as guard:
+            guard.block(lifecycle.OBJECTS_LOST,
+                {"geometry_count": 1, "lost_objects": 2, "maximum_lost_object_percent": 5})
+            guard.notify()
+            guard.notify()
+            assert guard.load()[0]["hold"]["notification"] == "sent"
+        send.assert_called_once()
+
+
+def seed(client, directory, *, records=None, source_inputs=None):
     directory.mkdir()
     publisher = GcsPublisher(client, job.quality.BUCKET)
     prior = dt.date(2026, 10, 16)
-    records = sidecar([feature(z) for z in range(1, 41)])
+    records = sidecar([feature(z) for z in range(1, 41)]) if records is None else records
     output = fixture_outputs(directory, records)
     raw = json.dumps({"type": "FeatureCollection", "features": [feature(z) for z in range(1, 41)]}).encode()
     fingerprint = job.source_fingerprint(records).record_fields()
     bundle = job.vector_pipeline.publish_vector_bundle(publisher=publisher, asset=job.ASSET, run_date=prior,
-        outputs=output, object_metadata={}, source_inputs=[{"uri": job.SOURCE_URL,
+        outputs=output, object_metadata={}, source_inputs=source_inputs if source_inputs is not None else [{"uri": job.SOURCE_URL,
             "sha256": source_quality.digest(raw), "source_fingerprint_hash": fingerprint["source_fingerprint_hash"]}],
         identity=job.model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]))
     record = {"schema_version": 1, "asset_slug": job.ASSET.slug, "status": "success", "source": job.SOURCE_URL,
         "source_version": "prior", "run_date": prior.isoformat(), "release_date": prior.isoformat(),
-        "row_count": 40, "release_path": f"gs://{publisher.bucket.name}/{job.ASSET.release_prefix(prior)}/",
+        "row_count": len(records), "release_path": f"gs://{publisher.bucket.name}/{job.ASSET.release_prefix(prior)}/",
         "release_paths": bundle.release_paths, "latest_paths": bundle.latest_paths, "sha256": bundle.sha256,
         "tools": TOOLS, **fingerprint}
     publisher.write_run_record(asset=job.ASSET, run_date=prior, payload=record)
@@ -138,6 +157,7 @@ def test_mpatlas_hold_reruns_and_exact_reviewed_promotion(tmp_path):
     state, _ = flow.Guard(publisher.bucket).load()
     assert state["hold"] is None and state["owner"] is None
     assert flow.baseline(publisher.bucket)["release"]["date"] == DAY.isoformat()
+    assert job.load_baseline(publisher, job.quality.baseline(publisher.bucket)["release"]).row_count == 40
 
 
 def test_empty_mpatlas_source_is_held_without_a_build(tmp_path):
@@ -244,3 +264,72 @@ def test_hold_raised_after_a_recorded_run_still_asks_once(tmp_path):
     send.assert_called_once()
     state, _ = flow.Guard(publisher.bucket).load()
     assert state["owner"] is None
+
+
+@pytest.mark.parametrize("fingerprinted", [False, True], ids=["legacy", "fingerprinted"])
+def test_counted_generation_pinned_mpatlas_baseline_needs_no_run_record(tmp_path, fingerprinted):
+    client = Client()
+    publisher, original_source = seed(client, tmp_path / "counted",
+        source_inputs=None if fingerprinted else [{"uri": job.SOURCE_URL, "sha256": "a" * 64}])
+    bucket, flow = publisher.bucket, job.quality
+    prior = dt.date(2026, 10, 16)
+    # The real scheduled producer supplies counted, generation-pinned state.
+    # Authentication needs no auxiliary run record; an uncounted manual entry
+    # would instead fail at the Guard, before the reader is reached.
+    bucket.blob(job.ASSET.run_record_object(prior)).exists = False
+    indexed = flow.baseline(bucket)["release"]
+    assert indexed["rows"] == 40 and all("generation" in ref for ref in indexed["files"])
+    assert publisher.load_json(job.ASSET.run_record_object(prior)) is None
+    result, prepared, built = execute(publisher, tmp_path / "next", range(1, 41), raw=original_source)
+    assert (result["status"], result["release_date"]) == ("skipped", prior.isoformat())
+    assert prepared.call_count == (0 if fingerprinted else 1)
+    built.assert_not_called()
+
+
+def test_mpatlas_resume_preserves_reviewed_manifest_index(tmp_path):
+    from ingestion.common import release_index
+
+    client = Client()
+    publisher, raw = seed(client, tmp_path / "baseline")
+    bucket, flow = publisher.bucket, job.quality
+    prior = dt.date(2026, 10, 16)
+    manifest = publisher.load_json(job.ASSET.release_object(prior, ".manifest.json"))
+    manifest["source_inputs"].append({"uri": "https://example.org/reviewed-metadata"})
+    local = tmp_path / "reviewed.manifest.json"
+    local.write_bytes(source_quality.encode(manifest))
+    source = source_quality.immutable_file(bucket, f"_scratch/pending-publishes/{flow.SLUG}/reviewed/manifest.json", local)
+    promotions = []
+    for name in (job.ASSET.release_object(prior, ".manifest.json"), job.ASSET.latest_object(".manifest.json")):
+        destination = bucket.blob(name)
+        promotions.append({"source_uri": source["path"], "source_generation": str(source["generation"]),
+            "destination_uri": f"gs://{bucket.name}/{name}", "destination_generation": str(destination.generation),
+            "content_type": "application/json", "cache_control": flow.NO_CACHE})
+    plan = {"asset_slug": flow.SLUG, "promotions": promotions, "release_index_asset_slugs": []}
+    path = tmp_path / "metadata-plan.json"
+    path.write_bytes(source_quality.encode(plan))
+    with mock.patch.object(flow, "protected_authority", return_value="reviewed-metadata"), \
+         mock.patch.object(gcs_asset, "get_client", return_value=client), \
+         mock.patch.dict("os.environ", {"SHARED_DATASETS_ALLOW_CANONICAL_MUTATION": "1", "SHARED_DATASETS_BUCKET": flow.BUCKET}):
+        transport, copied = copy_transport(client)
+        with mock.patch.object(publish_workflow.subprocess, "run", side_effect=transport):
+            assert publish_workflow.main(["promote", "--plan-json", str(path)]) == 0
+        assert len(copied) == 2
+        finalized = finalizer.finalize_promoted_release_metadata(plan, client=client)
+        assert len(finalized["finalized_manifests"]) == 2 and not finalized["finalized_run_records"]
+        rebuilt = release_index.rebuild_index_from_bucket(bucket, {
+            "asset_slug": flow.SLUG, "canonical_format": "fgb",
+            "canonical_path": f"gs://{bucket.name}/{job.ASSET.latest_object('.fgb')}"})
+        current = release_index.load_release_index(bucket, flow.SLUG)
+        release_index.write_release_index(bucket, flow.SLUG, rebuilt, generation=current.generation)
+        flow.finish_promotion(client, plan)
+    index = bucket.blob(flow.INDEX)
+    before = (index.generation, index.data)
+    with mock.patch.object(publisher, "record_existing_successful_release",
+                           wraps=publisher.record_existing_successful_release) as replay:
+        result = job.ingest(publisher, prior, tmp_path)
+    assert result["status"] == "success"
+    assert (index.generation, index.data) == before
+    replay.assert_not_called()
+    result, _, built = execute(publisher, tmp_path / "next", range(1, 41), raw=raw)
+    assert result["status"] == "skipped"
+    built.assert_not_called()

@@ -12,10 +12,17 @@ readable if this job is paused or retired.
 
 ## Change detection
 
-The comparison baseline is the published `latest/*.manifest.json`, read with its
-observed generation, and the manifest's hash-verified, generation-bound dated
-metadata sidecar. A missing or corrupt baseline fails before any publication;
-this refresh job does not initialize a dataset or repair its publication state.
+The shared baseline reader uses the Guard's captured `latest_release` index
+entry to read the dated manifest at its indexed generation, checking size when
+present. Index hashes provide no authority and can be stale after reviewed
+metadata updates. The validated manifest pins the dated canonical schema and
+metadata by generation, size and SHA-256. Validated sidecar counts must equal
+the manifest count and the index's positive row count. A counted,
+generation-pinned baseline needs no run record for authentication; an uncounted
+manual release fails at the Guard. Run records and `latest/` bytes provide no
+baseline authority. Published-state contract failures require reviewed repair
+before source acquisition; fingerprint computation errors retain their original
+exception. This refresh requires an existing publication.
 
 1. Download the complete API response and compute SHA-256. If it matches the
    source SHA-256 in the published manifest and its normalized fingerprint uses
@@ -54,9 +61,13 @@ The stage order and the rules between stages are those of
 [`ingestion/common/lifecycle.py`](../common/lifecycle.py); `run.py` supplies the
 MPAtlas stages.
 
-The first monthly run compares against the existing manually published sidecar;
-it does not require an earlier monthly-job run record. Same-day completed runs
-are idempotent. `RUN_DATE` overrides must be newer than the latest release.
+The first monthly run compares against an existing publication with a counted
+index entry and a generation-pinned manifest; it needs no earlier monthly-job
+run record. Same-day completed runs are idempotent. A success retry preserves
+the index when its release is already current, including reviewed metadata
+updates. A success retry whose release is not current still uses the existing
+index-recovery path. `RUN_DATE` overrides for new attempts must
+be newer than the latest release.
 An incomplete same-date release blocks publication and requires reviewed repair;
 do not delete objects or choose another date merely to evade the failed release.
 

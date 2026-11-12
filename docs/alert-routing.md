@@ -22,12 +22,13 @@ safety findings and operational summaries.
 | EAMLIS or MPAtlas source-quality hold | One persisted decision-alert attempt; delivery failure retains the hold and existing job-failure coverage |
 
 The [EAMLIS source-quality guard](eamlis-source-quality.md) pauses automatic
-publication after a greater-than-5% geometry-record loss and retains exact
-candidate bytes for staging review. MPAtlas uses the same persisted decision
-flow for an empty source or more lost published zone IDs than its lifecycle
-limit permits (5% by default); additions do not offset losses. Its Slack request
-names the lost count, published count and limit, with the asset-specific review
-command. [MPAtlas hold review](../ingestion/mpatlas_monthly/README.md#review-a-held-release)
+publication when more than 5% of baseline feature IDs are lost and retains exact
+candidate bytes for staging review. MPAtlas uses the same lifecycle and persisted
+decision flow for an empty source or more lost published zone IDs than its limit
+permits (5% by default). Additions never offset losses in either job. New loss
+holds use `objects_lost`; Slack requests name the lost count, published count and
+limit with the asset-specific review command. Older `geometry_count_drop` holds
+retain their reason and remain reviewable. [MPAtlas hold review](../ingestion/mpatlas_monthly/README.md#review-a-held-release)
 uses the shared preview workflow and immutable approval PR. A normal held run
 exits zero; delivery failures retain the claim and use existing job-failure
 coverage. Scheduler checks continue. A hold is cleared

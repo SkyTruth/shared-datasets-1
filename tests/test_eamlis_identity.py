@@ -1,10 +1,48 @@
 """Exact source keys survive renumbering, omissions, edits and reappearance."""
 import copy
 import json
+import pickle
 
 import pytest
 
 from ingestion.eamlis_monthly import identity as ids
+
+
+@pytest.mark.parametrize("count", [0, 1, 40])
+def test_ledger_id_projection_is_built_once_and_cannot_be_mutated(count):
+    class Entries(tuple):
+        iterations = 0
+
+        def __iter__(self):
+            self.iterations += 1
+            return super().__iter__()
+
+    entries = Entries(("problem", f"P{n}", "A1", str(n + 1)) for n in range(count))
+    ledger = ids.Ledger(entries, count + 1)
+    entries.iterations = 0
+    assignments = ledger.ids
+    for n in range(count):
+        assert ledger.ids[("problem", f"P{n}")] == str(n + 1)
+    assert entries.iterations == 1
+    assert ledger.ids is assignments
+    with pytest.raises(TypeError):
+        assignments[("problem", "injected")] = "999"
+    replacement = ledger.reserve((ids.SourceIdentity("problem", "NEW", "A1"),))
+    assert replacement.ids[("problem", "NEW")] == str(count + 1)
+    assert ("problem", "NEW") not in ledger.ids
+
+
+@pytest.mark.parametrize("count", [0, 1, 40])
+@pytest.mark.parametrize("clone", [copy.deepcopy, lambda ledger: pickle.loads(pickle.dumps(ledger))], ids=["deepcopy", "pickle"])
+def test_cached_ledger_mapping_survives_copy_and_pickle(count, clone):
+    ledger = ids.Ledger(tuple(("problem", f"P{n}", "A1", str(n + 1)) for n in range(count)), count + 1)
+    cached = ledger.ids
+    restored = clone(ledger)
+    assert restored == ledger and restored is not ledger
+    assert restored.ids == cached and restored.ids is restored.ids
+    with pytest.raises(TypeError):
+        restored.ids[("problem", "injected")] = "999"
+    assert ledger.ids is cached
 
 
 def area(key="AL000133", **changes):

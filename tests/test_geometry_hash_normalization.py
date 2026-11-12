@@ -97,7 +97,7 @@ def test_keyed_fingerprint_forces_hash_upgrade_then_ignores_number_spelling(tmp_
 
 @pytest.mark.parametrize("algorithm", [model.GEOMETRY_HASH_ALGORITHM, V2])
 def test_final_manifest_preserves_selected_geometry_algorithm(algorithm, tmp_path):
-    from tests.test_eamlis_monthly import FakeBucket, FakeClient, fake_asset_output, fixture_fingerprint, sample_source_state
+    from tests.test_eamlis_monthly import FakeBucket, FakeClient, fake_asset_output, fixture_fingerprint, sample_source_state, publish_fixture
     from ingestion.common.gcs import GcsPublisher
     from ingestion.eamlis_monthly import run as eamlis, identity_state
     import datetime as dt
@@ -108,7 +108,7 @@ def test_final_manifest_preserves_selected_geometry_algorithm(algorithm, tmp_pat
         values = dict(vars(output))
         ledger = ids.Ledger.genesis()
         output = eamlis.KeyedAssetOutput(**values, reservation=identity_state.Reservation(ledger, {"path": "fixture"}, 1, None))
-    eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2),
+    publish_fixture(publisher=publisher, run_date=dt.date(2026, 5, 2),
         source=fixture_fingerprint(sample_source_state()), output=output)
     manifest = json.loads(output.manifest.read_text())
     assert manifest["hashes"]["geometry_hash_algorithm"] == algorithm
