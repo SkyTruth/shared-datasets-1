@@ -77,9 +77,10 @@ def publish(publisher, asset, outputs, date=DATE, *, attempt_date=DATE):
     source_date = date - dt.timedelta(days=1)
     readme = outputs.fgb.parent / "asset_README.md"
     readme.write_text("# IMS Sea-Ice Extent\nReviewed new-contract documentation.\n")
-    return sea_ice.publish_outputs(fingerprint=sea_ice.fingerprints.Fingerprint("fixture", {}), publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
-                                   attempt_date=attempt_date,
-                                   source=sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date)))
+    source = sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date))
+    from test_sea_ice_daily import publication_record
+    return sea_ice.publish_outputs(publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
+                                   source=source, record=publication_record(source, outputs, attempt_date))
 
 
 def translation_plan(store, asset):

@@ -19,6 +19,8 @@ def sea_ice_build(workdir):
     """The installed-image and local smoke use the same complete synthetic build."""
     from ingestion.sea_ice_daily import run as sea_ice
 
+    sea_ice.Refresh(None, workdir, tools=sea_ice.toolchain(), source_template=sea_ice.DEFAULT_SOURCE_URL_TEMPLATE,
+                    max_lookback_days=sea_ice.DEFAULT_MAX_LOOKBACK_DAYS, asset_readme=Path("/app/asset_README.md"))
     source = workdir / "source.tif"
     sea_ice.run_command([
         "gdal_create", "-of", "GTiff", "-outsize", "4", "4", "-bands", "1",

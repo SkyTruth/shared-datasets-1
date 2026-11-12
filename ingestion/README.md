@@ -43,19 +43,28 @@ the owning job package.
 
 `ingestion/common/lifecycle.py` defines the release lifecycle: the stage order,
 the rules between stages and the run-record shape. `tests/test_lifecycle.py`
-holds one test per rule. `mpatlas_monthly` and `eamlis_monthly` run through
-`lifecycle.run`; `sea_ice_daily` still orchestrates its own stages.
+holds one test per rule. `mpatlas_monthly`, `eamlis_monthly` and `sea_ice_daily`
+run through `lifecycle.run`.
 `wdpa_monthly` fingerprints after its build, so it keeps its own orchestrator
 until it has a pre-build fingerprint.
 
 Every run record keeps the day the job ran in `run_date` and the release it
 describes in `release_date`. The release index takes `latest_run.date` from
 `run_date` and `latest_release.date` from `release_date`. Manual releases use the
-UTC day their run record is prepared. Release paths and run-record object names
-use the release date and attempt date, respectively. An unchanged check-in names
+UTC day their run record is prepared. Release paths use the release date.
+EAMLIS and MPAtlas run-record object names use the attempt date; owned WDPA and
+sea-ice publication records use the release date. An unchanged check-in names
 the baseline in `release_date` and writes no dataset artifacts. Historical records
 without `run_date` use `release_date` for `latest_run.date`; earlier skipped
 records retain their stored dates.
+
+Sea ice verifies its committed baseline's metadata contract before source lookup.
+Its native tools are resolved and versioned before owned-publication resume,
+reservation or claim. New success records include each executable's path and
+version; deployed success records without `tools` remain readable. Daily polygon
+turnover has no lost-object percentage limit, as recorded by the explicit `null`
+policy in `catalog/ingestion-quality.json`. Sea ice has no retained-candidate hold
+flow; an unexpected hold reason fails the run.
 
 `ingestion/common/source_quality.py` supplies one retained-candidate hold flow
 for EAMLIS and MPAtlas. The registry binds asset paths, labels, Cloud Run jobs
