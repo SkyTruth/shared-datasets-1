@@ -70,9 +70,10 @@ The owner closed the plain-revert window on 2026-11-11 in
 The reviewed `dataset_usage` hold release enables merge-push delivery through
 `ingestion-deploy.yml`; its receipts require the current reader. The owner
 released the MPAtlas hold on 2026-11-11, after its hold permissions were applied,
-and the EAMLIS hold the same day, after its lifecycle migration merged. Both
-deploy on merge. WDPA and sea ice retain their
-[rollout holds](../.github/ingestion-rollout-holds.json). Expiry does not release
+and the EAMLIS hold the same day, after its lifecycle migration merged. The owner
+released the sea-ice hold on 2026-11-12, after its lifecycle migration merged.
+All three deploy on merge. WDPA retains its
+[rollout hold](../.github/ingestion-rollout-holds.json). Expiry does not release
 a hold automatically, and image validation still runs while delivery is held.
 
 The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:

@@ -3,6 +3,9 @@
   "assets": {
     "eamlis-abandoned-mine-land-inventory": {
       "maximum_lost_object_percent": 5
+    },
+    "ims-sea-ice-extent": {
+      "maximum_lost_object_percent": null
     }
   }
 }

@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.request
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from typing import Any, Mapping, Sequence
 
 from google.cloud import storage
 
-from ingestion.common import feature_metadata, vector_pipeline, source_fingerprint as fingerprints
+from ingestion.common import feature_metadata, lifecycle, vector_pipeline, source_fingerprint as fingerprints
 from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.common.http import (
@@ -60,6 +61,10 @@ FEATURE_COUNT_RE = re.compile(r"^\s*Feature Count:\s*(\d+)\s*$", re.MULTILINE)
 FIELD_LINE_RE = re.compile(
     r"^\s*([^:\s][^:]*):\s+"
     r"(Integer64|Integer|Real|String|DateTime|Date|Time|Binary)(?:\s|\(|$)"
+)
+NATIVE_TOOLS = (
+    "gdalinfo", "gdal_translate", "gdal_calc.py", "gdal_polygonize.py",
+    "ogr2ogr", "ogrinfo", "tippecanoe", "tippecanoe-decode", "pmtiles",
 )
 
 
@@ -219,30 +224,6 @@ def add_source_request_warnings(
     if source_request_warnings:
         record["source_request_warnings"] = list(source_request_warnings)
     return record
-
-
-def no_available_source_record(
-    *,
-    asset: AssetSpec,
-    anchor_day: dt.date,
-    max_lookback_days: int,
-    source_request_warnings: tuple[dict[str, Any], ...],
-) -> dict[str, Any]:
-    reason = (
-        f"No IMS 4 km GeoTIFF available from {anchor_day.isoformat()} "
-        f"within the last {max_lookback_days} day(s)"
-    )
-    return add_source_request_warnings(
-        {
-            "schema_version": 1,
-            "asset_slug": asset.slug,
-            "run_date": anchor_day.isoformat(),
-            "release_date": anchor_day.isoformat(),
-            "status": "skipped",
-            "reason": reason,
-        },
-        source_request_warnings,
-    )
 
 
 run_command = bind_run_command(LOGGER)
@@ -633,38 +614,11 @@ def publish_outputs(
     asset: AssetSpec,
     outputs: AssetOutputs,
     source: DownloadedSource | AvailableSource,
-    attempt_date: dt.date,
     asset_readme: Path,
-    fingerprint: fingerprints.Fingerprint,
-    source_request_warnings: tuple[dict[str, Any], ...] = (),
+    record: dict[str, Any],
 ) -> dict[str, Any]:
     run_date = source.documented_valid_date
     metadata = metadata_for_source(asset=asset, source=source)
-    record = add_source_request_warnings(
-        {
-            "schema_version": 1,
-            "record_version": RUN_RECORD_VERSION,
-            "asset_slug": asset.slug,
-            "run_date": attempt_date.isoformat(),
-            "release_date": run_date.isoformat(),
-            "status": "success",
-            "source": source.source_url,
-            "source_url": source.source_url,
-            "source_filename": source.source_filename,
-            "source_filename_date": source.filename_date.isoformat(),
-            "documented_valid_date": source.documented_valid_date.isoformat(),
-            "source_version": source.source_filename,
-            **fingerprint.record_fields(),
-            "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-            "row_count": outputs.row_count,
-            "notes": (
-                "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
-                "Release date uses the documented valid date, one day after the "
-                "GeoTIFF filename date. ice_date preserves the filename date."
-            ),
-        },
-        source_request_warnings,
-    )
     return publisher.publish_generated(
         asset=asset,
         run_date=run_date,
@@ -704,20 +658,119 @@ def metadata_for_source(
     }
 
 
+def toolchain() -> dict[str, dict[str, str]]:
+    """Resolve every native executable before an owned transaction can resume."""
+    paths = {}
+    for name in NATIVE_TOOLS:
+        require_binary(name)
+        paths[name] = str(Path(shutil.which(name)).resolve())
+    tools = {}
+    for name, path in paths.items():
+        # GDAL's Python utilities and the decoder report their installed suite's
+        # version through a sibling binary; they have no usable version flag.
+        reporter = {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
+                    "tippecanoe-decode": "tippecanoe"}.get(name, name)
+        version_path = str(Path(path).with_name(reporter))
+        completed = subprocess.run([version_path, "version" if reporter == "pmtiles" else "--version"],
+                                   check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        version = completed.stdout.strip()
+        if not version:
+            raise RuntimeError(f"Native tool returned no version: {path}")
+        tools[name] = {"path": path, "version": version}
+    return tools
+
+
+def source_description(source: DownloadedSource | AvailableSource) -> lifecycle.Source:
+    return lifecycle.Source(source.documented_valid_date, source.source_url, source.source_filename, {
+        "record_version": RUN_RECORD_VERSION,
+        "source_url": source.source_url, "source_filename": source.source_filename,
+        "source_filename_date": source.filename_date.isoformat(),
+        "documented_valid_date": source.documented_valid_date.isoformat(),
+        "notes": (
+            "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
+            "Release date uses the documented valid date, one day after the "
+            "GeoTIFF filename date. ice_date preserves the filename date."
+        ),
+    })
+
+
+class Refresh:
+    """IMS stages of lifecycle.run; the shared rulebook owns their order."""
+    slug = ASSET.slug
+
+    def __init__(self, publisher: GcsPublisher, workdir: Path, *, tools: Mapping[str, Mapping[str, str]],
+                 source_template: str, max_lookback_days: int, asset_readme: Path):
+        self.publisher, self.workdir = publisher, workdir
+        self.tools, self.asset_readme = tools, asset_readme
+        self.source_template, self.max_lookback_days = source_template, max_lookback_days
+        self.loss_limit = lifecycle.loss_limit(self.slug)
+        self.source_request_warnings = ()
+
+    def resume(self, attempt: dt.date) -> dict[str, Any] | None:
+        # Run objects are keyed by valid date, not the filename lookup anchor.
+        # Only this execution's captured intent is a resumable attempt. A fresh
+        # execution, even with the same anchor, must poll and compare again.
+        return self.publisher.resume(ASSET)
+
+    def baseline(self) -> lifecycle.Baseline | None:
+        previous = self.publisher.latest_success_record(ASSET)
+        if previous is None:
+            return None  # installed reset; the owned publisher verifies adoption
+        issue = self.publisher.release_metadata_contract_issue(ASSET, previous)
+        if issue:
+            raise RuntimeError(f"{self.slug} published metadata contract is invalid: {issue}; use a reviewed repair")
+        # Historical success records have no tools. Validation of new lifecycle
+        # records belongs to the writer, not this persisted-record reader.
+        return lifecycle.Baseline(dt.date.fromisoformat(previous["release_date"]),
+                                  previous.get("source_fingerprint_hash"), previous["row_count"])
+
+    def acquire(self, attempt: dt.date) -> lifecycle.Source | lifecycle.Unavailable:
+        lookup = find_latest_available_source(self.source_template, attempt, self.max_lookback_days)
+        self.source_request_warnings = lookup.source_request_warnings
+        if lookup.source is None:
+            return lifecycle.Unavailable(documented_valid_date_for_filename_date(attempt),
+                f"No IMS 4 km GeoTIFF available from {attempt.isoformat()} "
+                f"within the last {self.max_lookback_days} day(s)")
+        self.source = download_source(lookup.source, self.workdir)
+        self.source_tif = self.workdir / self.source.gz_path.with_suffix("").name
+        gunzip_file(self.source.gz_path, self.source_tif)
+        remove_if_exists(self.source.gz_path)
+        return source_description(self.source)
+
+    def describe(self, source: lifecycle.Source, baseline: lifecycle.Baseline | None) -> lifecycle.Content:
+        fingerprint = fingerprint_source(self.source, self.source_tif, self.workdir)
+        return lifecycle.Content(fingerprint.record_fields(), rows=None,
+            extra=add_source_request_warnings({}, self.source_request_warnings))
+
+    def build(self, source: lifecycle.Source, content: lifecycle.Content, baseline: lifecycle.Baseline | None) -> lifecycle.Built:
+        self.publisher.assert_no_partial_release(ASSET, source.release)
+        self.outputs = build_outputs(source_tif=self.source_tif, source_date=self.source.filename_date,
+            workdir=self.workdir,
+            baseline=self.publisher.load_generated_identity_baseline(ASSET, contract_id=CONTRACT_ID),
+            identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
+                asset_slug=self.slug, release=source.release.isoformat()))
+        if self.outputs.row_count <= 0:
+            raise RuntimeError(f"{self.slug} output contains no features")
+        return lifecycle.Built(self.outputs.row_count, self.tools,
+                               f"gs://{self.publisher.bucket.name}/{ASSET.release_prefix(source.release)}/")
+
+    def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
+        return publish_outputs(publisher=self.publisher, asset=ASSET, outputs=self.outputs,
+                               source=self.source, asset_readme=self.asset_readme, record=record)
+
+    def check_in(self, record: dict[str, Any]) -> dict[str, Any]:
+        add_source_request_warnings(record, self.source_request_warnings)
+        LOGGER.info("%s", record["reason"])
+        record["release_index"] = self.publisher.update_latest_run_index(asset=ASSET, payload=record)
+        return record
+
+    def hold(self, reason: str, source: lifecycle.Source, content: lifecycle.Content, built: lifecycle.Built | None) -> dict[str, Any]:
+        raise lifecycle.LifecycleError(f"{self.slug} has no hold flow: {reason}")
+
+
 def run() -> dict[str, Any]:
     configure_logging()
-    for binary in (
-        "gdalinfo",
-        "gdal_translate",
-        "gdal_calc.py",
-        "gdal_polygonize.py",
-        "ogr2ogr",
-        "ogrinfo",
-        "tippecanoe",
-        "tippecanoe-decode",
-        "pmtiles",
-    ):
-        require_binary(binary)
+    tools = toolchain()
 
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     bucket_name = os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET)
@@ -733,91 +786,12 @@ def run() -> dict[str, Any]:
     )
 
     publisher = GcsPublisher.from_runtime(storage.Client(project=project_id), bucket_name, logger=LOGGER)
-    resumed = publisher.resume(ASSET)
-    if resumed is not None:
-        return resumed
-    previous = publisher.latest_success_record(ASSET)
-    lookup = find_latest_available_source(
-        source_template=source_template,
-        anchor_day=anchor_day,
-        max_lookback_days=max_lookback_days,
-    )
-    source_request_warnings = lookup.source_request_warnings
-    if lookup.source is None:
-        record = no_available_source_record(
-            asset=ASSET,
-            anchor_day=anchor_day,
-            max_lookback_days=max_lookback_days,
-            source_request_warnings=source_request_warnings,
-        )
-        LOGGER.info("%s", record["reason"])
-        record["release_index"] = publisher.update_latest_run_index(
-            asset=ASSET,
-            payload=record,
-        )
-        return record
-
-    available_source = lookup.source
-    release_day = available_source.documented_valid_date
     work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1"))) / "vector-assets" / ASSET.slug
     work_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="daily-", dir=work_root) as tmp:
-        workdir = Path(tmp)
-        downloaded = download_source(available_source, workdir)
-        source_tif = workdir / downloaded.gz_path.with_suffix("").name
-        gunzip_file(downloaded.gz_path, source_tif)
-        remove_if_exists(downloaded.gz_path)
-
-        fingerprint = fingerprint_source(downloaded, source_tif, workdir)
-        # Completed records from the deployed publisher predate fingerprints.
-        # Keep their immutable daily item idempotent without inventing a baseline.
-        legacy_completed_item = (
-            previous is not None and "source_fingerprint_hash" not in previous
-            and previous["release_date"] == release_day.isoformat()
-            and previous.get("source_filename") == downloaded.source_filename
-        )
-        if fingerprint.matches(previous) or legacy_completed_item:
-            issue = publisher.release_metadata_contract_issue(ASSET, previous)
-            if issue:
-                raise RuntimeError(f"{ASSET.slug} published metadata contract is invalid: {issue}; use a reviewed repair")
-            record = add_source_request_warnings({
-                "schema_version": 1, "asset_slug": ASSET.slug,
-                "run_date": anchor_day.isoformat(), "release_date": previous["release_date"],
-                "status": "skipped",
-                "reason": "latest available source already published" if legacy_completed_item else "source fingerprint unchanged",
-                "source": downloaded.source_url, "source_url": downloaded.source_url,
-                "source_version": downloaded.source_filename, "source_filename": downloaded.source_filename,
-                "source_filename_date": downloaded.filename_date.isoformat(),
-                "documented_valid_date": downloaded.documented_valid_date.isoformat(),
-                **fingerprint.record_fields(),
-            }, source_request_warnings)
-            record["release_index"] = publisher.update_latest_run_index(asset=ASSET, payload=record)
-            return record
-        # A changed input must never overwrite an immutable daily item.
-        if previous is not None and previous["release_date"] == release_day.isoformat():
-            raise RuntimeError("IMS source differs from or lacks the published fingerprint for this date; "
-                               "use a reviewed correction rather than replacing the daily release")
-        publisher.assert_no_partial_release(ASSET, release_day)
-        outputs = build_outputs(
-            source_tif=source_tif,
-            source_date=downloaded.filename_date,
-            workdir=workdir,
-            baseline=publisher.load_generated_identity_baseline(ASSET, contract_id=CONTRACT_ID),
-            identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
-                asset_slug=ASSET.slug,
-                release=downloaded.documented_valid_date.isoformat(),
-            ),
-        )
-        return publish_outputs(
-            publisher=publisher,
-            asset=ASSET,
-            outputs=outputs,
-            source=downloaded,
-            attempt_date=anchor_day,
-            fingerprint=fingerprint,
-            asset_readme=Path("/app/asset_README.md"),
-            source_request_warnings=source_request_warnings,
-        )
+        refresh = Refresh(publisher, Path(tmp), tools=tools, source_template=source_template,
+                          max_lookback_days=max_lookback_days, asset_readme=Path("/app/asset_README.md"))
+        return lifecycle.run(refresh, anchor_day)
 
 
 def main() -> None:
