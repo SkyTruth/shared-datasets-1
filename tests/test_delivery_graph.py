@@ -76,9 +76,9 @@ def test_merge_receipt_signers_after_plain_revert_window(target, expected_signer
 
 
 def test_only_unreleased_publication_producers_remain_held():
-    # MPAtlas and e-AMLIS left the holds when their lifecycle runners were released.
+    # MPAtlas, e-AMLIS and sea ice left the holds when their lifecycle runners were released.
     holds = json.loads((ROOT / ci.INGESTION_ROLLOUT_HOLDS).read_text())
-    assert set(ci.rollout_holds(holds)) == {'wdpa', 'sea_ice'}
+    assert set(ci.rollout_holds(holds)) == {'wdpa'}
 
 
 @pytest.mark.parametrize('create_account', [False, True])
