@@ -272,6 +272,7 @@ class ReceiptContractTests(unittest.TestCase):
             "workflow shell override": lambda value, job: value.update(defaults={"run": {"shell": "python"}}),
             "job shell override": lambda value, job: job.update(defaults={"run": {"shell": "python"}}),
             "other runner": lambda value, job: job.update({"runs-on": "self-hosted"}),
+            "moving runner": lambda value, job: job.update({"runs-on": "ubuntu-latest"}),
             "cancellation": lambda value, job: job["concurrency"].update({"cancel-in-progress": True}),
         }
         for label, mutate in mutations.items():

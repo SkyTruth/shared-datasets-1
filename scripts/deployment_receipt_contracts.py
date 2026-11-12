@@ -103,7 +103,7 @@ def notification_boundary(filename, identifier, workflow, job):
         return False
     if job.get("permissions") != NOTIFICATION_PERMISSIONS or any(key in job for key in ("environment", "uses", "env", "defaults", "container", "services", "strategy")):
         return False
-    if job.get("runs-on") != "ubuntu-latest":
+    if job.get("runs-on") != "ubuntu-24.04":
         return False
     if job.get("concurrency") != {"group": "slack-incidents-${{ github.repository }}", "queue": "max", "cancel-in-progress": False}:
         return False
