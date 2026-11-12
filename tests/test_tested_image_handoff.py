@@ -134,7 +134,7 @@ def handoff(tmp_path, monkeypatch):
         files["images/" + images[target]["archive"]] = raw
     manifest = {"schema_version": 1, "tested_sha": SHA, "images": images}
     identity = {"schema_version": 1, "base": "b" * 40, "head": SHA, "tested_sha": SHA, "tree": "tree", "contract_digest": "contract"}
-    plan = {**identity, "suites": ["production-images"], "production_image_targets": list(bundle.BUILD_TARGETS), "changed_paths": ["scripts/ci_contract.py"], "selection_reason": "classified",
+    plan = {**identity, "deployments": [], "held_deployment_targets": [], "readiness_targets": [], "suites": ["production-images"], "production_image_targets": list(bundle.BUILD_TARGETS), "changed_paths": ["scripts/ci_contract.py"], "selection_reason": "classified",
             "source": {"run_id": "123", "run_attempt": 1}}
     evidence = {**plan, "source": {"run_id": "123", "run_attempt": 2}, "status": "success", "plan_artifact": "ci-validation-plan-attempt1",
                 "suite_artifacts": {"production-images": "ci-result-production-images-attempt1"}}

@@ -1,0 +1,91 @@
+name: Deployments / Signed executor readiness
+on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        required: true
+        type: string
+      source_run_id:
+        required: true
+        type: string
+      source_run_attempt:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  id-token: write
+  attestations: write
+jobs:
+  readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: shared-datasets-production
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXECUTOR_SHA: ${{ inputs.executor_sha }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+      TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authorize exact accepted CI gate before credentials
+        run: python -I -S scripts/deployment_readiness.py authorize --context "$RUNNER_TEMP/readiness-context.json" --result "$RUNNER_TEMP/readiness-${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}.json"
+      - uses: ./.github/actions/ci-tools
+        with:
+          node: ''
+          binaries: terraform
+      - name: Install read-only planner dependencies
+        run: uv sync --locked --only-group ci-plan
+      - name: Install pinned attestation verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Authenticate Terraform principal
+        id: terraform
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+          token_format: access_token
+      - name: Authenticate runtime principal without replacing Terraform credentials
+        id: runtime
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Authenticate observer principal without replacing Terraform credentials
+        id: observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Check registered plans and each principal's permissions
+        env:
+          READINESS_TOKEN_TERRAFORM: ${{ steps.terraform.outputs.access_token }}
+          READINESS_TOKEN_RUNTIME: ${{ steps.runtime.outputs.access_token }}
+          READINESS_TOKEN_OBSERVER: ${{ steps.observer.outputs.access_token }}
+        run: uv run --no-sync python scripts/deployment_readiness.py check --context "$RUNNER_TEMP/readiness-context.json" --result "$RUNNER_TEMP/readiness-${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}.json"
+      - name: Sign readiness observation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: ${{ runner.temp }}/readiness-${{ github.run_id }}-attempt${{ github.run_attempt }}.json
+          create-storage-record: false
+      - name: Verify current-attempt readiness signature
+        run: python scripts/deployment_readiness.py verify --context "$RUNNER_TEMP/readiness-context.json" --result "$RUNNER_TEMP/readiness-${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}.json"
+      - name: Retain only verified readiness observation
+        uses: actions/upload-artifact@v4
+        with:
+          name: executor-readiness-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/readiness-${{ github.run_id }}-attempt${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 14

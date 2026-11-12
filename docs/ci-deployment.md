@@ -38,10 +38,26 @@ complete here.
    call `prod-terraform-target-apply.yml` by synchronization name. Preserve caller identities/bootstrap order;
    add a constrained protected path by PR if none covers the resource class. Selection follows
    workflow/nested-action/script closure, Docker COPY and parsed Terraform ownership/modules.
-   `selection_exceptions` owns reasoned traversal boundaries/input additions. Executor-only exclusions replace
-   inferred callers with explicit representatives: sea ice, Artifact Registry IAM, viewer and CDN. Admission
-   imports stop traversal. Content, variables and registry changes retain all actual consumers;
+   `selection_exceptions` owns reasoned traversal boundaries/input additions. Explicit `kind: executor` rows
+   require signed readiness for representative executors instead of live rollouts. Admission imports stop
+   traversal. Actual Docker COPY and Terraform consumers are added after those boundaries, so an executor
+   helper copied into an image still selects its runtime delivery. Both comparison revisions cover removed
+   and renamed inputs. Content, variables and desired-state registry changes retain all actual consumers;
    validation/image selection remain independent.
+   The planner also owns bootstrap eligibility. Executor-only selection, including an Artifact Registry
+   selection, does not enable another delivery's bootstrap. Registry scope comparisons select
+   their bootstrap owners; unavailable comparisons remain conservative. Actual Terraform changes retain
+   bootstrap coverage for every already-selected owner because the root shares locals, variables, identity
+   files and modules. Explicit desired-state input additions in the registry retain their owners too.
+   Callers consume the verified bootstrap set without inferring it from another delivery flag. Manual recovery,
+   live readiness, saved-plan checks and signed mutation barriers remain unchanged.
+   Runtime image dependencies are generated from the single authoritative `uv.lock` by
+   `uv run python scripts/runtime_dependencies.py`. Lint rejects stale exports. The images copy only
+   their runtime lock and native build configuration, so development-group edits with unchanged runtime
+   exports retain the non-image CI checks without rebuilding unchanged images or selecting image deliveries.
+   Image validation follows changed exported/COPY inputs. Changes to the generated CI-plan parser lock
+   require ingestion executor readiness. Regenerate exports after editing dependencies;
+   do not edit the generated locks directly.
 4. **Exercise the boundary and validate.** Run focused positive/refusal checks for selection, unmanaged
    ancestors, realistic saved plans, unrelated changes, replacements, missing prerequisites, deletion policy
    and runtime outcomes. Run `uv run python scripts/terraform_target_contracts.py` and `uv run python
@@ -75,6 +91,40 @@ complete here.
    actions, execution/result, changed remote paths and uncertainty. Deferred verification is incomplete. Use
    [recovery](ci-recovery.md) after failures; maintain separate code-merged, operation-completed,
    observer-verified and incident-reconciled milestones.
+
+## Executor-only signed readiness
+
+For changes only to deployment machinery, `deployment-readiness.yml` replaces representative live
+rollouts with one protected, observational job. CI persists separate delivery, held-delivery and readiness
+obligations. Real delivery takes precedence before rollout holds: a held runtime change cannot become
+readiness. Exact-head owner acceptance covers readiness as well as mutation. The job verifies the accepted
+main push and the exact successful gate artifacts before cloud authentication; retained selector/gate evidence
+can survive a selective rerun, but each emitting attempt must produce its own signature.
+
+The shared planner resolves registered production scopes, reads deployed immutable images/settings,
+initializes the pinned backend/providers, and runs up to four lock-free plans at once. It checks saved-plan
+scope/action/image rules, CDN bootstrap and active-folder protections, and the Terraform principal's live
+permissions. Separate runtime and observer authentication checks their actual operation permissions, including
+CDN invalidation authority. It uploads no images, creates no secret versions, runs no Cloud Run executions,
+resumes no schedulers, invalidates no caches, and never applies a plan. State, variable files, saved plans and
+provider diagnostics remain ephemeral; the retained result contains identities and digests.
+
+The distinct `shared-datasets-executor-readiness-v1` result is signed and verified against the exact repository,
+main source, hosted runner, readiness leaf, executor and current run/attempt. It is not a deployment claim,
+terminal outcome, recovery record, supersession watermark or reusable future authorization. GitHub may still
+create its usual protected-environment deployment metadata. Lock-free plans observe state at different times
+and do not certify one atomic production snapshot. A failed or interrupted check/signature fails readiness.
+
+Readiness does not execute mutation workflow YAML, image transport, claim/apply/outcome steps, publication
+canaries, or post-deploy operations. Static and local refusal tests retain coverage; mutation-specific bugs
+are exercised on the next real selected delivery. Real runtime and infrastructure changes keep all existing
+protected checks and do not wait for the observational job. Readiness stays outside the shared state queue.
+
+The leaf is an explicitly reviewed new recipient of the existing Terraform, runtime and observer WIF
+identities, with no new account or role permissions. Those credentials remain mutation-capable; the constrained
+readiness executable supplies the read-only boundary. Its inventory change uses the normal protected Artifact
+Registry identity sync, and readiness waits for that selected prerequisite to succeed. No production cycle-time
+saving is claimed until ordinary authorized main runs supply signed observations and timing evidence.
 
 Protected deployment authentication, the safety check and completion verification use the hosted
 Ubuntu runner's preinstalled gcloud through `setup-gcloud` with `skip_install: true`. Their commands

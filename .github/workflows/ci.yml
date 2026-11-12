@@ -365,7 +365,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          selected="$(jq -sr 'any(.[]; .deployments | length > 0)' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
+          selected="$(jq -sr 'any(.[]; (.deployments | length > 0) or (.readiness_targets | length > 0))' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
           if [[ "$selected" == true ]]; then
             python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
           fi
@@ -568,7 +568,7 @@ jobs:
     permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
     with:
-      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'dataset_usage') }}
+      sync_iam: ${{ contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'dataset_usage') }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
@@ -580,7 +580,7 @@ jobs:
     permissions: *deployment-permissions
     uses: ./.github/workflows/catalog-viewer-deploy.yml
     with:
-      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'catalog_viewer') }}
+      sync_iam: ${{ contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'catalog_viewer') }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
@@ -591,6 +591,18 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').artifact-registry-iam }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/artifact-registry-iam-sync.yml
+    with: *deployment-source
+
+  deployment-readiness:
+    needs: [ci-ready, artifact-registry-iam]
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').deployment-readiness }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/deployment-readiness.yml
     with: *deployment-source
 
   preview-terraform-iam:
@@ -613,7 +625,7 @@ jobs:
     permissions: *terraform-permissions
     uses: ./.github/workflows/cron-alert-policy-sync.yml
     with:
-      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'cron_alert_policy') }}
+      sync_iam: ${{ contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'cron_alert_policy') }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}

@@ -35,6 +35,7 @@ def plan(suites=SUITES):
         "tested_sha": "c" * 40, "tree": "d" * 40,
         "production_image_limits": preflight.production_image_limits(targets=targets),
         "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": targets,
+        "deployments": [], "held_deployment_targets": [], "readiness_targets": [],
     }
 
 
@@ -59,7 +60,7 @@ def jobs_for(validation):
     return jobs
 
 
-@pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "uv.lock"])
+@pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "scripts/tested_image_bundle.py"])
 def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     assert resolve_selection([path])["suites"] == list(SUITES)
     assert resolve_selection(None)["suites"] == list(SUITES)
@@ -78,11 +79,12 @@ def test_component_documentation_only_selects_always(path):
     assert set(resolve_selection([path])["suites"]) == ALWAYS
 
 
-@pytest.mark.parametrize("path", [
-    "scripts/README.md.py", "pyproject.toml",
+@pytest.mark.parametrize("path,required", [
+    ("scripts/README.md.py", list(SUITES)),
+    ("pyproject.toml", [suite for suite in SUITES if suite != 'production-images']),
 ])
-def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
-    assert resolve_selection([path])["suites"] == list(SUITES)
+def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path, required):
+    assert resolve_selection([path])["suites"] == required
 
 
 def test_documentation_does_not_reduce_other_changed_path_requirements():

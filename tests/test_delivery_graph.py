@@ -152,7 +152,7 @@ def test_every_selected_prerequisite_runs_or_has_failed_or_cancelled_ancestry():
         for subset in combinations(order, width):
             selected = set(subset)
             for stopped, outcome in ((None, None), *((name, result) for name in selected for result in ('failure', 'cancelled'))):
-                delivery = json.loads(json.dumps(ci.delivery_outputs({'deployments': list(selected), 'suites': []}, 'push', 'refs/heads/main')))
+                delivery = json.loads(json.dumps(ci.delivery_outputs({'deployments': list(selected), 'readiness_targets': [], 'suites': []}, 'push', 'refs/heads/main')))
                 outcomes, failed_ancestry, cancelled_ancestry = {}, {}, {}
                 for name in order:
                     # failure() is transitive; contains(needs.*.result, 'cancelled') sees direct needs only,
