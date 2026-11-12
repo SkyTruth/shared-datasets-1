@@ -1190,12 +1190,24 @@ ci-plan = [
     { name = "python-hcl2" },
     { name = "pyyaml" },
 ]
+control-plane = [
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+    { name = "python-hcl2" },
+    { name = "pyyaml" },
+]
 dev = [
     { name = "geopandas" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "python-hcl2" },
+    { name = "pyyaml" },
     { name = "rasterio" },
+    { name = "ruff" },
+]
+lint = [
+    { name = "python-hcl2" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -1217,12 +1229,24 @@ ci-plan = [
     { name = "python-hcl2", specifier = ">=8,<9" },
     { name = "pyyaml", specifier = ">=6.0.0" },
 ]
+control-plane = [
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-xdist", specifier = "==3.8.0" },
+    { name = "python-hcl2", specifier = ">=8,<9" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+]
 dev = [
     { name = "geopandas", specifier = "==1.1.1" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-xdist", specifier = "==3.8.0" },
     { name = "python-hcl2", specifier = ">=8,<9" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rasterio", specifier = "==1.4.3" },
+    { name = "ruff", specifier = ">=0.14.0" },
+]
+lint = [
+    { name = "python-hcl2", specifier = ">=8,<9" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.14.0" },
 ]
 

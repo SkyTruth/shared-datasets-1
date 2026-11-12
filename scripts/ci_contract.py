@@ -31,8 +31,16 @@ INGESTION_DEPLOYMENTS = frozenset(config["selection"] for config in INGESTION_CO
 ROLLOUT_HOLD_TARGETS = frozenset(config["selection"] for config in DEPLOY_TARGETS.values())
 DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deployments").items() if "image" in row}
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
-ALWAYS = {"lint", "tests", "tests-control-plane"}
+ALWAYS = {"lint", "tests"}
 REUSABLE_SUITES = frozenset({"lint", "tests", "tests-control-plane", "geospatial-integration", "browser"})
+# These graph tests need initialized providers and run with deployment controls.
+PROVIDER_TESTS = frozenset({'tests/test_terraform_target_contracts.py', 'tests/test_pr_plan_activation.py'})
+
+
+def control_plane_test(path):
+    return 'ci_' in Path(path).name or 'deployment' in Path(path).name or path in PROVIDER_TESTS
+
+
 DELIVERY_FILTERS = {'refresh-reviewed-catalog': 'has_catalog_changes',
                     'announce-repo-functionality': 'has_repo_alert', 'publish-reviewed-dataset': 'has_mutations'}
 
@@ -160,7 +168,7 @@ def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]
             "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py",
         }):
         return "component" if path in {"pyproject.toml", "uv.lock"} else "shared", set(SUITES)
-    images, native, browser, sources, _ = inputs or dependency_inputs(root=root)
+    images, native, browser, sources, _ = inputs or dependency_inputs(None, root)
     if path.startswith(("catalog/", "templates/", "docs/assets/")):
         suites = {"sdk-node22", "sdk-node24", "browser"}
         if path.startswith("catalog/") or any(matches(path, copied) for copied in images.values()):
@@ -235,6 +243,8 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
     suites.discard("production-images")
     if images:
         suites.add("production-images")
+    if tiers - {"documentation"}:
+        suites.add("tests-control-plane")
     if deployment_inputs.get("released_holds"):
         suites.add("geospatial-integration")
     return dict(deployments=deployments, production_image_targets=[target for target in BUILD_TARGETS if target in images],
@@ -285,8 +295,46 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
+def _registry_contracts(raw, *, bootstrap=False):
+    value = json.loads(raw)
+    if type(value.get('schema_version')) is not int or value['schema_version'] != 1:
+        raise ValueError("unsupported deployment registry snapshot")
+    shared = {key: row for key, row in value.items()
+              if key not in {"workflows", "targets", "plan_scopes", "image_checks"}}
+    return {row["selection"]: {
+        "workflow": row,
+        "targets": {name: item for name, item in value["targets"].items() if item["workflow"] == workflow
+                    and (not bootstrap or item.get('readiness_target') == 'iam-bootstrap')},
+        "scopes": {name: scope for name, scope in value.get("plan_scopes", {}).get(workflow, {}).items()
+                   if not bootstrap or name.startswith('bootstrap')},
+        "image_checks": None if bootstrap else value.get("image_checks", {}).get(row.get("image")),
+        "shared": shared,
+    } for workflow, row in value["workflows"].items() if "selection" in row}
+
+
+def registry_deployment_targets(before: str, after: str, *, bootstrap=False) -> set[str]:
+    """A registry row changes its consumers, not every protected deployment."""
+    previous, current = (_registry_contracts(raw, bootstrap=bootstrap) for raw in (before, after))
+    return {target for target in previous.keys() | current.keys() if previous.get(target) != current.get(target)}
+
+
+def bootstrap_deployments(paths, *, registry_snapshots=None, root=ROOT):
+    selected = set()
+    if '.github/terraform-targets.json' in (paths or []) and registry_snapshots is not None:
+        selected.update(registry_deployment_targets(*registry_snapshots, bootstrap=True))
+    terraform_paths = [path for path in paths or [] if path.startswith('terraform/')]
+    if terraform_paths:
+        for target, contract in _registry_contracts((root / '.github/terraform-targets.json').read_text(), bootstrap=True).items():
+            resources = [resource for row in contract['targets'].values() for resource in row['resources']]
+            resources += [resource for scope in contract['scopes'].values()
+                          for resource in [*scope.get('exact', []), *scope.get('instances', []), *scope.get('modules', {})]]
+            if resources and any(matches(path, scope_inputs(resources, root)) for path in terraform_paths):
+                selected.add(target)
+    return selected
+
+
 @lru_cache(maxsize=4)
-def deployment_paths(root=None):
+def deployment_paths(root=None, *, terraform=True):
     """Workflow/action/script closure plus registered Terraform and image inputs."""
     root = root or ROOT
     files = {path.relative_to(root).as_posix(): path.read_bytes()
@@ -307,12 +355,13 @@ def deployment_paths(root=None):
         for name, row in exceptions.items():
             if row["kind"] != "include" and not (name.endswith((".yml", ".yaml")) and row.get("deployments")):
                 edges[name] = set()
-    sources = {name for path, rows in resource_index(root).items()
-               if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
-    for job, row in syncs.items():
-        for resource in row['prerequisites']:
-            if not any(resource == name or resource.startswith(name + ".") for name in sources):
-                raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
+    if terraform:
+        sources = {name for path, rows in resource_index(root).items()
+                   if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
+        for job, row in syncs.items():
+            for resource in row['prerequisites']:
+                if not any(resource == name or resource.startswith(name + ".") for name in sources):
+                    raise ValueError(f"{job}: IAM prerequisite has no Terraform declaration: {resource}")
     paths = {}
     for target, row in declarations.items():
         workflow = row["workflow"]
@@ -321,11 +370,13 @@ def deployment_paths(root=None):
         resources += [resource for config in syncs.values() if config["workflow"] == workflow for resource in config["resources"]]
         resources += [resource for scope in scopes.get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
-        inputs = dependency_closure(edges, [".github/workflows/" + workflow]) | scope_inputs(resources, root)
+        inputs = dependency_closure(edges, [".github/workflows/" + workflow])
+        if terraform:
+            inputs.update(scope_inputs(resources, root))
         if resources:
             inputs.update("terraform/envs/prod/" + name for name in ("main.tf", "production.auto.tfvars", "variables.tf", "versions.tf"))
         if "image" in row:
-            inputs.update(dependency_inputs(root=root)[4][row["image"]])
+            inputs.update(dependency_inputs(None, root)[4][row["image"]])
         inputs.add(".github/terraform-targets.json")
         inputs.difference_update(name for name, item in exceptions.items() if item["kind"] == "exclude")
         for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
@@ -349,7 +400,7 @@ def changed_ci_suites(base, root):
     return (changed & set(SUITES)) | ({"sdk-node22", "sdk-node24"} if "sdk-validation" in changed else set())
 
 
-def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
+def select_deployments(paths, *, catalog_snapshots=None, registry_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
     for path in paths or []:
@@ -358,7 +409,11 @@ def select_deployments(paths, *, catalog_snapshots=None, ingestion_holds=(), rel
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
             continue
-        selected.update(target for pattern, targets in deployment_paths(root).items() if matches(path, {pattern}) for target in targets)
+        if path == ".github/terraform-targets.json" and registry_snapshots is not None:
+            selected.update(registry_deployment_targets(*registry_snapshots))
+            continue
+        selected.update(target for pattern, targets in deployment_paths(root, terraform=any(name.startswith('terraform/') for name in paths)).items()
+                        if matches(path, {pattern}) for target in targets)
     return [target for target in registry(root, section="deployments") if target in selected and target not in ingestion_holds]
 
 
@@ -461,7 +516,7 @@ def expected_tools(suite: str) -> dict[str, str]:
     if suite not in SUITES:
         raise ValueError(f"unknown suite: {suite}")
     return {"python": TOOLCHAIN["python"], "uv": TOOLCHAIN["uv"]} | {
-        "lint": {key: TOOLCHAIN[key] for key in ("terraform", "actionlint", "shellcheck")},
+        "lint": {key: TOOLCHAIN[key] for key in ("actionlint", "shellcheck")},
         **dict.fromkeys(("tests", "tests-control-plane"), {"node": TOOLCHAIN["node22"], "gitleaks": TOOLCHAIN["gitleaks"], "terraform": TOOLCHAIN["terraform"]}),
         "sdk-node22": {"node": TOOLCHAIN["node22"]}, "sdk-node24": {"node": TOOLCHAIN["node24"]},
         "browser": {"node": TOOLCHAIN["node22"]},

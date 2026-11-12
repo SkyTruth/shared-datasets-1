@@ -9,6 +9,18 @@ protected workflow boundaries offline. It does not prove installed publication
 state or propagated IAM; protected jobs verify those live before mutation.
 API failures and missing authority remain failures.
 
+The shared Terraform executor allocates a separate preparation job only for
+`Cron alert policy sync`, whose tested Monitoring image and credential must be
+prepared outside the state queue. Other scopes enter the queued job directly;
+that job still performs its own trusted bootstrap, replay/permission checks,
+signing rehearsal, saved-plan guard and signed claim before mutation. Failed
+or cancelled required preparation cannot admit the apply.
+
+Registry and Terraform ownership comparisons carry changed bootstrap eligibility
+separately from runtime eligibility. The successful main gate passes those flags to each caller's
+`sync_iam` input alongside the existing infrastructure trigger, so an owned
+bootstrap change cannot be skipped or cause unrelated deployment fan-out.
+
 Identity activation follows the [two-phase rollout](github-identity-rollout.md):
 phase 1 preserves legacy access and adds per-workflow identities; phase 2 removes
 legacy grants only after successful main runs prove each new identity.

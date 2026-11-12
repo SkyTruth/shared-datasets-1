@@ -1,5 +1,6 @@
 """Registry facts and serialized CI plans survive dependency-free execution."""
 import json
+import copy
 import os
 from pathlib import Path
 import runpy
@@ -77,6 +78,7 @@ def test_gate_eligibility_matches_every_post_gate_caller_and_cannot_escape_main(
     for event, ref in [('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main'), ('push', 'refs/heads/topic')]:
         assert not any(ci_contract.delivery_outputs(plan, event, ref).values())
     assert jobs['ci-ready']['outputs']['delivery'] == "${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}"
+    assert jobs['ci-ready']['outputs']['bootstrap'] == "${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.bootstrap || '[]' }}"
     verify = next(step for step in jobs['ci-ready']['steps'] if step.get('id') == 'verify')
     assert '--github-output "$GITHUB_OUTPUT"' in verify['run']
     for name in callers:
@@ -116,8 +118,78 @@ def test_verify_cli_emits_delivery_only_after_serialized_results_pass(tmp_path, 
         '--results', str(tmp_path / 'results'), '--jobs', str(jobs_file), '--github-output', str(output)])
     assert preflight.main() == (0 if successful else 1)
     if successful:
-        key, raw = output.read_text().strip().split('=', 1)
-        assert key == 'delivery'
-        assert json.loads(raw) == ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main')
+        values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+        assert json.loads(values['delivery']) == ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main')
+        assert json.loads(values['bootstrap']) == []
     else:
         assert not output.exists()
+
+
+@pytest.mark.parametrize('scope,owner,bootstrap', [
+    ('Monitoring alert policy IAM bootstrap', 'cron_alert_policy', True),
+    ('Monitoring Slack transport resources', 'cron_alert_policy', True),
+    ('Dataset usage deploy IAM bootstrap', 'dataset_usage', True),
+    ('viewer-bootstrap', 'catalog_viewer', True),
+    ('Cron alert policy sync', 'cron_alert_policy', False),
+    ('terraform/envs/prod/monitoring_alert_policy_iam.tf', 'cron_alert_policy', True),
+    ('terraform/envs/prod/dataset_usage.tf', 'dataset_usage', True),
+    ('terraform/envs/prod/pmtiles_cdn.tf', 'catalog_viewer', True),
+])
+def test_changed_scope_reaches_its_bootstrap_through_the_real_gate(tmp_path, monkeypatch, scope, owner, bootstrap):
+    from scripts import ci_preflight as preflight
+    from test_ci_preflight import jobs_for, results_for
+    from workflow_helpers import condition_result
+    root, git = fixture_repo(tmp_path)
+    base = git('rev-parse', 'HEAD')
+    registry = root / '.github/terraform-targets.json'
+    value = json.loads(registry.read_text())
+    if scope.startswith('terraform/'):
+        path = root / scope
+        path.write_text(path.read_text() + '\n# changed bootstrap policy source\n')
+    elif scope == 'viewer-bootstrap':
+        scopes = value['plan_scopes']['catalog-viewer-deploy.yml']
+        scopes['bootstrap']['exact'].append(scopes['runtime']['exact'][0])
+    else:
+        value['targets'][scope]['post_apply_wait_seconds'] = 1
+    if not scope.startswith('terraform/'):
+        registry.write_text(json.dumps(value))
+    git('add', '.')
+    git('commit', '-m', 'one changed registry scope')
+    plan, _ = emit_plan(root, base, tmp_path / 'selection')
+    assert owner in plan['deployments']
+    conditional = {'dataset_usage', 'catalog_viewer', 'cron_alert_policy'}
+    assert set(plan.get('bootstrap_targets', [])) & conditional == ({owner} if bootstrap else set())
+    plan_file, jobs_file, output = (tmp_path / name for name in ('gate-plan.json', 'jobs.json', 'gate-output'))
+    plan_file.write_text(json.dumps(plan))
+    jobs_file.write_text(json.dumps(jobs_for(plan)))
+    for report in results_for(plan):
+        directory = tmp_path / 'results' / report['suite']
+        directory.mkdir(parents=True)
+        (directory / 'result.json').write_text(json.dumps(report))
+    monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'push')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(sys, 'argv', ['ci_preflight.py', 'verify', '--plan', str(plan_file),
+        '--results', str(tmp_path / 'results'), '--jobs', str(jobs_file), '--github-output', str(output)])
+    assert preflight.main() == 0
+    outputs = dict(line.split('=', 1) for line in output.read_text().splitlines())
+    workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+    program = """const expression=process.argv[1], needs=JSON.parse(process.argv[2]);
+console.log(String(Function('needs','fromJSON','contains','return '+expression)
+    (needs,JSON.parse,(values,item)=>values.includes(item))));"""
+    for selection in ('dataset_usage', 'catalog_viewer', 'cron_alert_policy'):
+        caller = workflow['jobs'][selection.replace('_', '-')]
+        expression = caller['with']['sync_iam'].removeprefix('${{').removesuffix('}}').strip()
+        expression = expression.replace('needs.ci-ready', 'needs["ci-ready"]').replace('.artifact-registry-iam', '["artifact-registry-iam"]')
+        needs = {'ci-ready': {'outputs': outputs}}
+        actual = subprocess.check_output(['node', '-e', program, expression, json.dumps(needs)], text=True).strip() == 'true'
+        assert actual is (bootstrap and selection == owner)
+        leaf = yaml.safe_load((ROOT / caller['uses'].removeprefix('./')).read_text())
+        context = {'github.ref': 'refs/heads/main', 'github.event_name': 'push', 'inputs.sync_iam': actual,
+                   'needs.prepare.result': 'success', 'needs.prepare.outputs.proceed': 'true', 'needs.prepare.outputs.claim_signed': 'success'}
+        assert condition_result(leaf['jobs']['bootstrap'], context) is actual
+        iam_outputs = copy.deepcopy(outputs)
+        iam_outputs['delivery'] = json.dumps(json.loads(outputs['delivery']) | {'artifact-registry-iam': True})
+        needs['ci-ready']['outputs'] = iam_outputs
+        assert subprocess.check_output(['node', '-e', program, expression, json.dumps(needs)], text=True).strip() == 'true'

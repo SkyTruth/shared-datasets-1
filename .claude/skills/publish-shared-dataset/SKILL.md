@@ -39,7 +39,7 @@ raster/array inputs require an explicit feature-identity non-applicability reaso
 and still carry source pins and unresolved contract blockers. Retain verified
 analysis and apply exact decisions without repeating normalization. A sample or
 an incomplete inventory cannot pass. For code-only work, use complete synthetic
-batches and focused boundary probes before the final required preflight.
+batches and focused boundary probes before pushing for hosted validation.
 
 Use for a new or under-specified asset. Read [first-upload.md](references/first-upload.md).
 Discover the source and select an existing category/subcategory from

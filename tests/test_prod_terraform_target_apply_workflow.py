@@ -61,7 +61,10 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertEqual(propagation['permissions'], {})
         self.assertEqual([name for name, job in workflow['jobs'].items() if 'concurrency' in job], ['sync'])
         self.assertEqual(job['needs'], 'prepare')
-        self.assertEqual(job['if'], "needs.prepare.outputs.proceed == 'true'")
+        self.assertEqual(job['if'], "${{ !cancelled() && !failure() && (needs.prepare.result == 'skipped' || (needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true')) }}")
+        prepared = [name for name, row in registry().items() if row.get('prepare_monitoring_slack')]
+        self.assertEqual(prepared, ['Cron alert policy sync'])
+        self.assertEqual(workflow['jobs']['prepare']['if'], "inputs.sync_name == 'Cron alert policy sync'")
         self.assertNotIn('concurrency', workflow['jobs']['prepare'])
         self.assertIn('Prepare tested Monitoring image and bot credential',
                       workflow_steps_by_name(workflow, 'prepare'))

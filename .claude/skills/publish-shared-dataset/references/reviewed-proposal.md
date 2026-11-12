@@ -82,18 +82,19 @@ validation, admission for new assets, consumer impact and unresolved assumptions
 Create a focused branch and stage only related files. Load
 `repo-alert-commit-messages` before committing. With the final head committed,
 read `docs/ci-preflight.md` and `docs/agent-integration.md`, freeze the clean
-checkout, then run:
+checkout and finish focused positive/refusal checks. Full local preflight is an
+optional diagnostic; hosted `ci-ready` independently validates the exact head.
+When the publication request authorizes Git operations, run:
 
 ```bash
 git fetch origin main
-uv run python scripts/ci_preflight.py --base "$MAIN_SHA" --head "$HEAD_SHA"
 git push -u origin "$BRANCH"
 gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$WORK_DIR/pr-body.md"
 ```
 
 Resolve `MAIN_SHA=git rev-parse origin/main` and `HEAD_SHA=git rev-parse HEAD`
-after any required integration, before preflight. Passing evidence must match
-those exact revisions. Request `jonaraphael` review when the author differs;
+after any required integration. Optional full preflight evidence must match
+those exact revisions; it cannot replace hosted validation. Request `jonaraphael` review when the author differs;
 when the author is `jonaraphael`, record GitHub's self-review block and restricted
 self-acceptance in the body instead of issuing a known-failing reviewer request.
 

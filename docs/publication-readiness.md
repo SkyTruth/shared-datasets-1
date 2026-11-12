@@ -253,9 +253,9 @@ registered as required native executions before the non-native suite may skip
 them. A missing registration fails before Docker builds or hosted fanout.
 
 Run these focused checks while editing. Complete the actual affected entrypoint,
-serialization and relevant runtime-resource probes before full preflight. Local
+serialization and relevant runtime-resource probes before pushing. Local
 preflight and the existing hosted selection job run the shared probe before
 Docker builds/fanout; this adds no independent GHA workflow. Freeze the final
-commit, run required full preflight once, push once, and use existing verified
+commit, finish focused checks, push once when authorized, and use existing verified
 PR-to-main reuse where eligible. Any actual code/base/contract change requires
 fresh final validation. Preserve required checks and genuine failure reporting.

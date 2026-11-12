@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 from contextlib import contextmanager
+from functools import lru_cache
 import hashlib
 import gzip
 import io
@@ -22,6 +23,31 @@ ROOT = Path(__file__).resolve().parents[1]
 def repository_files(revision, root):
     with tarfile.open(fileobj=io.BytesIO(subprocess.check_output(["git", "archive", revision], cwd=root))) as archive:
         return {member.name: archive.extractfile(member).read() for member in archive if member.isfile()}
+
+
+@lru_cache(maxsize=1024)
+def _python_references(name, text):
+    """Cache syntax facts only; resolve every edge against the current file set."""
+    names, paths = set(), set()
+    package = name.removeprefix("api/python/src/").split("/")[:-1]
+    for node in ast.walk(ast.parse(text, filename=name)):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
+            module = ".".join(filter(None, (prefix, node.module)))
+            names.update([module, *(f"{module}.{alias.name}" for alias in node.names)])
+        elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+              and not node.value.endswith((".py", ".yml", ".yaml"))):
+            paths.add(node.value)
+        elif isinstance(node, ast.Call):
+            function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            if function in {"run", "run_command", "Popen", "check_output", "check_call"}:
+                paths.update(item.value for arg in node.args for item in ast.walk(arg)
+                             if isinstance(item, ast.Constant) and isinstance(item.value, str))
+            elif function == "import_module" and node.args and isinstance(node.args[0], ast.Constant):
+                names.add(node.args[0].value)
+    return frozenset(names), frozenset(paths)
 
 
 def dependency_graph(files, *, disabled_conditions=()):
@@ -47,31 +73,13 @@ def dependency_graph(files, *, disabled_conditions=()):
             edges[name] = paths & files.keys()
         if not name.endswith(".py"):
             continue
-        dependencies = set()
-        package = name.removeprefix("api/python/src/").split("/")[:-1]
-        for node in ast.walk(ast.parse(source_text, filename=name)):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                prefix = ".".join(package[:len(package) - node.level + 1]) if node.level else ""
-                module = ".".join(filter(None, (prefix, node.module)))
-                names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
-            elif (isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in files
-                  and not node.value.endswith((".py", ".yml", ".yaml"))):
-                dependencies.add(node.value)
-            elif isinstance(node, ast.Call):
-                function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if function in {"run", "run_command", "Popen", "check_output", "check_call"}:
-                    dependencies.update(item.value for arg in node.args for item in ast.walk(arg)
-                                        if isinstance(item, ast.Constant) and isinstance(item.value, str) and item.value in files)
-                elif function == "import_module" and node.args and isinstance(node.args[0], ast.Constant):
-                    names = [node.args[0].value]
-            for module in names:
-                parts = module.split(".")
-                for index in range(1, len(parts) + 1):
-                    prefix = ".".join(parts[:index])
-                    dependencies.update(modules[key] for key in (prefix, prefix + ".__init__") if key in modules)
+        names, paths = _python_references(name, source_text.decode() if isinstance(source_text, bytes) else source_text)
+        dependencies = set(paths & files.keys())
+        for module in names:
+            parts = module.split(".")
+            for index in range(1, len(parts) + 1):
+                prefix = ".".join(parts[:index])
+                dependencies.update(modules[key] for key in (prefix, prefix + ".__init__") if key in modules)
         dependencies.update(str(parent / "__init__.py") for parent in Path(name).parents
                             if str(parent / "__init__.py") in files)
         edges[name] = dependencies

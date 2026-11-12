@@ -92,8 +92,8 @@ mixups and unauthorized reads; preserve exact evidence links through retries.
 
 ## Integration and validation
 
-Use focused tests while editing. Before each first push, commit the focused
-scope, freeze the checkout, run complete preflight against current main, and
-record the evidence path. Reconcile overlapping files and prerequisite PRs
+Use focused tests while editing and before an authorized push. Full local
+preflight is an optional reproduction tool; hosted CI validates the prospective
+merge. Reconcile overlapping files and prerequisite PRs
 before the final validation boundary. Open each PR only when its implementation
 and validation are ready for review; do not open placeholder PRs for later work.

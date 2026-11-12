@@ -328,9 +328,9 @@ Git and history:
 - For publication-code changes without a pending real release, exercise complete
   synthetic batches and the changed runtime/serialization boundaries first;
   do not download every production dataset just to validate source changes.
-  Run `uv run python scripts/publication_runtime_check.py` before full preflight.
+  Run `uv run python scripts/publication_runtime_check.py` before pushing.
   Finish focused positive/negative checks before freezing the final head, then
-  run required full preflight and push that revision once. Read-only evidence
+  push that revision once when authorized. Read-only evidence
   updates do not need new commits or GHA runs. Existing production ownership,
   required checks and protected publication authority remain in force.
 - Treat the Git index and commit history as user-owned state.
@@ -370,19 +370,18 @@ Git and history:
   in a validating checkout.
   Follow-ups must refresh live PR/run identity and stop acting on completed or
   superseded work. Do not take over another chat without human authorization.
-- Before the first push, commit the focused changes and run
+- Before pushing, run `uv run ruff check .` and focused positive/negative checks
+  for the changed boundaries. Fix failures, empty collection and unexpected
+  relevant skips. Commit and push only when authorized. GitHub `ci-ready`
+  independently validates the prospective merge and remains authoritative;
+  full local preflight is an optional diagnostic, not a first-push gate.
+- To reproduce hosted validation locally, use
   `uv run python scripts/ci_preflight.py --wait --base <current-main-sha> --head <head-sha>`
-  from a clean checkout with full history. Read `docs/ci-preflight.md` for the
-  pinned Linux toolchain and evidence contract. Missing tools, failed checks,
-  empty collection and unexpected relevant skips must be fixed before pushing.
-- The PR's first push and toolchain or validation-contract changes require full
-  local preflight. Later code changes may use `--since <validated-sha>` with
-  passing local evidence for that SHA on the same base and contract; it runs the
-  delta plus always-on suites and records reuse. Conflict-free base-only
-  movement, PR-body edits and hosted waits need no local rerun. Preflight tests
-  an isolated prospective merge and must not modify unrelated working-tree or
-  index state. Local hooks and evidence are supplementary; GitHub `ci-ready`
-  independently runs the full current PR selection and remains authoritative.
+  from a clean checkout with full history. `--since <validated-sha>` reuses
+  compatible local coverage; contract/toolchain changes select the full run.
+  Read `docs/ci-preflight.md` for pinned tools and evidence. Preflight remains
+  isolated and must not modify unrelated working-tree or index state. Local
+  evidence never grants hosted validation or production authority.
 
 ## When To Ask For Human Input
 

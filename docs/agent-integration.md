@@ -45,11 +45,11 @@ the live PR head, main and run attempt; saved SHAs are observations, not authori
 Stay quiet while prerequisites are unchanged. Stop acting when the PR is merged,
 closed or superseded, and disable its own completed schedule when authorized.
 Never mutate an unrelated automation. Run `uv run ruff check .` before every
-commit. A new commit requires local evidence for that head: use a full run for
-the first push and after contract or toolchain changes, or `--since <validated-sha>` with passing evidence on the same
-base and contract. Conflict-free base-only movement, PR-body edits and hosted
-waits need no local rerun. Hosted CI still runs the full PR selection; do not
-retry an old hosted run for a new commit.
+commit and focused checks before an authorized push. Full local preflight is an
+optional reproduction tool; its `--since` reuse still requires compatible base,
+contract and toolchain evidence. GitHub validates each current prospective merge
+independently. Conflict-free base movement, PR-body edits and hosted waits need
+no local rerun. Do not retry an old hosted run for a new commit.
 
 ## Preserved boundaries
 

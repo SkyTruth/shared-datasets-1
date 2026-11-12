@@ -33,6 +33,7 @@ permissions:
 jobs:
   prepare:
     name: Prepare ${{ inputs.sync_name }}
+    if: inputs.sync_name == 'Cron alert policy sync'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: shared-datasets-production
@@ -252,7 +253,7 @@ jobs:
         mode: receipt
         receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}
     needs: prepare
-    if: needs.prepare.outputs.proceed == 'true'
+    if: ${{ !cancelled() && !failure() && (needs.prepare.result == 'skipped' || (needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true')) }}
   propagation:
     name: Wait for IAM propagation
     needs: sync

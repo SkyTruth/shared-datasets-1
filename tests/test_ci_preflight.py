@@ -29,11 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def plan(suites=SUITES):
+    targets = list(BUILD_TARGETS) if "production-images" in suites else []
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
         "tested_sha": "c" * 40, "tree": "d" * 40,
-        "production_image_limits": preflight.production_image_limits(),
-        "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": list(BUILD_TARGETS) if "production-images" in suites else [],
+        "production_image_limits": preflight.production_image_limits(targets=targets),
+        "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": targets,
     }
 
 
@@ -86,19 +87,20 @@ def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(pa
 
 def test_documentation_does_not_reduce_other_changed_path_requirements():
     paths = ["scripts/README.md", "ingestion/wdpa_monthly/run.py"]
-    assert set(resolve_selection(paths)["suites"]) == ALWAYS | {"geospatial-integration", "production-images", "browser"}
+    assert set(resolve_selection(paths)["suites"]) == ALWAYS | {"tests-control-plane", "geospatial-integration", "production-images", "browser"}
     assert resolve_selection(["scripts/README.md", "scripts/unproved.py"])["suites"] == list(SUITES)
 
 
 @pytest.mark.parametrize("path", ["scripts/slack_incidents.py", "scripts/operational_safety_check.py",
     "scripts/repo_alerts.py", ".github/workflows/operational-safety-check.yml"])
 def test_unrelated_automation_uses_core_suites_without_image_builds(path):
-    assert set(resolve_selection([path])["suites"]) == ALWAYS
+    control = {"tests-control-plane"}
+    assert set(resolve_selection([path])["suites"]) == ALWAYS | control
     assert resolve_selection([path])["production_image_targets"] == []
     component = "ingestion/mpatlas_monthly/run.py"
-    assert resolve_selection([path, component])["suites"] == resolve_selection([component])["suites"]
+    assert set(resolve_selection([path, component])["suites"]) == set(resolve_selection([component])["suites"]) | control
     assert resolve_selection([path, component])["production_image_targets"] == ["mpatlas-monthly"]
-    assert set(resolve_selection([path, "scripts/ci_contract.py"])["suites"]) == ALWAYS
+    assert set(resolve_selection([path, "scripts/ci_contract.py"])["suites"]) == ALWAYS | {"tests-control-plane"}
 
 
 def test_generated_import_closure_includes_relative_imports_packages_and_script_calls(tmp_path, monkeypatch):
@@ -119,7 +121,7 @@ def test_generated_import_closure_includes_relative_imports_packages_and_script_
         context.setattr(ci_contract, "registry", lambda *args, **kwargs: {})
         context.setattr(ci_contract, "NATIVE_TESTS", ("ingestion/mpatlas_monthly/run.py",))
         ci_contract.dependency_inputs.cache_clear()
-        images, native, *_ = ci_contract.dependency_inputs()
+        images, native, *_ = ci_contract.dependency_inputs(None, ci_contract.ROOT)
         inputs = images["mpatlas-monthly"]
         assert {"scripts/shared.py", "scripts/leaf.py", "scripts/entry.py", "scripts/__init__.py"} <= native
         assert "scripts/entry.py" in inputs
@@ -173,7 +175,7 @@ def test_every_registered_host_read_probe_is_an_image_input():
     from scripts.production_image_contracts import HOST_PROBE_FILES
     from scripts.terraform_target_contracts import registry
 
-    images, *_ = ci_contract.dependency_inputs()
+    images, *_ = ci_contract.dependency_inputs(None, ci_contract.ROOT)
     for target, checks in registry(section='image_checks').items():
         for key, path in HOST_PROBE_FILES.items():
             if '{' + key + '}' in json.dumps(checks):
@@ -213,7 +215,7 @@ def test_browser_fixture_imports_and_script_calls_keep_browser_coverage(script):
 
 def test_cross_component_dependencies_and_explicit_unselected_suites():
     assert set(resolve_selection(["docs/consumer-guide.md"])["suites"]) == ALWAYS
-    assert set(resolve_selection(["api/python/src/skytruth_shared_datasets/snapshot.py"])["suites"]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
+    assert set(resolve_selection(["api/python/src/skytruth_shared_datasets/snapshot.py"])["suites"]) == ALWAYS | {"tests-control-plane", "sdk-node22", "sdk-node24", "browser", "production-images"}
     assert set(resolve_selection(["catalog/shared-datasets-catalog.csv"])["suites"]) == set(SUITES)
     assert "geospatial-integration" in resolve_selection(["ingestion/common/reset.py"])["suites"]
     assert "geospatial-integration" in resolve_selection(["tests/test_wdpa_translation_inputs.py"])["suites"]
@@ -438,12 +440,23 @@ def fixture_repo(tmp_path, *, image_targets=BUILD_TARGETS):
     return root, git
 
 
-def emit_plan(root, base, work):
+def emit_plan(root, base, work, *, isolated=False):
+    """Exercise CLI parsing and persisted transports; cold-start coverage is separate."""
     output, github_output = work / "plan.json", work / "github-output"
-    result = subprocess.run([preflight.sys.executable, str(ROOT / "scripts/ci_preflight.py"), "plan", "--base", base,
-        "--output", str(output), "--github-output", str(github_output)], cwd=root,
-        env={key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    argv = [str(ROOT / "scripts/ci_preflight.py"), "plan", "--base", base,
+            "--output", str(output), "--github-output", str(github_output)]
+    if isolated:
+        result = subprocess.run([preflight.sys.executable, *argv], cwd=root,
+            env={key: value for key, value in os.environ.items() if not key.startswith("GITHUB_")}, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+    else:
+        with pytest.MonkeyPatch.context() as context:
+            context.chdir(root)
+            context.setattr(preflight.sys, 'argv', argv)
+            for key in tuple(os.environ):
+                if key.startswith('GITHUB_'):
+                    context.delenv(key)
+            assert preflight.main() == 0
     return json.loads(output.read_text()), dict(line.split("=", 1) for line in github_output.read_text().splitlines())
 
 
@@ -490,7 +503,8 @@ def test_invalid_ingestion_rollout_hold_fails_plan(tmp_path, invalid):
         preflight.make_plan(source, base, "HEAD")
 
 
-def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path):
+@pytest.mark.parametrize('isolated', [False, True])
+def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path, isolated):
     source, git = fixture_repo(tmp_path)
     base = git("rev-parse", "HEAD")
     for filename in ("scripts/slack_incidents.py", "tests/test_wdpa_incident_recovery.py"):
@@ -499,11 +513,11 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
         target.write_text("# automation fixture\n")
     git("add", ".")
     git("commit", "-m", "automation")
-    validation, emitted = emit_plan(source, base, tmp_path)
+    validation, emitted = emit_plan(source, base, tmp_path, isolated=isolated)
     assert validation["suites"] == ["lint", "tests", "tests-control-plane"]
     assert validation["deployments"] == []
     assert json.loads(emitted["production-image-targets"]) == []
-    assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS
+    assert {suite for suite in SUITES if emitted[suite] == "true"} == ALWAYS | {"tests-control-plane"}
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
                 for suite in validation["suites"]}
     assert ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."] in commands["tests"]
@@ -512,7 +526,7 @@ def test_automation_plan_cli_outputs_and_gate_preserve_mandatory_checks(tmp_path
         assert any(f"scripts/{script}.py" in args for args in commands["tests"])
     assert ["uv", "run", "--no-sync", "ruff", "check", "."] in commands["lint"]
     assert any("scripts/check_workflow_syntax.py" in args for args in commands["lint"])
-    assert any(args[0] == "terraform" and "validate" in args for args in commands["lint"])
+    assert any(args[0] == "terraform" and "validate" in args for args in commands["tests-control-plane"])
     results, jobs = results_for(validation), jobs_for(validation)
     verify_results(validation, results, jobs)
     for suite in ALWAYS:
@@ -700,17 +714,17 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     (["services/catalog_viewer/README.md"], ALWAYS, []),
     (["ingestion/common/nested/operations.md"], ALWAYS, []),
     (["ingestion/dataset_usage/README.md", "ingestion/dataset_usage/run.py"],
-     ALWAYS | {"geospatial-integration", "production-images"}, ["dataset_usage"]),
+     ALWAYS | {"tests-control-plane", "geospatial-integration", "production-images"}, ["dataset_usage"]),
     (["services/catalog_viewer/README.md", "services/catalog_viewer/run.py"],
-     ALWAYS | {"production-images", "browser"}, ["catalog_viewer"]),
+     ALWAYS | {"tests-control-plane", "production-images", "browser"}, ["catalog_viewer"]),
     (["docs/assets/ims-sea-ice-extent.md"], set(SUITES), ["sea_ice"]),
-    (["docs/guide.md", "scripts/unproved.py"], ALWAYS, []),
+    (["docs/guide.md", "scripts/unproved.py"], ALWAYS | {"tests-control-plane"}, []),
     (["docs/guide.md", "unknown/component.ext"], set(SUITES), []),
     (["docs/new-tool.py"], set(SUITES), []),
     ([".claude/skills/new-tool.py"], set(SUITES), []),
-    (["scripts/ci_source_proof.py"], ALWAYS, []),
-    ([".github/workflows/ci.yml"], ALWAYS, []),
-    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS, ["ingestion_iam"]),
+    (["scripts/ci_source_proof.py"], ALWAYS | {"tests-control-plane"}, []),
+    ([".github/workflows/ci.yml"], ALWAYS | {"tests-control-plane"}, []),
+    (["terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"], ALWAYS | {"tests-control-plane"}, ["ingestion_iam"]),
     ([], ALWAYS, []),
 ])
 def test_real_diff_tiers_preserve_validation_and_deployment_boundaries(tmp_path, paths, suites, deployments):
@@ -776,7 +790,7 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
 
 
 def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):
-    commands = preflight.suite_commands('lint', ROOT, plan(), tmp_path)
+    commands = preflight.suite_commands('tests-control-plane', ROOT, plan(), tmp_path)
     initializations = [args for args, _ in commands if args[0] == 'terraform' and 'init' in args]
     assert len(initializations) == 2
     assert all('-lockfile=readonly' in args for args in initializations)
@@ -997,10 +1011,9 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
                 for suite in validation["suites"]}
     assert commands == {
         "lint": [["git", "diff", "--check", base, validation["tested_sha"]]],
-        "tests-control-plane": [["uv", "sync", "--locked", "--all-groups"], preflight.interpreter_command()],
         "tests": [
             ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."],
-            ["uv", "sync", "--locked", "--all-groups"],
+            ["uv", "sync", "--locked", "--no-dev"],
             preflight.interpreter_command(),
             ["uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check"],
             ["uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(tmp_path / "tests/catalog-web")],
@@ -1053,7 +1066,7 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
         assert retained["commands"][-1]["exit_code"] != 0
         lint = preflight.run_suite(source, validation, "lint", output / "lint")
         with pytest.raises(ValueError, match="did not execute successfully"):
-            verify_results(validation, [lint, retained, next(row for row in results_for(validation) if row["suite"] == "tests-control-plane")], jobs_for(validation))
+            verify_results(validation, [lint, retained], jobs_for(validation))
     assert all(not (tmp_path / suite / "pytest.xml").exists() for suite in validation["suites"])
 
 
@@ -1101,7 +1114,7 @@ def test_nested_action_edits_invalidate_the_persisted_validation_plan(tmp_path):
 @pytest.mark.parametrize("path", ["scripts/ci_contract.py", "scripts/ci_preflight.py",
                                  "scripts/ci_source_proof.py"])
 def test_ci_administration_does_not_rebuild_production_images(path):
-    assert set(resolve_selection([path])["suites"]) == ALWAYS
+    assert set(resolve_selection([path])["suites"]) == ALWAYS | {"tests-control-plane"}
     assert resolve_selection([path])["production_image_targets"] == []
 
 
@@ -1131,7 +1144,7 @@ def test_deleted_module_uses_base_consumers_through_the_real_plan_cli(tmp_path, 
     git("commit", "-m", "remove module and import")
     selected, emitted = emit_plan(source, base, tmp_path)
     if consumer == "unproved":
-        assert set(selected["suites"]) == ALWAYS | {"geospatial-integration"}
+        assert set(selected["suites"]) == ALWAYS | {"tests-control-plane", "geospatial-integration"}
         return
     assert selected["production_image_targets"] == (["mpatlas-monthly"] if consumer == "image" else [])
     assert emitted["production-images"] == str(consumer == "image").lower()
@@ -1160,7 +1173,7 @@ def test_lint_releases_at_most_one_held_target(tmp_path, released):
 
 def test_unit_test_only_changes_do_not_rebuild_uncopied_production_images():
     # Installed probes and fixtures remain inputs; pytest-only source is not consumed by image execution.
-    images, *_ = ci_contract.dependency_inputs()
+    images, *_ = ci_contract.dependency_inputs(None, ci_contract.ROOT)
     for target in BUILD_TARGETS:
         unit = f"tests/test_{target.replace('-', '_')}.py"
         assert unit not in images[target]
