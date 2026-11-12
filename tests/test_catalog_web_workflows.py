@@ -26,18 +26,13 @@ RELEASE_INDEX_REBUILD = REPO_ROOT / ".github/workflows/release-index-rebuild.yml
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
 
 
-def run_embedded_python_allowlist(run: str, resource_changes: list[dict]) -> subprocess.CompletedProcess[str]:
-    marker = "<<'PY'\n"
-    source = run.partition(marker)[2].rsplit("\nPY", maxsplit=1)[0]
-    if not source:
-        raise AssertionError("workflow step does not contain an embedded Python script")
-
+def run_cdn_runtime_allowlist(run: str, resource_changes: list[dict]) -> subprocess.CompletedProcess[str]:
+    assert run.strip() == 'python scripts/cdn_plan_readiness.py check-runtime --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"'
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json") as plan_file:
-        json.dump({"resource_changes": resource_changes}, plan_file)
+        json.dump({"format_version": "1.2", "resource_changes": resource_changes}, plan_file)
         plan_file.flush()
         return subprocess.run(
-            [sys.executable, "-", plan_file.name],
-            input=source,
+            [sys.executable, '-I', '-S', str(REPO_ROOT / 'scripts/cdn_plan_readiness.py'), 'check-runtime', '--plan-json', plan_file.name],
             text=True,
             capture_output=True,
             check=False,
@@ -114,9 +109,9 @@ def assert_protected_terraform_sync(
     testcase.assertIn("-refresh=false", plan_run)
     testcase.assertIn(f'out="${{RUNNER_TEMP}}/{plan_name}.tfplan"', plan_run)
     for resource in expected_targets | blocked_resources:
-        result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(resource, ["update"])])
+        result = run_cdn_runtime_allowlist(enforce_run, [terraform_resource_change(resource, ["update"])])
         testcase.assertEqual(result.returncode == 0, resource in expected_targets, result.stderr)
-    testcase.assertIn("Refusing", enforce_run)
+    testcase.assertIn("scripts/cdn_plan_readiness.py check-runtime", enforce_run)
     testcase.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod", steps["Terraform apply"]["run"])
     testcase.assertIn(" apply ", steps["Terraform apply"]["run"])
 
@@ -348,11 +343,8 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
         ):
             for suffix in ('["fixture"]', '_foreign["fixture"]'):
-                result = run_embedded_python_allowlist(enforce_run, [terraform_resource_change(prefix + suffix, ["update"])])
+                result = run_cdn_runtime_allowlist(enforce_run, [terraform_resource_change(prefix + suffix, ["update"])])
                 self.assertEqual(result.returncode == 0, suffix == '["fixture"]', result.stderr)
-        self.assertIn('managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"', enforce_run)
-        self.assertIn('address == "google_storage_bucket.shared_bucket" and "delete" in actions', enforce_run)
-        self.assertIn('"delete" in actions', enforce_run)
 
         self.assertIn("python scripts/ingestion_targets.py image-vars", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', workflow_steps_by_name(workflow, 'verify')["Invalidate catalog CDN cache"]["run"])
@@ -401,20 +393,20 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         active_prefix = posixpath.dirname(posixpath.dirname(object_name)) + "/"
         retired_prefix = "300-infrastructure-industrial/320-mining/no-longer-in-catalog/"
 
-        allowed = run_embedded_python_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete"])])
+        allowed = run_cdn_runtime_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete"])])
         self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
 
-        still_active = run_embedded_python_allowlist(enforce_run, [folder_delete(active_prefix, ["delete"])])
+        still_active = run_cdn_runtime_allowlist(enforce_run, [folder_delete(active_prefix, ["delete"])])
         self.assertEqual(still_active.returncode, 1, still_active.stdout + still_active.stderr)
-        self.assertIn(active_prefix, still_active.stdout)
+        self.assertIn('refusing', still_active.stderr)
 
-        catalog_folder = run_embedded_python_allowlist(enforce_run, [folder_delete("_catalog/", ["delete"])])
+        catalog_folder = run_cdn_runtime_allowlist(enforce_run, [folder_delete("_catalog/", ["delete"])])
         self.assertEqual(catalog_folder.returncode, 1)
 
-        replace = run_embedded_python_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete", "create"])])
+        replace = run_cdn_runtime_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete", "create"])])
         self.assertEqual(replace.returncode, 1)
 
-        whole_resource = run_embedded_python_allowlist(
+        whole_resource = run_cdn_runtime_allowlist(
             enforce_run,
             [terraform_resource_change(folder_resource, ["delete"])],
         )

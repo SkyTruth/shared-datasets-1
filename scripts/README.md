@@ -20,6 +20,17 @@ entrypoints. [CI preflight](../docs/ci-preflight.md) owns the ordered before-pus
 procedure, resolved image matrix, offline checks, tools and evidence contract.
 Interface: `uv run python scripts/ci_preflight.py --help`.
 
+`runtime_dependencies.py` exports the authoritative `uv.lock` into checked-in runtime,
+WDPA-native and CI-plan locks under `.github/docker/runtime-dependencies/`. Run
+`uv run python scripts/runtime_dependencies.py` after dependency changes. Lint uses
+`--check` to reject stale exports. Runtime Dockerfiles consume the exported hashes,
+Python constraints and native build settings instead of development metadata.
+
+`deployment_readiness.py` admits the exact accepted main CI gate, checks registered
+read-only plans and production principals, and verifies a distinct signed readiness
+observation. It creates no deployment claim or apply authority. The protected
+workflow supplies its invocation; see [executor readiness](../docs/ci-deployment.md#executor-only-signed-readiness).
+
 [Ingestion deployment](../docs/ci-deployment.md),
 [Terraform target changes](../docs/terraform-reconciliation.md#change-a-terraform-or-iam-target)
 and [recovery](../docs/ci-recovery.md) own their respective procedures; tool

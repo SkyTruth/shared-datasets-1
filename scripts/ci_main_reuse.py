@@ -81,7 +81,7 @@ def check_snapshot(plan, snapshot, current):
             and evidence["validation_context"]["repository"] == repository
             and evidence["validation_context"]["pr_number"] == pr["number"], "PR evidence event mismatch")
     require(evidence["head"] == pr["head"]["sha"] and re.fullmatch(r"[0-9a-f]{40}", evidence["tested_sha"])
-            and all(evidence[key] == plan[key] for key in ("tree", "base", "contract_digest", "suites")),
+            and all(evidence[key] == plan[key] for key in ("tree", "base", "contract_digest", "suites", "deployments", "held_deployment_targets", "readiness_targets")),
             "PR tree, base, selection or contract differs from the main push")
     tools = {suite: expected_tools(suite) for suite in plan["suites"]}
     require(evidence["toolchains"] == tools, "PR toolchain identities changed")
@@ -130,7 +130,7 @@ def discover(api, plan, current, *, now):
                 "admitted_at": (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z"), "pr": pr, "run": run,
                 "gate": fields(gates[0], "name status conclusion started_at completed_at"),
                 "artifact": fields(matches[0], "id name workflow_run expired expires_at created_at digest size_in_bytes"),
-                "evidence": fields(evidence, "schema_version status source validation_context head tested_sha tree base contract_digest suites toolchains validation_results"),
+                "evidence": fields(evidence, "schema_version status source validation_context head tested_sha tree base contract_digest suites deployments held_deployment_targets readiness_targets toolchains validation_results"),
                 "reused_suites": sorted(set(plan["suites"]) & REUSABLE_SUITES)}
     check_snapshot(plan, snapshot, current)
     return snapshot

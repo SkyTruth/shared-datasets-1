@@ -16,6 +16,7 @@ WORKFLOW_NAMES = {
     'dataset-breaking-change-alert.yml': ('Dataset breaking change alert',),
     'dataset-usage-deploy.yml': ('Data / Usage collector deploy', 'Dataset usage deploy'),
     'deployment-recovery.yml': ('Deployments / Read-only reconciliation', 'Deployment read-only reconciliation'),
+    'deployment-readiness.yml': ('Deployments / Signed executor readiness',),
     'deployment-verification.yml': ('Deployments / Completion check', 'Deployment completion check', 'Deployment terminal verification'),
     'eamlis-held-candidate-preview.yml': ('Inspect held EAMLIS candidate',),
     'eamlis-monthly-deploy.yml': ('Ingestion / EAMLIS monthly deploy', 'EAMLIS monthly deploy'),

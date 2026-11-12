@@ -49,8 +49,9 @@ COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra wdpa-native \
+COPY .github/docker/runtime-dependencies/pylock.wdpa.toml .github/docker/runtime-dependencies/uv.toml ./.github/docker/runtime-dependencies/
+RUN uv venv --python /usr/local/bin/python .venv \
+    && uv pip sync --config-file .github/docker/runtime-dependencies/uv.toml --preview-features pylock --require-hashes --strict --python .venv/bin/python .github/docker/runtime-dependencies/pylock.wdpa.toml \
     && .venv/bin/python -c 'import numpy; from osgeo import gdal, gdal_array; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; assert numpy.__version__ == "1.26.4"; assert gdal_array.NumericTypeCodeToGDALTypeCode(numpy.dtype("uint8")) == gdal.GDT_Byte'
 ENV PATH="/app/.venv/bin:${PATH}" \
     TMPDIR=/work/tmp \

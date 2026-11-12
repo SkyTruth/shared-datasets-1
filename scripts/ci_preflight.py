@@ -36,7 +36,7 @@ from scripts.terraform_target_contracts import production_image_limits
 from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, validate_manifest, validate_local_manifest
 from scripts.ci_contract import (
     ALWAYS, DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, bootstrap_deployments, contract_digest, control_plane_test, expected_tools, delivery_outputs, deploy_image_targets,
-    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
+    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, validate_obligations, verify_results, write_json,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -273,6 +273,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
     bootstrap = bootstrap_deployments(paths, registry_snapshots=registry_snapshots, root=root) & set(selection['deployments'])
     if bootstrap:
         selection['bootstrap_targets'] = sorted(bootstrap)
+    validate_obligations(selection)
     return {
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
@@ -328,6 +329,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
         add("uv", "run", "--no-sync", "python", "scripts/reviewed_dataset_plan.py", "check-diff", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
+        add("uv", "run", "--no-sync", "python", "scripts/runtime_dependencies.py", "--check")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
     elif suite == "tests-control-plane":
         add("uv", "sync", "--locked", "--no-dev", "--group", "control-plane")
@@ -721,7 +723,7 @@ def local_execution_plan(root: Path, plan: dict, since: str | None) -> tuple[dic
                  "production_image_targets": [target for target in BUILD_TARGETS if target in targets],
                  "production_image_limits": {target: (plan["production_image_limits"] | delta["production_image_limits"])[target]
                                              for target in targets},
-                 "deployments": [], "delta_paths": delta["changed_paths"]}
+                 "deployments": [], "held_deployment_targets": [], "readiness_targets": [], "delta_paths": delta["changed_paths"]}
     reused = {suite: {"head": since, "evidence": str(local_evidence_path(plan["base"], since))}
               for suite in plan["suites"] if suite not in selected}
     return execution, reused

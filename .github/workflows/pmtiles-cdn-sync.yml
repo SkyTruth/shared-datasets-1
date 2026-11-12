@@ -155,35 +155,7 @@ jobs:
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
       - name: Enforce PMTiles resource-change allowlist
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
-        run: |
-          python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-          from scripts.cdn_plan_readiness import catalog_folders
-          from scripts.terraform_target_contracts import plan_scope
-          allowed_exact, allowed_patterns = plan_scope("pmtiles-cdn-sync.yml", "runtime")
-          managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
-          catalog_managed_folder_names = catalog_folders(Path("catalog/shared-datasets-catalog.csv").read_text())
-          blocked = []
-          for resource in json.load(open(sys.argv[1])).get("resource_changes", []):
-              actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]): continue
-              address = resource.get("address", "")
-              allowed = address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns)
-              if address == "google_storage_bucket.shared_bucket" and "delete" in actions:
-                  allowed = False
-              if (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}[")) and "delete" in actions:
-                  # Folder-only deletion cannot delete objects. Keep active catalog anchors.
-                  index = resource.get("index")
-                  folder = index if isinstance(index, str) and index else address.partition('["')[2].rsplit('"]', 1)[0]
-                  allowed = actions == ["delete"] and address.startswith(f"{managed_folder_prefix}[") and bool(folder) and folder not in catalog_managed_folder_names
-              if not allowed:
-                  blocked.append(f"{'/'.join(actions)} {address}")
-          if blocked:
-              print("Refusing non-allowlisted PMTiles changes: " + ", ".join(blocked))
-              raise SystemExit(1)
-          PY
+        run: python scripts/cdn_plan_readiness.py check-runtime --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
       - name: Verify permissions required by the saved CDN plan
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target pmtiles-cdn --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"

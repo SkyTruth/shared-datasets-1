@@ -194,4 +194,5 @@ def test_registry_reason_edit_preserves_semantic_resource_and_selection_contract
     after = plan_scope('catalog-viewer-deploy.yml', 'runtime', source)
     assert before[0] == after[0]
     assert [item.pattern for item in before[1]] == [item.pattern for item in after[1]]
-    assert ci.select_deployments(['scripts/deployment_revision.py'], root=source)
+    selection = ci.resolve_selection(['scripts/deployment_revision.py'], root=source)
+    assert not selection['deployments'] and selection['readiness_targets']

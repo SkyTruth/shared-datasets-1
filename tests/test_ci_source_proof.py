@@ -10,6 +10,7 @@ from ci_result_fixtures import production_images
 def plan(attempt=1):
     return {
         "schema_version": 1, "base": "a" * 40, "head": "b" * 40,
+        "deployments": [], "held_deployment_targets": [], "readiness_targets": [],
         "tested_sha": "c" * 40, "tree": "d" * 40, "contract_digest": "e" * 64,
         "suites": list(SUITES), "production_image_targets": sorted(production_images("c" * 40)["images"]), "source": {"run_id": "123", "run_attempt": attempt},
     }

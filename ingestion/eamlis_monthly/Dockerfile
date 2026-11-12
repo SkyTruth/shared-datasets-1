@@ -44,8 +44,9 @@ COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-dev
+COPY .github/docker/runtime-dependencies/pylock.runtime.toml ./
+RUN uv venv --python /usr/local/bin/python .venv \
+    && uv pip sync --preview-features pylock --require-hashes --strict --python .venv/bin/python pylock.runtime.toml
 ENV PATH="/app/.venv/bin:${PATH}"
 
 COPY ingestion/__init__.py ./ingestion/__init__.py

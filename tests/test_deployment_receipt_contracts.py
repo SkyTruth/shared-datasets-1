@@ -40,6 +40,8 @@ class ReceiptContractTests(unittest.TestCase):
                 source = Path(__file__).resolve().parents[1] / ".github/workflows" / name
                 value = yaml.safe_load(source.read_text())
             self.write(name, value)
+        shutil.copyfile(Path(__file__).resolve().parents[1] / '.github/workflows/deployment-readiness.yml',
+                        self.workflows / 'deployment-readiness.yml')
 
     def write(self, name, value):
         (self.workflows / name).write_text(yaml.safe_dump(value))

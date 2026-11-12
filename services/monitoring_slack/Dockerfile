@@ -2,8 +2,9 @@ FROM python:3.12-slim@sha256:e70237b264442328526ff29d6b3c43bd8abcf6cbab78a949322
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
-COPY pyproject.toml uv.lock /app/
-RUN uv sync --locked --no-dev --no-install-project
+COPY .github/docker/runtime-dependencies/pylock.runtime.toml /app/
+RUN uv venv --python /usr/local/bin/python .venv \
+    && uv pip sync --preview-features pylock --require-hashes --strict --python .venv/bin/python pylock.runtime.toml
 COPY scripts/slack_incident_api.py /app/scripts/slack_incident_api.py
 COPY ingestion/__init__.py /app/ingestion/__init__.py
 COPY ingestion/common/__init__.py /app/ingestion/common/__init__.py

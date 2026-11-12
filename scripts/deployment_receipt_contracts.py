@@ -313,7 +313,7 @@ def viewer_boundary(workflow):
 
 
 def boundaries(root):
-    errors = []
+    errors = readiness_boundary(root)
     for filename in WORKFLOWS:
         value = yaml.safe_load((root / ".github/workflows" / filename).read_text())
         if filename == "publish-typescript-sdk.yml":
@@ -360,6 +360,58 @@ def boundaries(root):
                 following = [step for step in steps[index + 1:] if identifier and receipt_link(step, identifier)]
                 if not following or not any("always()" in str(step.get("if", "")) for step in following):
                     errors.append(f"{filename}/{output.get('name')}: every outcome needs always-run signing of its exact receipt output")
+    return errors
+
+
+def readiness_boundary(root):
+    """An observational leaf must never acquire the mutation workflow surface."""
+    value = yaml.safe_load((root / '.github/workflows/deployment-readiness.yml').read_text())
+    trigger = value.get('on', value.get(True, {}))
+    jobs = value['jobs']
+    errors = []
+    if set(trigger) != {'workflow_call'} or set(jobs) != {'readiness'}:
+        errors.append('readiness requires one reusable observational job')
+        return errors
+    job = jobs['readiness']
+    permissions = job.get('permissions', value.get('permissions', {}))
+    if job.get('environment') != PROTECTED or 'concurrency' in job or permissions != {
+            'contents': 'read', 'actions': 'read', 'pull-requests': 'read', 'id-token': 'write', 'attestations': 'write'}:
+        errors.append('readiness requires protected, queue-free observation permissions')
+    steps = list(expanded_steps(root, job))
+    arguments = ' --context "$RUNNER_TEMP/readiness-context.json" --result "$RUNNER_TEMP/readiness-${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}.json"'
+    allowed_commands = {'python -I -S scripts/deployment_readiness.py authorize' + arguments,
+                        'uv run --no-sync python scripts/deployment_readiness.py check' + arguments,
+                        'python scripts/deployment_readiness.py verify' + arguments,
+                        'uv sync --locked --only-group ci-plan', 'python scripts/install_deployment_verifier.py'}
+    allowed_actions = {'actions/checkout@v4', './.github/actions/ci-tools', 'google-github-actions/auth@v2',
+                       NOTIFICATION_ATTEST, 'actions/upload-artifact@v4'}
+    if any(step.get('uses') not in allowed_actions if 'uses' in step else step.get('run', '').strip() not in allowed_commands
+           for step in job['steps']):
+        errors.append('readiness has an unregistered executable step')
+    commands = '\n'.join(step.get('run', '') for step in steps)
+    if any(step.get('continue-on-error') or 'if' in step for step in job['steps']):
+        errors.append('readiness authorization/check/signature cannot be optional or tolerated')
+    modes = [mode for step in steps for mode in ('authorize', 'check', 'verify')
+             if 'scripts/deployment_readiness.py ' + mode in step.get('run', '')]
+    if modes != ['authorize', 'check', 'verify']:
+        errors.append('readiness requires authorization, checks and exact signature verification in order')
+    auth = [i for i, step in enumerate(steps) if step.get('uses', '').startswith('google-github-actions/auth@')]
+    authorize = next((i for i, step in enumerate(steps) if 'scripts/deployment_readiness.py authorize ' in step.get('run', '')), len(steps))
+    if len(auth) != 3 or authorize >= min(auth, default=-1):
+        errors.append('readiness must authorize before all three principal authentications')
+    signed = [i for i, step in enumerate(steps) if step.get('uses') == NOTIFICATION_ATTEST
+              and step.get('with', {}).get('create-storage-record') is False]
+    check = next((i for i, step in enumerate(steps) if 'scripts/deployment_readiness.py check ' in step.get('run', '')), len(steps))
+    verify = next((i for i, step in enumerate(steps) if 'scripts/deployment_readiness.py verify ' in step.get('run', '')), -1)
+    if len(signed) != 1 or not check < signed[0] < verify:
+        errors.append('readiness must sign only completed checks and verify before retention')
+    retained = [i for i, step in enumerate(steps) if step.get('uses', '').startswith('actions/upload-artifact@')]
+    if len(retained) != 1 or retained[0] <= verify or auth and max(auth) >= check:
+        errors.append('readiness requires all principal authentications before checking and verification before retention')
+    if any(step.get('uses') == ACTION or any(mutations(step)) or any(command(step, name) for name in ('start', 'finish', 'observe', 'reconcile')) for step in steps):
+        errors.append('readiness cannot claim, mutate, reconcile or emit deployment receipts')
+    if re.search(r'\b(?:apply|import|destroy|force-unlock|invalidate-cdn-cache)\b|gcloud\s+.*(?:\brun\b.*\bexecute\b|\bversions\s+add\b|\bscheduler\b.*\b(?:pause|resume)\b)|(?:docker|gcloud)\s+.*\bpush\b', commands):
+        errors.append('readiness contains an unsupported mutation command')
     return errors
 
 

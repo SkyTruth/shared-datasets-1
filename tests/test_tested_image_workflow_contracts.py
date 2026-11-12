@@ -88,6 +88,7 @@ def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, targ
 def image_results():
     selected = sorted(ALWAYS | {"production-images"})
     plan = {"schema_version": 1, "base": "a" * 40, "head": "b" * 40, "tested_sha": "c" * 40,
+            "deployments": [], "held_deployment_targets": [], "readiness_targets": [],
             "tree": "d" * 40, "contract_digest": "e" * 64, "suites": selected, "production_image_targets": sorted(IMAGE_TARGETS)}
     results = [{**{key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")},
                 "suite": suite, "status": "success", "tools": expected_tools(suite),

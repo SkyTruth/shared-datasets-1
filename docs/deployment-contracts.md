@@ -18,8 +18,15 @@ or cancelled required preparation cannot admit the apply.
 
 Registry and Terraform ownership comparisons carry changed bootstrap eligibility
 separately from runtime eligibility. The successful main gate passes those flags to each caller's
-`sync_iam` input alongside the existing infrastructure trigger, so an owned
+`sync_iam` input, so an owned
 bootstrap change cannot be skipped or cause unrelated deployment fan-out.
+
+Explicit executor-only selection instead requires [signed readiness](ci-deployment.md#executor-only-signed-readiness).
+The observation has its own schema and verifier, runs lock-free outside the state queue, and never enters
+deployment records, mutation claims, replay, supersession or recovery. Real runtime/IaC consumers take
+precedence before holds. Its reusable leaf checks the accepted main push and retained successful gate,
+plans registered scopes, checks each production principal's permissions, and signs/verifies the current
+attempt's safe digest summary. The existing claim/apply/outcome barriers remain exclusive to real delivery.
 
 Identity activation follows the [two-phase rollout](github-identity-rollout.md):
 phase 1 preserves legacy access and adds per-workflow identities; phase 2 removes

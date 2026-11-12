@@ -42,7 +42,7 @@ def fixture(tmp_path, monkeypatch, *, sdk_attempt=1, gate_attempt=2):
     path.write_text(json.dumps(manifest))
     candidate = {**manifest, 'tested_sha': SHA, 'tarball': 'sdk.tgz', 'sha256': hashlib.sha256(package).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(package).digest()).decode()}
     identity = {'schema_version': 1, 'base': 'b' * 40, 'head': SHA, 'tested_sha': SHA, 'tree': 'tree', 'contract_digest': 'contract'}
-    plan = {**identity, 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
+    plan = {**identity, 'deployments': [], 'held_deployment_targets': [], 'readiness_targets': [], 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
     evidence = {**plan, 'status': 'success', 'source': {'run_id': '123', 'run_attempt': gate_attempt}, 'plan_artifact': 'ci-validation-plan-attempt1', 'suite_artifacts': {'sdk-node24': f'ci-result-sdk-node24-attempt{sdk_attempt}'}}
     result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}], 'package': candidate}
     payloads = [archive({'evidence.json': evidence}), archive({'plan.json': plan}), archive({'result.json': result, 'package/candidate.json': candidate, 'package/sdk.tgz': package, 'logs/arbitrary-script.py': b'not executed or extracted'})]

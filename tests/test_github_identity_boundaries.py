@@ -117,12 +117,15 @@ def test_identity_provisioning_precedes_the_existing_ci_prerequisite():
 
 @pytest.mark.parametrize('path,expected', [
     ('terraform/envs/prod/github-workflow-identities.json', {'artifact_registry_iam'}),
-    ('.github/actions/deployment-auth/action.yml', {'sea_ice', 'pmtiles_cdn', 'catalog_viewer', 'artifact_registry_iam'}),
+    ('.github/actions/deployment-auth/action.yml', set()),
 ])
 def test_identity_contract_edits_select_their_automatic_delivery_path(path, expected):
     from scripts.ci_contract import select_deployments
     selected = set(select_deployments([path]))
     assert selected == expected
+    if not expected:
+        from scripts.ci_contract import resolve_selection
+        assert set(resolve_selection([path])['readiness_targets']) == {'sea_ice', 'pmtiles_cdn', 'catalog_viewer', 'artifact_registry_iam'}
     assert select_deployments(['docs/ci-deployment.md']) == []
 
 
