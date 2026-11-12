@@ -72,9 +72,14 @@ The reviewed `dataset_usage` hold release enables merge-push delivery through
 released the MPAtlas hold on 2026-11-11, after its hold permissions were applied,
 and the EAMLIS hold the same day, after its lifecycle migration merged. The owner
 released the sea-ice hold on 2026-11-12, after its lifecycle migration merged.
-All three deploy on merge. WDPA retains its
-[rollout hold](../.github/ingestion-rollout-holds.json). Expiry does not release
-a hold automatically, and image validation still runs while delivery is held.
+The owner released the WDPA hold on 2026-11-12 without requiring a rehearsal
+publication. All four publication producers deploy on merge, and the
+[rollout holds file](../.github/ingestion-rollout-holds.json) is empty. WDPA still
+uses its automatic worker; migration to the shared release lifecycle is separate.
+The deployment canary may skip November's already published source; December's
+source is the next opportunity to verify a full publication on the deployed image.
+Expiry does not release a hold automatically, and image validation still runs
+while delivery is held.
 
 The old-main receipt reader at `4aa19c71` accepts these merge-push contracts:
 

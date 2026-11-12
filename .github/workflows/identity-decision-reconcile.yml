@@ -37,7 +37,7 @@ concurrency:
 jobs:
   reconcile:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.actor == 'jonaraphael')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: shared-datasets-production
     steps:
