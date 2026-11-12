@@ -26,18 +26,20 @@ from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import install_deployment_verifier as verifier
+from scripts.github_api_read import read as github_read
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
-from scripts.slack_notify import build_slack_payload
+from services.monitoring_slack import messages
 from scripts.workflow_identity import RETIRED_WORKFLOWS
 
-SCHEMA = "shared-datasets-slack-incident-v4"
+SCHEMA = "shared-datasets-slack-incident-v5"
+DISPLAY_SCHEMA = "shared-datasets-slack-incident-v4"
 PREVIOUS_SCHEMA = "shared-datasets-slack-incident-v2"
 LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
 RETIRED_SCHEMA = "shared-datasets-slack-incident-v3"
 # Last retained checkpoint before the retired writer was disabled.
 RETIRED_CHECKPOINT_MAX_ID = 7260103711
-READ_SCHEMAS = {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
+READ_SCHEMAS = {SCHEMA, DISPLAY_SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA, RETIRED_SCHEMA}
 RETIRED_SETUP_TARGET = "terraform-" + hashlib.sha256(b"Operational observation setup").hexdigest()[:16]
 ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
@@ -88,9 +90,11 @@ def observation_key(value):
 
 
 def validate_observation(value):
-    require(isinstance(value, dict) and set(value) == {
+    fields = {
         "scope", "kind", "label", "run_id", "attempt", "sha", "time", "job_id", "job_name", "conclusion", "proof",
-    }, "invalid incident observation schema")
+    }
+    # Old signed observations have no diagnostic; do not invent historical facts.
+    require(isinstance(value, dict) and set(value) in (fields, fields | {"diagnostic"}), "invalid incident observation schema")
     require(value["kind"] in {"deployment", "workflow", "job", "publication"}, "invalid incident kind")
     require(re.fullmatch(r"[a-z][a-z0-9:._-]{0,150}", value["scope"]), "invalid incident scope")
     require(positive(value["run_id"]) and positive(value["attempt"]), "invalid observation attempt")
@@ -106,6 +110,15 @@ def validate_observation(value):
                 and re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", proof["artifact"]), "invalid terminal deployment proof")
     if value["kind"] == "deployment" and value["conclusion"] == "success":
         require(proof is not None, "deployment recovery requires a signed terminal receipt")
+    if "diagnostic" in value:
+        diagnostic = value["diagnostic"]
+        require(value["conclusion"] in alerts.FAILED_CONCLUSIONS and value["job_id"] > 0
+                and isinstance(diagnostic, dict) and set(diagnostic) == {"step", "number", "error", "effect"},
+                "invalid failure diagnostic")
+        require(isinstance(diagnostic["step"], str) and 0 < len(diagnostic["step"]) <= 500
+                and type(diagnostic["number"]) is int and diagnostic["number"] >= 0
+                and (diagnostic["error"] is None or isinstance(diagnostic["error"], str) and 0 < len(diagnostic["error"]) <= 500)
+                and diagnostic["effect"] in {None, "reconciliation_not_started"}, "invalid failure diagnostic fields")
     return value
 
 
@@ -187,13 +200,24 @@ def scope_for_job(name, targets, workflow):
     return "job:" + hashlib.sha256((workflow + ":" + name).encode()).hexdigest(), "job", name
 
 
-def from_job(run, job, targets):
+def from_job(run, job, targets, *, error_reader=None):
     scope, kind, label = scope_for_job(job["name"], targets, alerts.WORKFLOW_PATHS[run["name"]])
-    return validate_observation({
+    value = {
         "scope": scope, "kind": kind, "label": label, "run_id": run["id"], "attempt": run["run_attempt"],
         "sha": run["head_sha"], "time": job["completed_at"], "job_id": job["id"], "job_name": job["name"],
         "conclusion": job["conclusion"], "proof": None,
-    })
+    }
+    failed = [step for step in job.get("steps", []) if step.get("conclusion") in alerts.FAILED_CONCLUSIONS]
+    if job["conclusion"] in alerts.FAILED_CONCLUSIONS and failed:
+        step = failed[0]
+        write_steps = {"Prepare incident changes and claim posts", "Deliver or update incident messages"}
+        before_reconciliation = (alerts.WORKFLOW_PATHS[run["name"]] == "unattended-workflow-alert.yml"
+                                and job["name"] == "Reconcile Slack incident status"
+                                and {item["name"] for item in job["steps"] if item.get("conclusion") == "skipped"} >= write_steps)
+        value["diagnostic"] = {"step": messages.plain(step["name"]), "number": step.get("number", 0),
+                               "error": error_reader(job["id"], step=step) if error_reader is not None else None,
+                               "effect": "reconciliation_not_started" if before_reconciliation else None}
+    return validate_observation(value)
 
 
 def from_workflow(run):
@@ -286,7 +310,7 @@ def source_observations(api, event, targets=None):
         # a deployment job success must also have its signed terminal record.
         successes = [job for job in jobs if job["status"] == "completed" and job["conclusion"] == "success"
                      and job["name"] not in alerts.VALIDATION_JOBS and ("ci.yml", registered_name(job["name"])) not in targets]
-        return [from_job(run, job, targets) for job in failures + successes]
+        return [from_job(run, job, targets, error_reader=job_error) for job in failures + successes]
     if run["conclusion"] != "success" and (not alerts.unattended(run) or event["repository"]["full_name"] != REPOSITORY):
         return []  # Supervised manual failures keep existing GitHub-only routing.
     if alerts.WORKFLOW_PATHS[run["name"]] in {"bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"}:
@@ -301,7 +325,7 @@ def source_observations(api, event, targets=None):
                        or step_verified(job, READ_ONLY_JOBS[(alerts.WORKFLOW_PATHS[run["name"]], job["name"])][2]))
                   and (not job["name"].startswith("Complete publication receipt (")
                        or step_verified(job, REPAIR_STEP))]
-    result = [from_job(run, job, targets) for job in failures + successful]
+    result = [from_job(run, job, targets, error_reader=job_error) for job in failures + successful]
     if not failed or run["conclusion"] == "success":
         result.append(from_workflow(run))  # Includes startup failures with no allocated jobs.
     if alerts.WORKFLOW_PATHS[run["name"]] == "publish-dataset.yml":
@@ -701,50 +725,57 @@ def run_link(observation):
     return emissions.invocation(REPOSITORY, observation["run_id"], observation["attempt"])
 
 
+def failure_link(observation):
+    link = run_link(observation)
+    if observation["job_id"]:
+        link += f"/job/{observation['job_id']}"
+        diagnostic = observation.get("diagnostic")
+        if diagnostic and diagnostic["number"]:
+            link += f"#step:{diagnostic['number']}:1"
+    return link
+
+
 def render(state):
     incident = state["incident"]
     first, latest = incident["failures"][0], incident["failures"][-1]
     resolution = incident["resolution"]
-    status = "success" if resolution else "error"
-    title = f"{'Resolved' if resolution else 'Open'} · {state['label']} · {incident['id']}"
+    title = f"{'Resolved' if resolution else 'Open'} · {state['label']}"
     observer = re.fullmatch(r"verify \(([1-9][0-9]*)\)", first["job_name"])
     if state["scope"] != scope_for_job(first["job_name"], {}, "deployment-verification.yml")[0]:
         observer = None
     if observer:
-        title = f"{'Resolved' if resolution else 'Open'} · WDPA execution verification · {incident['id']}"
-    impact = "Unknown; consumer impact has not been established."
-    mutation = "Unknown; the failed attempt may have written data or changed resources."
-    action = "Inspect the failed attempt and authoritative mutation records before any replay; use the existing recovery path."
+        title = f"{'Resolved' if resolution else 'Open'} · WDPA execution verification"
+    diagnostic = (first if resolution else latest).get("diagnostic")
+    details = []
+    if diagnostic:
+        details.append(f"{diagnostic['step']}: {diagnostic['error']}" if diagnostic["error"] else f"Failed step: {diagnostic['step']}.")
+        if not resolution and diagnostic["effect"] == "reconciliation_not_started":
+            details.append("Reconciliation never started.")
+    else:
+        details.append(f"{first['job_name']} ({first['conclusion']}).")
+    action = "Inspect the failed step and repair the reported error."
+    if diagnostic and "actions/setup-python@" in diagnostic["step"]:
+        action = "Repair Python setup."
+    if state["kind"] in {"deployment", "publication"}:
+        action = "Verify the target's mutation records before retrying through the existing recovery path."
     if observer:
-        action = (f"Inspect the failed verification or receipt-signing step for deployment {observer[1]} in the linked Actions attempt. "
-                  "The completion check could not establish a signed worker outcome; check its execution and publication records before recovery.")
+        action = f"Inspect the verification or receipt-signing step for deployment {observer[1]}; verify the worker outcome before recovery."
     if resolution:
-        impact = "Historical consumer impact unknown; recovery verified for this incident scope."
-        action = "Record any consumer impact; no replay is required for this recovered operation."
+        action = "None."
         if resolution["kind"] == "deployment":
-            mutation = "Signed terminal success verified for this deployment target; see the receipt below."
+            details.append("Deployment recovery verified by a signed terminal receipt.")
         elif state["kind"] == "publication":
-            mutation = ("Publication completed; failed PR receipt repaired without replaying the mutation."
-                        if PUBLICATION_RECEIPT_JOB.fullmatch(resolution["job_name"])
-                        else "Reviewed publication phase completed; see the exact recovery evidence below.")
+            details.append("Publication completed; receipt repaired without replaying the mutation."
+                           if PUBLICATION_RECEIPT_JOB.fullmatch(resolution["job_name"])
+                           else "Reviewed publication phase completed.")
         else:
-            mutation = "Unknown; successful job/workflow completion does not verify published data."
-            action = "Confirm any data or resource outcome separately; no workflow replay is requested."
-    body = (f"*Impact:* {impact}\n*Mutation state:* {mutation}\n"
-            "*Owner:* jonaraphael (triage); operation owner unknown.\n"
-            f"*Required action:* {action}\n"
-            f"*Original failure:* {escape(first['job_name'])} ({first['conclusion']})\n"
-            f"<{run_link(first)}|Failed attempt> · `{first['sha'][:12]}` · {first['time']}\n"
-            f"*Failed attempts:* {len(incident['failures'])}")
-    if latest != first:
-        body += f"\n<{run_link(latest)}|Latest failed attempt> · {latest['time']}"
+            details.append("Workflow completed successfully." if state["kind"] == "workflow" else "Job completed successfully.")
+    if len(incident["failures"]) > 1:
+        details.append(f"{len(incident['failures'])} failed attempts.")
+    links = [(failure_link(first if resolution else latest), "Original failure" if resolution else "Failed step")]
     if resolution:
-        body += f"\n*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
-        if resolution["proof"]:
-            body += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
-    payload = build_slack_payload(title=title, body=body, status=status, emoji="✅" if status == "success" else "🔴")
-    # Labels may originate in job names; escape the notification fallback too.
-    payload["text"] = escape(title) + "\n" + body
+        links.insert(0, (run_link(resolution), "Recovery evidence"))
+    payload = messages.card(title, details=details, action=action, links=links, status="success" if resolution else "error")
     payload["metadata"] = {"event_type": "shared_datasets_incident", "event_payload": {"incident_id": incident["id"], "scope": state["scope"]}}
     return payload
 
@@ -793,6 +824,33 @@ class GitHub(deployments.GitHub):
         return deployments.read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
 
 
+def job_error(identifier, *, step):
+    """Optional display evidence uses the existing GET transport, not a client subtype."""
+    require(positive(identifier), "invalid diagnostic job identity")
+    if not step.get("started_at") or not step.get("completed_at"):
+        return None
+    start, end = instant(step["started_at"]), instant(step["completed_at"])
+    try:
+        raw = github_read(f"repos/{REPOSITORY}/actions/jobs/{identifier}/logs")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        print(f"Job {identifier}: error excerpt unavailable; retaining the failed step.", file=sys.stderr)
+        return None
+    if len(raw) > 2 * 1024 * 1024:
+        return None
+    errors = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        match = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z (.*)", line)
+        if not match or not start <= instant(match[1] + "Z") <= end:
+            continue
+        text = match[2]
+        if text.startswith("##[error]"):
+            errors.append(text.removeprefix("##[error]"))
+        elif re.match(r"[\w.]+(?:Error|Exception):", text):
+            errors.insert(0, text)
+    meaningful = [text for text in errors if not re.match(r"Process completed with exit code [0-9]+\.?$", text)]
+    return messages.plain((meaningful or errors)[0]) if errors else None
+
+
 def worker_context(api, environment=os.environ):
     try:
         return alerts.context(api, environment, workflow=WORKFLOW, events={"workflow_run", "workflow_dispatch"})
@@ -817,7 +875,7 @@ class Ledger:
                 "a retired writer emitted a new checkpoint; refusing state downgrade")
         if payload["schema"] != RETIRED_SCHEMA:
             validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
-                           historical=payload["schema"] != SCHEMA)
+                           historical=payload["schema"] not in {SCHEMA, DISPLAY_SCHEMA})
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
@@ -910,10 +968,10 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     require(match is not None, "require checkpoint:ID:SHA256 after reviewing the exact checkpoint")
     record = ledger.api.get(f"repos/{REPOSITORY}/deployments/{match[1]}")
     payload = record_payload(record)
-    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
+    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, DISPLAY_SCHEMA, PREVIOUS_SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
     state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA,
-                           historical=payload["schema"] != SCHEMA)
+                           historical=payload["schema"] not in {SCHEMA, DISPLAY_SCHEMA})
     require(state["incident"]["id"] == incident_id and state["identity"] == identity
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")

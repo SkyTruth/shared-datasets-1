@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import html
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import logging
@@ -14,7 +13,7 @@ from google.cloud import storage
 
 from scripts.slack_incident_api import Slack, TIMESTAMP
 from ingestion.common import decision_events
-from services.monitoring_slack import decisions, executions
+from services.monitoring_slack import decisions, executions, messages
 
 PROJECT = "shared-datasets-1"
 SUBSCRIPTION = f"projects/{PROJECT}/subscriptions/monitoring-slack"
@@ -44,19 +43,15 @@ def event(raw):
 
 
 def message(incident, closed):
-    title = html.escape(incident["policy_name"][:512], quote=False)
-    summary = ("Monitoring closed this incident. Dataset or deployment recovery requires separate verification."
-               if closed else html.escape(str(incident.get("summary") or "")[:2000], quote=False))
-    mark = ":warning:" if incident.get("severity") == "WARNING" else ":red_circle:"
-    state = ":white_check_mark: Closed by Monitoring" if closed else mark + " Open"
+    title = incident["policy_name"]
+    summary = ("Monitoring condition cleared; recovery requires separate verification."
+               if closed else incident.get("summary", ""))
     url = f"https://console.cloud.google.com/monitoring/alerting/alerts/{incident['incident_id']}?project={PROJECT}"
-    action = ("Verify the affected execution and mutation outcome; Monitoring closure alone is not recovery proof."
-              if closed else "Inspect the linked incident and affected execution; verify writes before any replay and use the existing recovery path.")
-    return {"text": (f"{state} — {title}\n{summary}\n"
-                     "*Impact:* Unknown; consumer impact has not been established.\n"
-                     "*Mutation state:* Unknown; Monitoring does not verify data or resource changes.\n"
-                     "*Owner:* jonaraphael (triage); operation owner unknown.\n"
-                     f"*Required action:* {action}\n<{url}|Monitoring incident>"), "blocks": []}
+    action = ("Verify the affected execution or resource outcome."
+              if closed else "Inspect the Monitoring incident and address the reported condition.")
+    return messages.card(f"{'Closed by Monitoring' if closed else 'Open'} — {title}", details=[summary], action=action,
+                         links=[(url, "Monitoring incident")],
+                         status="warning" if closed or incident.get("severity") == "WARNING" else "error")
 
 
 class Store:

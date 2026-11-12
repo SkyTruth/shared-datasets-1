@@ -1,13 +1,13 @@
 """One durable Slack parent for all reports about an exact Cloud Run execution."""
 from __future__ import annotations
 
-import html
 import logging
 import re
 from urllib.parse import urlencode
 
 from ingestion.common import decision_events as wire
 from scripts.slack_incident_api import TIMESTAMP
+from services.monitoring_slack import messages
 
 SCHEMA = "execution-slack-v1"
 RECEIPT_SCHEMA = "monitoring-slack-execution-v1"
@@ -60,34 +60,38 @@ def render(value):
     failures = value["failures"]
     if failures:
         closed = all(item["closed"] for item in failures.values())
-        status = ":white_check_mark: Closed by Monitoring" if closed and not pending else ":red_circle: Open"
-        title = f"{status} · {ctx['job']} execution failed"
+        title = f"{'Closed by Monitoring' if closed else 'Open'} · {ctx['job']} execution failed"
         causes = list(dict.fromkeys(item["cause"] for item in failures.values() if item["cause"]))
-        body = "\n".join("*Cause:* " + html.escape(cause, quote=False) for cause in causes)
-        body += "\n*Data state:* Publication outcome needs verification; a failed execution may have written data."
-        body += "\n*Next action:* Inspect the linked execution and publication records, repair the reported failure, then use the existing recovery path."
+        details = causes if len(causes) <= 2 else [causes[0], causes[-1]]
+        if len(causes) > 2:
+            details.append(f"{len(causes) - 2} additional errors in the execution logs.")
         if closed:
-            body += "\nMonitoring closure does not verify dataset or deployment recovery."
+            details.append("Monitoring condition cleared; publication remains unverified.")
+        action = "Verify publication before retrying; inspect the exact execution logs."
+        if pending:
+            action = "Review the identity requests below; verify publication before retrying."
     else:
-        title = (":raising_hand: Decision needed" if pending else ":white_check_mark: Decision recorded") + f" · {ctx['job']}"
-        body = "Identity review and publication acceptance are tracked separately."
-    body += f"\n*Execution:* `{ctx['execution']}`\n*Owner:* jonaraphael (triage and identity decisions)."
+        title = ("Decision needed" if pending else "Decision recorded") + f" · {ctx['job']}"
+        details = []
+        action = "Review the identity requests below." if pending else "None; identity decisions recorded."
+    requests = ""
     for key in sorted(value["reviews"] | value["decisions"]):
         if key in value["decisions"]:
             decision = value["decisions"][key]
-            status = "Decision recorded" if decision["resolved"] else "Decision needed"
-            body += f"\n\n*Review status:* {status}\n*Original request:*\n" + decision["text"]
+            review_status = "Decision recorded" if decision["resolved"] else "Decision needed"
+            requests += f"\n\n*Review status:* {review_status}\n*Original request:*\n" + decision["text"]
         else:
             review = value["reviews"][key]
-            body += f"\n\nIdentity review requested for `{review['asset_slug']}` release `{review['release']}`; detailed case evidence is pending."
+            requests += f"\n\nIdentity review requested for `{review['asset_slug']}` release `{review['release']}`; detailed case evidence is pending."
     url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{ctx['execution']}?project={wire.PROJECT}"
     query = (f'resource.type="cloud_run_job" resource.labels.job_name="{ctx["job"]}" '
              f'labels."run.googleapis.com/execution_name"="{ctx["execution"]}"')
     logs = "https://console.cloud.google.com/logs/query?" + urlencode({"project": wire.PROJECT, "query": query})
-    links = [f"<{url}|Execution>", f"<{logs}|Exact execution logs>"]
-    for key in sorted(failures):
-        links.append(f"<https://console.cloud.google.com/monitoring/alerting/alerts/{key}?project={wire.PROJECT}|Monitoring incident>")
-    return {"text": title + "\n" + body.strip() + "\n" + " · ".join(links), "blocks": []}
+    payload = messages.card(title, details=details, action=action,
+                            links=[(logs, "Exact execution logs"), (url, ctx["execution"])],
+                            status="warning" if failures and closed else "error" if failures else "decision" if pending else "success")
+    payload["text"] += requests
+    return payload
 
 
 def report(store, slack, identity, ctx, *, failure=None, review=None, decision=None, parent_ts=None):
