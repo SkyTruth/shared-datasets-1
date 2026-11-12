@@ -174,3 +174,25 @@ def test_display_diagnostics_cannot_introduce_unvalidated_outcomes(change):
     observed["diagnostic"].update(change)
     with pytest.raises(incidents.IncidentError, match="invalid failure diagnostic"):
         incidents.validate_observation(observed)
+
+
+@pytest.mark.parametrize("location", [None, "failure", "deferred"])
+def test_checkpoint_version_matches_its_persisted_diagnostic_fields(tmp_path, location):
+    from test_deployment_checkpoint_revert import CheckpointAPI
+    run, job = setup_failure()
+    diagnostic = incidents.from_job(run, job, {})
+    original = {key: value for key, value in diagnostic.items() if key != "diagnostic"}
+    value = incidents.fold(None, diagnostic if location == "failure" else original, IDENTITY)
+    if location == "deferred":
+        value["deferred"] = [{**diagnostic, "run_id": 43291191694}]
+    api = CheckpointAPI()
+    record = incidents.Ledger(api, api.runs[14], tmp_path).save(value, "claims")
+    assert record["payload"]["schema"] == (incidents.SCHEMA if location else incidents.DISPLAY_SCHEMA)
+    assert record["payload"]["state"] == value
+
+
+def test_v4_terminal_validation_cache_survives_the_compatible_reader():
+    from test_slack_incidents import state, success
+    value = incidents.fold(state(), success(), IDENTITY, ancestor=lambda *_: True)
+    value["terminal_validation"] = {"evidence_sha256": "a" * 64, "contract_sha256": "b" * 64}
+    assert incidents.migrate_verified_state(value, incidents.DISPLAY_SCHEMA) == value

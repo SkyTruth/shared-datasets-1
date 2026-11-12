@@ -700,7 +700,7 @@ def migrate_verified_state(state, schema):
         state["incident"]["parent_view_sha256"] = None
     if schema == LEGACY_SCHEMA:
         state["incident"]["parent_view_sha256"] = None
-    if schema != SCHEMA:
+    if schema not in {SCHEMA, DISPLAY_SCHEMA}:
         state["terminal_validation"] = None
     return validate_state(state)
 
@@ -933,7 +933,9 @@ class Ledger:
 
     def save(self, state, phase):
         validate_state(state)
-        payload = {"schema": SCHEMA, "state": state,
+        # Preserve the old wire format when no new facts need its extension.
+        diagnostics = any("diagnostic" in item for item in state["incident"]["failures"] + state["deferred"])
+        payload = {"schema": SCHEMA if diagnostics else DISPLAY_SCHEMA, "state": state,
                    "execution_run_id": self.run["id"], "execution_run_attempt": self.run["run_attempt"]}
         record = self.api.post(f"repos/{REPOSITORY}/deployments", {
             "ref": self.run["head_sha"], "task": "slack-incident", "environment": ENVIRONMENT,

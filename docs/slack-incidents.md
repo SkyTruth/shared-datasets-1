@@ -104,9 +104,10 @@ observations without blocking other scopes. Claims cannot create idle snapshots;
 unchanged claims fail health after 24 hours from the latest signed checkpoint.
 Owner inspection is required; recovery does not imply confirmed delivery.
 
-Verify v1/v2/v3/v4 signatures before v5 migration; rollback retains those readers
-and must also read v5 checkpoints. V5 adds optional failure diagnostics without
-inventing facts for retained observations; parent identity and delivery claims survive.
+Verify signatures before migration. Checkpoints without diagnostics retain v4,
+including their terminal-validation cache; only new failure diagnostics need v5.
+Rollback retains v1–v4 readers and must also read v5 checkpoints once emitted.
+Historical facts are not invented; parent identity and delivery claims survive.
 Retired v3 IDs must precede retirement and contain complete incident cores. Reject
 unknown/merged scopes, active empty registrations and omitted failures. Preserve
 parents/replies/claims; clear old acknowledgements/fingerprints. Before incompatible

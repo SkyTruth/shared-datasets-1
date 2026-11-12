@@ -176,7 +176,16 @@ def test_old_main_reconciles_current_checkpoints(old_snapshot, tmp_path, monkeyp
         ledger = old.slack_incidents.Ledger(api, api.runs[14], tmp_path)
         loaded = ledger.load()[state['scope']]
         assert bool(loaded['incident']['resolution']) == resolved
-        old.slack_incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True)
+        pending = old.slack_incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True)
+        api.capture(tmp_path)
+        # A renderer revert needs to acknowledge its one idempotent update to
+        # the existing parent before the safety dry-run can report settled.
+        slack = Mock()
+        slack.identity.return_value = IDENTITY
+        old.slack_incidents.deliver(ledger, pending, slack)
+        slack.post.assert_not_called()
+        assert slack.update.call_count == 1
+        assert slack.update.call_args.args[0] == state['incident']['posts']['parent']['ts']
         api.capture(tmp_path)
         payload = old.deployment_revision.verify_record(api, REPO, record)
         assert payload['targets'] == item['resources']
