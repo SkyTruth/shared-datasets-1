@@ -60,9 +60,9 @@ def test_delta_requires_prior_coverage_and_preserves_receipt_identities(tmp_path
         git('commit', '-m', 'fixup')
         current = p.make_plan(source, base, 'HEAD')
         execution, reused = p.local_execution_plan(source, current, prior['head'])
-        assert set(execution['suites']) == ALWAYS
+        assert set(execution['suites']) == ALWAYS | {'tests-control-plane'}
         assert execution['delta_paths'] == [str(test.relative_to(source))]
-        assert set(reused) == set(SUITES) - ALWAYS
+        assert set(reused) == set(SUITES) - ALWAYS - {'tests-control-plane'}
         assert execution['production_image_targets'] == []
         assert all(record['head'] == prior['head'] for record in reused.values())
         assert path.read_bytes() == original
@@ -71,6 +71,30 @@ def test_delta_requires_prior_coverage_and_preserves_receipt_identities(tmp_path
         _, coverage, images = p.local_coverage(base, current['head'], current['contract_digest'])
         assert coverage == set(SUITES) and images == set(prior['production_image_targets'])
         prior = current
+
+
+def test_reverted_image_in_delta_keeps_current_resource_limits(tmp_path, monkeypatch):
+    monkeypatch.setattr(p, 'LOCAL_COORDINATION_DIRECTORY', tmp_path / 'coordination')
+    source, git = fixture_repo(tmp_path)
+    base = git('rev-parse', 'HEAD')
+    eamlis = source / 'ingestion/eamlis_monthly/run.py'
+    original = eamlis.read_text()
+    eamlis.write_text(original + '\n# first edit\n')
+    git('add', '.')
+    git('commit', '-m', 'change eamlis')
+    prior = p.make_plan(source, base, 'HEAD')
+    save_evidence(prior)
+    eamlis.write_text(original)
+    sea_ice = source / 'ingestion/sea_ice_daily/run.py'
+    sea_ice.write_text(sea_ice.read_text() + '\n# next edit\n')
+    git('add', '.')
+    git('commit', '-m', 'revert eamlis and change sea ice')
+    current = p.make_plan(source, base, 'HEAD')
+    assert current['production_image_targets'] == ['sea-ice-daily']
+    execution, _ = p.local_execution_plan(source, current, prior['head'])
+    assert execution['production_image_targets'] == ['eamlis-monthly', 'sea-ice-daily']
+    assert set(execution['production_image_limits']) == set(execution['production_image_targets'])
+    assert p.suite_commands('production-images', source, execution, tmp_path / 'output')
 
 
 @pytest.mark.parametrize('defect', ['missing', 'failure', 'base', 'contract', 'failed-command', 'missing-suite', 'missing-image', 'cycle'])
@@ -208,7 +232,7 @@ def test_actions_cannot_request_local_image_receipts(tmp_path, monkeypatch):
 ])
 def test_test_data_follows_consumers_with_a_native_floor(path, extra):
     selection = resolve_selection([path])
-    assert set(selection['suites']) == ALWAYS | {'geospatial-integration'} | extra
+    assert set(selection['suites']) == ALWAYS | {'tests-control-plane', 'geospatial-integration'} | extra
     assert selection['selection_reason'] == 'tiers: component'
     if 'production-images' not in extra:
         assert selection['production_image_targets'] == []

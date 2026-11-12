@@ -75,7 +75,7 @@ def test_ci_job_diff_selects_its_suite_only(source, job, suites):
     (source / '.github/workflows/ci.yml').write_text(yaml.safe_dump(document))
     with patch.object(ci, 'repository_files', return_value={'.github/workflows/ci.yml': before}):
         plan = ci.resolve_selection(['.github/workflows/ci.yml'], base='base', root=source)
-    assert set(plan['suites']) == ci.ALWAYS | suites
+    assert set(plan['suites']) == ci.ALWAYS | suites | {'tests-control-plane'}
     assert bool(plan['production_image_targets']) == ('production-images' in suites)
 
 
@@ -145,3 +145,24 @@ def test_cli_reports_failed_stage_without_provider_values(tmp_path, monkeypatch,
     captured = capsys.readouterr()
     assert 'Terraform init failed' in captured.err
     assert 'secret-provider-value' not in captured.out + captured.err
+
+
+def test_python_syntax_cache_resolves_against_each_snapshot(monkeypatch):
+    import ast
+    from scripts.tested_image_bundle import dependency_graph, _python_references
+    code = "from scripts import leaf\nsubprocess.run(['python', 'scripts/probe.py'])\nDATA = 'catalog/policy.json'\n"
+    files = {'scripts/entry.py': code, 'scripts/__init__.py': ''}
+    parse, calls = ast.parse, []
+    def tracked(text, *, filename):
+        calls.append(filename)
+        return parse(text, filename=filename)
+    _python_references.cache_clear()
+    monkeypatch.setattr(ast, 'parse', tracked)
+    assert dependency_graph(files)['scripts/entry.py'] == {'scripts/__init__.py'}
+    files.update({'scripts/entry.py': code.encode(), 'scripts/leaf.py': '', 'scripts/probe.py': '', 'catalog/policy.json': '{}'})
+    expected = {'scripts/__init__.py', 'scripts/leaf.py', 'scripts/probe.py', 'catalog/policy.json'}
+    assert dependency_graph(files)['scripts/entry.py'] == expected
+    assert calls.count('scripts/entry.py') == 1
+    files.update({'scripts/entry.py': code + 'import scripts.other\n', 'scripts/other.py': ''})
+    assert dependency_graph(files)['scripts/entry.py'] == expected | {'scripts/other.py'}
+    assert calls.count('scripts/entry.py') == 2

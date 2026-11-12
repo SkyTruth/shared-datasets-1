@@ -22,15 +22,15 @@ gdal = ["numpy==1.26.4"]
 
 [dependency-groups]
 ci-plan = ["PyYAML>=6.0.0", "python-hcl2>=8,<9"]
+lint = [{include-group = "ci-plan"}, "ruff>=0.14.0"]
+control-plane = [{include-group = "ci-plan"}, "pytest>=9.0.0", "pytest-xdist==3.8.0"]
 # Browser fixtures create real FGB bytes; Rasterio belongs to Python/native tests.
 browser = ["geopandas==1.1.1"]
 dev = [
+  {include-group = "lint"},
+  {include-group = "control-plane"},
   "geopandas==1.1.1",
-  "pytest>=9.0.0",
-  "pytest-xdist==3.8.0",
-  "python-hcl2>=8,<9",
   "rasterio==1.4.3",
-  "ruff>=0.14.0",
 ]
 
 [tool.ruff]

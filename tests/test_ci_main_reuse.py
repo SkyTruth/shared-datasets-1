@@ -349,7 +349,7 @@ def test_workflow_reuses_only_pure_jobs_and_retains_pr_required_checks():
     for suite in REUSABLE_SUITES:
         expression = jobs[suite]["if"].replace("needs.geospatial-changes", 'needs["geospatial-changes"]')
         for reused, expected in (("false", "true"), ("true", "false")):
-            needs = {"geospatial-changes": {"outputs": {"reuse_validation": reused, "should_run": "true", "browser": "true"}}}
+            needs = {"geospatial-changes": {"outputs": {"reuse_validation": reused, "should_run": "true", "browser": "true", "control_plane": "true"}}}
             result = subprocess.run(["node", "-e", "console.log(Function('needs', 'return ' + process.argv[1])(JSON.parse(process.argv[2])))",
                                      expression, json.dumps(needs)], capture_output=True, text=True, check=True)
             assert result.stdout.strip() == expected

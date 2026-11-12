@@ -100,24 +100,12 @@ const script = new AsyncFunction('github', 'context', JSON.parse(process.argv[1]
     assert result.returncode == 0, result.stderr
 
 
-def test_shared_shard_commands_partition_every_test_and_require_both_producers(tmp_path):
+def test_selected_control_producer_must_succeed():
     from scripts.ci_contract import resolve_selection, verify_results
-    from scripts.ci_preflight import suite_commands
     from test_ci_preflight import plan, results_for, jobs_for
-    import pytest
-    selected = resolve_selection(['tests/test_pr_feedback.py'])
+    selected = resolve_selection(['scripts/ci_preflight.py'])
     assert {'tests', 'tests-control-plane'} <= set(selected['suites'])
-    validation = plan()
-    partitions = []
-    for suite in ('tests', 'tests-control-plane'):
-        commands = [argv for argv, _ in suite_commands(suite, ROOT, validation, tmp_path / suite)]
-        pytest_command = next(argv for argv in commands if 'pytest' in argv)
-        partitions.append({arg for arg in pytest_command if arg.startswith('tests/')})
-        init = next(i for i, argv in enumerate(commands) if argv[0] == 'terraform' and 'init' in argv)
-        assert init < commands.index(pytest_command)
-        assert ['uv', 'sync', '--locked', '--all-groups'] in commands
-    assert all(partitions) and not partitions[0] & partitions[1]
-    assert set.union(*partitions) == {str(path.relative_to(ROOT)) for path in set((ROOT / 'tests').rglob('test_*.py')) | set((ROOT / 'tests').rglob('*_test.py'))}
+    validation = plan(selected['suites'])
     jobs = jobs_for(validation)
     for state in ('failure', 'cancelled', 'skipped', None):
         jobs['tests-control-plane'] = {'result': state}

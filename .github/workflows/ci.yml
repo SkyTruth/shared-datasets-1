@@ -42,6 +42,7 @@ jobs:
       should_run: ${{ steps.plan.outputs.should_run }}
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
       browser: ${{ steps.plan.outputs.browser }}
+      control_plane: ${{ steps.plan.outputs.tests-control-plane }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
       production_images: ${{ steps.plan.outputs.production-images }}
       production_image_groups: ${{ steps.plan.outputs.production-image-groups }}
@@ -99,6 +100,9 @@ jobs:
     steps:
       - *validation-checkout
       - uses: ./.github/actions/ci-tools
+        with:
+          binaries: actionlint shellcheck
+          node: ''
       - &validation-plan
         uses: actions/download-artifact@v4
         with:
@@ -125,12 +129,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  tests: &python-tests
+  tests:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.reuse_validation != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    steps:
+    steps: &python-test-steps
       - *validation-checkout
       - uses: ./.github/actions/ci-tools
         with:
@@ -141,7 +145,12 @@ jobs:
       - *retained-validation-results
       - *compact-gate-result
 
-  tests-control-plane: *python-tests
+  tests-control-plane:
+    needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.control_plane == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps: *python-test-steps
 
   geospatial-integration:
     needs: geospatial-changes
@@ -338,6 +347,7 @@ jobs:
     outputs:
       tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
       delivery: ${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.delivery || '{}' }}
+      bootstrap: ${{ job.status == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.verify.outputs.bootstrap || '[]' }}
     steps:
       - *reject-draft
       - *validation-checkout
@@ -557,8 +567,8 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').dataset-usage }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/dataset-usage-deploy.yml
-    with: &deployment-source-with-iam
-      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam }}
+    with:
+      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'dataset_usage') }}
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
       source_run_id: ${{ format('{0}', github.run_id) }}
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
@@ -569,7 +579,11 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer }}
     permissions: *deployment-permissions
     uses: ./.github/workflows/catalog-viewer-deploy.yml
-    with: *deployment-source-with-iam
+    with:
+      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'catalog_viewer') }}
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
   artifact-registry-iam:
@@ -598,7 +612,11 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').cron-alert-policy }}
     permissions: *terraform-permissions
     uses: ./.github/workflows/cron-alert-policy-sync.yml
-    with: *deployment-source-with-iam
+    with:
+      sync_iam: ${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'cron_alert_policy') }}
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
   identity-decision-reconcile:

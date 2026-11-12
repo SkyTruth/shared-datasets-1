@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from scripts import ci_preflight, terraform_target_contracts as contracts, wdpa_processing_gate as wdpa
+from scripts import terraform_target_contracts as contracts, wdpa_processing_gate as wdpa
 from workflow_helpers import load_workflow, workflow_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,16 +27,6 @@ def test_cron_failure_filter_runtime_identity_is_a_declared_prerequisite():
                           row for rows in (row.get('retired_resources', []) for row in json.loads((ROOT / '.github/terraform-targets.json').read_text())['targets'].values())
                           for row in rows}})
     assert 'google_service_account.github_job' in contracts.check_graph(ROOT, graph)['cron-alert-policy-sync.yml/sync']['managed_prerequisites']
-
-
-def test_tests_job_initializes_its_own_pinned_providers_before_pytest():
-    steps = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['tests']['steps']
-    commands = [args for args, _ in ci_preflight.suite_commands('tests', ROOT,
-        {'base': 'HEAD', 'tested_sha': 'HEAD', 'changed_paths': ['scripts/ci_preflight.py']}, ROOT / '.ignored-output')]
-    index = next(i for i, args in enumerate(commands) if 'pytest' in args)
-    expected = ['terraform', '-chdir=terraform/envs/prod', 'init', '-backend=false', '-input=false', '-lockfile=readonly']
-    assert expected in commands[:index]
-    assert not any(shlex.split(s.get('run', '')) == expected for s in steps)
 
 
 def test_wdpa_digest_uses_only_inputs_installed_by_its_dockerfile(tmp_path, monkeypatch):

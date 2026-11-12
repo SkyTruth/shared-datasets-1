@@ -35,7 +35,7 @@ from scripts.deployment_revision import DeploymentError
 from scripts.terraform_target_contracts import production_image_limits
 from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, validate_manifest, validate_local_manifest
 from scripts.ci_contract import (
-    ALWAYS, DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, contract_digest, expected_tools, delivery_outputs, deploy_image_targets,
+    ALWAYS, DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, bootstrap_deployments, contract_digest, control_plane_test, expected_tools, delivery_outputs, deploy_image_targets,
     INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
 )
 
@@ -260,14 +260,26 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         except subprocess.CalledProcessError:
             # A new or unavailable snapshot conservatively selects its known consumers.
             pass
+    registry_snapshots = None
+    if paths and ".github/terraform-targets.json" in paths:
+        try:
+            registry_snapshots = tuple(git(root, "show", f"{revision}:.github/terraform-targets.json", raw=True)
+                                       for revision in (resolved_base, tested_sha))
+        except subprocess.CalledProcessError:
+            pass  # Missing comparison history retains the broad registered scope.
+    selection = resolve_selection(paths, base=resolved_base if paths is not None else None, root=root,
+                                  catalog_snapshots=catalog_snapshots, registry_snapshots=registry_snapshots,
+                                  ingestion_holds=holds, released_holds=released)
+    bootstrap = bootstrap_deployments(paths, registry_snapshots=registry_snapshots, root=root) & set(selection['deployments'])
+    if bootstrap:
+        selection['bootstrap_targets'] = sorted(bootstrap)
     return {
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "changed_paths": paths,
-        "production_image_limits": production_image_limits(root),
-        **resolve_selection(paths, base=resolved_base if paths is not None else None, root=root,
-                            catalog_snapshots=catalog_snapshots, ingestion_holds=holds, released_holds=released),
+        "production_image_limits": production_image_limits(root, targets=selection["production_image_targets"]),
+        **selection,
     }
 
 
@@ -312,22 +324,22 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         if documentation_only(plan.get("changed_paths"), root=root):
             add("git", "diff", "--check", base, head)
             return commands
-        add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "sync", "--locked", "--only-group", "lint")
         add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
         add("uv", "run", "--no-sync", "python", "scripts/reviewed_dataset_plan.py", "check-diff", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
+    elif suite == "tests-control-plane":
+        add("uv", "sync", "--locked", "--no-dev", "--group", "control-plane")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")
         for environment in ("prod", "preview"):
             add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false", "-lockfile=readonly")
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
         add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
         add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", "--target", "all")
-    elif suite == "tests-control-plane":
-        add("uv", "sync", "--locked", "--all-groups")
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
-        add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "sync", "--locked", *(["--no-dev"] if documentation_only(plan.get("changed_paths"), root=root) else ["--all-groups"]))
         add("uv", "run", "--no-sync", "python", "scripts/catalog_docs.py", "check")
         add("uv", "run", "--no-sync", "python", "scripts/catalog_site.py", "--out", str(output / "catalog-web"))
         if documentation_only(plan.get("changed_paths"), root=root):
@@ -381,8 +393,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         raise ValueError(f"unknown suite: {suite}")
     if suite in {"tests", "tests-control-plane"} and not documentation_only(plan.get("changed_paths"), root=root):
         files = [str(path.relative_to(root)) for path in sorted(set((root / "tests").rglob("test_*.py")) | set((root / "tests").rglob("*_test.py")))
-                 if ("ci_" in path.name or "deployment" in path.name) == (suite == "tests-control-plane")]
-        add("terraform", "-chdir=terraform/envs/prod", "init", "-backend=false", "-input=false", "-lockfile=readonly")
+                 if control_plane_test(path.relative_to(root).as_posix()) == (suite == "tests-control-plane")]
         add("uv", "run", "--no-sync", "pytest", *files, "-n", "4", "--max-worker-restart", "0", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     return commands
 
@@ -708,6 +719,8 @@ def local_execution_plan(root: Path, plan: dict, since: str | None) -> tuple[dic
     targets = (set(delta["production_image_targets"]) | set(plan["production_image_targets"])) if "production-images" in selected else set()
     execution = {**plan, "suites": [suite for suite in SUITES if suite in selected],
                  "production_image_targets": [target for target in BUILD_TARGETS if target in targets],
+                 "production_image_limits": {target: (plan["production_image_limits"] | delta["production_image_limits"])[target]
+                                             for target in targets},
                  "deployments": [], "delta_paths": delta["changed_paths"]}
     reused = {suite: {"head": since, "evidence": str(local_evidence_path(plan["base"], since))}
               for suite in plan["suites"] if suite not in selected}
@@ -993,6 +1006,7 @@ def main() -> int:
             if args.github_output:
                 with args.github_output.open('a') as output:
                     output.write('delivery=' + json.dumps(delivery_outputs(plan, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'])) + '\n')
+                    output.write('bootstrap=' + json.dumps(plan.get('bootstrap_targets', [])) + '\n')
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
         if not args.base or not args.head:

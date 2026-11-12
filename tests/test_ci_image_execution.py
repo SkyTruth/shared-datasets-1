@@ -10,9 +10,9 @@ import zipfile
 import pytest
 
 from scripts import ci_preflight as preflight
-from scripts.ci_contract import expected_tools, resolve_selection, verify_results
+from scripts.ci_contract import ALWAYS, contract_digest, expected_tools, resolve_selection, verify_results
 from ci_result_fixtures import production_images
-from test_ci_preflight import fixture_repo, results_for
+from test_ci_preflight import fixture_repo, plan as validation_plan, results_for
 from test_tested_image_handoff import download, handoff as handoff, zipped
 from scripts.deployment_revision import DeploymentError
 
@@ -76,6 +76,22 @@ finally:
 '''
 
 
+def image_plan(root, targets, *, hosted=False):
+    """Feed the real execution CLI a serialized plan, without retesting selection.
+
+    Selection and the plan CLI have their own boundary tests. Every transport,
+    cancellation and malformed-output case below still executes real children
+    and consumes their persisted results against this checkout's exact identity.
+    """
+    sha = preflight.git(root, 'rev-parse', 'HEAD')
+    value = {**validation_plan(ALWAYS | {'production-images'}), 'base': sha, 'head': sha,
+             'tested_sha': sha, 'tree': preflight.git(root, 'rev-parse', 'HEAD^{tree}'),
+             'contract_digest': contract_digest(root), 'production_image_targets': targets}
+    if hosted:
+        value['source'] = {'run_id': '42094352596', 'run_attempt': 1}
+    return value
+
+
 @pytest.mark.parametrize('paths', [['ingestion/eamlis_monthly/run.py'], ['pyproject.toml']])
 @pytest.mark.parametrize('defect', [None, 'wrong-set', 'stale', 'command'])
 def test_local_image_cli_serializes_ids_and_keeps_hosted_tar_gate_strict(tmp_path, monkeypatch, paths, defect):
@@ -86,15 +102,9 @@ def test_local_image_cli_serializes_ids_and_keeps_hosted_tar_gate_strict(tmp_pat
                         f'IMAGES={production_images("a" * 40)["images"]!r}\n' + PRODUCER)
     git('add', '.')
     git('commit', '-m', 'external producer fixture')
-    base = git('rev-parse', 'HEAD')
-    for path in paths:
-        file = source / path
-        file.write_text(file.read_text() + '\n# selected input\n')
-    git('add', '.')
-    git('commit', '-m', 'selected inputs')
     monkeypatch.chdir(source)
     monkeypatch.delenv('GITHUB_RUN_ID', raising=False)
-    plan = preflight.make_plan(source, base, 'HEAD')
+    plan = image_plan(source, targets)
     plan_path, output = tmp_path / 'plan.json', tmp_path / 'local-results'
     preflight.write_json(plan_path, plan)
     original = preflight.subprocess.check_output
@@ -156,19 +166,11 @@ def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tm
                         f"IMAGES={production_images('a' * 40)['images']!r}\n" + (PRODUCER.replace("args.output.parent / 'metrics.json'", "args.output.parent.parent / 'metrics.json'") if matrix == "group" else PRODUCER))
     git("add", ".")
     git("commit", "-m", "install external image producer fixture")
-    base = git("rev-parse", "HEAD")
-    for path in paths:
-        target = source / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(target.read_text() + "\n# changed input\n")
-    git("add", ".")
-    git("commit", "-m", "select image targets")
     monkeypatch.setenv("GITHUB_RUN_ID", "42094352596")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     monkeypatch.chdir(source)
     plan_path, output = tmp_path / "plan.json", tmp_path / "images-result"
-    monkeypatch.setattr(sys, "argv", ["ci_preflight.py", "plan", "--base", base, "--head", "HEAD", "--output", str(plan_path)])
-    assert preflight.main() == 0
+    preflight.write_json(plan_path, image_plan(source, resolve_selection(paths)["production_image_targets"], hosted=True))
     assert json.loads(plan_path.read_text())["source"] == {"run_id": "42094352596", "run_attempt": 1}
     check_output = preflight.subprocess.check_output
     monkeypatch.setattr(preflight.subprocess, "check_output", lambda argv, **kwargs:

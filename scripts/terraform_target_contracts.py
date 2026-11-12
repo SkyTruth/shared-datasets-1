@@ -34,13 +34,14 @@ EDGE = re.compile(r'^\s*(' + QUOTED + r')\s+->\s+(' + QUOTED + r');\s*$')
 
 
 @lru_cache(maxsize=4)
-def resource_index(root=ROOT, revision=None):
+def resource_index(root=ROOT, revision=None, *, paths=None):
     """Parse declarations once; comments/indentation cannot manufacture owners."""
     import hcl2
     from hcl2.utils import SerializationOptions
     from scripts.tested_image_bundle import repository_files
 
-    files = ({path.relative_to(root).as_posix(): path.read_bytes() for path in (root / 'terraform').rglob('*.tf')
+    files = ({name: (root / name).read_bytes() for name in paths} if paths is not None else
+             {path.relative_to(root).as_posix(): path.read_bytes() for path in (root / 'terraform').rglob('*.tf')
               if '.terraform' not in path.parts} if revision is None else repository_files(revision, root))
     result = {}
     for path, raw in files.items():
@@ -80,11 +81,15 @@ def scope_inputs(resources, root=ROOT):
     return selected | {path.removesuffix('.tf') + '_variables.tf' for path in selected if path.endswith('.tf')}
 
 
-def production_image_limits(root=ROOT):
+def production_image_limits(root=ROOT, *, targets=None):
     """Serialize literal production caps using the same parsed declaration index."""
     from scripts.tested_image_bundle import image_recipes
-    index, result = resource_index(root), {}
-    for target in image_recipes(root):
+    selected = image_recipes(root) if targets is None else targets
+    if not selected:
+        return {}
+    paths = tuple(sorted(f'terraform/envs/prod/{target.replace("-", "_")}.tf' for target in selected))
+    index, result = resource_index(root, paths=paths), {}
+    for target in selected:
         package = target.replace('-', '_')
         declarations = index[f'terraform/envs/prod/{package}.tf']
         if 'module.' + package + '_job' in declarations:

@@ -2,7 +2,7 @@ name: Pinned validation tools
 description: Install the repository validation toolchain without production credentials
 inputs:
   node:
-    description: Node major used by this suite
+    description: Node major used by this suite; empty skips Node setup
     default: '22'
   binaries:
     description: Official pinned release binaries to install
@@ -16,6 +16,7 @@ runs:
         python-version: '3.12.12'
         enable-cache: true
     - uses: actions/setup-node@v4
+      if: inputs.node != ''
       with:
         node-version: ${{ inputs.node == '24' && '24.13.1' || '22.12.0' }}
         cache: npm

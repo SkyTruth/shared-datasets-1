@@ -206,7 +206,8 @@ def test_matrix_retention_requires_exact_target_tar_and_both_uploads(tmp_path, t
 @pytest.mark.parametrize('retention_outcome', ['failure', 'cancelled', 'skipped'])
 def test_successful_local_image_checks_cannot_hide_failed_hosted_retention(retention_outcome):
     plan, results, _ = image_results()
-    jobs = {name: {'result': 'success'} for name in ('geospatial-changes', 'lint', 'tests', 'tests-control-plane')}
+    jobs = {name: {'result': 'success'} for name in ('geospatial-changes', 'lint', 'tests')}
+    jobs['tests-control-plane'] = {'result': 'success' if 'tests-control-plane' in plan['suites'] else 'skipped'}
     jobs.update({name: {'result': 'skipped'} for name in ('geospatial-integration', 'browser', 'sdk-validation')})
     jobs['production-images'] = {'result': retention_outcome}
     with pytest.raises(ValueError, match='job production-images'):

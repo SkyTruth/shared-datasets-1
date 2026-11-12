@@ -129,9 +129,9 @@ results, consumer impact, and anything unverified. The operating guide owns
 review requirements; canonical mutations also use the
 [checked-in plan contract](.github/dataset-plans/README.md).
 
-Before pushing committed changes from a clean checkout with full history, run
-[CI preflight](docs/ci-preflight.md) against current main and the branch head.
-GitHub's `ci-ready` gate independently validates the selected suites.
+Before an authorized push, run Ruff and focused checks for the changed
+boundaries. [Full local preflight](docs/ci-preflight.md) is available to reproduce
+hosted validation; GitHub's `ci-ready` gate validates the prospective merge.
 
 ## Non-goals
 

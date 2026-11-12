@@ -269,8 +269,10 @@ def terraform_boundary(workflow):
     if (any(jobs[key].get('environment') != PROTECTED for key in ('prepare', 'sync'))
             or [key for key, job in jobs.items() if 'concurrency' in job] != ['sync']
             or sync['concurrency'] != {'group': 'prod-terraform-state', 'queue': 'max', 'cancel-in-progress': False}
-            or sync.get('needs') != 'prepare' or sync.get('if') != "needs.prepare.outputs.proceed == 'true'"):
-        return ['Terraform preparation must gate the protected serialized apply']
+            or prepare.get('if') != "inputs.sync_name == 'Cron alert policy sync'"
+            or sync.get('needs') != 'prepare'
+            or sync.get('if') != "${{ !cancelled() && !failure() && (needs.prepare.result == 'skipped' || (needs.prepare.result == 'success' && needs.prepare.outputs.proceed == 'true')) }}"):
+        return ['Required Monitoring preparation must gate the protected serialized Terraform apply']
     if (propagation.get('needs') != 'sync' or propagation.get('permissions') != {}
             or 'environment' in propagation
             or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"

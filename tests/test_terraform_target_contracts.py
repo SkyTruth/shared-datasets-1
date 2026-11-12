@@ -268,7 +268,7 @@ def test_isolated_graph_cannot_read_production_state_or_caller_credentials(tmp_p
 
 
 def test_both_boundaries_run_the_actual_graph_gate_after_provider_initialization(tmp_path):
-    commands = [argv for argv, _ in ci_preflight.suite_commands('lint', ROOT, {'base': 'a' * 40, 'tested_sha': 'b' * 40}, tmp_path)]
+    commands = [argv for argv, _ in ci_preflight.suite_commands('tests-control-plane', ROOT, {'base': 'a' * 40, 'tested_sha': 'b' * 40}, tmp_path)]
     check = next(command for command in commands if 'scripts/terraform_target_contracts.py' in command)
     initialized = next(command for command in commands if command[:3] == ['terraform', '-chdir=terraform/envs/prod', 'init'])
     assert commands.index(initialized) < commands.index(check)

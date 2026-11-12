@@ -323,7 +323,7 @@ def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_valida
     [".github/workflows/prod-terraform-target-apply.yml"], ["scripts/deployment_permissions.py"]])
 def test_pr_validation_checks_all_offline_deployment_contracts_without_credentials(paths):
     plan = {"base": "base", "tested_sha": "head", "changed_paths": paths, "deployments": []}
-    commands = [args for args, _ in suite_commands("lint", ROOT, plan, ROOT)]
+    commands = [args for args, _ in suite_commands("tests-control-plane", ROOT, plan, ROOT)]
     gate = next(args for args in commands if "scripts/release_contracts.py" in args)
     assert gate[-2:] == ["--target", "all"]
     assert sum(args[-1:] == ["validate"] for args in commands) == 2
@@ -567,7 +567,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
         target = "eamlis-monthly"
     git("add", ".")
     git("commit", "-m", "release")
-    plan, outputs = emit_plan(root, base, tmp_path)
+    plan, outputs = emit_plan(root, base, tmp_path, isolated=target == 'wdpa-monthly')
     assert plan["deployments"] == [selection] and outputs[selection] == "true"
     assert "production-images" in plan["suites"] and "geospatial-integration" in plan["suites"]
     assert json.loads(outputs["production-image-targets"]) == plan["production_image_targets"] == [target]
@@ -582,7 +582,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
 def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][target]
-    assert caller["with"]["sync_iam"] == "${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam }}"
+    assert caller["with"]["sync_iam"] == "${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), '" + target.replace('-', '_') + "') }}"
     workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
     assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}
     if target == "catalog-viewer":
