@@ -99,14 +99,21 @@ The release date remains the documented valid date (filename date plus one day),
 and `ice_date` remains the filename date. Feature identity continues to exclude
 `ice_date` from its properties hash; fingerprinting does not change ID assignment.
 
-A changed fingerprint under an already committed filename/date fails for reviewed
-correction instead of overwriting that item. Completed legacy daily items have no
-fingerprint: when both filename and release date match, the existing metadata
-contract check and completed-item check-in remain idempotent. This does not
-establish or advance a successful fingerprint. A new daily filename proceeds
-normally and its publication records the first fingerprint. This persisted-data
-bridge can be removed once all current production items carry fingerprints.
-No-source check-ins retain their existing availability behavior.
+A changed fingerprint under an already committed filename/date fails with
+`changed source cannot replace or predate a published release`. The lifecycle
+owns that refusal and the unchanged-source check-in. A historical success without
+a fingerprint never proves equality; publication under its date requires reviewed
+repair. Current deployed successes carry fingerprints and remain valid baselines
+without `tools`. New successes record each native tool's resolved path and version.
+The baseline's metadata contract is checked before source acquisition, including
+when changed input would otherwise publish.
+
+`run_date` is the filename lookup anchor. `release_date` is the documented valid
+date on success, the baseline release on an unchanged check-in, and anchor date
+plus one day when no source is available in the lookback window. The unavailable
+date identifies the newest requested filename's documented valid date. Both skip
+outcomes retain transient source-request warnings and update the release index.
+Sea ice has no lost-object percentage limit because its polygons turn over daily.
 
 Limitations: all raster classes count, including changes outside class 3. Such a
 change can conservatively produce a release with equivalent ice geometry. Source

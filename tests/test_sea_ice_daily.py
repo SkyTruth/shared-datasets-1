@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
+from dataclasses import replace
 import os
 import shutil
 import subprocess
@@ -12,13 +12,28 @@ from unittest import mock
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
-from ingestion.common.gcs import GcsPublisher
+import pytest
+from types import SimpleNamespace
+
+from ingestion.common import lifecycle
+
 from ingestion.sea_ice_daily import run as sea_ice
 
 VALID_FGB_SHA = "a" * 64
 VALID_PMTILES_SHA = "b" * 64
 VALID_METADATA_SHA = "c" * 64
 VALID_SCHEMA_SHA = "d" * 64
+NATIVE_TOOLS = ("gdalinfo", "gdal_translate", "gdal_calc.py", "gdal_polygonize.py", "ogr2ogr", "ogrinfo",
+                "tippecanoe", "tippecanoe-decode", "pmtiles")
+TOOLS = {name: {"path": f"/usr/bin/{name}", "version": "fixture 1"} for name in NATIVE_TOOLS}
+
+
+def publication_record(source, outputs, attempt, bucket="bucket"):
+    """Exercise the shared record producer for direct owned-publisher fixtures."""
+    return lifecycle.published(sea_ice.ASSET.slug, attempt=attempt, source=sea_ice.source_description(source),
+        content=lifecycle.Content(sea_ice.fingerprints.Fingerprint("fixture", {}).record_fields(), None),
+        built=lifecycle.Built(outputs.row_count, TOOLS,
+            f"gs://{bucket}/{sea_ice.ASSET.release_prefix(source.documented_valid_date)}/"))
 
 
 def runnable_command(command: list[str]) -> bool:
@@ -37,87 +52,6 @@ def runnable_command(command: list[str]) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return completed.returncode == 0
-
-
-class FakeBlob:
-    def __init__(self, name: str, *, exists: bool = False, generation: int = 1) -> None:
-        self.name = name
-        self.exists = exists
-        self.generation = generation
-        self.size = 0
-        self.metadata = None
-        self.content_type = None
-        self.text = ""
-        self.data = b""
-        self.uploads = []
-
-    def reload(self) -> None:
-        if not self.exists:
-            raise NotFound("not found")
-
-    def download_as_text(self) -> str:
-        self.reload()
-        return self.text
-
-    def download_as_bytes(self) -> bytes:
-        self.reload()
-        return self.data
-
-    def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
-        self._check_generation(if_generation_match)
-        self.exists = True
-        self.generation += 1
-        self.content_type = content_type
-        self.metadata = self.metadata
-        self.data = Path(filename).read_bytes()
-        self.text = self.data.decode("utf-8", errors="replace")
-        self.size = len(self.data)
-        self.uploads.append(("filename", if_generation_match, content_type))
-
-    def upload_from_string(self, data, *, content_type=None, if_generation_match=None):
-        self._check_generation(if_generation_match)
-        self.exists = True
-        self.generation += 1
-        self.content_type = content_type
-        self.text = data
-        self.data = data.encode()
-        self.size = len(data.encode())
-        self.uploads.append(("string", if_generation_match, content_type))
-
-    def _check_generation(self, if_generation_match):
-        if if_generation_match == 0 and self.exists:
-            raise PreconditionFailed("exists")
-        if if_generation_match not in (None, 0) and if_generation_match != self.generation:
-            raise PreconditionFailed("generation mismatch")
-
-
-class FakeBucket:
-    def __init__(self) -> None:
-        self.name = "test-bucket"
-        self.blobs = {}
-
-    def blob(self, name: str) -> FakeBlob:
-        if name not in self.blobs:
-            self.blobs[name] = FakeBlob(name)
-        return self.blobs[name]
-
-
-class FakeClient:
-    def __init__(self, bucket: FakeBucket) -> None:
-        self._bucket = bucket
-
-    def bucket(self, name: str) -> FakeBucket:
-        return self._bucket
-
-
-def source_lookup_publisher(client, bucket_name, **kwargs):
-    """Source-selection fixture; durable publication is tested independently."""
-    publisher = GcsPublisher(client, bucket_name, **kwargs)
-    publisher.resume = mock.Mock(return_value=None)
-    publisher.latest_success_record = mock.Mock(side_effect=lambda asset: next((json.loads(blob.text) for blob in publisher.bucket.blobs.values()
-        if blob.name.startswith(asset.runs_prefix) and blob.text and json.loads(blob.text).get("status") == "success"), None))
-    publisher.load_generated_identity_baseline = mock.Mock(return_value=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
-    return publisher
 
 
 def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ice.AssetOutputs:
@@ -248,8 +182,7 @@ class SeaIceDailyTests(unittest.TestCase):
             readme.write_text("# Sea ice\n")
             sea_ice.publish_outputs(
                 publisher=publisher, asset=sea_ice.ASSET, outputs=outputs, source=source, asset_readme=readme,
-                attempt_date=dt.date(2026, 10, 2),
-                fingerprint=sea_ice.fingerprints.Fingerprint("ims-raster-v1", {"fixture": True}),
+                record=publication_record(source, outputs, dt.date(2026, 10, 2), "test-bucket"),
             )
         call = publisher.publish_generated.call_args.kwargs
         self.assertEqual(call["run_date"], dt.date(2026, 9, 30))
@@ -377,119 +310,315 @@ ice_date: String (0.0)
         self.assertEqual(lookup.source.filename_date, dt.date(2026, 5, 11))
         self.assertEqual(lookup.source_request_warnings, ())
 
-    def test_transient_probe_to_published_source_skips_without_uploads(self):
-        bucket = FakeBucket()
-        asset = sea_ice.ASSET
-        source_date = dt.date(2026, 5, 11)
-        release_date = sea_ice.documented_valid_date_for_filename_date(source_date)
-        run_record = bucket.blob(asset.run_record_object(release_date))
-        run_record.exists = True
-        run_record.text = json.dumps(
-            {
-                "status": "success",
-                "run_date": release_date.isoformat(),
-                "source_version": sea_ice.ims_filename_for_day(source_date),
-                "release_date": release_date.isoformat(),
-                **sea_ice.fingerprints.Fingerprint("fixture", {}).record_fields(),
-                "release_paths": [],
-                "latest_paths": [],
-            }
-        )
+class StoredBlob:
+    """GCS read surface over the owned publisher's immutable fake generations."""
+    def __init__(self, store, name, generation=None):
+        self.store, self.name, self.generation = store, name, generation
+        self.uri = f"gs://bucket/{name}"
 
-        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
-            if "ims2026132" in source_url:
-                return sea_ice.RequestOutcome(
-                    status=sea_ice.STATUS_TRANSIENT,
-                    url=source_url,
-                    attempts=3,
-                    http_status=500,
-                    reason="HTTP 500",
-                )
-            if "ims2026131" in source_url:
-                return sea_ice.RequestOutcome(
-                    status=sea_ice.STATUS_SUCCESS,
-                    url=source_url,
-                    http_status=200,
-                    attempts=1,
-                )
-            self.fail(f"unexpected probe URL: {source_url}")
+    def reload(self):
+        version = self.store.inspect(self.uri, self.generation)
+        if version is None:
+            raise NotFound(self.uri)
+        self.generation, self.size = version.generation, version.size
 
-        with (
-            mock.patch.dict(
-                sea_ice.os.environ,
-                {
-                    "RUN_DATE": "2026-05-12",
-                    "GOOGLE_CLOUD_PROJECT": "test-project",
-                    "SHARED_DATASETS_BUCKET": bucket.name,
-                    "SEA_ICE_SOURCE_URL_TEMPLATE": "https://example.test/{yyyy}/{file_name}",
-                    "SEA_ICE_MAX_LOOKBACK_DAYS": "2",
-                },
-            ),
-            mock.patch.object(sea_ice, "require_binary", return_value=None),
-            mock.patch.object(sea_ice.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
-            mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
-            mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
-            mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
-            mock.patch.object(sea_ice, "download_source", return_value=sea_ice.DownloadedSource(
-                source_date, "https://example.test/source", sea_ice.ims_filename_for_day(source_date), Path("source.gz"))),
-            mock.patch.object(sea_ice, "gunzip_file"),
-            mock.patch.object(sea_ice, "fingerprint_source", return_value=sea_ice.fingerprints.Fingerprint("fixture", {})),
-        ):
-            record = sea_ice.run()
+    def download_as_bytes(self, *, if_generation_match=None):
+        self.reload()
+        if if_generation_match is not None and self.generation != if_generation_match:
+            raise PreconditionFailed(self.uri)
+        return self.store.history[(self.uri, self.generation)][1]
 
-        self.assertEqual(record["status"], "skipped")
-        self.assertEqual(record["source_filename_date"], "2026-05-11")
-        self.assertEqual(record["release_date"], "2026-05-12")
-        self.assertEqual(record["source_request_warnings"][0]["http_status"], 500)
-        self.assertFalse(bucket.blob(asset.release_object(source_date, ".fgb")).uploads)
-        self.assertFalse(bucket.blob(asset.latest_object(".fgb")).uploads)
-
-    def test_repeated_transient_probes_skip_without_release_uploads(self):
-        bucket = FakeBucket()
-        asset = sea_ice.ASSET
-
-        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
-            return sea_ice.RequestOutcome(
-                status=sea_ice.STATUS_TRANSIENT,
-                url=source_url,
-                attempts=3,
-                http_status=500,
-                reason="HTTP 500",
-            )
-
-        with (
-            mock.patch.dict(
-                sea_ice.os.environ,
-                {
-                    "RUN_DATE": "2026-05-12",
-                    "GOOGLE_CLOUD_PROJECT": "test-project",
-                    "SHARED_DATASETS_BUCKET": bucket.name,
-                    "SEA_ICE_SOURCE_URL_TEMPLATE": "https://example.test/{yyyy}/{file_name}",
-                    "SEA_ICE_MAX_LOOKBACK_DAYS": "2",
-                },
-            ),
-            mock.patch.object(sea_ice, "require_binary", return_value=None),
-            mock.patch.object(sea_ice.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
-            mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
-            mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
-            mock.patch.object(
-                sea_ice,
-                "download_source",
-                side_effect=AssertionError("no source should not download"),
-            ),
-        ):
-            record = sea_ice.run()
-
-        self.assertEqual(record["status"], "skipped")
-        self.assertEqual(len(record["source_request_warnings"]), 2)
-        for source_date in (dt.date(2026, 5, 12), dt.date(2026, 5, 11)):
-            self.assertFalse(bucket.blob(asset.release_object(source_date, ".fgb")).uploads)
-            self.assertFalse(
-                bucket.blob(asset.release_object(source_date, ".pmtiles")).uploads
-            )
+    def download_as_text(self):
+        return self.download_as_bytes().decode()
 
 
+@pytest.fixture
+def daily(tmp_path, monkeypatch):
+    from test_owned_publication import DATE, outputs_fixture, publisher_fixture
 
+    publisher, store = publisher_fixture(sea_ice.ASSET)
+    bucket = SimpleNamespace(name="bucket", blob=lambda name, generation=None: StoredBlob(store, name, generation))
+    client = SimpleNamespace(bucket=lambda name: bucket)
+    readme = tmp_path / "README.md"
+    readme.write_text("# IMS Sea-Ice Extent\n")
+    source = sea_ice.AvailableSource(DATE - dt.timedelta(days=1), "https://example.test/ims",
+                                    sea_ice.ims_filename_for_day(DATE - dt.timedelta(days=1)))
+    warnings = ({"http_status": 500, "source_date": DATE.isoformat()},)
+    state = SimpleNamespace(source=source, samples=b"\x03\x01", warnings=warnings,
+                            publisher=publisher, store=store, release=DATE, attempt=DATE + dt.timedelta(days=3))
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(sea_ice.storage, "Client", lambda **kwargs: client)
+    monkeypatch.setattr(sea_ice.GcsPublisher, "from_runtime", lambda *args, **kwargs: state.publisher)
+    monkeypatch.setattr(sea_ice, "require_binary", mock.Mock())
+    monkeypatch.setattr(sea_ice, "toolchain", mock.Mock(return_value=TOOLS), raising=False)
+    lookup = mock.Mock(side_effect=lambda *args, **kwargs: sea_ice.SourceLookupResult(state.source, state.warnings))
+    monkeypatch.setattr(sea_ice, "find_latest_available_source", lookup)
+    state.lookup = lookup
+
+    def download(url, path):
+        import gzip
+        path.write_bytes(gzip.compress(state.samples))
+
+    def gdal(command, **kwargs):
+        if command[0] == "gdalinfo":
+            return {"size": [2, 1], "geoTransform": [0, 1, 0, 0, 0, -1],
+                    "coordinateSystem": {"wkt": "EPSG:4326"}, "bands": [{"type": "Byte", "noDataValue": 0}]}
+        assert command[0] == "gdal_translate"
+        Path(command[-1]).write_bytes(Path(command[-2]).read_bytes())
+
+    monkeypatch.setattr(sea_ice, "download_file", download)
+    monkeypatch.setattr(sea_ice, "run_command", gdal)
+    monkeypatch.setattr("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+                        lambda *args: SimpleNamespace(valid=True, errors=()))
+
+    def build(**kwargs):
+        baseline = kwargs["baseline"]
+        assert kwargs["identity_resolution_decisions"] == []
+        output = outputs_fixture(kwargs["workdir"], sea_ice.ASSET,
+                                 date=sea_ice.documented_valid_date_for_filename_date(kwargs["source_date"]))
+        return replace(output, previous_release=baseline.release, identity_baseline_snapshot=baseline.snapshot,
+                       previous_generated_feature_id=baseline.next_feature_id)
+
+    state.build = mock.Mock(side_effect=build)
+    monkeypatch.setattr(sea_ice, "build_outputs", state.build)
+    decisions = mock.Mock(return_value=[])
+    monkeypatch.setattr(sea_ice.feature_metadata.release_feature_model, "load_identity_resolution_decisions", decisions)
+    state.decisions = decisions
+    # The installed image supplies this path; the fixture supplies the same bytes.
+    original_publish = sea_ice.publish_outputs
+    def publish(**kwargs):
+        kwargs["asset_readme"] = readme
+        return original_publish(**kwargs)
+    monkeypatch.setattr(sea_ice, "publish_outputs", publish)
+
+    def execute(*, fresh=True, attempt=None):
+        if fresh:
+            state.publisher, _ = publisher_fixture(sea_ice.ASSET, execution=f"execution-{store.serial}", store=store)
+        state.publisher.client, state.publisher.bucket = client, bucket
+        monkeypatch.setenv("RUN_DATE", (attempt or state.attempt).isoformat())
+        return sea_ice.run()
+    state.execute = execute
+    state.index = lambda: store.read_json("gs://bucket/_catalog/releases/ims-sea-ice-extent.json").value
+    state.artifacts = lambda: {uri: version.identity() for uri, version in store.objects.items()
+        if uri.startswith(f"gs://bucket/{sea_ice.ASSET.root}/")
+        and any(part in uri for part in ("/releases/", "/latest/", "/runs/"))}
+    return state
+
+
+def test_success_record_carries_native_tools_and_both_dates(daily):
+    record = daily.execute()
+    stored = daily.store.read_json(record["run_record"]["path"]).value
+    assert stored["tools"] == TOOLS
+    assert (stored["run_date"], stored["release_date"]) == ("2026-10-04", "2026-10-01")
+    assert stored["source_filename_date"] == "2026-09-30"
+    assert stored["source_request_warnings"] == list(daily.warnings)
+    assert record["run_record"]["path"].endswith("/runs/2026-10-01.json")
+    assert daily.index()["latest_run"]["date"] == "2026-10-04"
+    assert daily.index()["latest_release"]["date"] == "2026-10-01"
+    daily.decisions.assert_called_once_with(asset_slug=sea_ice.ASSET.slug, release="2026-10-01")
+
+
+def test_published_source_second_attempt_skips_without_dataset_writes(daily):
+    published = daily.execute()
+    artifacts = daily.artifacts()
+    daily.build.reset_mock()
+    # Same filename anchor, new execution: no run-record lookup by anchor date.
+    skipped = daily.execute()
+    assert skipped["status"] == "skipped"
+    assert skipped["reason"] == lifecycle.UNCHANGED
+    assert (skipped["run_date"], skipped["release_date"]) == ("2026-10-04", "2026-10-01")
+    assert skipped["row_count"] == published["row_count"]
+    assert skipped["source_fingerprint_hash"] == published["source_fingerprint_hash"]
+    assert skipped["source_request_warnings"] == list(daily.warnings)
+    assert daily.artifacts() == artifacts
+    daily.build.assert_not_called()
+    assert daily.index()["latest_release"]["date"] == "2026-10-01"
+    assert daily.index()["latest_run"]["status"] == "skipped"
+    assert daily.index()["latest_run"]["date"] == "2026-10-04"
+    assert daily.publisher.latest_success_record(sea_ice.ASSET)["source_fingerprint_hash"] == published["source_fingerprint_hash"]
+
+
+def test_changed_content_under_published_date_is_refused_before_build(daily):
+    daily.execute()
+    before = daily.artifacts()
+    daily.samples = b"\x03\x03"
+    daily.build.reset_mock()
+    with pytest.raises(lifecycle.LifecycleError, match="cannot replace or predate"):
+        daily.execute()
+    daily.build.assert_not_called()
+    assert daily.artifacts() == before
+
+
+def test_new_filename_publishes_even_when_samples_are_identical(daily):
+    first = daily.execute()
+    source_day = daily.source.filename_date + dt.timedelta(days=1)
+    daily.source = replace(daily.source, filename_date=source_day, source_filename=sea_ice.ims_filename_for_day(source_day))
+    second = daily.execute(attempt=daily.attempt + dt.timedelta(days=1))
+    assert second["status"] == "success"
+    assert second["release_date"] == "2026-10-02"
+    assert second["source_fingerprint_hash"] != first["source_fingerprint_hash"]
+    assert [release["date"] for release in daily.index()["releases"]] == ["2026-10-02", "2026-10-01"]
+
+
+def test_unavailable_source_skip_names_attempt_and_missing_valid_date(daily):
+    daily.execute()
+    before = daily.artifacts()
+    daily.source = None
+    daily.build.reset_mock()
+    record = daily.execute(attempt=dt.date(2026, 10, 7))
+    assert (record["status"], record["run_date"], record["release_date"]) == ("skipped", "2026-10-07", "2026-10-08")
+    assert record["reason"] == "No IMS 4 km GeoTIFF available from 2026-10-07 within the last 14 day(s)"
+    assert record["source_request_warnings"] == list(daily.warnings)
+    assert daily.index()["latest_run"]["date"] == "2026-10-07"
+    assert daily.index()["latest_run"]["status"] == "skipped"
+    assert daily.index()["latest_release"]["date"] == "2026-10-01"
+    daily.build.assert_not_called()
+    assert daily.artifacts() == before
+    # Skip receipt resumes before probing, just like a publication receipt.
+    daily.lookup.reset_mock()
+    assert daily.execute(fresh=False)["reason"] == record["reason"]
+    daily.lookup.assert_not_called()
+
+
+def test_deployed_success_without_tools_is_accepted_as_baseline(daily, monkeypatch):
+    original = sea_ice.GcsPublisher.publish_generated
+    def deployed_writer(publisher, **kwargs):
+        kwargs["record"].pop("tools", None)
+        return original(publisher, **kwargs)
+    with monkeypatch.context() as old:
+        old.setattr(sea_ice.GcsPublisher, "publish_generated", deployed_writer)
+        result = daily.execute()
+    assert "tools" not in daily.store.read_json(result["run_record"]["path"]).value
+    assert daily.execute()["reason"] == lifecycle.UNCHANGED
+
+
+def test_historical_success_without_fingerprint_cannot_skip_existing_date(daily, monkeypatch):
+    original = sea_ice.GcsPublisher.publish_generated
+    def historical_writer(publisher, **kwargs):
+        kwargs["record"].pop("source_fingerprint_hash")
+        kwargs["record"].pop("source_fingerprint")
+        return original(publisher, **kwargs)
+    with monkeypatch.context() as old:
+        old.setattr(sea_ice.GcsPublisher, "publish_generated", historical_writer)
+        daily.execute()
+    before = daily.artifacts()
+    with pytest.raises(lifecycle.LifecycleError, match="cannot replace or predate"):
+        daily.execute()
+    assert daily.artifacts() == before
+
+
+def test_fingerprint_defect_is_not_reported_as_a_broken_baseline(daily, monkeypatch):
+    daily.execute()
+    monkeypatch.setattr(sea_ice, "fingerprint_source", mock.Mock(side_effect=TypeError("producer defect")))
+    with pytest.raises(TypeError, match="producer defect"):
+        daily.execute()
+
+
+def test_completed_owned_execution_returns_before_polling(daily):
+    first = daily.execute()
+    daily.lookup.reset_mock()
+    daily.build.reset_mock()
+    before = list(daily.store.events)
+    assert daily.execute(fresh=False) == first
+    daily.lookup.assert_not_called()
+    daily.build.assert_not_called()
+    assert daily.store.events == before
+
+
+@pytest.mark.parametrize("broken", ["manifest", "schema", "metadata"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_broken_baseline_stops_before_source_or_build(daily, broken, changed):
+    daily.execute()
+    suffix = {"manifest": ".manifest.json", "schema": ".schema.json", "metadata": ".metadata.ndjson.gz"}[broken]
+    uri = f"gs://bucket/{sea_ice.ASSET.release_object(daily.release, suffix)}"
+    daily.store.write_bytes(uri, b"{}", daily.store.head(uri).generation, {}, "application/json", "")
+    if changed:
+        day = daily.source.filename_date + dt.timedelta(days=1)
+        daily.source = replace(daily.source, filename_date=day, source_filename=sea_ice.ims_filename_for_day(day))
+    daily.build.reset_mock()
+    daily.lookup.reset_mock()
+    before = list(daily.store.events)
+    with pytest.raises(RuntimeError, match="reviewed repair"):
+        daily.execute()
+    daily.lookup.assert_not_called()
+    daily.build.assert_not_called()
+    assert daily.store.events == before
+
+
+def test_empty_build_fails_without_claim_or_reservation(daily):
+    original = daily.build.side_effect
+    daily.build.side_effect = lambda **kwargs: replace(original(**kwargs), row_count=0)
+    state = daily.publisher.state(sea_ice.ASSET).value
+    with pytest.raises(RuntimeError, match="output contains no features"):
+        daily.execute()
+    assert daily.publisher.state(sea_ice.ASSET).value == state
+
+
+def test_partial_daily_release_is_refused_before_build(daily):
+    uri = f"gs://bucket/{sea_ice.ASSET.release_object(daily.release, '.fgb')}"
+    daily.store.write_bytes(uri, b"partial", 0, {}, "application/octet-stream", "")
+    with pytest.raises(RuntimeError, match="already exist without a successful run record"):
+        daily.execute()
+    daily.build.assert_not_called()
+
+
+@pytest.mark.parametrize("checkpoint_writes", [4, 14])
+def test_interrupted_publication_resumes_before_source_and_keeps_reservation(daily, checkpoint_writes):
+    from test_publication import LostResponse
+    from ingestion.common.publication import NotRecoverableSource
+    daily.store.events.clear()
+    daily.store.fail_after = checkpoint_writes
+    with pytest.raises(LostResponse):
+        daily.execute()
+    interrupted = daily.publisher.state(sea_ice.ASSET).value
+    assert interrupted["active"] is not None
+    assert interrupted["reserved_next_feature_id"] == 3
+    daily.store.fail_after = None
+    daily.build.reset_mock()
+    daily.lookup.reset_mock()
+    if checkpoint_writes == 4:
+        with pytest.raises(NotRecoverableSource, match="reservation retained"):
+            daily.execute(fresh=False)
+        assert daily.publisher.state(sea_ice.ASSET).value == interrupted
+    else:
+        assert daily.execute(fresh=False)["status"] == "success"
+    daily.lookup.assert_not_called()
+    daily.build.assert_not_called()
+    assert daily.publisher.state(sea_ice.ASSET).value["reserved_next_feature_id"] == 3
+
+
+def test_tools_are_checked_before_owned_resume_or_claim(daily, monkeypatch):
+    resume = mock.Mock()
+    monkeypatch.setattr(daily.publisher, "resume", resume)
+    monkeypatch.setattr(sea_ice, "toolchain", mock.Mock(side_effect=RuntimeError("missing native tool")))
+    before = list(daily.store.events)
+    with pytest.raises(RuntimeError, match="missing native tool"):
+        daily.execute(fresh=False)
+    resume.assert_not_called()
+    assert daily.store.events == before
+
+
+def test_toolchain_records_all_paths_and_the_installed_suite_versions(tmp_path, monkeypatch):
+    for name in NATIVE_TOOLS:
+        path = tmp_path / name
+        no_version = name in {"tippecanoe-decode", "gdal_calc.py", "gdal_polygonize.py"}
+        path.write_text("#!/bin/sh\n" + ("exit 99\n" if no_version else f"echo '{name} 1.0'\n"))
+        path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    tools = sea_ice.toolchain()
+    assert set(tools) == set(NATIVE_TOOLS)
+    for name, item in tools.items():
+        reporter = {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
+                    "tippecanoe-decode": "tippecanoe"}.get(name, name)
+        assert item == {"path": str(tmp_path / name), "version": f"{reporter} 1.0"}
+
+
+def test_sea_ice_has_no_percentage_rule_or_hold_flow(tmp_path):
+    refresh = sea_ice.Refresh(None, tmp_path, tools=TOOLS, source_template="fixture", max_lookback_days=14,
+                              asset_readme=tmp_path / "README.md")
+    assert refresh.loss_limit is None
+    with pytest.raises(lifecycle.LifecycleError, match="has no hold flow: empty_source"):
+        refresh.hold(lifecycle.EMPTY_SOURCE, None, None, None)
 
 
 @unittest.skipUnless(
