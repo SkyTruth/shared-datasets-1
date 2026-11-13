@@ -335,6 +335,7 @@ jobs:
       - uses: ./.github/actions/ci-tools
         with:
           binaries: gitleaks
+          uv-cache: 'false'
       - name: Run shared real-browser validation
         run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
       - *retained-validation-results
