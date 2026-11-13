@@ -64,7 +64,7 @@ def test_usage_two_runs_keep_target_ownership_until_exact_image_verification(tmp
     assert rejected.returncode != 0
 
 
-def test_shared_rollout_has_no_split_verification_and_attests_apply_before_signalling_success():
+def test_shared_rollout_uses_signed_claim_then_exact_canary_without_an_intermediate_phase():
     document = load_workflow(ROOT / '.github/workflows/ingestion-deploy.yml')
     inputs = document['on']['workflow_call']['inputs']
     assert not {'stage', 'deployment_id', 'image'} & set(inputs)
@@ -74,8 +74,9 @@ def test_shared_rollout_has_no_split_verification_and_attests_apply_before_signa
     barrier = next(s for s in verify['steps'] if s.get('name') == 'Require successful signed apply')
     assert barrier['run'].strip() == 'test "$APPLY_RESULT" = success && test "$CLAIM_SIGNED" = success'
     apply = document['jobs']['apply']['steps']
-    assert apply[-1]['name'] == 'Attest applied deployment'
-    assert apply[-1]['uses'] == './.github/actions/deployment-receipt'
+    assert apply[-1]['name'] == 'Terraform apply'
+    assert "steps.claim-receipt.outcome == 'success'" in apply[-1]['if']
+    assert not any('--phase applied' in step.get('run', '') for step in apply)
 
 
 @pytest.mark.parametrize('error', [urllib.error.URLError('TLS handshake timeout'), TimeoutError('read timeout'),

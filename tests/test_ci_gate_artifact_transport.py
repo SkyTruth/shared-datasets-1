@@ -109,6 +109,7 @@ def transport(tmp_path, source_plan):
             partial.mkdir(parents=True)
             (partial / "partial.docker.tar").write_bytes(b"partial-image-bytes")
         if suite.startswith("sdk-node"):
+            result['release_needed'] = False
             package = output / "package"
             package.mkdir()
             (package / "candidate.json").write_text('{"fixture":true}')

@@ -239,10 +239,10 @@ def main():
         value = json.loads(args.receipt.read_bytes())
         require(value.get("schema") == SCHEMA and value.get("repository") == repository, "invalid receipt file")
         record = api.get(f"repos/{repository}/deployments/{value['deployment_id']}")
-        matches = [phase for phase in api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100") if phase.get("id") == value["status"]["id"]]
+        statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
+        matches = [phase for phase in statuses if phase.get("id") == value["status"]["id"]]
         require(len(matches) == 1 and receipt(repository, record, matches[0]) == value, "receipt differs from its durable record/status")
-        revision.verify_record(api, repository, record)
-        revision.verify_receipt(api, repository, record, matches[0])
+        revision.verify_record(api, repository, record, statuses=statuses, requested_status=matches[0])
 
 
 if __name__ == "__main__":

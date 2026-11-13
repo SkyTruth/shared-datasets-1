@@ -38,6 +38,8 @@ jobs:
       pull-requests: read
     outputs:
       reuse_validation: ${{ steps.reuse.outputs.reuse_validation }}
+      reuse_images: ${{ steps.reuse.outputs.reuse_images }}
+      reuse_sdk: ${{ steps.reuse.outputs.reuse_sdk }}
       pr_terraform: ${{ steps.pr-plan.outputs.pr_terraform }}
       should_run: ${{ steps.plan.outputs.should_run }}
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
@@ -188,7 +190,7 @@ jobs:
 
   production-images:
     needs: geospatial-changes
-    if: needs.geospatial-changes.outputs.production_images == 'true'
+    if: needs.geospatial-changes.outputs.production_images == 'true' && needs.geospatial-changes.outputs.reuse_images != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions: *validation-permissions
@@ -255,7 +257,7 @@ jobs:
 
   sdk-validation:
     needs: geospatial-changes
-    if: needs.geospatial-changes.outputs.sdk == 'true'
+    if: needs.geospatial-changes.outputs.sdk == 'true' && needs.geospatial-changes.outputs.reuse_sdk != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

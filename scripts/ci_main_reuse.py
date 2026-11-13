@@ -16,7 +16,7 @@ import signal
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.ci_contract import REUSABLE_SUITES, expected_tools, write_json
+from scripts.ci_contract import REUSABLE_SUITES, SDK_SUITES, deploy_image_targets, expected_tools, hosted_result_keys, sdk_release_needed, write_json
 from scripts.deployment_revision import require
 from scripts.sdk_release_authorization import GitHub, artifact_files, execution_time, gate_execution
 
@@ -42,8 +42,19 @@ def context(environment=os.environ):
 
 
 def result_summary(chosen):
-    return {key: {field: result[field] for field in ("status", "tools", "source")}
+    return {key: {**{field: result[field] for field in ("status", "tools", "source")},
+                  **({'release_needed': result['release_needed']} if key in SDK_SUITES else {})}
             for key, result in chosen.items()}
+
+
+def reusable_suites(plan, evidence):
+    selected = set(plan['suites'])
+    covered = selected & REUSABLE_SUITES
+    if 'production-images' in selected and not deploy_image_targets(plan):
+        covered.add('production-images')
+    if SDK_SUITES <= selected and not sdk_release_needed(evidence['validation_results']):
+        covered.update(SDK_SUITES)
+    return sorted(covered)
 
 
 def fields(value, names):
@@ -81,14 +92,15 @@ def check_snapshot(plan, snapshot, current):
             and evidence["validation_context"]["repository"] == repository
             and evidence["validation_context"]["pr_number"] == pr["number"], "PR evidence event mismatch")
     require(evidence["head"] == pr["head"]["sha"] and re.fullmatch(r"[0-9a-f]{40}", evidence["tested_sha"])
-            and all(evidence[key] == plan[key] for key in ("tree", "base", "contract_digest", "suites", "deployments", "held_deployment_targets", "readiness_targets")),
+            and all(evidence[key] == plan[key] for key in ("tree", "base", "contract_digest", "suites", "production_image_targets", "deployments", "held_deployment_targets", "readiness_targets")),
             "PR tree, base, selection or contract differs from the main push")
     tools = {suite: expected_tools(suite) for suite in plan["suites"]}
     require(evidence["toolchains"] == tools, "PR toolchain identities changed")
-    reused = sorted(set(plan["suites"]) & REUSABLE_SUITES)
+    reused = reusable_suites(plan, evidence)
     require(snapshot["reused_suites"] == reused, "reuse includes an unauthorized suite")
-    for suite in reused:
-        result = evidence["validation_results"][suite]
+    for key in hosted_result_keys(plan, reused):
+        suite = 'production-images' if key.startswith('production-images-') else key
+        result = evidence["validation_results"][key]
         require(result["status"] == "success" and result["tools"] == tools[suite]
                 and result["source"]["run_id"] == str(run["id"])
                 and type(result["source"]["run_attempt"]) is int
@@ -130,8 +142,8 @@ def discover(api, plan, current, *, now):
                 "admitted_at": (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z"), "pr": pr, "run": run,
                 "gate": fields(gates[0], "name status conclusion started_at completed_at"),
                 "artifact": fields(matches[0], "id name workflow_run expired expires_at created_at digest size_in_bytes"),
-                "evidence": fields(evidence, "schema_version status source validation_context head tested_sha tree base contract_digest suites deployments held_deployment_targets readiness_targets toolchains validation_results"),
-                "reused_suites": sorted(set(plan["suites"]) & REUSABLE_SUITES)}
+                "evidence": fields(evidence, "schema_version status source validation_context head tested_sha tree base contract_digest suites production_image_targets deployments held_deployment_targets readiness_targets toolchains validation_results"),
+                "reused_suites": reusable_suites(plan, evidence)}
     check_snapshot(plan, snapshot, current)
     return snapshot
 
@@ -178,8 +190,11 @@ def main():
     if snapshot:
         plan["main_reuse"] = snapshot
     write_json(args.plan, plan)
+    covered = set(snapshot['reused_suites']) if snapshot else set()
     with args.github_output.open("a") as output:
         output.write(f"reuse_validation={'true' if snapshot else 'false'}\n")
+        output.write(f"reuse_images={'true' if 'production-images' in covered else 'false'}\n")
+        output.write(f"reuse_sdk={'true' if SDK_SUITES <= covered else 'false'}\n")
 
 
 if __name__ == "__main__":

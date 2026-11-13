@@ -132,9 +132,9 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     needed = subprocess.check_output(["node", "api/typescript/scripts/release-policy.mjs", "changes", plan["base"], sha], cwd=root, text=True).strip()
     require(needed in {"release_needed=true", "release_needed=false"}, "invalid SDK version policy result")
     outputs = {"release_needed": needed.partition("=")[2], "base_sha": plan["base"]}
-    if "sdk-node24" not in plan["suites"]:
-        require(outputs["release_needed"] == "false", "release requires missing SDK validation")
+    if outputs['release_needed'] == 'false':
         return outputs
+    require('sdk-node24' in plan['suites'], 'release requires missing SDK validation')
     reference = evidence.get("suite_artifacts", {}).get("sdk-node24")
     suite_attempt = reference_attempt(reference, "ci-result-sdk-node24", evidence["source"]["run_attempt"])
     files = artifact_files(api, repository, run_id, artifacts, reference)

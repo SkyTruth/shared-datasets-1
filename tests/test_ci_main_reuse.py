@@ -16,7 +16,7 @@ import zipfile
 import pytest
 
 from scripts import ci_main_reuse as reuse, ci_preflight as preflight, ci_source_proof as source
-from scripts.ci_contract import REUSABLE_SUITES, expected_tools, verify_results
+from scripts.ci_contract import REUSABLE_SUITES, expected_tools, hosted_result_keys, verify_results
 from scripts.deployment_revision import DeploymentError
 from test_ci_preflight import ROOT, fixture_repo, jobs_for, plan, results_for
 from workflow_helpers import load_workflow
@@ -27,7 +27,7 @@ NOW = datetime(2026, 11, 10, tzinfo=timezone.utc)
 
 class Actions:
     """Only external transport is substituted; JSON, ZIP and digest checks run."""
-    def __init__(self, validation):
+    def __init__(self, validation, *, release_needed=False):
         self.repository = {"id": 17, "full_name": REPOSITORY}
         self.pr = {"number": 42, "merged": True, "merged_at": "2026-11-10T00:00:00Z", "state": "closed", "draft": False,
                    "merge_commit_sha": validation["tested_sha"],
@@ -45,9 +45,10 @@ class Actions:
                          "source": {"run_id": "123", "run_attempt": 2}, "status": "success",
                          "validation_context": {"event": "pull_request", "repository": REPOSITORY, "pr_number": 42},
                          "toolchains": {suite: expected_tools(suite) for suite in validation["suites"]},
-                         "validation_results": {suite: {"status": "success", "tools": expected_tools(suite),
-                                                       "source": {"run_id": "123", "run_attempt": 1}}
-                                                for suite in validation["suites"]}}
+                         "validation_results": {key: {"status": "success", "tools": expected_tools('production-images' if key.startswith('production-images-') else key),
+                                                     "source": {"run_id": "123", "run_attempt": 1},
+                                                     **({'release_needed': release_needed} if key.startswith('sdk-node') else {})}
+                                                for key in hosted_result_keys(validation, validation['suites'])}}
         self.artifact = {"id": 81, "name": "ci-ready-evidence-attempt2", "workflow_run": {"id": 123}, "expired": False,
                          "created_at": "2026-11-09T00:00:30Z", "expires_at": "2026-11-23T00:00:30Z"}
         self.artifacts = [self.artifact]
@@ -91,10 +92,10 @@ class Actions:
 @pytest.fixture
 def main_push():
     validation = plan()
-    validation.update(head=validation["tested_sha"], source={"run_id": "789", "run_attempt": 1})
+    validation.update(head=validation["tested_sha"], source={"run_id": "789", "run_attempt": 1}, deployments=['sea_ice'])
     current = {"event": "push", "ref": "refs/heads/main", "repository": REPOSITORY,
                "sha": validation["tested_sha"], "before": validation["base"]}
-    return validation, current, Actions(validation)
+    return validation, current, Actions(validation, release_needed=True)
 
 
 def test_successful_exact_tree_pr_evidence_survives_json_and_gate_verification(main_push):
@@ -121,6 +122,66 @@ def test_successful_exact_tree_pr_evidence_survives_json_and_gate_verification(m
             verify_results(validation, results, broken, source_proofs=proofs, run_id="789", run_attempt=1, reused_suites=covered)
     with pytest.raises(ValueError, match="missing suite results"):
         verify_results(validation, results, jobs, source_proofs=proofs, run_id="789", run_attempt=1)
+
+
+@pytest.mark.parametrize('image_consumer,release_required', [(False, False), (False, True), (True, False), (True, True)])
+def test_only_unconsumed_bytes_reuse_pr_coverage_through_actual_job_conditions(main_push, image_consumer, release_required):
+    validation, current, _ = main_push
+    validation['deployments'] = ['sea_ice'] if image_consumer else []
+    validation['held_deployment_targets'] = [] if image_consumer else ['wdpa']
+    api = Actions(validation, release_needed=release_required)
+    validation['main_reuse'] = json.loads(json.dumps(reuse.select_reuse(api, validation, current, attempt=1, now=NOW)))
+    covered = reuse.verified_reuse(validation, current, run_id='789', attempt=1)
+    assert ('production-images' in covered) == (not image_consumer)
+    assert ({'sdk-node22', 'sdk-node24'} <= covered) == (not release_required)
+    workflow = load_workflow(ROOT / reuse.WORKFLOW)
+    outputs = {'production_images': 'true', 'sdk': 'true',
+               'reuse_images': str(not image_consumer).lower(), 'reuse_sdk': str(not release_required).lower()}
+    jobs = jobs_for(validation)
+    for suite in REUSABLE_SUITES:
+        jobs[suite]['result'] = 'skipped'
+    for name in ('production-images', 'sdk-validation'):
+        expression = workflow['jobs'][name]['if'].replace('needs.geospatial-changes.outputs.', 'o.')
+        result = subprocess.run(['node', '-e', 'console.log(Function("o", "return " + process.argv[1])(JSON.parse(process.argv[2])))',
+                                 expression, json.dumps(outputs)], text=True, capture_output=True, check=True)
+        jobs[name]['result'] = 'success' if result.stdout.strip() == 'true' else 'skipped'
+    results = [dict(result, source=validation['source']) for result in results_for(validation) if result['suite'] not in covered]
+    for result in results:
+        if result['suite'].startswith('sdk-node'):
+            result['release_needed'] = release_required
+    proofs = {1: {source.job_name(result['suite']) for result in results}}
+    chosen = verify_results(validation, results, jobs, source_proofs=proofs, run_id='789', run_attempt=1, reused_suites=covered)
+    assert set(chosen) == set(validation['suites']) - covered
+    assert ('production-images' in chosen) == image_consumer
+    assert all(result['source']['run_id'] == '789' for result in chosen.values())
+
+
+@pytest.mark.parametrize('defect', ['missing-image', 'failed-image', 'image-source', 'image-tools', 'image-selection',
+                                  'missing-sdk-decision', 'sdk-disagreement', 'sdk-untyped'])
+def test_unconsumed_coverage_cannot_skip_on_partial_or_inconsistent_pr_evidence(main_push, defect):
+    validation, current, _ = main_push
+    validation['deployments'] = []
+    api = Actions(validation)
+    summaries = api.evidence['validation_results']
+    key = 'production-images-' + validation['production_image_targets'][0]
+    if defect == 'missing-image':
+        del summaries[key]
+    elif defect == 'failed-image':
+        summaries[key]['status'] = 'failure'
+    elif defect == 'image-source':
+        summaries[key]['source']['run_id'] = '999'
+    elif defect == 'image-tools':
+        summaries[key]['tools']['python'] = '0.0.0'
+    elif defect == 'image-selection':
+        api.evidence['production_image_targets'].pop()
+    elif defect == 'missing-sdk-decision':
+        del summaries['sdk-node22']['release_needed']
+    elif defect == 'sdk-disagreement':
+        summaries['sdk-node22']['release_needed'] = True
+    elif defect == 'sdk-untyped':
+        summaries['sdk-node22']['release_needed'] = 'false'
+    api.pack()
+    assert reuse.select_reuse(api, validation, current, attempt=1, now=NOW) is None
 
 
 @pytest.mark.parametrize("defect", [
@@ -329,7 +390,7 @@ exec cat "$TRANSPORT_FIXTURE/responses/$(printf '%s' "$path" | tr '/?&=' '____')
     if stall == "retry":
         assert "retrying in 5s" in stderr
     assert json.loads(plan_path.read_text()) == validation
-    assert output.read_text() == "reuse_validation=false\n"
+    assert output.read_text() == "reuse_validation=false\nreuse_images=false\nreuse_sdk=false\n"
     with pytest.raises(ProcessLookupError):
         os.kill(int((tmp_path / "transport-pid").read_text()), 0)
 
@@ -353,7 +414,8 @@ def test_workflow_reuses_only_pure_jobs_and_retains_pr_required_checks():
             result = subprocess.run(["node", "-e", "console.log(Function('needs', 'return ' + process.argv[1])(JSON.parse(process.argv[2])))",
                                      expression, json.dumps(needs)], capture_output=True, text=True, check=True)
             assert result.stdout.strip() == expected
-    assert all("reuse_validation" not in jobs[job]["if"] for job in ("production-images", "sdk-validation"))
+    assert 'reuse_images' in jobs['production-images']['if']
+    assert 'reuse_sdk' in jobs['sdk-validation']['if']
     assert jobs["ci-ready"]["if"] == "always()"
     for job in ("lint", "tests", "geospatial-changes", "ci-ready"):
         assert jobs[job].get("name", job) == job
@@ -388,16 +450,19 @@ def test_serialized_selector_plan_and_real_gate_emit_pr_and_main_provenance(tmp_
     monkeypatch.setattr(reuse, "GitHub", lambda: api)
     monkeypatch.setattr(sys, "argv", ["ci_main_reuse.py", "--plan", str(plan_path), "--github-output", str(output)])
     reuse.main()
-    assert output.read_text() == "reuse_validation=true\n"
+    covered = set(reuse.reusable_suites(validation, api.evidence))
+    assert output.read_text() == ('reuse_validation=true\n'
+                                 f"reuse_images={'true' if 'production-images' in covered else 'false'}\n"
+                                 f"reuse_sdk={'true' if 'sdk-node22' in covered else 'false'}\n")
     selected = json.loads(plan_path.read_text())
     assert selected["suites"] == validation["suites"]
     results = tmp_path / "results"
     results.mkdir()
     jobs = jobs_for(validation)
-    for suite in REUSABLE_SUITES:
-        jobs[suite]["result"] = "skipped"
+    for suite in covered:
+        jobs['sdk-validation' if suite.startswith('sdk-node') else suite]["result"] = "skipped"
     for result in results_for(validation):
-        if result["suite"] not in REUSABLE_SUITES:
+        if result["suite"] not in covered:
             path = results / result["suite"] / "result.json"
             path.parent.mkdir()
             path.write_text(json.dumps(dict(result, source=validation["source"])))
@@ -412,7 +477,10 @@ def test_serialized_selector_plan_and_real_gate_emit_pr_and_main_provenance(tmp_
     assert admitted["source"] == validation["source"]
     assert admitted["main_reuse"]["run"]["id"] == 123
     assert admitted["main_reuse"]["evidence"]["head"] == "b" * 40
-    assert set(admitted["suite_artifacts"]) == ({"production-images", "sdk-node22", "sdk-node24"} if scope == "full" else set())
+    assert set(admitted["suite_artifacts"]) == set()
     assert admitted["validation_results"]["tests"]["source"]["run_id"] == "123"
     if scope == "full":
-        assert admitted["validation_results"]["sdk-node24"]["source"]["run_id"] == "789"
+        assert admitted["validation_results"]["sdk-node24"]["source"]["run_id"] == "123"
+        assert all(admitted['validation_results']['production-images-' + target]['source']['run_id'] == '123'
+                   for target in validation['production_image_targets'])
+        assert not admitted['validation_results']['sdk-node24']['release_needed']

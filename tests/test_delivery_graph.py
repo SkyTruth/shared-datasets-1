@@ -39,7 +39,7 @@ def test_identity_sync_exports_a_bounded_propagation_barrier(tmp_path):
     apply_index = next(index for index, step in enumerate(sync['steps']) if step['name'] == 'Terraform apply')
     assert sync['steps'].index(claim) < apply_index
     assert propagation['needs'] == 'sync'
-    assert propagation['if'] == "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+    assert propagation['if'] == "${{ !cancelled() && !failure() && needs.sync.result == 'success' && needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
     assert propagation['steps'][0]['env']['WAIT_SECONDS'] == '${{ needs.sync.outputs.wait_seconds }}'
     assert propagation['steps'][0]['run'] == 'sleep "$WAIT_SECONDS"'
     assert 0 < seconds < propagation['timeout-minutes'] * 60
@@ -58,6 +58,33 @@ def test_terraform_boundary_requires_the_claim_computed_propagation_wait():
     claim['run'] = claim['run'].replace('--propagation-window "$POST_APPLY_WAIT_SECONDS"', '')
     for changed in (unconditional, windowless):
         assert receipts.terraform_boundary(changed)
+
+
+@pytest.mark.parametrize('prepare,result,applied,seconds,cancelled,expected', [
+    ('skipped', 'success', 'true', 120, False, True),
+    ('success', 'success', 'true', 30, False, True),
+    ('skipped', 'success', 'true', 0, False, False),
+    ('skipped', 'success', 'false', 120, False, False),
+    ('skipped', 'failure', 'true', 120, False, False),
+    ('skipped', 'cancelled', 'true', 120, False, False),
+    ('skipped', 'skipped', 'true', 120, False, False),
+    ('failure', 'success', 'true', 120, False, False),
+    ('skipped', 'success', 'true', 120, True, False),
+])
+def test_propagation_admission_preserves_the_wait_after_skipped_preparation(prepare, result, applied, seconds, cancelled, expected):
+    job = yaml.safe_load((ROOT / '.github/workflows/prod-terraform-target-apply.yml').read_text())['jobs']['propagation']
+    expression = job['if'].removeprefix('${{').removesuffix('}}').strip()
+    # GitHub applies success() across the dependency chain unless a status
+    # function overrides it. A deliberately skipped prepare must not skip wait.
+    default_success = prepare == result == 'success'
+    explicit_status = any(function in expression for function in ('cancelled()', 'failure()', 'always()', 'success()'))
+    values = {'!cancelled()': not cancelled, '!failure()': prepare != 'failure' and result != 'failure',
+              'needs.sync.result': result, 'needs.sync.outputs.applied': applied,
+              'fromJSON(needs.sync.outputs.wait_seconds)': seconds}
+    for key, value in values.items():
+        expression = expression.replace(key, repr(value))
+    actual = (explicit_status or default_success) and eval(expression.replace('&&', ' and '), {'__builtins__': {}})
+    assert bool(actual) == expected
 
 
 @pytest.mark.parametrize('target,expected_signer', [
