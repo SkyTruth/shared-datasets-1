@@ -44,6 +44,29 @@ The selection and image targets remain intact. After lookup completes, the succe
 
 All-job main reruns deliberately disable PR reuse and execute the full selection, including when PR evidence has expired. A selective rerun of a gate that used PR coverage cannot reinterpret its previous skipped jobs: use **Re-run all jobs**. Proofs that were expired at admission, lack an admission timestamp or have altered identities fail explicitly at the gate; they never authorize delivery. Original successful gate receipts and exact image/SDK attempt proofs remain usable by the existing delivery/recovery readers.
 
+## Runner comparison
+
+General Python, control-plane Python and browser validation use standard
+`ubuntu-24.04-arm` runners; test selection, four pytest workers, two browser workers,
+assertions and refusal checks are unchanged. Production image/native validation,
+SDK candidates, selection and gate jobs retain their existing x64 runners.
+Local preflight continues to use its native Linux architecture.
+The development Rasterio pin supplies Linux ARM wheels, so general validation
+does not require a hosted GDAL source-build environment. Generated runtime/native
+image locks retain their own dependency versions.
+
+For an authorized same-revision runner comparison, dispatch this workflow twice
+on the same branch head with the same explicit `base_sha`, setting
+`x64_validation` to `true` and `false`. That input only selects one of the two
+fixed standard runner labels for those three jobs. The comparison includes setup,
+test execution, artifact time, case identities, failures/skips and occupied
+runner-minutes. Dispatch runs cannot emit production delivery authority or
+qualify for PR-validation reuse. An empty diagnostic base retains the existing
+comparison against the dispatched revision itself.
+Record exact/partial setup-cache hits and time in `uv sync`, `npm ci` and
+Chromium installation. PR merge-ref caches are not available to branch dispatch;
+architecture-specific cache state can bias a single pair and must be reported.
+
 ## Holds, failures and retries
 
 Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push; historical bare hold lists are comparison baselines only. Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation. The independent safety health report also deduplicates a disabled incident switch or missing bot token through its webhook, including changed findings and daily reminders.

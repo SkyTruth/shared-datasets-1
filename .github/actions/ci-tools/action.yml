@@ -7,6 +7,9 @@ inputs:
   binaries:
     description: Official pinned release binaries to install
     default: 'actionlint terraform gitleaks shellcheck'
+  uv-cache:
+    description: Restore and save uv's shared download cache
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -14,7 +17,7 @@ runs:
       with:
         version: '0.11.8'
         python-version: '3.12.12'
-        enable-cache: true
+        enable-cache: ${{ inputs['uv-cache'] }}
     - uses: actions/setup-node@v4
       if: inputs.node != ''
       with:
