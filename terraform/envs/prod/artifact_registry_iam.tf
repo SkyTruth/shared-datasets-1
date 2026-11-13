@@ -2,7 +2,7 @@ resource "google_project_iam_custom_role" "artifact_registry_iam_policy_manager"
   project     = var.project_id
   role_id     = "sharedDatasetsArtifactRegistryIamPolicyManager"
   title       = "Shared Datasets Artifact Registry IAM Policy Manager"
-  description = "Allows approved GitHub Actions Terraform to manage IAM bindings on the shared datasets Artifact Registry repository."
+  description = "Allows approved GitHub Actions Terraform to manage IAM bindings on the shared datasets Artifact Registry repository. (foundation baseline benchmark v1)"
   permissions = [
     "artifactregistry.repositories.getIamPolicy",
     "artifactregistry.repositories.setIamPolicy",

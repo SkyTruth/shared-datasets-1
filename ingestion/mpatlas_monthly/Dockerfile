@@ -57,3 +57,5 @@ COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
 
 CMD ["python", "-m", "ingestion.mpatlas_monthly.run"]
+
+LABEL org.skytruth.ci.delivery-benchmark="foundation-baseline-v1"

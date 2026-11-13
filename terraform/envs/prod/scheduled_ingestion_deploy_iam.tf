@@ -37,7 +37,7 @@ resource "google_project_iam_custom_role" "translation_notice_iam_manager" {
   project     = var.project_id
   role_id     = "sharedDatasetsTranslationNoticeIamManager"
   title       = "Shared Datasets Translation Notice IAM Manager"
-  description = "Read Slack secret metadata and manage its runtime accessor bindings."
+  description = "Read Slack secret metadata and manage its runtime accessor bindings. (foundation baseline benchmark v1)"
   permissions = [
     "secretmanager.secrets.get",
     "secretmanager.secrets.getIamPolicy",

@@ -11,3 +11,5 @@ COPY ingestion/common/__init__.py /app/ingestion/common/__init__.py
 COPY ingestion/common/decision_events.py /app/ingestion/common/decision_events.py
 COPY services/monitoring_slack /app/services/monitoring_slack
 CMD ["/app/.venv/bin/python", "-m", "services.monitoring_slack.run"]
+
+LABEL org.skytruth.ci.delivery-benchmark="foundation-baseline-v1"
