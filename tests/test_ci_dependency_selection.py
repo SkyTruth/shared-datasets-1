@@ -73,7 +73,9 @@ def test_ci_job_diff_selects_its_suite_only(source, job, suites):
     document = yaml.safe_load(before)
     document['jobs'][job]['timeout-minutes'] = 99
     (source / '.github/workflows/ci.yml').write_text(yaml.safe_dump(document))
-    with patch.object(ci, 'repository_files', return_value={'.github/workflows/ci.yml': before}):
+    files = {p.relative_to(source).as_posix(): p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    files['.github/workflows/ci.yml'] = before
+    with patch.object(ci, 'repository_files', return_value=files):
         plan = ci.resolve_selection(['.github/workflows/ci.yml'], base='base', root=source)
     assert set(plan['suites']) == ci.ALWAYS | suites | {'tests-control-plane'}
     assert bool(plan['production_image_targets']) == ('production-images' in suites)
@@ -132,6 +134,9 @@ def test_cli_reports_failed_stage_without_provider_values(tmp_path, monkeypatch,
     event.write_text(json.dumps({'pull_request': {side: {'repo': {'full_name': planner.REPOSITORY}} for side in ('head', 'base')}}))
     monkeypatch.setenv('GITHUB_EVENT_NAME', 'pull_request')
     monkeypatch.setenv('GITHUB_EVENT_PATH', str(event))
+    monkeypatch.setenv('PRODUCTION_TERRAFORM_SERVICE_ACCOUNT', 'deployer@shared-datasets-1.iam.gserviceaccount.com')
+    monkeypatch.setattr(planner.subprocess, 'check_output', lambda *args, **kwargs: 'token')
+    monkeypatch.setattr(planner.PolicyReader, 'read', lambda *args: {'projectNumber': '123'})
     monkeypatch.setattr('sys.argv', ['pr_terraform_plan.py', 'run', '--plan', str(plan)])
     def run(command, **kwargs):
         if command[2] == 'version':

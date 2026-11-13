@@ -21,12 +21,11 @@ def test_historical_recipe_before_probe_registry_keeps_its_copy_inputs(tmp_path,
 
 
 @pytest.mark.parametrize('path', ['uv.lock', 'pyproject.toml'])
-def test_dependency_metadata_keeps_all_suites_and_only_recipes_that_copy_it(path):
-    expected = {target for target, recipe in RECIPES.items()
-                if any(path in shlex.split(line)[1:-1] for line in (ROOT / recipe).read_text().splitlines() if line.startswith('COPY '))}
+def test_dependency_metadata_keeps_non_image_validation_without_unrelated_builds(path):
     plan = resolve_selection([path])
-    assert set(plan['production_image_targets']) == expected
-    assert plan['suites'] == list(SUITES)
+    assert plan['production_image_targets'] == []
+    assert plan['suites'] == [suite for suite in SUITES if suite != 'production-images']
+    assert plan['deployments'] == []
 
 
 def test_installed_fixture_change_checks_only_its_registered_producers():

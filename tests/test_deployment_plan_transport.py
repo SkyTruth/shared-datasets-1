@@ -72,7 +72,7 @@ def test_gate_eligibility_matches_every_post_gate_caller_and_cannot_escape_main(
     jobs = workflow['jobs']
     callers = {name for name, job in jobs.items() if 'ci-ready' in
                (job['needs'] if isinstance(job.get('needs'), list) else [job.get('needs')])}
-    plan = {'deployments': list(ci_contract.DEPLOYMENTS), 'suites': list(ci_contract.SUITES)}
+    plan = {'deployments': list(ci_contract.DEPLOYMENTS), 'readiness_targets': ['sea_ice'], 'suites': list(ci_contract.SUITES), 'sdk_release_needed': True}
     assert set(ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main')) == callers
     assert all(ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main').values())
     for event, ref in [('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main'), ('push', 'refs/heads/topic')]:
@@ -136,9 +136,6 @@ def test_verify_cli_emits_delivery_only_after_serialized_results_pass(tmp_path, 
     ('terraform/envs/prod/pmtiles_cdn.tf', 'catalog_viewer', True),
 ])
 def test_changed_scope_reaches_its_bootstrap_through_the_real_gate(tmp_path, monkeypatch, scope, owner, bootstrap):
-    from scripts import ci_preflight as preflight
-    from test_ci_preflight import jobs_for, results_for
-    from workflow_helpers import condition_result
     root, git = fixture_repo(tmp_path)
     base = git('rev-parse', 'HEAD')
     registry = root / '.github/terraform-targets.json'
@@ -159,6 +156,95 @@ def test_changed_scope_reaches_its_bootstrap_through_the_real_gate(tmp_path, mon
     assert owner in plan['deployments']
     conditional = {'dataset_usage', 'catalog_viewer', 'cron_alert_policy'}
     assert set(plan.get('bootstrap_targets', [])) & conditional == ({owner} if bootstrap else set())
+    assert_bootstrap_gate(root, plan, tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize('changed,bootstrap', [
+    ('scripts/tested_image_bundle.py', False),
+    ('scripts/terraform_target_contracts.py', False),
+    ('.github/workflows/prod-terraform-target-apply.yml', False),
+    ('pyproject.toml', False),
+    ('terraform/envs/prod/main.tf', True),
+    ('terraform/envs/prod/variables.tf', True),
+    ('terraform/envs/prod/production.auto.tfvars', True),
+    ('terraform/envs/prod/.terraform.lock.hcl', True),
+    ('terraform/envs/prod/github-workflow-identities.json', True),
+    ('terraform/envs/prod/canonical_mutation_iam.tf', True),
+    ('terraform/modules/service_account/main.tf', True),
+    ('terraform/envs/prod/new_cross_file_locals.tf', True),
+    ('removed-bootstrap', True),
+    ('renamed-bootstrap', True),
+])
+def test_bootstrap_eligibility_distinguishes_executor_and_shared_inputs_through_the_gate(tmp_path, monkeypatch, changed, bootstrap):
+    root, git = fixture_repo(tmp_path)
+    base = git('rev-parse', 'HEAD')
+    owners = {'dataset_usage', 'catalog_viewer', 'cron_alert_policy'}
+    # Select the actual callers independently of the bootstrap input. Uncertainty
+    # must cover selected owners without authorizing an unrelated delivery.
+    for workflow in ('dataset-usage-deploy', 'catalog-viewer-deploy', 'cron-alert-policy-sync'):
+        source = root / f'.github/workflows/{workflow}.yml'
+        source.write_text(source.read_text() + '\n# exercise this selected executor\n')
+    if changed in {'removed-bootstrap', 'renamed-bootstrap'}:
+        source = root / 'terraform/envs/prod/monitoring_alert_policy_iam.tf'
+        if changed == 'removed-bootstrap':
+            # Keep declarations valid after removing their original source file.
+            destination = root / 'terraform/envs/prod/dataset_usage.tf'
+            destination.write_text(destination.read_text() + '\n' + source.read_text())
+            source.unlink()
+        else:
+            source.rename(source.with_name('renamed_monitoring_bootstrap.tf'))
+    else:
+        source = root / changed
+        if source.suffix == '.json':
+            source.write_text(source.read_text() + '\n')
+        else:
+            source.write_text((source.read_text() if source.exists() else '') + '\n# input changed\n')
+    git('add', '.')
+    git('commit', '-m', 'exercise bootstrap input ownership')
+    plan, _ = emit_plan(root, base, tmp_path / 'selection')
+    assert owners <= set(plan['deployments'])
+    assert set(plan.get('bootstrap_targets', [])) <= set(plan['deployments'])
+    assert set(plan.get('bootstrap_targets', [])) & owners == (owners if bootstrap else set())
+    assert_bootstrap_gate(root, plan, tmp_path, monkeypatch)
+
+
+def test_bootstrap_missing_comparison_and_explicit_shared_inputs_retain_owners():
+    owners = {'dataset_usage', 'catalog_viewer', 'cron_alert_policy'}
+    assert owners <= ci_contract.bootstrap_deployments(None)
+    assert owners <= ci_contract.bootstrap_deployments(['.github/terraform-targets.json'])
+    assert 'catalog_viewer' in ci_contract.bootstrap_deployments(['catalog/categories.yaml'])
+    assert ci_contract.bootstrap_deployments([]) == set()
+
+
+def test_missing_registry_snapshot_preserves_bootstrap_through_the_gate(tmp_path, monkeypatch):
+    from scripts import ci_preflight as preflight
+
+    root, git = fixture_repo(tmp_path)
+    base = git('rev-parse', 'HEAD')
+    registry = root / '.github/terraform-targets.json'
+    registry.write_text(registry.read_text() + '\n')
+    git('add', '.')
+    git('commit', '-m', 'registry comparison unavailable')
+    original = preflight.git
+
+    def missing_snapshot(root, *args, **kwargs):
+        if args == ('show', f'{base}:.github/terraform-targets.json'):
+            raise subprocess.CalledProcessError(128, ['git', *args])
+        return original(root, *args, **kwargs)
+
+    monkeypatch.setattr(preflight, 'git', missing_snapshot)
+    plan, _ = emit_plan(root, base, tmp_path / 'selection')
+    assert plan['changed_paths'] == ['.github/terraform-targets.json']
+    assert {'dataset_usage', 'catalog_viewer', 'cron_alert_policy'} <= set(plan['bootstrap_targets'])
+    assert set(plan['bootstrap_targets']) <= set(plan['deployments'])
+    assert_bootstrap_gate(root, plan, tmp_path, monkeypatch)
+
+
+def assert_bootstrap_gate(root, plan, tmp_path, monkeypatch):
+    from scripts import ci_preflight as preflight
+    from test_ci_preflight import jobs_for, results_for
+    from workflow_helpers import condition_result
+
     plan_file, jobs_file, output = (tmp_path / name for name in ('gate-plan.json', 'jobs.json', 'gate-output'))
     plan_file.write_text(json.dumps(plan))
     jobs_file.write_text(json.dumps(jobs_for(plan)))
@@ -184,7 +270,7 @@ console.log(String(Function('needs','fromJSON','contains','return '+expression)
         expression = expression.replace('needs.ci-ready', 'needs["ci-ready"]').replace('.artifact-registry-iam', '["artifact-registry-iam"]')
         needs = {'ci-ready': {'outputs': outputs}}
         actual = subprocess.check_output(['node', '-e', program, expression, json.dumps(needs)], text=True).strip() == 'true'
-        assert actual is (bootstrap and selection == owner)
+        assert actual is (selection in plan.get('bootstrap_targets', []))
         leaf = yaml.safe_load((ROOT / caller['uses'].removeprefix('./')).read_text())
         context = {'github.ref': 'refs/heads/main', 'github.event_name': 'push', 'inputs.sync_iam': actual,
                    'needs.prepare.result': 'success', 'needs.prepare.outputs.proceed': 'true', 'needs.prepare.outputs.claim_signed': 'success'}
@@ -192,4 +278,4 @@ console.log(String(Function('needs','fromJSON','contains','return '+expression)
         iam_outputs = copy.deepcopy(outputs)
         iam_outputs['delivery'] = json.dumps(json.loads(outputs['delivery']) | {'artifact-registry-iam': True})
         needs['ci-ready']['outputs'] = iam_outputs
-        assert subprocess.check_output(['node', '-e', program, expression, json.dumps(needs)], text=True).strip() == 'true'
+        assert (subprocess.check_output(['node', '-e', program, expression, json.dumps(needs)], text=True).strip() == 'true') is actual

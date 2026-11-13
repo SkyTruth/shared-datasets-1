@@ -42,9 +42,9 @@ def fixture(tmp_path, monkeypatch, *, sdk_attempt=1, gate_attempt=2):
     path.write_text(json.dumps(manifest))
     candidate = {**manifest, 'tested_sha': SHA, 'tarball': 'sdk.tgz', 'sha256': hashlib.sha256(package).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(package).digest()).decode()}
     identity = {'schema_version': 1, 'base': 'b' * 40, 'head': SHA, 'tested_sha': SHA, 'tree': 'tree', 'contract_digest': 'contract'}
-    plan = {**identity, 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
+    plan = {**identity, 'deployments': [], 'held_deployment_targets': [], 'readiness_targets': [], 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
     evidence = {**plan, 'status': 'success', 'source': {'run_id': '123', 'run_attempt': gate_attempt}, 'plan_artifact': 'ci-validation-plan-attempt1', 'suite_artifacts': {'sdk-node24': f'ci-result-sdk-node24-attempt{sdk_attempt}'}}
-    result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}], 'package': candidate}
+    result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'release_needed': True, 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}], 'package': candidate}
     payloads = [archive({'evidence.json': evidence}), archive({'plan.json': plan}), archive({'result.json': result, 'package/candidate.json': candidate, 'package/sdk.tgz': package, 'logs/arbitrary-script.py': b'not executed or extracted'})]
     artifacts = [{'id': index, 'name': name, 'expired': False, 'created_at': '2026-10-14T01:31:53Z', 'workflow_run': {'id': 123}, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()} for index, (name, raw) in enumerate(zip([f'ci-ready-evidence-attempt{gate_attempt}', 'ci-validation-plan-attempt1', f'ci-result-sdk-node24-attempt{sdk_attempt}'], payloads), 1)]
     run = {'id': 123, 'workflow_id': 7, 'repository': {'id': 9, 'full_name': REPO}, 'head_repository': {'id': 9, 'full_name': REPO}, 'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'path': '.github/workflows/ci.yml', 'run_attempt': 1}
@@ -142,11 +142,42 @@ def test_consumer_accepts_the_actual_preflight_package_producer(tmp_path, monkey
     monkeypatch.setattr(ci_preflight, 'validate_checkout', lambda *_: None)
     monkeypatch.setattr(ci_preflight, 'probe_tools', lambda *_: release.expected_tools('sdk-node24'))
     monkeypatch.setattr(ci_preflight, 'suite_commands', lambda *_: [(['npm', 'test'], tmp_path)])
-    monkeypatch.setattr(ci_preflight.subprocess, 'run', lambda *args, **kwargs: Mock(returncode=0))
+    def command(*args, **kwargs):
+        kwargs['stdout'].write('release_needed=true\n')
+        return Mock(returncode=0)
+    monkeypatch.setattr(ci_preflight.subprocess, 'run', command)
     result = ci_preflight.run_suite(tmp_path, plan, 'sdk-node24', output)
     assert result['status'] == 'success'
     payloads[2] = archive({'result.json': (output / 'result.json').read_bytes(), 'package/candidate.json': (output / 'package/candidate.json').read_bytes(), 'package/sdk.tgz': (output / 'package/sdk.tgz').read_bytes()})
     artifacts[2]['digest'] = 'sha256:' + hashlib.sha256(payloads[2]).hexdigest()
+    actual = release.download(api, REPO, 123, 2, SHA, tmp_path / 'consumer', tmp_path)
+    assert Path(actual['tarball']).read_bytes() == package
+
+
+def test_no_release_returns_before_candidate_transport(tmp_path, monkeypatch):
+    api, _, _, artifacts, payloads = fixture(tmp_path, monkeypatch)
+    with zipfile.ZipFile(io.BytesIO(payloads[0])) as zipped:
+        evidence = json.loads(zipped.read('evidence.json'))
+    evidence.update(suite_artifacts={})
+    payloads[0] = archive({'evidence.json': evidence})
+    artifacts[0]['digest'] = 'sha256:' + hashlib.sha256(payloads[0]).hexdigest()
+    monkeypatch.setattr(release.subprocess, 'check_output', lambda args, **kwargs: 'release_needed=false' if args[0] == 'node' else 'tree')
+    output = tmp_path / 'consumer'
+    assert release.download(api, REPO, 123, 2, SHA, output, tmp_path) == {'release_needed': 'false', 'base_sha': 'b' * 40}
+    assert not output.exists()
+    assert [call.args[1] for call in api.archive.call_args_list] == [1, 2]
+
+
+def test_historical_gate_and_sdk_result_without_release_metadata_remain_recoverable(tmp_path, monkeypatch):
+    api, _, package, artifacts, payloads = fixture(tmp_path, monkeypatch)
+    for index, member in [(0, 'evidence.json'), (2, 'result.json')]:
+        with zipfile.ZipFile(io.BytesIO(payloads[index])) as zipped:
+            files = {name: zipped.read(name) for name in zipped.namelist()}
+        value = json.loads(files[member])
+        value.pop('sdk_release_needed' if index == 0 else 'release_needed', None)
+        files[member] = json.dumps(value).encode()
+        payloads[index] = archive(files)
+        artifacts[index]['digest'] = 'sha256:' + hashlib.sha256(payloads[index]).hexdigest()
     actual = release.download(api, REPO, 123, 2, SHA, tmp_path / 'consumer', tmp_path)
     assert Path(actual['tarball']).read_bytes() == package
 

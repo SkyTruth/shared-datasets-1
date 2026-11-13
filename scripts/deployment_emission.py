@@ -33,7 +33,7 @@ RECOVERY = ".github/workflows/deployment-recovery.yml"
 REHEARSAL_SIGNERS = {
     *(config["workflow"] for config in DEPLOY_TARGETS.values()),
     "ingestion-deploy.yml", "prod-terraform-target-apply.yml",
-    "deployment-readiness.yml", "deployment-verification.yml", "deployment-recovery.yml",
+    "deployment-verification.yml", "deployment-recovery.yml",
     "publish-typescript-sdk.yml", "pmtiles-cdn-sync.yml", "catalog-web-deploy.yml", "catalog-viewer-deploy.yml",
 }
 
@@ -84,13 +84,12 @@ def invocation(repository, run_id, attempt):
     return f"https://github.com/{repository}/actions/runs/{run_id}/attempts/{attempt}"
 
 
-def policy(repository, repo_id, value, run, signer):
+def run_policy(repository, repo_id, run, signer):
     source = "https://github.com/" + repository
     require(run.get("head_branch") == "main" and run.get("event") in {"push", "workflow_dispatch", "workflow_run", "schedule"}, "receipt emitter is not trusted main")
     require(re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha", ""))), "emitter revision unavailable")
     require(all(run.get(key, {}).get("id") == repo_id and run.get(key, {}).get("full_name") == repository for key in ("repository", "head_repository")), "emitter repository identity mismatch")
     url = invocation(repository, run["id"], run["run_attempt"])
-    require(value["status"]["log_url"] == url, "phase must identify its exact emitter attempt")
     return {
         "issuer": "https://token.actions.githubusercontent.com", "runnerEnvironment": "github-hosted",
         "sourceRepositoryURI": source, "sourceRepositoryIdentifier": str(repo_id),
@@ -102,14 +101,19 @@ def policy(repository, repo_id, value, run, signer):
     }
 
 
-def verify_result(results, value, expected, *, batch=False):
+def policy(repository, repo_id, value, run, signer):
+    expected = run_policy(repository, repo_id, run, signer)
+    require(value['status']['log_url'] == expected['runInvocationURI'], 'phase must identify its exact emitter attempt')
+    return expected
+
+
+def verify_subject(results, subject, expected, *, batch=False):
+    """Verify exact subject bytes and the protected emitter, independently of format."""
     require(isinstance(results, list) and results, "no cryptographically verified receipt")
-    digest = hashlib.sha256(canonical(value)).hexdigest()
     for result in results:
         verified = result.get("verificationResult", {})
         cert = verified.get("signature", {}).get("certificate", {})
         statement = verified.get("statement", {})
-        subject = {"name": name(value), "digest": {"sha256": digest}}
         subjects = statement.get("subject")
         subjects_match = (isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
                           if batch else subjects == [subject])
@@ -122,6 +126,11 @@ def verify_result(results, value, expected, *, batch=False):
         ):
             return
     raise EmissionError("DEPLOYMENT_EMISSION: signed receipt does not bind the exact record, phase and protected emitter")
+
+
+def verify_result(results, value, expected, *, batch=False):
+    subject = {'name': name(value), 'digest': {'sha256': hashlib.sha256(canonical(value)).hexdigest()}}
+    verify_subject(results, subject, expected, batch=batch)
 
 
 def verified_output(command, repository, digest):
@@ -230,10 +239,10 @@ def main():
         value = json.loads(args.receipt.read_bytes())
         require(value.get("schema") == SCHEMA and value.get("repository") == repository, "invalid receipt file")
         record = api.get(f"repos/{repository}/deployments/{value['deployment_id']}")
-        matches = [phase for phase in api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100") if phase.get("id") == value["status"]["id"]]
+        statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
+        matches = [phase for phase in statuses if phase.get("id") == value["status"]["id"]]
         require(len(matches) == 1 and receipt(repository, record, matches[0]) == value, "receipt differs from its durable record/status")
-        revision.verify_record(api, repository, record)
-        revision.verify_receipt(api, repository, record, matches[0])
+        revision.verify_record(api, repository, record, statuses=statuses, requested_status=matches[0])
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ import sys
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.ci_contract import contract_digest, expected_tools
+from scripts.ci_contract import contract_digest, expected_tools, validate_obligations
 from scripts.ci_source_proof import job_name
 from scripts.dataset_mutation_authorization import GitHub as ArtifactGitHub
 from scripts.deployment_revision import DeploymentError, require, verify_ci, verify_context
@@ -118,7 +118,8 @@ def verified_plan(api, repository, run_id, attempt, sha, root):
     require(evidence.get("source") == {"run_id": str(run_id), "run_attempt": gate_attempt} and evidence.get("status") == "success" and evidence.get("tested_sha") == sha and evidence.get("head") == sha, "ci-ready evidence source mismatch")
     plan_attempt = reference_attempt(evidence.get("plan_artifact"), "ci-validation-plan", gate_attempt)
     plan = json.loads(artifact_files(api, repository, run_id, artifacts, evidence["plan_artifact"])["plan.json"])
-    require(plan.get("source") == {"run_id": str(run_id), "run_attempt": plan_attempt} and all(plan.get(key) == evidence.get(key) for key in (*IDENTITY, "suites", "changed_paths", "selection_reason")), "validation plan differs from ci-ready evidence")
+    require(plan.get("source") == {"run_id": str(run_id), "run_attempt": plan_attempt} and all(plan.get(key) == evidence.get(key) for key in (*IDENTITY, "suites", "changed_paths", "selection_reason", "deployments", "held_deployment_targets", "readiness_targets", "bootstrap_targets")), "validation plan differs from ci-ready evidence")
+    validate_obligations(plan)
     require(plan.get("schema_version") == 1 and plan.get("tree") == subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip() and plan.get("contract_digest") == contract_digest(root), "validation tree or contract changed")
     producing_job(api, repository, run_id, plan_attempt, sha, "geospatial-changes", run["workflow_id"], run["repository"]["id"])
     print(f"Verified CI trigger attempt {attempt} using ci-ready evidence from attempt {gate_attempt}.")
@@ -131,9 +132,9 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     needed = subprocess.check_output(["node", "api/typescript/scripts/release-policy.mjs", "changes", plan["base"], sha], cwd=root, text=True).strip()
     require(needed in {"release_needed=true", "release_needed=false"}, "invalid SDK version policy result")
     outputs = {"release_needed": needed.partition("=")[2], "base_sha": plan["base"]}
-    if "sdk-node24" not in plan["suites"]:
-        require(outputs["release_needed"] == "false", "release requires missing SDK validation")
+    if outputs['release_needed'] == 'false':
         return outputs
+    require('sdk-node24' in plan['suites'], 'release requires missing SDK validation')
     reference = evidence.get("suite_artifacts", {}).get("sdk-node24")
     suite_attempt = reference_attempt(reference, "ci-result-sdk-node24", evidence["source"]["run_attempt"])
     files = artifact_files(api, repository, run_id, artifacts, reference)

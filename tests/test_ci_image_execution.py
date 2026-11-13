@@ -92,7 +92,7 @@ def image_plan(root, targets, *, hosted=False):
     return value
 
 
-@pytest.mark.parametrize('paths', [['ingestion/eamlis_monthly/run.py'], ['pyproject.toml']])
+@pytest.mark.parametrize('paths', [['ingestion/eamlis_monthly/run.py'], ['.github/docker/runtime-dependencies/pylock.runtime.toml', '.github/docker/runtime-dependencies/pylock.wdpa.toml']])
 @pytest.mark.parametrize('defect', [None, 'wrong-set', 'stale', 'command'])
 def test_local_image_cli_serializes_ids_and_keeps_hosted_tar_gate_strict(tmp_path, monkeypatch, paths, defect):
     source, git = fixture_repo(tmp_path)
@@ -150,7 +150,7 @@ def test_historical_fresh_images_remain_loadable_with_unrelated_reused_suites(ha
 
 
 @pytest.mark.parametrize("matrix", [False, True, "group"])
-@pytest.mark.parametrize("paths", [["ingestion/eamlis_monthly/run.py"], ["pyproject.toml"]])
+@pytest.mark.parametrize("paths", [["ingestion/eamlis_monthly/run.py"], [".github/docker/runtime-dependencies/pylock.runtime.toml", ".github/docker/runtime-dependencies/pylock.wdpa.toml"]])
 @pytest.mark.parametrize("defect", [None, "command", "missing-manifest", "wrong-set", "stale", "missing-tar"])
 def test_real_suite_cli_bounds_parallel_targets_and_rejects_incomplete_output(tmp_path, monkeypatch, paths, defect, matrix):
     source, git = fixture_repo(tmp_path)

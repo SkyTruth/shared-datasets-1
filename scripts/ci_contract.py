@@ -33,6 +33,7 @@ DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deplo
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 REUSABLE_SUITES = frozenset({"lint", "tests", "tests-control-plane", "geospatial-integration", "browser"})
+SDK_SUITES = frozenset({'sdk-node22', 'sdk-node24'})
 # These graph tests need initialized providers and run with deployment controls.
 PROVIDER_TESTS = frozenset({'tests/test_terraform_target_contracts.py', 'tests/test_pr_plan_activation.py'})
 
@@ -54,7 +55,8 @@ def delivery_outputs(plan, event, ref):
     """Successful CI emits main-only eligibility; later prerequisite results stay live."""
     enabled = event == 'push' and ref == 'refs/heads/main'
     return {**{name.replace('_', '-'): enabled and name in plan['deployments'] for name in DEPLOYMENTS},
-            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'],
+            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'] and plan['sdk_release_needed'],
+            'deployment-readiness': enabled and bool(plan['readiness_targets']),
             **dict.fromkeys(('dataset-mutation-selection', 'refresh-reviewed-catalog', 'announce-repo-functionality',
                              'publish-reviewed-dataset', 'identity-decision-reconcile'), enabled)}
 
@@ -101,7 +103,7 @@ CONTRACT_FILES = tuple(sorted({
 } | {
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
     ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
-    ".github/workflows/pr-terraform-plan.yml",
+    ".github/workflows/pr-terraform-plan.yml", ".github/workflows/deployment-readiness.yml",
     ".github/terraform-targets.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
@@ -215,8 +217,10 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
         raise ValueError("selection requires a changed-path list")
     root = root or ROOT
     holds = deployment_inputs.pop('ingestion_holds', ())
-    deployments = select_deployments(paths, root=root, **deployment_inputs)
+    deployments = select_deployments(paths, base=base, root=root, **deployment_inputs)
+    readiness = readiness_deployments(paths, base=base, root=root, registry_snapshots=deployment_inputs.get('registry_snapshots')) - set(deployments)
     images = {row["image"] for target, row in registry(root, section="deployments").items() if target in deployments and "image" in row}
+    held = [target for target in deployments if target in holds]
     deployments = [target for target in deployments if target not in holds]
     suites, tiers = set(ALWAYS), set()
     reason = "comparison history unavailable"
@@ -247,7 +251,9 @@ def resolve_selection(paths, *, base=None, root=None, **deployment_inputs):
         suites.add("tests-control-plane")
     if deployment_inputs.get("released_holds"):
         suites.add("geospatial-integration")
-    return dict(deployments=deployments, production_image_targets=[target for target in BUILD_TARGETS if target in images],
+    return dict(deployments=deployments, held_deployment_targets=held,
+                readiness_targets=[target for target in registry(root, section='deployments') if target in readiness],
+                production_image_targets=[target for target in BUILD_TARGETS if target in images],
                 suites=[suite for suite in SUITES if suite in suites], selection_reason=reason)
 
 
@@ -256,7 +262,8 @@ def planned_images(plan):
     images = plan["production_image_targets"]
     if (not isinstance(images, list) or images != [target for target in BUILD_TARGETS if target in images]
             or bool(images) != ("production-images" in plan["suites"])
-            or not {DEPLOYMENT_IMAGES[target] for target in plan.get("deployments", []) if target in DEPLOYMENT_IMAGES} <= set(images)):
+            or not {DEPLOYMENT_IMAGES[target] for target in [*plan.get("deployments", []), *plan.get('held_deployment_targets', [])]
+                    if target in DEPLOYMENT_IMAGES} <= set(images)):
         raise ValueError("invalid resolved production-image selection")
     return images
 
@@ -265,6 +272,32 @@ def deploy_image_targets(plan):
     """Only selected deliveries need retained TARs; holds still require validation."""
     deploying = {DEPLOYMENT_IMAGES[target] for target in plan["deployments"] if target in DEPLOYMENT_IMAGES}
     return [target for target in planned_images(plan) if target in deploying]
+
+
+def sdk_release_needed(results):
+    decisions = [results[suite].get('release_needed') for suite in SDK_SUITES if suite in results]
+    if not decisions:
+        return False
+    if len(decisions) != 2 or any(type(value) is not bool for value in decisions) or decisions[0] != decisions[1]:
+        raise ValueError('both SDK runtimes must agree on the release policy')
+    return decisions[0]
+
+
+def hosted_result_keys(plan, suites):
+    return {key for suite in suites for key in (
+        ['production-images-' + target for target in planned_images(plan)] if suite == 'production-images' else [suite])}
+
+
+def validate_obligations(plan):
+    """Current plans partition delivery, held delivery and observations explicitly."""
+    groups = []
+    for field in ('deployments', 'held_deployment_targets', 'readiness_targets'):
+        values = plan.get(field)
+        if not isinstance(values, list) or values != [target for target in DEPLOYMENTS if target in values]:
+            raise ValueError('invalid or missing ' + field)
+        groups.append(set(values))
+    if groups[0] & groups[1] or groups[0] & groups[2] or groups[1] & groups[2] or not groups[1] <= ROLLOUT_HOLD_TARGETS:
+        raise ValueError('delivery, held delivery and readiness obligations overlap or contain unsupported holds')
 
 
 def catalog_deployment_targets(before: str, after: str) -> set[str]:
@@ -295,14 +328,27 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
     return {target for target in previous if previous[target] != current[target]}
 
 
-def _registry_contracts(raw, *, bootstrap=False):
+def executor_rules(value):
+    """Read current executor obligations and their historical representative form."""
+    return {path: row.get('readiness_targets', row.get('deployments', {}))
+            for path, row in value.get('selection_exceptions', {}).items()
+            if row['kind'] == 'executor' or row['kind'] == 'exclude' and row.get('deployments')}
+
+
+def _registry_contracts(raw, *, bootstrap=False, executor_paths=()):
     value = json.loads(raw)
     if type(value.get('schema_version')) is not int or value['schema_version'] != 1:
         raise ValueError("unsupported deployment registry snapshot")
     shared = {key: row for key, row in value.items()
               if key not in {"workflows", "targets", "plan_scopes", "image_checks"}}
+    # Executor policy requests observations; explicit input additions belong to
+    # their declared owners even when a path changes between those policies.
+    shared['selection_exceptions'] = {path: row for path, row in value.get('selection_exceptions', {}).items()
+                                      if row['kind'] != 'include' and path not in set(executor_rules(value)) | set(executor_paths)}
     return {row["selection"]: {
         "workflow": row,
+        "inputs": {path: rule['deployments'][row['selection']] for path, rule in value.get('selection_exceptions', {}).items()
+                   if rule['kind'] == 'include' and row['selection'] in rule['deployments']},
         "targets": {name: item for name, item in value["targets"].items() if item["workflow"] == workflow
                     and (not bootstrap or item.get('readiness_target') == 'iam-bootstrap')},
         "scopes": {name: scope for name, scope in value.get("plan_scopes", {}).get(workflow, {}).items()
@@ -314,49 +360,63 @@ def _registry_contracts(raw, *, bootstrap=False):
 
 def registry_deployment_targets(before: str, after: str, *, bootstrap=False) -> set[str]:
     """A registry row changes its consumers, not every protected deployment."""
-    previous, current = (_registry_contracts(raw, bootstrap=bootstrap) for raw in (before, after))
+    executor_paths = set(executor_rules(json.loads(before))) | set(executor_rules(json.loads(after)))
+    previous, current = (_registry_contracts(raw, bootstrap=bootstrap, executor_paths=executor_paths) for raw in (before, after))
     return {target for target in previous.keys() | current.keys() if previous.get(target) != current.get(target)}
 
 
 def bootstrap_deployments(paths, *, registry_snapshots=None, root=ROOT):
+    """Plan bootstrap obligations; execution dependencies grant none by themselves."""
+    owners = {target for target, contract in
+              _registry_contracts((root / '.github/terraform-targets.json').read_text(), bootstrap=True).items()
+              if contract['targets'] or contract['scopes']}
+    # One production root shares locals, variables, files and modules. Even a
+    # removed/new declaration can affect a selected scope; do not infer absence
+    # from today's declaration index. make_plan intersects with selected delivery.
+    if paths is None or any(path.startswith('terraform/') for path in paths):
+        return owners
     selected = set()
-    if '.github/terraform-targets.json' in (paths or []) and registry_snapshots is not None:
-        selected.update(registry_deployment_targets(*registry_snapshots, bootstrap=True))
-    terraform_paths = [path for path in paths or [] if path.startswith('terraform/')]
-    if terraform_paths:
-        for target, contract in _registry_contracts((root / '.github/terraform-targets.json').read_text(), bootstrap=True).items():
-            resources = [resource for row in contract['targets'].values() for resource in row['resources']]
-            resources += [resource for scope in contract['scopes'].values()
-                          for resource in [*scope.get('exact', []), *scope.get('instances', []), *scope.get('modules', {})]]
-            if resources and any(matches(path, scope_inputs(resources, root)) for path in terraform_paths):
-                selected.add(target)
-    return selected
+    if '.github/terraform-targets.json' in paths:
+        selected.update(owners if registry_snapshots is None else
+                        registry_deployment_targets(*registry_snapshots, bootstrap=True))
+    for path, rule in registry(root, section='selection_exceptions').items():
+        if rule['kind'] == 'include' and any(matches(changed, {path}) for changed in paths):
+            selected.update(rule['deployments'])
+    return selected & owners
 
 
-@lru_cache(maxsize=4)
-def deployment_paths(root=None, *, terraform=True):
+@lru_cache(maxsize=8)
+def deployment_paths(root=None, *, terraform=True, revision=None):
     """Workflow/action/script closure plus registered Terraform and image inputs."""
     root = root or ROOT
-    files = {path.relative_to(root).as_posix(): path.read_bytes()
+    files = repository_files(revision, root) if revision else {path.relative_to(root).as_posix(): path.read_bytes()
              for directory in (".github", "scripts", "ingestion", "services", "catalog", "api")
              for path in (root / directory).rglob("*")
              if path.is_file() and not set(path.parts) & {"__pycache__", "node_modules", ".venv", ".terraform"}}
-    declarations, scopes, syncs = (registry(root, section=section) for section in ("deployments", "plan_scopes", "targets"))
+    value = json.loads(files['.github/terraform-targets.json'])
+    declarations = {row['selection']: {'workflow': name, **row} for name, row in value['workflows'].items() if 'selection' in row}
+    scopes, syncs = value.get('plan_scopes', {}), value['targets']
     graphs = [dependency_graph(files, disabled_conditions=("env.PREPARE_MONITORING_SLACK == 'true'",)), dependency_graph(files)]
     # These entrypoints validate an already-selected rollout. Their imported
     # policy changes invalidate CI evidence, not the resources being delivered.
-    exceptions = registry(root, section="selection_exceptions")
+    exceptions = value.get('selection_exceptions', {})
+    executors = executor_rules(value)
     for row in exceptions.values():
         reasons = row.get("deployments", {}).values() if row["kind"] == "include" else [row["reason"]]
-        if (row["kind"] not in {"boundary", "exclude", "include"} or not reasons or any(not reason.strip() for reason in reasons)
-                or set(row.get("deployments", {})) - declarations.keys()):
+        if (row["kind"] not in {"boundary", "exclude", "include", "executor"} or not reasons or any(not reason.strip() for reason in reasons)
+                or set(row.get("deployments", {})) - declarations.keys()
+                or set(row.get('readiness_targets', {})) - declarations.keys()):
             raise ValueError("selection exceptions require a reason, kind and registered deployments")
+        if row['kind'] == 'executor' and (not isinstance(row.get('readiness_targets'), dict) or not row['readiness_targets'] or 'deployments' in row):
+            raise ValueError('executor rules require explicit nonempty readiness targets, never deployment targets')
+    if any(path.startswith('terraform/') for path in executors):
+        raise ValueError('Terraform desired-state inputs cannot be executor-only rules')
     for edges in graphs:
         for name, row in exceptions.items():
-            if row["kind"] != "include" and not (name.endswith((".yml", ".yaml")) and row.get("deployments")):
+            if row["kind"] != "include" and not (name.endswith((".yml", ".yaml")) and (row.get("deployments") or row.get('readiness_targets'))):
                 edges[name] = set()
     if terraform:
-        sources = {name for path, rows in resource_index(root).items()
+        sources = {name for path, rows in (resource_index(root) if revision is None else resource_index(root, revision)).items()
                    if Path(path).parent.as_posix() == "terraform/envs/prod" for name in rows}
         for job, row in syncs.items():
             for resource in row['prerequisites']:
@@ -371,15 +431,17 @@ def deployment_paths(root=None, *, terraform=True):
         resources += [resource for scope in scopes.get(workflow, {}).values()
                       for resource in [*scope.get("exact", []), *scope.get("instances", []), *scope.get("modules", {})]]
         inputs = dependency_closure(edges, [".github/workflows/" + workflow])
+        inputs.difference_update(name for name, item in exceptions.items() if item['kind'] in {'exclude', 'executor'})
         if terraform:
-            inputs.update(scope_inputs(resources, root))
+            inputs.update(scope_inputs(resources, root, revision))
         if resources:
             inputs.update("terraform/envs/prod/" + name for name in ("main.tf", "production.auto.tfvars", "variables.tf", "versions.tf"))
+        inputs.difference_update(name for name, item in exceptions.items() if item['kind'] == 'exclude' and name not in executors)
         if "image" in row:
-            inputs.update(dependency_inputs(None, root)[4][row["image"]])
+            copied = dependency_inputs(revision, root)[4]
+            inputs.update(copied[row['image']] if revision is None else copied.get(row['image'], set()))
         inputs.add(".github/terraform-targets.json")
-        inputs.difference_update(name for name, item in exceptions.items() if item["kind"] == "exclude")
-        for path in inputs | {name for name, item in exceptions.items() if target in item.get("deployments", [])}:
+        for path in inputs | {name for name, item in exceptions.items() if name not in executors and target in item.get("deployments", [])}:
             paths.setdefault(path, set()).add(target)
     return paths
 
@@ -400,7 +462,28 @@ def changed_ci_suites(base, root):
     return (changed & set(SUITES)) | ({"sdk-node22", "sdk-node24"} if "sdk-validation" in changed else set())
 
 
-def select_deployments(paths, *, catalog_snapshots=None, registry_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
+def readiness_deployments(paths, *, base=None, registry_snapshots=None, root=ROOT):
+    """Explicit executor policy requests observations; unknown history grants none."""
+    if paths is None:
+        return set()
+    current = json.loads((root / '.github/terraform-targets.json').read_text())
+    versions = [current]
+    if base:
+        versions.append(json.loads(repository_files(base, root)['.github/terraform-targets.json']))
+    selected = {target for value in versions for pattern, targets in executor_rules(value).items()
+                if any(matches(path, {pattern}) for path in paths) for target in targets}
+    if '.github/terraform-targets.json' in paths and registry_snapshots is not None:
+        before, after = (executor_rules(json.loads(raw)) for raw in registry_snapshots)
+        for path in before.keys() | after.keys():
+            if set(before.get(path, {})) != set(after.get(path, {})):
+                selected.update(before.get(path, {}))
+                selected.update(after.get(path, {}))
+    if selected - {row['selection'] for row in current['workflows'].values() if 'selection' in row}:
+        raise ValueError('executor readiness references an unregistered current target')
+    return selected
+
+
+def select_deployments(paths, *, base=None, catalog_snapshots=None, registry_snapshots=None, ingestion_holds=(), released_holds=(), root=ROOT):
     """Unknown paths broaden validation, never mutation authority."""
     selected = set(released_holds)
     for path in paths or []:
@@ -412,8 +495,9 @@ def select_deployments(paths, *, catalog_snapshots=None, registry_snapshots=None
         if path == ".github/terraform-targets.json" and registry_snapshots is not None:
             selected.update(registry_deployment_targets(*registry_snapshots))
             continue
-        selected.update(target for pattern, targets in deployment_paths(root, terraform=any(name.startswith('terraform/') for name in paths)).items()
-                        if matches(path, {pattern}) for target in targets)
+        for revision in (None, base) if base else (None,):
+            selected.update(target for pattern, targets in deployment_paths(root, terraform=any(name.startswith('terraform/') for name in paths), revision=revision).items()
+                            if matches(path, {pattern}) for target in targets)
     return [target for target in registry(root, section="deployments") if target in selected and target not in ingestion_holds]
 
 
@@ -434,6 +518,7 @@ def verify_results(
         raise ValueError("local image receipts cannot authorize hosted validation")
     if plan.get("schema_version") != 1 or not plan.get("suites"):
         raise ValueError("invalid validation plan")
+    validate_obligations(plan)
     selected = plan["suites"]
     if len(set(selected)) != len(selected) or not set(selected) <= set(SUITES):
         raise ValueError("invalid selected suites")
@@ -442,12 +527,14 @@ def verify_results(
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
     if reused_suites and (local or source_proofs is None or jobs is None or not run_id
-                          or not reused_suites <= REUSABLE_SUITES & set(selected)):
-        raise ValueError("PR reuse requires verified hosted coverage of pure validation suites")
+                          or not reused_suites <= set(selected)
+                          or ('production-images' in reused_suites and deploy_image_targets(plan))
+                          or bool(reused_suites & SDK_SUITES) != (SDK_SUITES <= reused_suites)):
+        raise ValueError("PR reuse requires verified hosted coverage without delivery-byte consumers")
     targets = planned_images(plan)
     matrix = any("image_target" in result for result in results)
     required_results = set(selected) - reused_suites
-    if matrix and "production-images" in selected:
+    if matrix and "production-images" in required_results:
         required_results.remove("production-images")
         required_results.update("production-images-" + target for target in targets)
     by_suite: dict[str, dict] = {}
@@ -504,11 +591,12 @@ def verify_results(
             required = "success" if job in selected and job not in reused_suites else "skipped"
             if jobs.get(job, {}).get("result") != required:
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
-        sdk_required = "success" if "sdk-node22" in selected else "skipped"
+        sdk_required = "success" if "sdk-node22" in selected and 'sdk-node22' not in reused_suites else "skipped"
         if jobs.get("sdk-validation", {}).get("result") != sdk_required:
             raise ValueError("SDK validation failed, was cancelled, missing, or unexpectedly skipped")
         if jobs.get("geospatial-changes", {}).get("result") != "success":
             raise ValueError("validation selection did not succeed")
+    sdk_release_needed(by_suite)
     return by_suite
 
 

@@ -128,7 +128,7 @@ def verify_record_identity(api, repository, record):
     return payload
 
 
-def verify_record(api, repository, record, *, statuses=None):
+def verify_record(api, repository, record, *, statuses=None, requested_status=None):
     payload = verify_record_identity(api, repository, record)
     if statuses is None:
         statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
@@ -139,6 +139,8 @@ def verify_record(api, repository, record, *, statuses=None):
     failure_proofs = [status for status in statuses if status.get("description") in {"failed", "unknown"} and status.get("log_url") == original]
     proof = max(failure_proofs, key=lambda status: status["id"]) if failure_proofs else started[0]
     verify_receipt(api, repository, record, proof)
+    if requested_status is not None and requested_status != proof:
+        verify_receipt(api, repository, record, requested_status)
     return payload
 
 

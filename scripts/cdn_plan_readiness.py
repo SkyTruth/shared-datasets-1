@@ -99,6 +99,31 @@ def check_bootstrap(plan):
         require(allowed, f"refusing {'/'.join(actions or [])} {address}")
 
 
+def check_runtime(plan, *, root=Path(__file__).resolve().parents[1]):
+    """The production executor and readiness share the exact catalog guard."""
+    require(isinstance(plan, dict) and plan.get('format_version') in {'1.1', '1.2'}, 'saved plan format is unavailable')
+    require(not plan.get('errored') and not plan.get('deferred_changes'), 'errored or deferred CDN plan')
+    rows = plan.get('resource_changes')
+    require(isinstance(rows, list), 'resource changes are unavailable')
+    exact, patterns = plan_scope('pmtiles-cdn-sync.yml', 'runtime', root)
+    folders = catalog_folders((root / 'catalog/shared-datasets-catalog.csv').read_text())
+    prefix = 'google_storage_managed_folder.shared_bucket_public_prefixes'
+    for resource in rows:
+        actions = resource.get('change', {}).get('actions')
+        require(isinstance(actions, list), 'resource actions unavailable')
+        if actions in ([], ['no-op'], ['read']):
+            continue
+        address = resource.get('address', '')
+        allowed = address in exact or any(pattern.match(address) for pattern in patterns)
+        if address == 'google_storage_bucket.shared_bucket' and 'delete' in actions:
+            allowed = False
+        if (address == prefix or address.startswith(prefix + '[')) and 'delete' in actions:
+            index = resource.get('index')
+            folder = index if isinstance(index, str) and index else address.partition('["')[2].rsplit('"]', 1)[0]
+            allowed = actions == ['delete'] and address.startswith(prefix + '[') and bool(folder) and folder not in folders
+        require(allowed, 'refusing non-allowlisted CDN resource action')
+
+
 def bootstrap_definition_errors(text):
     """Offline gate for the checked-in exact role and import definition."""
     errors = []
@@ -257,12 +282,17 @@ def main():
     diff.add_argument('--head', required=True)
     bootstrap = commands.add_parser('check-bootstrap')
     bootstrap.add_argument('--plan-json', required=True, type=Path)
+    runtime = commands.add_parser('check-runtime')
+    runtime.add_argument('--plan-json', required=True, type=Path)
     args = parser.parse_args()
     if args.command == 'verify-routes':
         verify_routes()
     elif args.command == 'check-bootstrap':
         check_bootstrap(json.loads(args.plan_json.read_text()))
         print('Exact existing CDN role adoption and bootstrap allowlist passed.')
+    elif args.command == 'check-runtime':
+        check_runtime(json.loads(args.plan_json.read_text()))
+        print('Catalog-derived CDN resource-change allowlist passed.')
     else:
         check_diff(Path.cwd(), args.base, args.head)
         print('Catalog-derived CDN removal prerequisites passed.')

@@ -35,6 +35,7 @@ def plan(suites=SUITES):
         "tested_sha": "c" * 40, "tree": "d" * 40,
         "production_image_limits": preflight.production_image_limits(targets=targets),
         "contract_digest": "e" * 64, "suites": list(suites), "production_image_targets": targets,
+        "deployments": [], "held_deployment_targets": [], "readiness_targets": [],
     }
 
 
@@ -45,6 +46,8 @@ def results_for(validation):
         "commands": [{"argv": ["executed-test"], "exit_code": 0}],
     } for suite in validation["suites"]]
     for result in results:
+        if result['suite'] in {'sdk-node22', 'sdk-node24'}:
+            result['release_needed'] = False
         if result["suite"] == "production-images":
             result["production_images"] = production_images(validation["tested_sha"])
             result["production_images"]["images"] = {target: image for target, image in result["production_images"]["images"].items() if target in validation["production_image_targets"]}
@@ -59,7 +62,20 @@ def jobs_for(validation):
     return jobs
 
 
-@pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "uv.lock"])
+@pytest.mark.parametrize('decision', [None, 'false', 0, True])
+def test_gate_refuses_missing_untyped_or_disagreeing_sdk_release_decisions(decision):
+    validation = plan()
+    results = results_for(validation)
+    runtime = next(result for result in results if result['suite'] == 'sdk-node22')
+    if decision is None:
+        del runtime['release_needed']
+    else:
+        runtime['release_needed'] = decision
+    with pytest.raises(ValueError, match='SDK runtimes must agree'):
+        verify_results(validation, json.loads(json.dumps(results)))
+
+
+@pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "scripts/tested_image_bundle.py"])
 def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
     assert resolve_selection([path])["suites"] == list(SUITES)
     assert resolve_selection(None)["suites"] == list(SUITES)
@@ -78,11 +94,12 @@ def test_component_documentation_only_selects_always(path):
     assert set(resolve_selection([path])["suites"]) == ALWAYS
 
 
-@pytest.mark.parametrize("path", [
-    "scripts/README.md.py", "pyproject.toml",
+@pytest.mark.parametrize("path,required", [
+    ("scripts/README.md.py", list(SUITES)),
+    ("pyproject.toml", [suite for suite in SUITES if suite != 'production-images']),
 ])
-def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path):
-    assert resolve_selection([path])["suites"] == list(SUITES)
+def test_documentation_exception_does_not_hide_unknown_or_shared_dependencies(path, required):
+    assert resolve_selection([path])["suites"] == required
 
 
 def test_documentation_does_not_reduce_other_changed_path_requirements():

@@ -93,6 +93,29 @@ class EmissionTests(unittest.TestCase):
         self.assertNotIn("--custom-trusted-root", command)
         self.assertFalse(any("artifact" in part for part in command[:3]))
 
+    def test_file_verifies_each_distinct_ownership_and_requested_receipt_once(self):
+        for phase in ('started', 'failed', 'verified'):
+            with self.subTest(phase=phase):
+                initial = status()
+                requested = initial if phase == 'started' else status(phase, identifier=82)
+                history = [initial] if phase == 'started' else [requested, initial]
+                claim = record()
+                path = e.emit(REPO, claim, requested)
+                self.api.pages.side_effect = None
+                self.api.pages.return_value = history
+                def get(route):
+                    return claim if '/deployments/' in route else self.route(route)
+                self.api.get.side_effect = get
+                expected = [requested] if phase in {'started', 'failed'} else [initial, requested]
+                proofs = [json.dumps(verified(e.receipt(REPO, claim, item))) for item in expected]
+                with patch.object(e, 'ReadOnlyGitHub', return_value=self.api), \
+                        patch.object(d, 'verify_record_identity', return_value=claim['payload']), \
+                        patch.object(e, 'verified_output', side_effect=proofs) as verifier, \
+                        patch.object(sys, 'argv', ['deployment_emission.py', 'verify-file', '--receipt', str(path)]):
+                    e.main()
+                self.assertEqual(verifier.call_count, len(expected))
+                self.api.pages.assert_called_with(f'repos/{REPO}/deployments/71/statuses?per_page=100')
+
     def test_all_signed_certificate_identity_fields_are_enforced(self):
         value = e.receipt(REPO, record(), status())
         expected = e.policy(REPO, 17, value, run(), SIGNER)

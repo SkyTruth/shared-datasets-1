@@ -36,7 +36,8 @@ from scripts.terraform_target_contracts import production_image_limits
 from scripts.tested_image_bundle import BUILD_TARGETS, ImageError, validate_manifest, validate_local_manifest
 from scripts.ci_contract import (
     ALWAYS, DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, bootstrap_deployments, contract_digest, control_plane_test, expected_tools, delivery_outputs, deploy_image_targets,
-    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, verify_results, write_json,
+    INGESTION_ROLLOUT_HOLDS, rollout_holds, documentation_only, resolve_selection, planned_images, validate_obligations, verify_results, write_json,
+    hosted_result_keys, sdk_release_needed,
 )
 
 LOCAL_COORDINATION_DIRECTORY = Path("/tmp/shared-datasets-1/coordination")
@@ -273,6 +274,7 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
     bootstrap = bootstrap_deployments(paths, registry_snapshots=registry_snapshots, root=root) & set(selection['deployments'])
     if bootstrap:
         selection['bootstrap_targets'] = sorted(bootstrap)
+    validate_obligations(selection)
     return {
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
@@ -328,6 +330,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/deployment_permissions.py", "--static-base", base, "--static-head", head)
         add("uv", "run", "--no-sync", "python", "scripts/reviewed_dataset_plan.py", "check-diff", "--base", base, "--head", head)
         add("uv", "run", "--no-sync", "ruff", "check", ".")
+        add("uv", "run", "--no-sync", "python", "scripts/runtime_dependencies.py", "--check")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
     elif suite == "tests-control-plane":
         add("uv", "sync", "--locked", "--no-dev", "--group", "control-plane")
@@ -525,6 +528,10 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path, *, image_target=
             write_json(output / "images/manifest.json", manifest)
             result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
+            decision = (output / 'command-00.log').read_text().strip()
+            if decision not in {'release_needed=true', 'release_needed=false'}:
+                raise ValueError('SDK validation did not produce a release-policy decision')
+            result['release_needed'] = decision == 'release_needed=true'
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
             if len(candidates) != 1:
                 raise ValueError("expected exactly one tested SDK candidate")
@@ -721,7 +728,7 @@ def local_execution_plan(root: Path, plan: dict, since: str | None) -> tuple[dic
                  "production_image_targets": [target for target in BUILD_TARGETS if target in targets],
                  "production_image_limits": {target: (plan["production_image_limits"] | delta["production_image_limits"])[target]
                                              for target in targets},
-                 "deployments": [], "delta_paths": delta["changed_paths"]}
+                 "deployments": [], "held_deployment_targets": [], "readiness_targets": [], "delta_paths": delta["changed_paths"]}
     reused = {suite: {"head": since, "evidence": str(local_evidence_path(plan["base"], since))}
               for suite in plan["suites"] if suite not in selected}
     return execution, reused
@@ -988,6 +995,9 @@ def main() -> int:
             reused = verified_reuse(plan, validation_context(), run_id=run_id, attempt=current_attempt)
             chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id,
                                     run_attempt=current_attempt, reused_suites=reused)
+            summaries = {**{key: plan['main_reuse']['evidence']['validation_results'][key] for key in hosted_result_keys(plan, reused)},
+                         **result_summary(chosen)} if run_id else chosen
+            release_needed = sdk_release_needed(summaries)
             if args.output:
                 evidence = {**plan, "status": "success"}
                 if run_id:
@@ -997,15 +1007,12 @@ def main() -> int:
                         "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
                         "validation_context": validation_context(),
                         "toolchains": {suite: expected_tools(suite) for suite in plan["suites"]},
-                        "validation_results": {
-                            **{suite: plan["main_reuse"]["evidence"]["validation_results"][suite] for suite in reused},
-                            **result_summary(chosen),
-                        },
+                        "validation_results": summaries,
                     })
                 write_json(args.output, evidence)
             if args.github_output:
                 with args.github_output.open('a') as output:
-                    output.write('delivery=' + json.dumps(delivery_outputs(plan, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'])) + '\n')
+                    output.write('delivery=' + json.dumps(delivery_outputs({**plan, 'sdk_release_needed': release_needed}, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'])) + '\n')
                     output.write('bootstrap=' + json.dumps(plan.get('bootstrap_targets', [])) + '\n')
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0

@@ -103,13 +103,13 @@ def test_workflow_only_changes_keep_the_held_deployments_image_validation_floor(
     ('.github/workflows/prod-terraform-target-apply.yml', {'artifact_registry_iam'}),
     ('.github/actions/deployment-bootstrap/terraform/action.yml', {'artifact_registry_iam'}),
 ])
-def test_executor_machinery_selects_one_representative_per_shared_executor(path, expected):
+def test_executor_machinery_selects_signed_readiness_without_live_rollouts(path, expected):
     plan = resolve_selection([path])
-    assert set(plan['deployments']) == expected
+    assert plan['deployments'] == []
+    assert set(plan['readiness_targets']) == expected
     assert ALWAYS <= set(plan['suites'])
-    if 'sea_ice' in expected:
-        assert 'production-images' in plan['suites']
-        assert 'sea-ice-daily' in plan['production_image_targets']
+    held = resolve_selection([path], ingestion_holds=('sea_ice',))
+    assert held['readiness_targets'] == plan['readiness_targets']
     assert 'sea_ice' not in select_deployments([path], ingestion_holds=('sea_ice',))
 
 
@@ -428,6 +428,7 @@ def test_monitoring_runtime_reuses_registry_iam_and_infrastructure_syncs_it(path
 
 MAIN_CALLERS = [target.replace("_", "-") for target in DEPLOYMENTS] + [
     "dataset-mutation-selection", "announce-repo-functionality", "publish-reviewed-dataset", "refresh-reviewed-catalog",
+    "deployment-readiness",
 ]
 
 
@@ -447,7 +448,9 @@ def condition_result(job, values, *, cancelled=False):
     caller, = [name for name, row in jobs.items() if row == job]
     assert job["if"] == delivery_condition(caller)
     plan = {'deployments': [target for target in DEPLOYMENTS if values.get(f'needs.geospatial-changes.outputs.{target}') == 'true'],
-            'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else []}
+            'readiness_targets': ['sea_ice'] if values.get('needs.geospatial-changes.outputs.deployment_readiness') == 'true' else [],
+            'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else [],
+            'sdk_release_needed': values.get('needs.geospatial-changes.outputs.sdk') == 'true'}
     delivery = json.loads(json.dumps(delivery_outputs(plan, values['github.event_name'], values['github.ref'])))
     ancestors = set()
     pending = [caller]
@@ -480,6 +483,7 @@ def test_main_callers_require_selection_gate_and_prerequisites(job_id, subtests)
         "github.event_name": "push", "github.ref": "refs/heads/main",
         **{f"needs.{parent}.result": "success" for parent in needs},
         **{f"needs.geospatial-changes.outputs.{target}": "true" for target in DEPLOYMENTS},
+        'needs.geospatial-changes.outputs.deployment_readiness': 'true',
         "needs.dataset-mutation-selection.outputs.has_repo_alert": "true",
         "needs.dataset-mutation-selection.outputs.has_mutations": "true",
         "needs.dataset-mutation-selection.outputs.has_catalog_changes": "true",
@@ -582,7 +586,7 @@ def test_plan_cli_emits_the_same_single_image_for_build_and_upload(tmp_path, mon
 @pytest.mark.parametrize("target", ["catalog-viewer", "dataset-usage", "cron-alert-policy"])
 def test_nested_iam_bootstraps_use_the_same_infrastructure_selection(target):
     caller = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"][target]
-    assert caller["with"]["sync_iam"] == "${{ fromJSON(needs.ci-ready.outputs.delivery).artifact-registry-iam || contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), '" + target.replace('-', '_') + "') }}"
+    assert caller["with"]["sync_iam"] == "${{ contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), '" + target.replace('-', '_') + "') }}"
     workflow = load_workflow(ROOT / caller["uses"].removeprefix("./"))
     assert workflow_triggers(workflow)["workflow_call"]["inputs"]["sync_iam"] == {"required": True, "type": "boolean"}
     if target == "catalog-viewer":
@@ -613,8 +617,9 @@ def test_authoritative_mutation_selection_keeps_its_own_refresh_path(has_mutatio
     assert condition_result(jobs['refresh-reviewed-catalog'], values) is (has_mutations == 'false')
 
 
-def test_nested_terraform_bootstrap_uses_its_representative_executor():
-    assert select_deployments([".github/actions/deployment-bootstrap/terraform/action.yml"]) == ['artifact_registry_iam']
+def test_nested_terraform_bootstrap_requires_its_registered_readiness():
+    plan = resolve_selection([".github/actions/deployment-bootstrap/terraform/action.yml"])
+    assert plan['deployments'] == [] and plan['readiness_targets'] == ['artifact_registry_iam']
 
 
 @pytest.mark.parametrize("declared", [True, False])
@@ -624,7 +629,8 @@ def test_plan_rejects_an_iam_prerequisite_without_its_declaration(tmp_path, monk
     prod.mkdir(parents=True)
     (prod / "iam.tf").write_text('resource "google_project_iam_custom_role" "reader" {}' if declared else '')
     (tmp_path / ".github").mkdir()
-    (tmp_path / ".github/terraform-targets.json").write_text(json.dumps({"schema_version": 1, "targets": {"sync/prepare": {"prerequisites": ["google_project_iam_custom_role.reader"]}}}))
+    (tmp_path / ".github/terraform-targets.json").write_text(json.dumps({"schema_version": 1, "workflows": {}, "targets": {
+        "sync/prepare": {"workflow": "fixture.yml", "resources": [], "prerequisites": ["google_project_iam_custom_role.reader"]}}}))
     monkeypatch.setattr(contract, "ROOT", tmp_path)
     contract.deployment_paths.cache_clear()
     try:

@@ -293,6 +293,7 @@ def test_emitted_selection_through_retained_image_saved_plan_signed_apply_and_te
     args.phase = 'failed' if applied.returncode or watched.returncode else environment.read_text().strip().split('=', 1)[1]
     args.execution = target + '-abcde'
     deployment.finish(args, services)
+    assert [phase['description'] for phase in services.statuses] == [args.phase, 'started']
     terminal = next(path for path in (directory / 'deployment-receipts').glob('*.json') if json.loads(path.read_bytes())['status']['description'] == args.phase)
     services.sign(terminal)
     if defect == 'terminal':

@@ -61,9 +61,9 @@ def resource_index(root=ROOT, revision=None, *, paths=None):
     return result
 
 
-def scope_inputs(resources, root=ROOT):
+def scope_inputs(resources, root=ROOT, revision=None):
     """Registered scopes own source files and their local module source trees."""
-    index = resource_index(root)
+    index = resource_index(root) if revision is None else resource_index(root, revision)
     sources = {name: path for path, rows in index.items() if Path(path).parent.as_posix() == 'terraform/envs/prod' for name in rows}
     selected = {sources[name] for resource in resources for name in sources
                 if address(resource) == name or address(resource).startswith(name + '.')}

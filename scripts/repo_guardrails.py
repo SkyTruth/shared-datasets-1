@@ -566,6 +566,8 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
             }
             if rel.as_posix() == ".github/workflows/dataset-usage-deploy.yml":
                 required["resource-change allowlist"] += ("python scripts/dataset_usage_deploy.py --plan-json ",)
+            if rel.as_posix() == ".github/workflows/pmtiles-cdn-sync.yml":
+                required["resource-change allowlist"] += ("python scripts/cdn_plan_readiness.py check-runtime --plan-json ",)
             if (rel.as_posix() == ".github/workflows/deployment-recovery.yml"
                     and "python scripts/deployment_revision.py reconcile " in job_text
                     and not re.search(r"\bapply\b|terraform_prod_apply\.py", job_text)):

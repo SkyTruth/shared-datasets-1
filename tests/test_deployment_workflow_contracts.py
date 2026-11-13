@@ -155,13 +155,12 @@ def test_every_receipt_caller_installs_the_trusted_verifier_once_before_emission
 def test_hosted_cdn_scope_guard_runs_with_only_stdlib(tmp_path, deleted):
     workflow = yaml.safe_load((ROOT / '.github/workflows/pmtiles-cdn-sync.yml').read_text())
     step = next(s for s in workflow['jobs']['sync']['steps'] if s.get('name') == 'Enforce PMTiles resource-change allowlist')
-    code = step['run'].split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+    assert step['run'].strip() == 'python scripts/cdn_plan_readiness.py check-runtime --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"'
     plan = tmp_path / 'plan.json'
     import json
-    plan.write_text(json.dumps({'resource_changes': [{'address': 'google_storage_bucket.shared_bucket',
+    plan.write_text(json.dumps({'format_version': '1.2', 'resource_changes': [{'address': 'google_storage_bucket.shared_bucket',
                               'change': {'actions': ['delete' if deleted else 'update']}}]}))
-    boot = 'import sys; sys.path.insert(0, ' + repr(str(ROOT)) + '); sys.argv = ["-", sys.argv[1]]; exec(' + repr(code) + ')'
-    result = subprocess.run([sys.executable, '-I', '-S', '-c', boot, str(plan)],
+    result = subprocess.run([sys.executable, '-I', '-S', 'scripts/cdn_plan_readiness.py', 'check-runtime', '--plan-json', str(plan)],
                             cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == int(deleted), result.stdout + result.stderr
 
