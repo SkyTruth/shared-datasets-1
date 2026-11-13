@@ -68,3 +68,5 @@ ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 CMD ["python", "-m", "ingestion.sea_ice_daily.run"]
+
+LABEL org.skytruth.ci.delivery-benchmark="foundation-baseline-v1"

@@ -6,7 +6,7 @@ resource "google_project_iam_custom_role" "monitoring_alert_policy_manager" {
   project     = var.project_id
   role_id     = "sharedDatasetsMonitoringAlertPolicyManager"
   title       = "Shared Datasets Monitoring Alert Policy Manager"
-  description = "Allows approved GitHub Actions Terraform to manage shared-datasets Cloud Monitoring alert policies."
+  description = "Allows approved GitHub Actions Terraform to manage shared-datasets Cloud Monitoring alert policies. (foundation baseline benchmark v1)"
   permissions = [
     "logging.logMetrics.create", "logging.logMetrics.get", "logging.logMetrics.list", "logging.logMetrics.update",
     # Updating a log-based policy replaces its internal notification rule.

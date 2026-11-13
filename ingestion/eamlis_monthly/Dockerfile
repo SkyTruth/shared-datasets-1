@@ -66,3 +66,5 @@ COPY scripts/vector_asset.py ./scripts/vector_asset.py
 RUN python -c "from ingestion.common import translation_notices"
 
 CMD ["python", "-m", "ingestion.eamlis_monthly.run"]
+
+LABEL org.skytruth.ci.delivery-benchmark="foundation-baseline-v1"
