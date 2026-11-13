@@ -9,6 +9,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Comparison base for validation-only diagnostics; empty uses this revision
+        type: string
+        default: ''
+      x64_validation:
+        description: Compare the three pure ARM validation jobs on standard x64 runners
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -74,7 +83,7 @@ jobs:
       - name: Select validation for the tested merge tree
         id: plan
         env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || github.sha }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || github.sha }}
           SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           uv run --frozen --only-group ci-plan python scripts/ci_preflight.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --source-head "$SOURCE_HEAD" \
@@ -134,7 +143,7 @@ jobs:
   tests:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.reuse_validation != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: &pure-validation-runner ${{ github.event_name == 'workflow_dispatch' && inputs.x64_validation && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
     timeout-minutes: 30
     steps: &python-test-steps
       - *validation-checkout
@@ -150,7 +159,7 @@ jobs:
   tests-control-plane:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.control_plane == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: *pure-validation-runner
     timeout-minutes: 30
     steps: *python-test-steps
 
@@ -317,7 +326,7 @@ jobs:
   browser:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.browser == 'true' && needs.geospatial-changes.outputs.reuse_validation != 'true'
-    runs-on: ubuntu-24.04
+    runs-on: *pure-validation-runner
     timeout-minutes: 20
     permissions: *validation-permissions
     steps:
