@@ -51,6 +51,9 @@ General Python, control-plane Python and browser validation use standard
 assertions and refusal checks are unchanged. Production image/native validation,
 SDK candidates, selection and gate jobs retain their existing x64 runners.
 Local preflight continues to use its native Linux architecture.
+The development Rasterio pin supplies Linux ARM wheels, so general validation
+does not require a hosted GDAL source-build environment. Generated runtime/native
+image locks retain their own dependency versions.
 
 For an authorized same-revision runner comparison, dispatch this workflow twice
 on the same branch head with the same explicit `base_sha`, setting
@@ -60,6 +63,9 @@ test execution, artifact time, case identities, failures/skips and occupied
 runner-minutes. Dispatch runs cannot emit production delivery authority or
 qualify for PR-validation reuse. An empty diagnostic base retains the existing
 comparison against the dispatched revision itself.
+Record exact/partial setup-cache hits and time in `uv sync`, `npm ci` and
+Chromium installation. PR merge-ref caches are not available to branch dispatch;
+architecture-specific cache state can bias a single pair and must be reported.
 
 ## Holds, failures and retries
 
