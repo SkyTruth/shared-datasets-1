@@ -3,11 +3,27 @@
 Follow [CI/deployment recovery](ci-recovery.md) for the ordered response. This
 reference owns incident identity, persistence, verification and Slack configuration.
 
-Operational failures share a stable `SD-` plus twelve hex characters incident ID.
+Operational failures retain a stable `SD-` plus twelve hex characters incident ID
+in signed records and Slack metadata.
 The first failure creates an **Open** parent; further attempts update its count and
 evidence. Verified recovery edits that parent green, without recovery parents or
 automatic replies. Triage (`jonaraphael`) assigns an owner and checks the exact
-attempt and mutation records. Unknown impact remains unknown.
+attempt and mutation records.
+
+Messages show the failed operation, an observed error or failed step, and one next
+action with exact evidence links. They omit generic unknown-impact/owner fields,
+commit hashes, timestamps and single-attempt counts. Repeated failures add a count;
+recovery retains the original error and links both the failure and verified result.
+Successful jobs establish only that job's recovery, not dataset publication.
+
+Workflow observations retain a bounded, credential-redacted error excerpt from
+the exact job and failed step's time interval. Unavailable or oversized logs retain
+the failed step and its link; missing error details cannot prevent notification.
+The reconciliation job reports that it never started only when its claim and
+delivery steps are both proven skipped. Other effects are not guessed from job names.
+Cloud Run failures use the existing exact-execution error reader. Monitoring
+closure remains a warning with a publication/resource verification action.
+Identity requests retain their full original text, cases and review links.
 
 ## Admission and cadence
 
@@ -88,7 +104,10 @@ observations without blocking other scopes. Claims cannot create idle snapshots;
 unchanged claims fail health after 24 hours from the latest signed checkpoint.
 Owner inspection is required; recovery does not imply confirmed delivery.
 
-Verify v1/v2/v3 signatures before v4 migration; rollback retains those readers.
+Verify signatures before migration. Checkpoints without diagnostics retain v4,
+including their terminal-validation cache; only new failure diagnostics need v5.
+Rollback retains v1–v4 readers and must also read v5 checkpoints once emitted.
+Historical facts are not invented; parent identity and delivery claims survive.
 Retired v3 IDs must precede retirement and contain complete incident cores. Reject
 unknown/merged scopes, active empty registrations and omitted failures. Preserve
 parents/replies/claims; clear old acknowledgements/fingerprints. Before incompatible

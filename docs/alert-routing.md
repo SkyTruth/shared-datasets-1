@@ -65,9 +65,9 @@ objects/receipts and verify teardown through the protected retirement contract.
 
 Monitoring sends events through Pub/Sub to private authenticated `monitoring-slack`.
 Its bot creates one parent per native incident and edits that same parent to
-**Closed by Monitoring** after authoritative closure. Duplicate/out-of-order opens
-cannot reopen it. Other apps' historical messages cannot be adopted. Impact and
-mutation outcome remain unknown, including after closure; triage belongs to
+**Closed by Monitoring** as a warning after authoritative closure. Duplicate/out-of-order opens
+cannot reopen it. Other apps' historical messages cannot be adopted. Closure
+requires separate verification of the affected execution or resource outcome; triage belongs to
 `jonaraphael` and assigns the operation owner.
 
 Execution failures and identity reviews share a parent keyed by exact project,

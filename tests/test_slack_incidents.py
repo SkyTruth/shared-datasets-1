@@ -248,13 +248,13 @@ def test_repeated_failures_and_recovery_update_one_actionable_parent_through_rea
     messages = [(method, body) for method, body in calls if method in {"chat.postMessage", "chat.update"}]
     assert [method for method, _ in messages] == ["chat.postMessage", "chat.update", "chat.update"]
     for _, body in messages:
-        for field in ("Impact", "Mutation state", "Owner", "Required action"):
-            assert f"*{field}:*" in body["text"]
-        assert "jonaraphael (triage)" in body["text"] and "operation owner unknown" in body["text"]
-    assert "*Mutation state:* Unknown" in messages[0][1]["text"]
-    assert "before any replay" in messages[0][1]["text"]
-    assert "*Failed attempts:* 2" in messages[1][1]["text"]
-    assert "Signed terminal success" in messages[2][1]["text"]
+        assert "*Next:*" in body["text"]
+        for clutter in ("*Impact:*", "*Mutation state:*", "*Owner:*", "operation owner unknown"):
+            assert clutter not in body["text"]
+    assert "mutation records before retrying" in messages[0][1]["text"]
+    assert "failed attempts" not in messages[0][1]["text"]
+    assert "2 failed attempts" in messages[1][1]["text"]
+    assert "signed terminal receipt" in messages[2][1]["text"]
     assert "Original failure" in messages[2][1]["text"] and "Resolved" in messages[2][1]["text"]
     assert set(ledger.states[SCOPE]["incident"]["posts"]) == {"parent"}
     assert incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: (success(), None)) == []
@@ -294,7 +294,7 @@ def test_existing_acknowledged_parent_receives_new_fields_without_new_failure_or
     incidents.deliver(ledger, records, slack)
     assert [item[0] for item in slack.calls] == ["update"]
     assert slack.calls[0][2]["ts"] == previous["parent"]["ts"]
-    assert "*Required action:*" in slack.calls[0][1]["text"]
+    assert "*Next:*" in slack.calls[0][1]["text"]
     assert ledger.states[SCOPE]["incident"]["posts"] == previous
     assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: (None, None)) == []
 
@@ -681,15 +681,16 @@ def test_successful_job_or_workflow_does_not_claim_verified_mutation(kind, scope
     recovery = {**first, "conclusion": "success", "run_id": 103, "time": "2026-10-06T10:18:44Z"}
     value = incidents.fold(incidents.fold(None, first, IDENTITY), recovery, IDENTITY, ancestor=lambda *_: True)
     payload = incidents.render(value)["text"]
-    assert "Resolved" in payload and "*Mutation state:* Unknown" in payload
-    assert "does not verify published data" in payload
+    assert "Resolved" in payload and f"{'Job' if kind == 'job' else 'Workflow'} completed successfully" in payload
+    assert "publication completed" not in payload.lower() and "deployment recovery verified" not in payload.lower()
+    assert "Mutation state" not in payload and "unknown" not in payload.lower()
 
 
 def test_receipt_recovery_explains_completed_publication_without_replay():
     first = observation(scope="publication:pr-208:apply", kind="publication", label="Dataset PR #208 (apply)",
                         job_name="Apply approved PR mutation plans (PR #208)")
     value = incidents.fold(None, first, IDENTITY)
-    assert "*Mutation state:* Unknown" in incidents.render(value)["text"]
+    assert "mutation records before retrying" in incidents.render(value)["text"]
     repaired = {**first, "conclusion": "success", "run_id": 103, "time": "2026-10-06T10:18:44Z",
                 "job_name": "Complete publication receipt (PR #208; run 100; attempt 1)"}
     value = incidents.fold(value, repaired, IDENTITY, ancestor=lambda *_: True)
@@ -1395,12 +1396,12 @@ def test_slack_errors_do_not_echo_tokens_and_do_not_retry():
     assert len(calls) == 1
 
 
-def test_malicious_labels_cannot_insert_mentions_and_id_is_searchable():
+def test_malicious_labels_cannot_insert_mentions_and_id_is_retained_in_metadata():
     value = state()
     value["label"] = "<@U123> & <https://evil|click>"
     payload = incidents.render(value)
     assert "<@U123>" not in payload["text"] and "&lt;@U123&gt;" in payload["text"]
-    assert value["incident"]["id"] in payload["text"]
+    assert value["incident"]["id"] not in payload["text"]
     assert payload["metadata"]["event_payload"]["incident_id"] == value["incident"]["id"]
 
 

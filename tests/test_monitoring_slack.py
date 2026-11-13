@@ -186,11 +186,12 @@ class ReceiverTests(unittest.TestCase):
         for method, body in self.calls:
             if method not in {"chat.postMessage", "chat.update"}:
                 continue
-            for field in ("Impact", "Mutation state", "Owner", "Required action"):
-                self.assertIn(f"*{field}:*", body["text"])
-            self.assertIn("*Mutation state:* Unknown", body["text"])
-            self.assertIn("jonaraphael (triage)", body["text"])
-            self.assertIn("operation owner unknown", body["text"])
+            self.assertIn("*Next:*", body["text"])
+            for clutter in ("*Impact:*", "*Mutation state:*", "*Owner:*", "operation owner unknown"):
+                self.assertNotIn(clutter, body["text"])
+            self.assertLessEqual(len(body["text"].splitlines()), 4)
+        self.assertTrue(message["text"].startswith(":warning:"))
+        self.assertNotIn(":white_check_mark:", message["text"])
         self.assertIn("Verify the affected execution", message["text"])
         record, _ = relay.Store(self.bucket).load("0.oe73n791vhsd")
         self.assertTrue(record["closed"])
@@ -301,7 +302,7 @@ class ReceiverTests(unittest.TestCase):
             parent, _ = relay.Store(self.bucket).load(key)
             text = self.messages[parent["ts"]]["text"]
             for phrase in ("wdpa-monthly execution failed", source["execution"], "identity review exceeds case limit",
-                           "Decision recorded", "Exact execution logs", "Next action"):
+                           "Decision recorded", "Exact execution logs", "*Next:*"):
                 self.assertIn(phrase, text)
             self.assertIn(":red_circle: Open", text)  # Semantic approval cannot resolve a real failure.
             self.assertIn(original_request, text)
