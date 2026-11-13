@@ -37,6 +37,18 @@ def shared_steps():
     return workflow_steps_by_name(load_workflow(REUSABLE), 'sync')
 
 
+def test_monitoring_image_preparation_uses_pinned_python_without_runtime_dependencies():
+    from scripts.ci_toolchain import TOOLCHAIN
+    job = load_workflow(REUSABLE)['jobs']['prepare']
+    assert job['runs-on'] == 'ubuntu-24.04'
+    setup = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/setup-python@'))
+    assert setup['with'] == {'python-version': TOOLCHAIN['python']}
+    commands = '\n'.join(step.get('run', '') for step in job['steps'])
+    assert 'uv sync' not in commands and 'uv run' not in commands
+    assert 'python -I -S scripts/tested_image_authorization.py' in commands
+    assert 'python -I -S scripts/monitoring_slack_prepare.py' in commands
+
+
 class ReusableTargetApplyWorkflowTests(unittest.TestCase):
     def test_only_callable_and_protected(self):
         workflow = load_workflow(REUSABLE)

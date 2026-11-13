@@ -234,16 +234,6 @@ jobs:
       if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
       run: |
         bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
-    - name: Record applied deployment
-      id: applied
-      if: steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: python scripts/deployment_revision.py finish --deployment-id "${{ steps.revision.outputs.deployment_id }}" --phase applied
-    - name: Attest applied deployment
-      if: ${{ always() && steps.applied.outputs.receipt_path != '' }}
-      uses: ./.github/actions/deployment-receipt
-      with: {mode: receipt, receipt-path: "${{ steps.applied.outputs.receipt_path }}"}
   verify:
     name: Verify ingestion canary
     needs:

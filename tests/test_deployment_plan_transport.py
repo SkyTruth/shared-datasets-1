@@ -72,7 +72,7 @@ def test_gate_eligibility_matches_every_post_gate_caller_and_cannot_escape_main(
     jobs = workflow['jobs']
     callers = {name for name, job in jobs.items() if 'ci-ready' in
                (job['needs'] if isinstance(job.get('needs'), list) else [job.get('needs')])}
-    plan = {'deployments': list(ci_contract.DEPLOYMENTS), 'readiness_targets': ['sea_ice'], 'suites': list(ci_contract.SUITES)}
+    plan = {'deployments': list(ci_contract.DEPLOYMENTS), 'readiness_targets': ['sea_ice'], 'suites': list(ci_contract.SUITES), 'sdk_release_needed': True}
     assert set(ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main')) == callers
     assert all(ci_contract.delivery_outputs(plan, 'push', 'refs/heads/main').values())
     for event, ref in [('pull_request', 'refs/heads/main'), ('workflow_dispatch', 'refs/heads/main'), ('push', 'refs/heads/topic')]:

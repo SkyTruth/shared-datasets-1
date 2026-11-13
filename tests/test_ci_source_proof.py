@@ -25,6 +25,8 @@ def result(validation, suite, attempt=1, status="success"):
     }
     if suite == "production-images":
         value["production_images"] = production_images(validation["tested_sha"])
+    if suite.startswith('sdk-node'):
+        value['release_needed'] = False
     return value
 
 

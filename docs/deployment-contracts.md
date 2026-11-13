@@ -149,6 +149,15 @@ Leaves rehearse signing before staging and verify signed claims before mutation.
 failed/unknown outcomes can prove ownership after claim failure, never success/mutation;
 unsigned attempts block replay. Validation tokens stay read-only; writers need protected
 production or main-only gates. SDK npm OIDC stays separate; record deletion needs explicit recovery.
+Within one receipt verification, each distinct ownership and requested phase is checked once;
+different ownership and terminal proofs remain separate checks. Every claim still verifies
+the current attempt's rehearsal at runtime.
+
+New ingestion records go from the signed `started` claim directly to a signed `verified`,
+`verification_pending`, `failed` or `unknown` outcome. Apply completion is not an independent
+success phase. A crash after apply leaves an incomplete signed claim and requires the existing
+live-state reconciliation; it cannot authorize replay. Historical ingestion `applied` phases
+remain readable, and non-ingestion executors retain their `applied` outcomes.
 
 The runtime-window command defers prepare/apply for active executions and requires an
 explicit canary date for paused WDPA/EAMLIS schedules. Preparation first admits and pushes

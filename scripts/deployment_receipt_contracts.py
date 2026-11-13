@@ -275,7 +275,7 @@ def terraform_boundary(workflow):
         return ['Required Monitoring preparation must gate the protected serialized Terraform apply']
     if (propagation.get('needs') != 'sync' or propagation.get('permissions') != {}
             or 'environment' in propagation
-            or propagation.get('if') != "${{ needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
+            or propagation.get('if') != "${{ !cancelled() && !failure() && needs.sync.result == 'success' && needs.sync.outputs.applied == 'true' && fromJSON(needs.sync.outputs.wait_seconds) > 0 }}"
             or sync.get('outputs', {}).get('applied') != "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}"
             or sync.get('outputs', {}).get('wait_seconds') != "${{ steps.revision.outputs.propagation_seconds || '0' }}"
             or not any('--propagation-window "$POST_APPLY_WAIT_SECONDS"' in step.get('run', '')

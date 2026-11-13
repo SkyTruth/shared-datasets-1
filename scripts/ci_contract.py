@@ -33,6 +33,7 @@ DEPLOYMENT_IMAGES = {name: row["image"] for name, row in registry(section="deplo
 INGESTION_ROLLOUT_HOLDS = ".github/ingestion-rollout-holds.json"
 ALWAYS = {"lint", "tests"}
 REUSABLE_SUITES = frozenset({"lint", "tests", "tests-control-plane", "geospatial-integration", "browser"})
+SDK_SUITES = frozenset({'sdk-node22', 'sdk-node24'})
 # These graph tests need initialized providers and run with deployment controls.
 PROVIDER_TESTS = frozenset({'tests/test_terraform_target_contracts.py', 'tests/test_pr_plan_activation.py'})
 
@@ -54,7 +55,7 @@ def delivery_outputs(plan, event, ref):
     """Successful CI emits main-only eligibility; later prerequisite results stay live."""
     enabled = event == 'push' and ref == 'refs/heads/main'
     return {**{name.replace('_', '-'): enabled and name in plan['deployments'] for name in DEPLOYMENTS},
-            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'],
+            'typescript-sdk': enabled and 'sdk-node22' in plan['suites'] and plan['sdk_release_needed'],
             'deployment-readiness': enabled and bool(plan['readiness_targets']),
             **dict.fromkeys(('dataset-mutation-selection', 'refresh-reviewed-catalog', 'announce-repo-functionality',
                              'publish-reviewed-dataset', 'identity-decision-reconcile'), enabled)}
@@ -271,6 +272,20 @@ def deploy_image_targets(plan):
     """Only selected deliveries need retained TARs; holds still require validation."""
     deploying = {DEPLOYMENT_IMAGES[target] for target in plan["deployments"] if target in DEPLOYMENT_IMAGES}
     return [target for target in planned_images(plan) if target in deploying]
+
+
+def sdk_release_needed(results):
+    decisions = [results[suite].get('release_needed') for suite in SDK_SUITES if suite in results]
+    if not decisions:
+        return False
+    if len(decisions) != 2 or any(type(value) is not bool for value in decisions) or decisions[0] != decisions[1]:
+        raise ValueError('both SDK runtimes must agree on the release policy')
+    return decisions[0]
+
+
+def hosted_result_keys(plan, suites):
+    return {key for suite in suites for key in (
+        ['production-images-' + target for target in planned_images(plan)] if suite == 'production-images' else [suite])}
 
 
 def validate_obligations(plan):
@@ -512,12 +527,14 @@ def verify_results(
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
     if reused_suites and (local or source_proofs is None or jobs is None or not run_id
-                          or not reused_suites <= REUSABLE_SUITES & set(selected)):
-        raise ValueError("PR reuse requires verified hosted coverage of pure validation suites")
+                          or not reused_suites <= set(selected)
+                          or ('production-images' in reused_suites and deploy_image_targets(plan))
+                          or bool(reused_suites & SDK_SUITES) != (SDK_SUITES <= reused_suites)):
+        raise ValueError("PR reuse requires verified hosted coverage without delivery-byte consumers")
     targets = planned_images(plan)
     matrix = any("image_target" in result for result in results)
     required_results = set(selected) - reused_suites
-    if matrix and "production-images" in selected:
+    if matrix and "production-images" in required_results:
         required_results.remove("production-images")
         required_results.update("production-images-" + target for target in targets)
     by_suite: dict[str, dict] = {}
@@ -574,11 +591,12 @@ def verify_results(
             required = "success" if job in selected and job not in reused_suites else "skipped"
             if jobs.get(job, {}).get("result") != required:
                 raise ValueError(f"job {job}: expected {required}, got {jobs.get(job, {}).get('result')}")
-        sdk_required = "success" if "sdk-node22" in selected else "skipped"
+        sdk_required = "success" if "sdk-node22" in selected and 'sdk-node22' not in reused_suites else "skipped"
         if jobs.get("sdk-validation", {}).get("result") != sdk_required:
             raise ValueError("SDK validation failed, was cancelled, missing, or unexpectedly skipped")
         if jobs.get("geospatial-changes", {}).get("result") != "success":
             raise ValueError("validation selection did not succeed")
+    sdk_release_needed(by_suite)
     return by_suite
 
 

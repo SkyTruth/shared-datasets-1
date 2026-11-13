@@ -449,7 +449,8 @@ def condition_result(job, values, *, cancelled=False):
     assert job["if"] == delivery_condition(caller)
     plan = {'deployments': [target for target in DEPLOYMENTS if values.get(f'needs.geospatial-changes.outputs.{target}') == 'true'],
             'readiness_targets': ['sea_ice'] if values.get('needs.geospatial-changes.outputs.deployment_readiness') == 'true' else [],
-            'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else []}
+            'suites': ['sdk-node22'] if values.get('needs.geospatial-changes.outputs.sdk') == 'true' else [],
+            'sdk_release_needed': values.get('needs.geospatial-changes.outputs.sdk') == 'true'}
     delivery = json.loads(json.dumps(delivery_outputs(plan, values['github.event_name'], values['github.ref'])))
     ancestors = set()
     pending = [caller]

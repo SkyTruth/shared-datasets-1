@@ -123,13 +123,13 @@ def test_every_ingestion_caller_verifies_each_claim_on_push_and_dispatch(wrapper
     values.update({'inputs.resume_scheduler': inputs['resume_scheduler'], 'needs.apply.result': result,
                    'needs.apply.outputs.deployment_id': claim, 'needs.apply.outputs.noop': 'true'})
     assert bool(expression_value(shared['jobs']['verify']['if'], values)) == bool(claim)
-    # A newly claimed unchanged plan still applies and records only the applied
-    # phase; the canary, rather than an old execution, owns terminal verification.
+    # A newly claimed unchanged plan still applies; the canary, rather than an
+    # intermediate apply receipt or old execution, owns terminal verification.
     steps = workflow_steps_by_name(shared, 'apply')
     values.update({'steps.revision.outputs.proceed': 'true', 'steps.claim-receipt.outcome': 'success',
                    'steps.revision.outputs.noop': 'true'})
     assert expression_value('${{ ' + steps['Terraform apply']['if'] + ' }}', values)
-    assert '--phase applied' in steps['Record applied deployment']['run']
+    assert not any('--phase applied' in step.get('run', '') for step in steps.values())
 
 
 @pytest.mark.parametrize('defect', [None, 'unsigned-apply', 'unbound-claim', 'hidden-failure'])

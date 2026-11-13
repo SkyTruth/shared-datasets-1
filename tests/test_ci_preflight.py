@@ -46,6 +46,8 @@ def results_for(validation):
         "commands": [{"argv": ["executed-test"], "exit_code": 0}],
     } for suite in validation["suites"]]
     for result in results:
+        if result['suite'] in {'sdk-node22', 'sdk-node24'}:
+            result['release_needed'] = False
         if result["suite"] == "production-images":
             result["production_images"] = production_images(validation["tested_sha"])
             result["production_images"]["images"] = {target: image for target, image in result["production_images"]["images"].items() if target in validation["production_image_targets"]}
@@ -58,6 +60,19 @@ def jobs_for(validation):
         jobs[suite] = {"result": "success" if suite in validation["suites"] else "skipped"}
     jobs["sdk-validation"] = {"result": "success" if "sdk-node22" in validation["suites"] else "skipped"}
     return jobs
+
+
+@pytest.mark.parametrize('decision', [None, 'false', 0, True])
+def test_gate_refuses_missing_untyped_or_disagreeing_sdk_release_decisions(decision):
+    validation = plan()
+    results = results_for(validation)
+    runtime = next(result for result in results if result['suite'] == 'sdk-node22')
+    if decision is None:
+        del runtime['release_needed']
+    else:
+        runtime['release_needed'] = decision
+    with pytest.raises(ValueError, match='SDK runtimes must agree'):
+        verify_results(validation, json.loads(json.dumps(results)))
 
 
 @pytest.mark.parametrize("path", ["new/component.ext", "scripts/new-runtime.py", ".github/workflows/new.yml", "scripts/tested_image_bundle.py"])

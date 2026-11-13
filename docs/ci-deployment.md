@@ -136,7 +136,7 @@ release/index and metadata-readiness coverage.
 
 ## Caller scheduling
 
-The first main-push attempt may reuse [verified same-tree PR validation](ci-preflight.md#image-execution-and-hosted-evidence) for pure validation suites. Its `ci-ready-evidence` records the PR run/attempt and matching tree/base/contract/tools. Selected image and SDK jobs still run on main, so delivery continues to consume main-produced TARs and package candidates through the existing exact-attempt loaders. Forks, dispatches, ambiguous or stale proof and lookup failures take the full-validation path. Main all-job reruns also run full validation. This removes the independent main-context rerun of pure suites only when the PR proof matches.
+The first main-push attempt may reuse [verified same-tree PR validation](ci-preflight.md#image-execution-and-hosted-evidence). Its `ci-ready-evidence` records the PR run/attempt and matching tree/base/contract/tools. Image validation can reuse every selected PR target only when no delivery needs image bytes; SDK validation can reuse both PR runtimes only when their agreed release decision is false. Actual image deliveries and SDK releases continue to consume main-produced TARs and package candidates through the existing exact-attempt loaders. A false SDK release decision also omits publisher dispatch. Forks, dispatches, ambiguous or stale proof and lookup failures take the full-validation path. Main all-job reruns also run full validation.
 
 Only successful main-push CI exposes delivery outputs. Every post-gate caller uses `!cancelled() &&
 !failure()` and its delivery lookup; mutation/catalog/alert callers also require their discovery output.
