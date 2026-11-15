@@ -24,7 +24,7 @@ HEALTH_SCOPE = "health:operational-safety-check"
 from scripts import incident_health_artifacts as native
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, ROLLOUT_HOLD_TARGETS, rollout_holds as validate_suspensions
-from scripts.dataset_mutation_authorization import GitHub
+from scripts.dataset_mutation_authorization import IdentityGitHub
 from scripts import workflow_failure_alert as alerts
 from scripts.workflow_failure_alert import API_ROOT, REPOSITORY, source_inventory
 from scripts.catalog_refresh_check import catalog_changed
@@ -41,6 +41,13 @@ HEARTBEAT_WINDOW = 2 * SAFETY_INTERVAL + timedelta(hours=1)
 REPLAY_WINDOW = 3 * SAFETY_INTERVAL
 UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already published",
                      "latest available source already published"}
+
+
+class GitHub(IdentityGitHub):
+    """Keep discovery read-only while sharing identity snapshots."""
+
+    def __init__(self):
+        super().__init__(REPOSITORY)
 
 
 class ReconciliationWrite(RuntimeError):
@@ -145,19 +152,6 @@ def verification_due(api, sources, pending, *, now):
         if any(execution.get("status", {}).get(key) for key in ("completionTime", "failedCount", "cancelledCount")):
             return True
     return now - utc(latest["created_at"]) >= SAFETY_INTERVAL - timedelta(hours=1) or any(utc(status["created_at"]) > utc(latest["created_at"]) for status in statuses)
-
-
-def reconciliation_stalled(api, run):
-    """Read the last two dispatch steps without a separate counter."""
-    since = (datetime.now(timezone.utc) - REPLAY_WINDOW).strftime("%Y-%m-%dT%H:%M:%SZ")
-    query = urlencode({"branch": "main", "created": ">=" + since, "per_page": 100})
-    rows = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
-    prior = sorted((item for item in rows if item["id"] < run["id"]), key=lambda item: item["id"], reverse=True)[:2]
-    return len(prior) == 2 and all(item.get("status") == "completed" and alerts.verify_source_event(api, item)
-        and any(job["name"] == JOB and any(step["name"] == "Request operational reconciliation"
-            and step["status"] == "completed" and step["conclusion"] in {"success", "failure"} for step in job.get("steps", []))
-            for job in api.pages(f"{API_ROOT}/actions/runs/{item['id']}/attempts/{item['run_attempt']}/jobs?per_page=100", field="jobs"))
-        for item in prior)
 
 
 def fresh_activity(payload, cadence, *, now):
@@ -405,8 +399,7 @@ def main():
             return freshness(catalog.get_client(), now=now, scheduler=scheduler)
 
         def reconciliation_problems():
-            stalled = json.loads((args.work_dir / "result.json").read_text())["reconcile"] and reconciliation_stalled(api, run)
-            return (["reconcile=true for >=3 consecutive safety probes; inspect the batch worker"] if stalled else []) + [
+            return [
                 f"{claim['incident']}: unchanged unconfirmed Slack claim >=24 h; owner reconciliation required"
                 for claim in (json.loads((args.work_dir / "claims.json").read_text()) if not configuration else [])
                 if now - native.timestamp(claim["since"]) >= timedelta(hours=24)]

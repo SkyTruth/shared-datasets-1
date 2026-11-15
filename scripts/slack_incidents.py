@@ -27,6 +27,7 @@ from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
 from scripts import install_deployment_verifier as verifier
 from scripts.github_api_read import read as github_read
+from scripts.dataset_mutation_authorization import IdentityGitHub
 from scripts.publication_receipt_recovery import REPAIR_STEP
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from services.monitoring_slack import messages
@@ -422,7 +423,7 @@ def terminal_contract_sha256():
     version = subprocess.check_output(["gh", "--version"], text=True)
     require(version.startswith(f"gh version {verifier.VERSION} "), "terminal validation requires the pinned receipt verifier")
     sources = ("slack_incidents.py", "deployment_revision.py", "deployment_emission.py", "workflow_failure_alert.py",
-               "workflow_identity.py", "github_api_read.py", "install_deployment_verifier.py")
+               "workflow_identity.py", "github_api_read.py", "dataset_mutation_authorization.py", "install_deployment_verifier.py")
     return hashlib.sha256(emissions.canonical({
         name: hashlib.sha256((ROOT / "scripts" / name).read_bytes()).hexdigest() for name in sources
     })).hexdigest()
@@ -805,23 +806,18 @@ def admits_blocked_observations(state):
     return incident["resolution"] is None and parent and parent["state"] == "delivered"
 
 
-class GitHub(deployments.GitHub):
-    """Share repository/workflow identity snapshots within one worker only."""
+class GitHub(IdentityGitHub):
+    """Add the incident worker's writes to the shared identity reader."""
+
+    require = staticmethod(deployments.require)
+    post = deployments.GitHub.post
 
     def __init__(self):
-        self._identities = {}
-
-    def get(self, path):
-        if not (path == f"repos/{REPOSITORY}" or re.fullmatch(
-                rf"repos/{re.escape(REPOSITORY)}/actions/workflows/(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\.yml)", path)):
-            return super().get(path)
-        if path not in self._identities:
-            self._identities[path] = super().get(path)
-        return copy.deepcopy(self._identities[path])
+        super().__init__(REPOSITORY)
 
     def archive(self, repository, identifier):
         require(repository == REPOSITORY and positive(identifier), "invalid notification artifact identity")
-        return deployments.read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
+        return github_read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
 
 
 def job_error(identifier, *, step):

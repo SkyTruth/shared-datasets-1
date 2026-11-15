@@ -166,7 +166,13 @@ so resolution is a top-level post rather than a threaded reply; old cached repor
 need no migration. Delivery failures fail the run before retaining the transition. Health reporting works without probe dependencies or the pinned verifier.
 A first-attempt setup failure directly after an authenticated successful safety run sends no Slack message: the run stays red, logs the cause as a warning annotation and carries the previous report forward, so a second consecutive failure or a re-run that fails is a new finding and alerts. Probe and reader failures alert at once. The quiet run skips health readers, so other new findings and due reminders wait one run (24 h). A previous success older than 25 hours cannot qualify for quiet setup handling, so a missing run followed by a setup failure alerts.
 The safety job restores only the checksum-verified `gh` verifier archive from a main-scoped Actions cache. Python and uv still download from GitHub releases, because `setup-python` and `setup-uv` trust tool-cache hits without verification and this job holds production credentials; release-download 504s on 2026-11-08..09 failed 3 of 194 hourly runs.
-Setup/probe failures stay red; authenticated reports suppress duplicate replay. Delivery, upload and dispatch failures remain visible. Unchanged findings cannot advance stall escalation.
+Setup/probe failures stay red; authenticated reports suppress duplicate replay.
+If the direct safety-failure webhook succeeds, the incident bot does not create
+another incident for failures preceding that delivery, even when timeout prevented
+health-report upload. A missing or failed webhook, or a later cleanup failure,
+still receives normal incident-bot coverage. Reconciliation dispatch counts do not
+raise health findings. Failed batches retain normal incident replay; unconfirmed
+Slack delivery claims older than 24 hours still require owner reconciliation.
 
 Protected monitoring sync provisions workflow identities and `google_project_iam_custom_role.operational_safety_reader` before cron-sync adds
 `google_logging_metric.operational_safety_heartbeat` and `google_monitoring_alert_policy.operational_safety_absent`.
