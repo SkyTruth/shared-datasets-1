@@ -25,7 +25,7 @@ def captured_failure():
     publisher = OwnedGeneratedPublisher(client, BUCKET, execution_id="october", executor_sha="c" * 40,
                                          configuration={}, store=store)
     with publication_temp_directory() as directory, patch(
-        "ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+        "ingestion.common.publication_bundle.vector_asset.validate_metadata_lookup_bundle",
         return_value=SimpleNamespace(valid=True, errors=()),
     ):
         publish(publisher, asset, outputs_fixture(Path(directory), asset))
