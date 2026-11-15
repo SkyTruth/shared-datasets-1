@@ -878,21 +878,27 @@ def test_prepare_cli_skips_only_empty_successful_scheduled_catalog_observation(t
     assert json.loads((tmp_path / "prepared.json").read_text()) == []
 
 
+@pytest.fixture(params=["worker", "probe"])
+def identity_client(request):
+    from scripts import operational_safety_check as safety
+    return incidents.GitHub if request.param == "worker" else safety.GitHub
+
+
 @pytest.mark.parametrize("path", [
     f"repos/{incidents.REPOSITORY}",
     f"repos/{incidents.REPOSITORY}/actions/workflows/42",
     f"repos/{incidents.REPOSITORY}/actions/workflows/ci.yml",
 ])
-def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path):
+def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path, identity_client):
     with mock.patch("scripts.dataset_mutation_authorization.read", side_effect=[
             RuntimeError("identity unavailable"), b'{"nested":{"id":1}}', b'{"nested":{"id":2}}']) as read:
-        api = incidents.GitHub()
+        api = identity_client()
         with pytest.raises(RuntimeError, match="identity unavailable"):
             api.get(path)
         first = api.get(path)
         first["nested"]["id"] = 99
         assert api.get(path) == {"nested": {"id": 1}}
-        assert incidents.GitHub().get(path) == {"nested": {"id": 2}}
+        assert identity_client().get(path) == {"nested": {"id": 2}}
     assert read.call_count == 3
 
 
@@ -907,21 +913,30 @@ def test_identity_snapshot_is_isolated_cold_and_does_not_cache_failed_reads(path
     "repos/Other/repository",
     "repos/Other/repository/actions/workflows/ci.yml",
 ])
-def test_operational_and_nonidentity_gets_always_refresh(path):
+def test_operational_and_nonidentity_gets_always_refresh(path, identity_client):
     with mock.patch("scripts.dataset_mutation_authorization.read", side_effect=[b'{"id":1}', b'{"id":2}']) as read:
-        api = incidents.GitHub()
+        api = identity_client()
         assert api.get(path) == {"id": 1}
         assert api.get(path) == {"id": 2}
     assert read.call_count == 2
 
 
-def test_identity_snapshot_does_not_cache_paginated_status_history():
+def test_identity_snapshot_does_not_cache_paginated_status_history(identity_client):
     path = f"repos/{incidents.REPOSITORY}/deployments/10/statuses?per_page=100"
     with mock.patch("scripts.dataset_mutation_authorization.read", side_effect=[b'[[{"id":1}]]', b'[[{"id":2},{"id":1}]]']) as read:
-        api = incidents.GitHub()
+        api = identity_client()
         assert api.pages(path) == [{"id": 1}]
         assert api.pages(path) == [{"id": 2}, {"id": 1}]
     assert read.call_args_list == [mock.call(path, paginate=True)] * 2
+
+
+def test_worker_retains_checkpoint_post_transport():
+    path = f"repos/{incidents.REPOSITORY}/deployments"
+    payload = {"task": "slack-incident", "ref": SHA}
+    with mock.patch.object(deployments.subprocess, "check_output", return_value=b'{"id":7}') as transport:
+        assert incidents.GitHub().post(path, payload) == {"id": 7}
+    assert transport.call_args.args[0] == ["gh", "api", "--method", "POST", path, "--input", "-"]
+    assert json.loads(transport.call_args.kwargs["input"]) == payload
 
 
 def test_hourly_cli_reuses_only_identity_reads_and_preserves_observations(tmp_path, monkeypatch):

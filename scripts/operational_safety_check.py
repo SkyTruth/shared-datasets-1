@@ -24,7 +24,7 @@ HEALTH_SCOPE = "health:operational-safety-check"
 from scripts import incident_health_artifacts as native
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, ROLLOUT_HOLD_TARGETS, rollout_holds as validate_suspensions
-from scripts.slack_incidents import GitHub
+from scripts.dataset_mutation_authorization import IdentityGitHub
 from scripts import workflow_failure_alert as alerts
 from scripts.workflow_failure_alert import API_ROOT, REPOSITORY, source_inventory
 from scripts.catalog_refresh_check import catalog_changed
@@ -41,6 +41,13 @@ HEARTBEAT_WINDOW = 2 * SAFETY_INTERVAL + timedelta(hours=1)
 REPLAY_WINDOW = 3 * SAFETY_INTERVAL
 UNCHANGED_REASONS = {"source fingerprint unchanged", "monthly source already published",
                      "latest available source already published"}
+
+
+class GitHub(IdentityGitHub):
+    """Keep discovery read-only while sharing identity snapshots."""
+
+    def __init__(self):
+        super().__init__(REPOSITORY)
 
 
 class ReconciliationWrite(RuntimeError):

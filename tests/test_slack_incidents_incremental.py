@@ -332,9 +332,10 @@ def test_validation_checkpoint_has_one_strict_shape(validation):
         incidents.validate_state(state)
 
 
-def test_validation_contract_changes_with_source_and_requires_pinned_verifier(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", ["deployment_revision.py", "dataset_mutation_authorization.py"])
+def test_validation_contract_changes_with_source_and_requires_pinned_verifier(tmp_path, monkeypatch, source):
     sources = ("slack_incidents.py", "deployment_revision.py", "deployment_emission.py",
-               "workflow_failure_alert.py", "workflow_identity.py", "github_api_read.py", "install_deployment_verifier.py")
+               "workflow_failure_alert.py", "workflow_identity.py", "github_api_read.py", "dataset_mutation_authorization.py", "install_deployment_verifier.py")
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     for name in sources:
@@ -342,7 +343,7 @@ def test_validation_contract_changes_with_source_and_requires_pinned_verifier(tm
     monkeypatch.setattr(incidents, "ROOT", tmp_path)
     with mock.patch.object(incidents.subprocess, "check_output", return_value=f"gh version {incidents.verifier.VERSION} (test)\n"):
         original = incidents.terminal_contract_sha256.__wrapped__()
-        (scripts / "deployment_revision.py").write_text("changed validator")
+        (scripts / source).write_text("changed validator")
         assert incidents.terminal_contract_sha256.__wrapped__() != original
     with mock.patch.object(incidents.subprocess, "check_output", return_value="gh version 0.0.0 (wrong)\n"):
         with pytest.raises(incidents.IncidentError, match="pinned receipt verifier"):

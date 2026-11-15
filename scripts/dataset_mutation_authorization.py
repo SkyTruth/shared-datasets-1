@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import datetime as dt
 import io
 import json
@@ -76,6 +77,23 @@ class GitHub:
 
     def archive(self, repository: str, artifact_id: int) -> bytes:
         return subprocess.check_output(["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}/zip"])
+
+
+class IdentityGitHub(GitHub):
+    """Read-only transport with invocation-local repository/workflow identities."""
+
+    def __init__(self, repository: str):
+        self._repository_path = f"repos/{repository}"
+        self._workflow_identity = re.compile(re.escape(self._repository_path)
+            + r"/actions/workflows/(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\.yml)")
+        self._identities = {}
+
+    def get(self, path: str) -> Any:
+        if path != self._repository_path and not self._workflow_identity.fullmatch(path):
+            return super().get(path)
+        if path not in self._identities:
+            self._identities[path] = super().get(path)
+        return copy.deepcopy(self._identities[path])
 
 
 def repo_matches(payload: Any, repository: dict[str, Any]) -> bool:
