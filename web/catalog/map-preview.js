@@ -3,6 +3,11 @@ import {artifactGeneration, assertArtifactResponse} from "./release-reference.js
 const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css";
 const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
+const LIBRARY_INTEGRITY = {
+  "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js": "sha384-81ppUWZZO+pveTPk4qU9cZuScEFULHfuOMHVJHFZ7xVBlWQTG1zsPrVIMGAl1WMb",
+  "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css": "sha384-gNYNsUmuZqDYiT3gbirWTV5K7rt71RoveS/yXAaU09d4ZUmeDVTD3XoqB6uJAIFR",
+  "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js": "sha384-sbRi6hoEcyvy8Ae92XrinfKW1tLhIVWAeyb4DMQF50X4w93ICW9vjK0bHudXP/dJ"
+};
 const MISSING_COLOR = "#949d97";
 const FEATURE_ID_PROPERTY = "feature_id";
 const FEATURE_STATE_COLOR_FIELD = "colorizeField";
@@ -453,6 +458,7 @@ function loadDependencies() {
 }
 
 function loadCss(href) {
+  if (!LIBRARY_INTEGRITY[href]) throw new Error(`Unreviewed stylesheet URL: ${href}`);
   if (document.querySelector(`link[href="${href}"]`)) {
     return Promise.resolve();
   }
@@ -460,6 +466,8 @@ function loadCss(href) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = href;
+    link.integrity = LIBRARY_INTEGRITY[href];
+    link.crossOrigin = "anonymous";
     link.onload = resolve;
     link.onerror = () => reject(new Error(`Could not load ${href}`));
     document.head.append(link);
@@ -467,6 +475,7 @@ function loadCss(href) {
 }
 
 function loadScript(src, globalName) {
+  if (!LIBRARY_INTEGRITY[src]) throw new Error(`Unreviewed script URL: ${src}`);
   if (window[globalName]) {
     return Promise.resolve();
   }
@@ -476,6 +485,8 @@ function loadScript(src, globalName) {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = src;
+    script.integrity = LIBRARY_INTEGRITY[src];
+    script.crossOrigin = "anonymous";
     script.async = true;
     script.onload = () => {
       if (window[globalName]) {

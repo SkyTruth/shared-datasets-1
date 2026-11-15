@@ -1,4 +1,5 @@
 """Trigger, CEL and execution-filter regressions at the declared IAM boundary."""
+from scripts.action_pins import pinned
 from functools import lru_cache
 import json
 import os
@@ -158,7 +159,7 @@ def test_pr_bucket_read_exception_is_confined_to_exact_advisory_leaf(filename, e
     assert 'github.event.pull_request.head.repo.full_name == github.repository' in route
     assert 'github.event.pull_request.base.repo.full_name == github.repository' in route
     assert value['jobs']['alert']['needs'] == 'route'
-    checkout = next(step for step in value['jobs']['alert']['steps'] if step.get('uses') == 'actions/checkout@v4')
+    checkout = next(step for step in value['jobs']['alert']['steps'] if step.get('uses') == pinned('actions/checkout@v4'))
     assert checkout['with']['ref'] == '${{ github.event.pull_request.base.sha }}'
 
 
@@ -247,7 +248,7 @@ def test_native_failure_filter_suppresses_only_marked_runtime_canaries(creator, 
 
 def test_held_candidate_uses_readonly_identity_and_no_unmanaged_observer_variables():
     value = workflow('eamlis-held-candidate-preview.yml')
-    auth = [step for step in value['jobs']['inspect']['steps'] if step.get('uses') == 'google-github-actions/auth@v2']
+    auth = [step for step in value['jobs']['inspect']['steps'] if step.get('uses') == pinned('google-github-actions/auth@v2')]
     assert auth[0]['with'] == {'workload_identity_provider': '${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}',
                                'service_account': '${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}'}
     assert auth[1]['with']['service_account'].startswith('feature-preview-loader@')

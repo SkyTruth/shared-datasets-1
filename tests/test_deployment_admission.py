@@ -28,8 +28,13 @@ def test_codeowners_covers_every_dependabot_dockerfile():
     assert '* @jonaraphael' in owners
     for item in config['updates']:
         assert 'reviewers' not in item
-        for directory in item['directories']:
-            assert (ROOT / directory.lstrip('/') / 'Dockerfile').is_file()
+        if item['package-ecosystem'] == 'docker':
+            for directory in item['directories']:
+                assert (ROOT / directory.lstrip('/') / 'Dockerfile').is_file()
+        else:
+            assert item['package-ecosystem'] == 'github-actions'
+            assert item['directories'] == ['/', '/.github/actions/*']
+            assert item['groups'] == {'github-actions': {'patterns': ['*']}}
 
 
 @pytest.mark.parametrize('case,accepted', [

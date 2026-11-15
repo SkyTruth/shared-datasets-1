@@ -1,4 +1,5 @@
 """Exact cloud impersonation and capability boundaries, including executor handoffs."""
+from scripts.action_pins import pinned
 import json
 import os
 from pathlib import Path
@@ -37,7 +38,7 @@ def auth_accounts(value, job):
         uses, inputs = step.get('uses', ''), step.get('with', {})
         if uses in {'./.github/actions/deployment-auth', './.github/actions/deployment-bootstrap/terraform'}:
             account = inputs.get('service-account', environment.get('TERRAFORM_SERVICE_ACCOUNT'))
-        elif uses == 'google-github-actions/auth@v2':
+        elif uses == pinned('google-github-actions/auth@v2'):
             account = inputs.get('service_account')
         else:
             continue

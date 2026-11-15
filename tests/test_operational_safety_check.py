@@ -1,6 +1,7 @@
 """A periodic probe detects work without mutating incident or delivery state."""
 from __future__ import annotations
 
+from scripts.action_pins import pinned
 import copy
 from datetime import datetime, timedelta, timezone
 from functools import cache
@@ -720,7 +721,7 @@ def test_health_only_failures_never_create_reconciliation_work_but_infrastructur
     assert dry(api, tmp_path, [source]) is True
     api.jobs[101][0]['steps'].pop()
     assert dry(api, tmp_path, [source]) is False
-    api.jobs[101][0]['steps'] = [{'name': 'actions/checkout@v4', 'conclusion': 'failure'}]
+    api.jobs[101][0]['steps'] = [{'name': pinned('actions/checkout@v4'), 'conclusion': 'failure'}]
     assert dry(api, tmp_path, [source]) is False
 
 

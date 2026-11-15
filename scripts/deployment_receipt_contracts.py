@@ -1,6 +1,7 @@
 """Offline workflow boundaries for protected deployment receipts and tokens."""
 from __future__ import annotations
 
+from scripts.action_pins import pinned
 import re
 import json
 
@@ -126,9 +127,9 @@ fi'''
     # One ordered declaration replaces parallel command, action, phase, signer
     # and artifact tables. Names are presentation; every authority field is exact.
     expected = [
-        {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
-        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12.12"}},
-        {"uses": "astral-sh/setup-uv@v6", "with": {"version": "0.11.8", "enable-cache": False}},
+        {"uses": pinned('actions/checkout@v4'), "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
+        {"uses": pinned('actions/setup-python@v5'), "with": {"python-version": "3.12.12"}},
+        {"uses": pinned('astral-sh/setup-uv@v6'), "with": {"version": "0.11.8", "enable-cache": False}},
         {"run": "uv sync --locked --no-dev"},
         {"run": "python scripts/install_deployment_verifier.py"},
         {"id": "prepare", "env": environment, "run": command.format("prepare")},
@@ -383,8 +384,8 @@ def readiness_boundary(root):
                         'uv run --no-sync python scripts/deployment_readiness.py check' + arguments,
                         'python scripts/deployment_readiness.py verify' + arguments,
                         'uv sync --locked --only-group ci-plan', 'python scripts/install_deployment_verifier.py'}
-    allowed_actions = {'actions/checkout@v4', './.github/actions/ci-tools', 'google-github-actions/auth@v2',
-                       NOTIFICATION_ATTEST, 'actions/upload-artifact@v4'}
+    allowed_actions = {pinned('actions/checkout@v4'), './.github/actions/ci-tools', pinned('google-github-actions/auth@v2'),
+                       NOTIFICATION_ATTEST, pinned('actions/upload-artifact@v4')}
     if any(step.get('uses') not in allowed_actions if 'uses' in step else step.get('run', '').strip() not in allowed_commands
            for step in job['steps']):
         errors.append('readiness has an unregistered executable step')

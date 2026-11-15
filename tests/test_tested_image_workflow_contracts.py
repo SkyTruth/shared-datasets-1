@@ -1,5 +1,6 @@
 """Fail preflight if a deployment replaces CI image bytes or loses their proof."""
 
+from scripts.action_pins import pinned
 import copy
 import json
 from pathlib import Path
@@ -149,7 +150,7 @@ def test_gate_requires_exact_selected_subset_including_wdpa_only(paths, targets)
 def test_production_cache_keeps_deployment_artifacts():
     job = load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['production-images']
     steps = job['steps']
-    buildx = next(i for i, step in enumerate(steps) if step.get('uses') == 'docker/setup-buildx-action@v3')
+    buildx = next(i for i, step in enumerate(steps) if step.get('uses') == pinned('docker/setup-buildx-action@v3'))
     runtime = next(i for i, step in enumerate(steps) if step.get('name') == 'Expose the ephemeral Actions cache runtime')
     producer = next(i for i, step in enumerate(steps) if step.get('name') == 'Test the actual production image recipes')
     assert buildx < runtime < producer

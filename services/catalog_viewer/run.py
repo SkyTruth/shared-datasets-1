@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from services.feature_preview_service import run as feature_preview_run
 from services.catalog_viewer import comparisons, usage, identity_review
 from services.http_base import (
+    CATALOG_SECURITY_HEADERS,
     NO_STORE,
     Response,
     api_headers,
@@ -699,6 +700,7 @@ def handle_static(method: str, request_path: str, *, object_store: ObjectStore) 
     except StaticObjectNotFound:
         return text_response(HTTPStatus.NOT_FOUND, "not found", {"Cache-Control": NO_STORE})
     headers = {
+        **CATALOG_SECURITY_HEADERS,
         "Content-Type": static_object.content_type,
         "Cache-Control": static_object.cache_control or NO_CACHE,
     }

@@ -1,6 +1,7 @@
 """Failures remain visible; only exact verified recovery closes their incidents."""
 from __future__ import annotations
 
+from scripts.action_pins import pinned
 import copy
 from datetime import datetime, timezone
 import hashlib
@@ -1427,7 +1428,7 @@ def test_workflow_has_safe_activation_exact_checkout_signed_claim_barrier_and_pr
     worker = workflow["jobs"]["incidents"]
     assert "INCIDENTS_ENABLED == 'true'" in worker["if"]
     assert worker["concurrency"]["queue"] == "max" and worker["concurrency"]["cancel-in-progress"] is False
-    checkout = next(step for step in worker["steps"] if step.get("uses") == "actions/checkout@v4")
+    checkout = next(step for step in worker["steps"] if step.get("uses") == pinned('actions/checkout@v4'))
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     assert "download-artifact" not in str(worker)
     assert "id-token" in worker["permissions"] and "deployments" in worker["permissions"]

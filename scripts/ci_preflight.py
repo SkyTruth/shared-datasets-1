@@ -318,6 +318,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
             commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
+        # Pure stdlib check runs even before docs-only early return or uv sync.
+        add(sys.executable, "scripts/python_sdk_release.py", "check", "--base", base, "--head", head)
         if (root / INGESTION_ROLLOUT_HOLDS).exists():
             previous = None
             if INGESTION_ROLLOUT_HOLDS in (plan.get("changed_paths") or []):
@@ -332,6 +334,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "ruff", "check", ".")
         add("uv", "run", "--no-sync", "python", "scripts/runtime_dependencies.py", "--check")
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
+        add("uv", "run", "--no-sync", "python", "scripts/action_pins.py")
     elif suite == "tests-control-plane":
         add("uv", "sync", "--locked", "--no-dev", "--group", "control-plane")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")

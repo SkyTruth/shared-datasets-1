@@ -228,8 +228,10 @@ class Guard(AbstractContextManager):
         from scripts import slack_notify
         require(self.held, "cannot alert without a persisted hold")
         hold = self.state["hold"]
-        if hold["notification"] != "pending":
+        if hold["notification"] == "sent":
             return
+        require(hold["notification"] == "pending",
+                f"{self.flow.label} hold alert delivery is unconfirmed; inspect the existing delivery before retrying")
         old = hold["baseline"]["release"]["rows"] if hold["baseline"] else None
         count = hold["observation"].get("geometry_count")
         loss = f"{100 * (old - count) / old:.2f}%" if old and count is not None else "unavailable"

@@ -30,20 +30,84 @@ consumers, pin a tag or commit SHA instead of `main`.
 
 | Scenario | Install |
 |---|---|
-| Public catalog and browser URL resolution with `Catalog.load().resolve(..., access="public")` | `pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
-| Authenticated GCS catalog loading, `resolve_dataset(...)`, or data downloads | `pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
+| Public catalog and browser URL resolution with `Catalog.load().resolve(..., access="public")` | `pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@python-sdk-v0.3.1#subdirectory=api/python"` |
+| Authenticated GCS catalog loading, `resolve_dataset(...)`, or data downloads | `pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@python-sdk-v0.3.1#subdirectory=api/python"` |
 | Runtime installer lacks `git` | `pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/<tag-or-sha>.zip#subdirectory=api/python"` |
 | Local development in this repository | `pip install -e "api/python[gcs]"` |
 
 For SSH-based repository access:
 
 ```bash
-pip install "skytruth-shared-datasets[gcs] @ git+ssh://git@github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
+pip install "skytruth-shared-datasets[gcs] @ git+ssh://git@github.com/SkyTruth/shared-datasets-1.git@python-sdk-v0.3.1#subdirectory=api/python"
 ```
 
 Before committing a dependency URL, verify the exact installer used by Docker,
 GitHub Actions, or production deploys can reach it. Local editable installs do
 not prove the production requirement works.
+
+## Versioned releases
+
+Use the `python-sdk-v0.3.1` tag or its wheel/source downloads from the
+[Python SDK release](https://github.com/SkyTruth/shared-datasets-1/releases/tag/python-sdk-v0.3.1).
+For the exact prebuilt package exercised by the isolated install tests:
+
+```bash
+pip install "skytruth-shared-datasets @ https://github.com/SkyTruth/shared-datasets-1/releases/download/python-sdk-v0.3.1/skytruth_shared_datasets-0.3.1-py3-none-any.whl"
+```
+
+The package exports `skytruth_shared_datasets.__version__`; its HTTP user agent
+reports the same version. PyPI publishing is not configured.
+
+Required `lint` rejects any change under `api/python/`, including packaged
+documentation and build inputs, unless the version in
+`src/skytruth_shared_datasets/_version.py` increases. This is the single version
+source used by setuptools. Pull-request validation rejects an
+unchanged or decreased version, builds with hash-locked dependencies, reproduces
+the wheel from the source archive, and installs it on Python 3.10.20 and 3.12.12.
+Source archives normalize ordering, ownership, modes, tar timestamps and gzip
+headers to the frozen source epoch before checksums are recorded.
+Installed probes run outside the checkout with isolated imports and test the CLI,
+type marker, version metadata and public catalog resolution without credentials.
+
+After successful main CI, `SDK / Python releases` rechecks the exact merged
+owner acceptance and successful `ci-ready`, then publishes through the protected
+`shared-datasets-production` environment. It creates a versioned tag and draft
+GitHub release, uploads the wheel, source archive, checksums and provenance, and
+publishes only after verification. Main release selection uses published-version
+state, so a later accepted green main revision can publish a version missed by
+an earlier failed or superseded run. It leaves the repository's overall latest
+release selection unchanged. Existing tags and assets are never overwritten.
+Only the current SDK version is reconciled. If another version bump lands first,
+an unpublished intermediate version is not released and its draft remains a draft.
+Use **Re-run failed jobs** for an interrupted publisher: it downloads the
+successful validation job's immutable artifact ID rather than guessing a new
+attempt's name. Matching assets are verified and only missing assets are added.
+A full rerun also reproduces the wheel and normalized source archive bytes.
+If main has advanced, the next successful main run reconciles the unpublished
+version; an existing tag retains its original source commit and epoch, and must
+be an ancestor with a byte-identical `api/python/` tree. The build uses current
+trusted release tools, without checking out or executing the old revision.
+Tags are never moved. Changed package trees, bytes or tag conflicts fail closed
+and require investigation. These workflow checks do not prevent a repository
+administrator from changing tags outside this workflow.
+Both release jobs use Ubuntu 24.04, matching CI. Runner updates can still affect
+compressed bytes: preserve the original successful artifact and draft evidence
+if a rebuild differs. Retry from the retained artifact; if that is unavailable,
+leave the conflicting draft/tag intact and use a reviewed version bump rather
+than deleting or replacing its assets.
+
+For local checks, use the repository's locked environment and a named directory
+under `SHARED_DATASETS_WORKDIR`:
+
+```bash
+uv run python scripts/python_sdk_release.py check --base origin/main --head HEAD
+uv run python scripts/python_sdk_release.py build --output "$SHARED_DATASETS_WORKDIR/python-sdk/dist" --python 3.10.20 --python 3.12.12
+```
+
+The output directory must be empty. Builds from a dirty checkout have a null
+source revision and cannot be published. To update the hash constraints, resolve
+the exact `[build-system].requires` with `uv pip compile --python-version 3.10
+--generate-hashes`, and update `build-constraints.txt` in the same versioned PR.
 
 ## Credentials And IAM
 

@@ -81,6 +81,12 @@ A terminal execution with an incomplete transaction requires reviewed recovery
 of that original receipt; a new execution cannot take it over. Legacy partial
 releases without a managed receipt still require reviewed repair. Do not delete
 objects or choose another date merely to evade an incomplete release.
+Follow the [terminal-execution recovery runbook](../../.claude/skills/publish-shared-dataset/references/partial-publication-recovery.md#mpatlas-after-both-task-attempts-fail).
+No protected operator entry point currently resumes a terminal MPAtlas receipt.
+Unconfirmed hold-alert delivery keeps task retries and later scheduled checks
+failed without another automatic Slack post until reviewed promotion clears the
+hold. Inspect `status` and the original Slack delivery, then use the retained
+candidate's reviewed `prepare-plan` → PR → protected `resolve` procedure below.
 
 The [shared fingerprint contract](../../docs/source-fingerprints.md#mpatlas-mpatlas-content-v1)
 defines persisted hash fields and source-specific limitations.

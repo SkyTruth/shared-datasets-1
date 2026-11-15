@@ -421,6 +421,9 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(response.headers["Cache-Control"], "no-cache, max-age=0, must-revalidate")
         self.assertEqual(response.body, b"<html></html>")
+        from services.http_base import CATALOG_SECURITY_HEADERS
+        for name, value in CATALOG_SECURITY_HEADERS.items():
+            self.assertEqual(response.headers[name], value)
 
     def test_release_index_route_serves_catalog_release_object(self):
         store = FakeStore(catalog_payload())

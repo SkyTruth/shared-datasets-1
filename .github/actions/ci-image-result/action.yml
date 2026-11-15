@@ -12,7 +12,7 @@ runs:
   steps:
     - name: Retain tested image
       if: inputs.retain-image == 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       id: retained-image
       with:
         name: ci-image-${{ inputs.target }}-attempt${{ github.run_attempt }}
@@ -20,7 +20,7 @@ runs:
         path: ${{ runner.temp }}/ci-results/production-images/${{ inputs.target }}/images/${{ inputs.target }}.docker.tar
         if-no-files-found: error
         retention-days: 2
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       id: retained-results
       if: always()
       with:
@@ -32,7 +32,7 @@ runs:
         if-no-files-found: error
         retention-days: 14
     - name: Upload compact gate result
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       if: ${{ always() && steps.retained-results.outcome == 'success' && (inputs.retain-image != 'true' || steps.retained-image.outcome == 'success') }}
       with:
         name: ci-gate-result-production-images-${{ inputs.target }}-attempt${{ github.run_attempt }}

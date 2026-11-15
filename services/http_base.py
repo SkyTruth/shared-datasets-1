@@ -19,6 +19,19 @@ from typing import Any, Mapping
 
 
 NO_STORE = "no-store"
+# Scripts are local modules or the two exact, SRI-checked library URLs. MapLibre
+# needs blob workers and style attributes, but neither inline scripts nor eval.
+CATALOG_CSP = "; ".join((
+    "default-src 'none'", "base-uri 'none'", "object-src 'none'", "form-action 'none'",
+    "script-src 'self' https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js",
+    "style-src 'self' 'unsafe-inline' https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css",
+    "worker-src blob:", "img-src 'self' data: blob:", "font-src 'self'",
+    "connect-src 'self' https://storage.googleapis.com https://tiles.skytruth.org https://tile.openstreetmap.org https://services.arcgisonline.com",
+))
+CATALOG_SECURITY_HEADERS = {
+    "Content-Security-Policy": CATALOG_CSP + "; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+}
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"

@@ -47,3 +47,29 @@ All-job main reruns deliberately disable PR reuse and execute the full selection
 ## Holds, failures and retries
 
 Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push; historical bare hold lists are comparison baselines only. Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation. The independent safety health report also deduplicates a disabled incident switch or missing bot token through its webhook, including changed findings and daily reminders.
+
+
+## GitHub Action revisions
+
+GitHub Actions references are pinned to complete upstream commit SHAs, including
+nested composites. `.github/action-pins.json` is the reviewed inventory consumed
+by `scripts/action_pins.py` and authority checks. The lint suite rejects mutable
+or unregistered references. Dependabot proposes weekly Action updates. In each
+update PR, verify the commit against the upstream repository/tag, update the
+inventory and matching workflow references together, retain a readable version
+comment, and run the workflow/identity tests. A bot PR is not approval to change
+protected permissions or identity boundaries.
+
+## Python SDK releases
+
+Python SDK version increases are enforced by required `lint`, including packaged
+README edits. A separate `SDK / Python releases` workflow validates packages.
+It builds hash-locked wheel/source packages and tests isolated installations on
+Python 3.10.20 and 3.12.12. After successful main CI, its protected publisher
+rechecks exact merged owner acceptance and publishes versioned GitHub release
+assets. Main release selection checks published version state, so a later green
+merge can publish a previously missed version. Publisher retries retain the
+successful producer's exact artifact ID. See `api/python/README.md` for version
+gates and interrupted draft recovery.
+Only the current SDK version is reconciled; an intermediate version superseded
+by another SDK bump before publication is not automatically released.

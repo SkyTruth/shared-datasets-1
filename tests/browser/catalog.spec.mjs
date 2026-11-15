@@ -48,10 +48,23 @@ const test = base.extend({
     const scenarioEmail = `browser-${testInfo.testId.replace(/[^a-z0-9]/gi, '')}@skytruth.org`;
     const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
-    const state = { deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, reviewEnabled: false, reviewUnavailable: false, reviewEmail: null, holdReview: false, reviewHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    const state = { deny: 0, signerGeneration: null, tierRoutes: false, storageHosting: false, lookupStatus: 200, catalog, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, reviewEnabled: false, reviewUnavailable: false, reviewEmail: null, holdReview: false, reviewHeld: false, expectedSecurityErrors: [], release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
+    });
+    // Observe maps without changing the library bytes checked by SRI.
+    await page.addInitScript(() => {
+      let library;
+      Object.defineProperty(window, 'maplibregl', {configurable:true,
+        get: () => library,
+        set(value) {
+          value.Map = class extends value.Map {
+            constructor(options) { super(options); window.catalogTestMap = this; }
+          };
+          library = value;
+        },
+      });
     });
     await context.route('**/*', async (route) => {
       const request = route.request();
@@ -78,14 +91,7 @@ const test = base.extend({
       }
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
-        if (file === 'maplibre-gl/dist/maplibre-gl.js') {
-          const library = await readFile(resolve(packageDir, 'node_modules', file), 'utf8');
-          return route.fulfill({contentType, body: library + `
-            window.maplibregl.Map = class extends window.maplibregl.Map {
-              constructor(options) { super(options); window.catalogTestMap = this; }
-            };`});
-        }
-        return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType });
+        return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType, headers: {'access-control-allow-origin':'*'} });
       }
       if (/^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url.href)) return route.fulfill({ body: basemapPNG, contentType: 'image/png' });
       if (/^https:\/\/services\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\d+\/\d+\/\d+$/.test(url.href)) return route.fulfill({body: basemapPNG, contentType: 'image/png'});
@@ -219,7 +225,7 @@ const test = base.extend({
       expect(forbidden, 'All data/auth/CDN boundaries must be explicitly served').toEqual([]);
       // Chromium SwiftShader emits a documented performance warning on screenshot readback.
       const expectedDriverWarning = (entry) => entry.type === 'warning' && /^\[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/.test(entry.text);
-      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (401|403|404|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
+      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !state.expectedSecurityErrors.some(pattern => typeof entry === 'object' && pattern.test(entry.text)) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (401|403|404|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
     }
   }, { auto: true }],
 });
@@ -1058,15 +1064,14 @@ test('inline dataset examples are short, copyable and execute a real map integra
     return route.fallback();
   };
   await page.route(/\.metadata\.ndjson\.gz\?generation=202$/, holdMetadata);
-  const pendingIntegration = page.evaluate(async code => {
-    const {showDataset} = await import('/sdk/maplibre.js');
+  await page.route('**/sdk/generated-snippet.js', route => route.fulfill({contentType:'text/javascript', body:`import {showDataset} from './maplibre.js';\n${compiledCode}\nexport {dataset};`}));
+  const pendingIntegration = page.evaluate(async () => {
     const container = document.createElement('div'); container.id='map'; container.style.height='400px'; document.body.append(container);
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    const result = await new AsyncFunction('showDataset', code + '\nreturn dataset;')(showDataset);
+    const {dataset:result} = await import('/sdk/generated-snippet.js');
     await new Promise((resolve, reject) => {result.map.once('idle',resolve);result.map.once('error',event=>reject(event.error));});
     window.generatedIntegration = result;
     return {ids:[...result.records.keys()],tileUrl:result.layer.tileUrl,metadataUrl:result.layer.metadata.url};
-  }, compiledCode);
+  });
   try {
     await expect.poll(() => metadataRequested).toBe(true);
     await expect(page.locator('#map canvas.maplibregl-canvas')).toBeVisible();
@@ -1485,4 +1490,35 @@ test('identity review labels samples and withholds unsupported replacement choic
   await expect(page.locator('.identity-review-warning')).toContainText('cannot establish the full release');
   await expect(page.locator('#identity-review-content li')).toHaveCount(1);
   await expect(page.locator('#identity-review-content li')).toContainText('Assign a new ID');
+});
+
+
+test('catalog CSP blocks unapproved and inline scripts', async ({page, transport}) => {
+  transport.expectedSecurityErrors.push(/Executing inline script violates/, /Loading the script 'https:\/\/unapproved.invalid\/attack.js' violates/);
+  await page.goto(baseURL);
+  await expect(page.locator('#asset-list [data-slug]').first()).toBeVisible();
+  await page.evaluate(() => {
+    window.policyViolations = [];
+    document.addEventListener('securitypolicyviolation', event => window.policyViolations.push(event.blockedURI));
+    const inline = document.createElement('script'); inline.textContent='window.catalogInjected=true'; document.head.append(inline);
+    const external = document.createElement('script'); external.src='https://unapproved.invalid/attack.js'; document.head.append(external);
+  });
+  await expect.poll(() => page.evaluate(() => [...new Set(window.policyViolations)].sort())).toEqual(['https://unapproved.invalid/attack.js', 'inline']);
+  expect(await page.evaluate(() => window.catalogInjected)).toBeUndefined();
+  expect(transport.requests.some(request => request.url.includes('unapproved.invalid'))).toBe(false);
+});
+
+test('catalog SRI rejects changed bytes from an approved CDN URL', async ({page, transport}) => {
+  transport.expectedSecurityErrors.push(/Failed to find a valid digest in the 'integrity' attribute/);
+  await select(page, 'public');
+  const url='https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js';
+  await page.route(url, route => route.fulfill({contentType:'text/javascript', headers:{'access-control-allow-origin':'*'}, body:'window.catalogInjected=true;'}));
+  const result = await page.evaluate(url => new Promise(resolve => {
+    const original = document.querySelector(`script[src="${url}"]`);
+    const script = document.createElement('script');
+    script.src=url; script.integrity=original.integrity; script.crossOrigin=original.crossOrigin;
+    script.onload=() => resolve('executed'); script.onerror=() => resolve('blocked'); document.head.append(script);
+  }), url);
+  expect(result).toBe('blocked');
+  expect(await page.evaluate(() => window.catalogInjected)).toBeUndefined();
 });

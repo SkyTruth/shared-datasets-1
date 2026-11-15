@@ -181,6 +181,54 @@ def test_empty_mpatlas_source_is_held_without_a_build(tmp_path):
     assert publisher.load_json(job.ASSET.run_record_object(DAY)) is None
 
 
+@pytest.mark.parametrize("flow", list(source_quality.FLOWS.values()), ids=lambda f: f.SLUG)
+@pytest.mark.parametrize("failure,state", [(OSError("lost response"), "unknown"), (SystemExit("task stopped"), "sending")])
+def test_unconfirmed_hold_alert_stays_failed_without_resending(flow, failure, state):
+    bucket = Client().bucket(flow.BUCKET)
+    with mock.patch.object(slack_notify, "notify", side_effect=failure) as send:
+        with pytest.raises(type(failure)):
+            with flow.Guard(bucket) as guard:
+                guard.block(lifecycle.EMPTY_SOURCE, {"geometry_count": 0})
+                guard.notify()
+        with flow.Guard(bucket) as retry:
+            assert retry.state["hold"]["notification"] == state
+            with pytest.raises(source_quality.SourceLossError, match="delivery is unconfirmed"):
+                retry.notify()
+        assert flow.Guard(bucket).load()[0]["hold"]["notification"] == state
+        send.assert_called_once()
+
+
+@pytest.mark.parametrize("flow", list(source_quality.FLOWS.values()), ids=lambda f: f.SLUG)
+def test_killed_sender_keeps_owner_and_retry_fails_without_reposting(flow):
+    bucket = Client().bucket(flow.BUCKET)
+    guard = flow.Guard(bucket, owner="same-execution")
+    guard.__enter__()
+    guard.block(lifecycle.EMPTY_SOURCE, {"geometry_count": 0})
+    with mock.patch.object(slack_notify, "notify", side_effect=SystemExit("task killed")) as send:
+        with pytest.raises(SystemExit):
+            guard.notify()
+        # A killed process cannot run __exit__: leave the real persisted claim.
+        assert guard.load()[0]["owner"] == "same-execution"
+        with flow.Guard(bucket, owner="same-execution") as retry:
+            assert retry.state["hold"]["notification"] == "sending"
+            with pytest.raises(source_quality.SourceLossError, match="delivery is unconfirmed"):
+                retry.notify()
+        send.assert_called_once()
+
+
+def test_mpatlas_retry_cannot_hide_failed_hold_alert(tmp_path):
+    publisher, _ = seed(Client(), tmp_path / "baseline")
+    before = publisher.bucket.blob(job.ASSET.latest_object(".fgb")).data
+    with mock.patch.object(slack_notify, "notify", side_effect=OSError("lost response")) as send:
+        with pytest.raises(OSError):
+            execute(publisher, tmp_path / "attempt", [*range(1, 38), 41, 42, 43])
+        with pytest.raises(source_quality.SourceLossError, match="delivery is unconfirmed"):
+            execute(publisher, tmp_path / "attempt", [*range(1, 38), 41, 42, 43])
+        send.assert_called_once()
+    assert publisher.bucket.blob(job.ASSET.latest_object(".fgb")).data == before
+    assert publisher.load_json(job.ASSET.run_record_object(DAY)) is None
+
+
 def test_empty_source_normalization_reaches_lifecycle_gate_without_native_tools(tmp_path):
     source = tmp_path / "source.geojson"
     source.write_text('{"type":"FeatureCollection","features":[]}')
