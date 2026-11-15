@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+from html import escape
 import json
 import re
 import shutil
@@ -21,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_csv
+from services.http_base import CATALOG_CSP
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -1318,6 +1320,13 @@ def build_site(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     written = copy_static_files(static_dir, out_dir)
+    index_html = out_dir / "index.html"
+    markup = index_html.read_text()
+    marker = '<meta charset="utf-8" />'
+    if markup.count(marker) != 1:
+        raise CatalogSiteError("index.html must declare exactly one UTF-8 charset before resources")
+    policy = f'<meta http-equiv="Content-Security-Policy" content="{escape(CATALOG_CSP, quote=True)}" />'
+    index_html.write_text(markup.replace(marker, marker + "\n    " + policy))
     if metadata_sidecar_autoload_max_bytes is not None:
         inject_metadata_sidecar_autoload_meta(out_dir / "index.html", metadata_sidecar_autoload_max_bytes)
     if feature_preview:

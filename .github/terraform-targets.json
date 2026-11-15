@@ -404,6 +404,7 @@
     "scratch-cleanup-iam-sync.yml": {"selection": "scratch_cleanup_iam", "terraform_prerequisites": [], "events": ["schedule", "workflow_run"]},
     "cron-alert-policy-sync.yml": {"selection": "cron_alert_policy", "image": "monitoring-slack", "terraform_prerequisites": ["ingestion_iam", "artifact_registry_iam"], "record": true, "events": ["schedule", "workflow_run"]},
     "wdpa-monthly-build.yml": {"record": "wdpa-monthly-build", "events": ["schedule", "workflow_run"]},
+    "python-sdk.yml": {"events": ["workflow_run"]},
     "publish-typescript-sdk.yml": {"record": "typescript-sdk", "events": ["schedule", "workflow_run", "workflow_dispatch"]},
     "catalog-web-deploy.yml": {"record": "catalog-web", "events": ["schedule", "workflow_run", "workflow_dispatch"], "publication_jobs": ["Build and publish catalog web"]},
     "prod-terraform-state-reconcile.yml": {"events": ["schedule", "workflow_run"]},

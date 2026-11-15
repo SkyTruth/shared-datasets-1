@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from threading import Barrier, Lock
@@ -1027,7 +1028,10 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
     commands = {suite: [args for args, _ in preflight.suite_commands(suite, source, validation, tmp_path / suite)]
                 for suite in validation["suites"]}
     assert commands == {
-        "lint": [["git", "diff", "--check", base, validation["tested_sha"]]],
+        "lint": [
+            [sys.executable, "scripts/python_sdk_release.py", "check", "--base", base, "--head", validation["tested_sha"]],
+            ["git", "diff", "--check", base, validation["tested_sha"]],
+        ],
         "tests": [
             ["gitleaks", "git", "--redact", "--log-opts=HEAD", "."],
             ["uv", "sync", "--locked", "--no-dev"],

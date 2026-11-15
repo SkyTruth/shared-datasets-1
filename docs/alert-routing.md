@@ -29,9 +29,12 @@ permits (5% by default). Additions never offset losses in either job. New loss
 holds use `objects_lost`; Slack requests name the lost count, published count and
 limit with the asset-specific review command. Older `geometry_count_drop` holds
 retain their reason and remain reviewable. [MPAtlas hold review](../ingestion/mpatlas_monthly/README.md#review-a-held-release)
-uses the shared preview workflow and immutable approval PR. A normal held run
-exits zero; delivery failures retain the claim and use existing job-failure
-coverage. Scheduler checks continue. A hold is cleared
+uses the shared preview workflow and immutable approval PR. A held run with a
+confirmed notification exits zero. `sending`/`unknown` notification state makes
+each later scheduled check fail without reposting, using existing job-failure
+coverage until reviewed promotion clears the hold. Investigate with `status`,
+inspect Slack, and follow `prepare-plan` → immutable reviewed PR → protected
+`resolve` for a retained candidate. Scheduler checks continue. A hold is cleared
 only after the immutable approved candidate is published and verified; Slack
 delivery or a healthy subsequent download cannot clear it.
 

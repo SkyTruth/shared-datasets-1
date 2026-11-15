@@ -171,7 +171,11 @@ def test_one_alert_claim_survives_delivery_failure_and_repeated_checks(fails):
                 gate.notify()
         with loss.Guard(bucket) as again:
             assert again.held
-            again.notify()
+            if fails:
+                with pytest.raises(loss.SourceLossError, match="delivery is unconfirmed"):
+                    again.notify()
+            else:
+                again.notify()
             assert again.state["hold"]["notification"] == ("unknown" if fails else "sent")
         assert send.call_count == 1
 

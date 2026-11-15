@@ -75,6 +75,12 @@ failure never releases the hold and propagates as a job failure through existing
 monitoring. The control object is the authority for investigation, even if no
 Slack post was delivered. This decision alert is separate from editable GitHub
 workflow incident notifications.
+An unconfirmed `sending`/`unknown` delivery makes every subsequent scheduled
+check fail without reposting, preserving the execution-failure alert until a
+reviewed promotion clears the hold. Start with `status` and inspect Slack;
+an authorized operator can post the request manually if it is confirmed missing.
+For a retained candidate, continue through `prepare-plan`, the immutable reviewed
+PR and protected `resolve`; never mark a notification sent to unblock a job.
 
 Only Google's terminal execution evidence permits reclaiming an interrupted
 Cloud Run claim. The runtime has viewer access on the EAMLIS job only. A missing,

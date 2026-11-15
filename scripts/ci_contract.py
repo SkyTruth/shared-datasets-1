@@ -99,7 +99,7 @@ NATIVE_TESTS = (
 # roots so a new command or nested composite changes the contract immediately.
 CONTRACT_REQUIRED = {
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
-    ".github/terraform-targets.json",
+    ".github/terraform-targets.json", ".github/action-pins.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
 }

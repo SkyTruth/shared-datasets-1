@@ -1,4 +1,5 @@
 """Execute the shipped review callback without candidate code or cloud credentials."""
+from scripts.action_pins import pinned
 import json
 from pathlib import Path
 import subprocess
@@ -41,7 +42,7 @@ def test_review_refresh_targets_only_exact_head_gate_and_revokes_dismissed_appro
     job = workflow['jobs']['refresh']
     assert job['timeout-minutes'] == 5
     assert not {'environment', 'secrets', 'permissions'} & job.keys()
-    assert len(job['steps']) == 1 and job['steps'][0]['uses'] == 'actions/github-script@v7'
+    assert len(job['steps']) == 1 and job['steps'][0]['uses'] == pinned('actions/github-script@v7')
     script = job['steps'][0]['with']['script']
     harness = r'''
 const assert = require('node:assert/strict');

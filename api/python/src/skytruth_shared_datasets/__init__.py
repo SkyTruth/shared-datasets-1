@@ -1,5 +1,6 @@
 """Resolve SkyTruth shared dataset catalog entries to current data files."""
 
+from ._version import __version__
 from .catalog import (
     DEFAULT_CATALOG_GS_URI,
     DEFAULT_CATALOG_CDN_BASE_URL,
@@ -24,6 +25,7 @@ from .catalog import (
 
 
 __all__ = [
+    "__version__",
     "DEFAULT_CATALOG_GS_URI",
     "DEFAULT_CATALOG_CDN_BASE_URL",
     "DEFAULT_CATALOG_URL",

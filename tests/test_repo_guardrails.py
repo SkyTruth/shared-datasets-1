@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from scripts.action_pins import pinned
 import tempfile
 import subprocess
 import unittest
@@ -344,8 +345,8 @@ class RepoGuardrailsTests(unittest.TestCase):
                 "jobs:\n"
                 "  unsafe:\n"
                 "    steps:\n"
-                "      - uses: actions/checkout@v4\n"
-                "      - uses: google-github-actions/auth@v2\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
+                "      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed\n"
             )
 
             errors = repo_guardrails.check_workflow_boundaries(root)
@@ -368,10 +369,10 @@ class RepoGuardrailsTests(unittest.TestCase):
                 "      - name: Validate main ref\n"
                 "        run: |\n"
                 "          if [[ \"${GITHUB_REF}\" != \"refs/heads/main\" ]]; then exit 1; fi\n"
-                "      - uses: actions/checkout@v4\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
                 "        with:\n"
                 "          ref: main\n"
-                "      - uses: google-github-actions/auth@v2\n"
+                "      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed\n"
             )
 
             errors = repo_guardrails.check_workflow_boundaries(root)
@@ -390,8 +391,8 @@ class RepoGuardrailsTests(unittest.TestCase):
                     '  exit 1',
                     'fi',
                 ])},
-                {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}"}},
-                {"uses": "google-github-actions/auth@v2"},
+                {"uses": pinned('actions/checkout@v4'), "with": {"ref": "${{ github.workflow_sha }}"}},
+                {"uses": pinned('google-github-actions/auth@v2')},
             ]}},
         }
 
@@ -524,14 +525,14 @@ class RepoGuardrailsTests(unittest.TestCase):
                 "          PREVIEW_SOURCE_REF: ${{ github.ref }}\n"
                 "        run: |\n"
                 "          echo \"Select the branch or tag to deploy from the workflow branch dropdown.\"\n"
-                "      - uses: actions/checkout@v4\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
                 "        with:\n"
                 "          ref: main\n"
-                "      - uses: actions/checkout@v4\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
                 "        with:\n"
                 "          ref: ${{ github.ref }}\n"
                 "          path: preview-source\n"
-                "      - uses: google-github-actions/auth@v2\n"
+                "      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed\n"
             )
 
             errors = repo_guardrails.check_workflow_boundaries(root)
@@ -556,13 +557,13 @@ class RepoGuardrailsTests(unittest.TestCase):
                 "          PREVIEW_SOURCE_REF: ${{ github.ref }}\n"
                 "        run: |\n"
                 "          echo \"Select the branch or tag to deploy from the workflow branch dropdown.\"\n"
-                "      - uses: actions/checkout@v4\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
                 "        with:\n"
                 "          ref: main\n"
-                "      - uses: actions/checkout@v4\n"
+                "      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n"
                 "        with:\n"
                 "          ref: ${{ github.ref }}\n"
-                "      - uses: google-github-actions/auth@v2\n"
+                "      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed\n"
             )
 
             errors = repo_guardrails.check_workflow_boundaries(root)

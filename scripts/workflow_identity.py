@@ -34,6 +34,7 @@ WORKFLOW_NAMES = {
     'prod-terraform-state-reconcile.yml': ('Prod Terraform state reconciliation',),
     'prod-terraform-target-apply.yml': ('Infrastructure / Production Terraform target apply', 'Prod Terraform target apply'),
     'publish-dataset.yml': ('Data / Approved mutation', 'Approved dataset mutation'),
+    'python-sdk.yml': ('SDK / Python releases',),
     'publish-typescript-sdk.yml': ('SDK / Publish TypeScript', 'Publish TypeScript SDK'),
     'release-index-rebuild.yml': ('Catalog / Release index rebuild', 'Release index rebuild'),
     'repo-functionality-alert.yml': ('Alerts / Repository functionality', 'Repo functionality alert'),

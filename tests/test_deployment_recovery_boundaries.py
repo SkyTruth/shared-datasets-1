@@ -1,4 +1,5 @@
 """Recovery consumes executor data through trusted code and read-only identity."""
+from scripts.action_pins import pinned
 import json
 import os
 from pathlib import Path
@@ -20,12 +21,12 @@ def recovery_steps():
 
 def test_recovery_preserves_trusted_checkout_and_never_authenticates_as_deployer():
     steps = recovery_steps()
-    checkouts = [s['with'] for s in steps if s.get('uses') == 'actions/checkout@v4']
+    checkouts = [s['with'] for s in steps if s.get('uses') == pinned('actions/checkout@v4')]
     assert len(checkouts) == 2
     assert checkouts[0]['ref'] == '${{ github.workflow_sha }}'
     assert checkouts[1] == {'ref': '${{ steps.original.outputs.executor_sha }}', 'path': 'original-executor',
                             'fetch-depth': 0, 'persist-credentials': False}
-    auth = [s for s in steps if s.get('uses') == 'google-github-actions/auth@v2']
+    auth = [s for s in steps if s.get('uses') == pinned('google-github-actions/auth@v2')]
     assert len(auth) == 1
     assert auth[0]['with']['service_account'] == 'shared-datasets-recovery@shared-datasets-1.iam.gserviceaccount.com'
     assert auth[0]['with']['workload_identity_provider'] == '${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}'

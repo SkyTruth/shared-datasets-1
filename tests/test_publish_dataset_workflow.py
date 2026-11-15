@@ -1,3 +1,4 @@
+from scripts.action_pins import pinned
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -145,7 +146,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertEqual(workflow["permissions"], {})
         self.assertEqual(route["permissions"], {"pull-requests": "read"})
         self.assertEqual(len(route["steps"]), 1)
-        self.assertEqual(route["steps"][0]["uses"], "actions/github-script@v7")
+        self.assertEqual(route["steps"][0]["uses"], pinned('actions/github-script@v7'))
         self.assertNotIn("secrets.", str(route))
         self.assertNotIn("checkout", str(route))
         self.assertEqual(alert["needs"], "route")

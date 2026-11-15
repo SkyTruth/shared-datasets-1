@@ -1,7 +1,7 @@
 ---
 title: SkyTruth Shared Datasets Consumer Guide
 description: Routing guide for choosing the Python or TypeScript shared-datasets API, catalog access surface, and PMTiles access pattern.
-last_updated: 2026-05-29
+last_updated: 2026-11-15
 audience: SkyTruth application developers, data pipeline owners, map frontend maintainers, and consumer-integration agents
 ---
 
@@ -435,7 +435,7 @@ catalog refresh or latest substitution occurs when the code runs.
 Install the SDK once in your project:
 
 ```bash
-uv pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/refs/heads/main.zip#subdirectory=api/python"
+uv pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/refs/tags/python-sdk-v0.3.1.zip#subdirectory=api/python"
 # Add the reader used by your example, e.g. geopandas for FGB or rasterio for COG.
 npm install @skytruth/shared-datasets maplibre-gl@5.9.0 pmtiles@4.3.0
 ```

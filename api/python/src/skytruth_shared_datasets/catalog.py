@@ -19,13 +19,15 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from ._version import __version__
+
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_CATALOG_GS_URI = f"gs://{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_CATALOG_CDN_BASE_URL = "https://tiles.skytruth.org"
 DEFAULT_CATALOG_URL = f"{DEFAULT_CATALOG_CDN_BASE_URL}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 RELEASE_INDEX_PREFIX = "_catalog/releases"
-USER_AGENT = "skytruth-shared-datasets/0.1"
+USER_AGENT = f"skytruth-shared-datasets/{__version__}"
 AUTHENTICATED_GCS_HINT = (
     "Use Application Default Credentials (ADC) with a runtime service account "
     "that has roles/storage.objectViewer on gs://skytruth-shared-datasets-1; "

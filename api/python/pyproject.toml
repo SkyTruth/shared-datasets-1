@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools==84.2.1", "wheel==0.48.0", "packaging==26.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "skytruth-shared-datasets"
-version = "0.3.0"
+dynamic = ["version"]
 description = "Tiny resolver SDK for SkyTruth shared dataset catalog entries."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,3 +21,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 skytruth_shared_datasets = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = {attr = "skytruth_shared_datasets._version.__version__"}
