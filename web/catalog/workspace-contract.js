@@ -1,6 +1,7 @@
 // Portable contract v1. See docs/standards/workspace-snapshot-v1.md.
 // This module is also compiled into the TypeScript SDK; it has no browser globals.
 export const SNAPSHOT_MAX_BYTES = 1024 * 1024;
+export const METADATA_DEFAULT_MAX_COMPRESSED_BYTES = 24 * 1024 * 1024;
 const formats = {fgb: /\.fgb$/, csv: /\.csv$/, geojson: /\.geojson$/, ndgeojson: /\.(ndgeojson|geojsonl)$/, cog: /\.(tif|tiff)$/, pmtiles: /\.pmtiles$/, metadata: /\.metadata(?:\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*)?\.ndjson\.gz$/, schema: /\.schema\.json$/};
 const provenanceKeys = ['title', 'citation', 'source', 'source_url', 'license', 'notes', 'status', 'lifecycle_reason', 'lifecycle_date', 'successor_asset_slug', 'consumer_guidance', 'source_version', 'release_index_uri', 'release_index_generation', 'release_index_updated_at', 'identity_contract'];
 const identityKeys = ['strategy', 'source_fields', 'generated_id_type', 'assignment_key', 'feature_id_column', 'geometry_hash_column', 'properties_hash_column'];

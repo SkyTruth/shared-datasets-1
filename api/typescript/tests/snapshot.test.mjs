@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {test} from 'node:test';
 import ts from 'typescript';
-import {validateWorkspaceSnapshot, resolveSnapshotLayer, fetchSnapshotMetadata} from '../dist/index.js';
+import {validateWorkspaceSnapshot, resolveSnapshotLayer, fetchSnapshotMetadata, DEFAULT_METADATA_LIMITS} from '../dist/index.js';
 import {authorizeSnapshotArtifact} from '../dist/server.js';
 import {captureWorkspace, pythonSnippet, typescriptSnippet} from '../../../web/catalog/workspace.js';
 import {selectReleaseReference} from '../../../web/catalog/release-reference.js';
@@ -119,5 +119,24 @@ test('generated TypeScript has valid syntax with quotes, newlines, unicode, and 
     assert(!code.includes('provenance'));
     assert.equal(pythonSnippet(snapshot).split('\n').length, 4);
     assert(!code.includes('@skytruth/shared-datasets/server";'));
+  }
+});
+
+test('generated map examples omit oversized metadata and retain exact tiles', async () => {
+  for (const size of [DEFAULT_METADATA_LIMITS.maxCompressedBytes, DEFAULT_METADATA_LIMITS.maxCompressedBytes + 1, 70_215_228]) {
+    const snapshot = clone(corpus.snapshot);
+    snapshot.datasets[0].artifacts.find(a => a.role === 'metadata').size = size;
+    const code = typescriptSnippet(snapshot);
+    const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+    const reference = await new AsyncFunction('showDataset', code.replace(/^import .*;$/gm, '') + '\nreturn dataset;')(
+      async (container, reference) => {assert.equal(container, 'map'); return reference;});
+    assert(reference.tiles.endsWith('#101'));
+    if (size > DEFAULT_METADATA_LIMITS.maxCompressedBytes) {
+      assert.equal(reference.metadata, null);
+      assert(code.includes('feature-metadata-api.md'));
+    } else {
+      assert(reference.metadata.endsWith('#102'));
+      assert(!code.includes('feature-metadata-api.md'));
+    }
   }
 });

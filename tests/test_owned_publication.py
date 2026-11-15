@@ -107,7 +107,7 @@ def translation_plan(store, asset):
 
 @pytest.mark.parametrize("asset", [sea_ice.ASSET, wdpa.ASSETS[0]], ids=["sea-ice", "wdpa"])
 def test_success_under_source_lag_indexes_attempt_and_release_separately(asset, tmp_path, monkeypatch):
-    monkeypatch.setattr("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+    monkeypatch.setattr("ingestion.common.publication_bundle.vector_asset.validate_metadata_lookup_bundle",
                         lambda *args: SimpleNamespace(valid=True, errors=()))
     publisher, store = publisher_fixture(asset)
     attempt = DATE + dt.timedelta(days=8)
@@ -129,7 +129,7 @@ def test_success_under_source_lag_indexes_attempt_and_release_separately(asset, 
 
 class OwnedPublicationTests(unittest.TestCase):
     def setUp(self):
-        native = mock.patch("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle", return_value=SimpleNamespace(valid=True, errors=()))
+        native = mock.patch("ingestion.common.publication_bundle.vector_asset.validate_metadata_lookup_bundle", return_value=SimpleNamespace(valid=True, errors=()))
         self.native = native.start()
         self.addCleanup(native.stop)
 

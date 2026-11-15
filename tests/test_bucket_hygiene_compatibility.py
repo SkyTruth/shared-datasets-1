@@ -9,7 +9,8 @@ import pytest
 
 from ingestion.common import publication
 from ingestion.eamlis_monthly import identity_state
-from scripts import compare_releases, gcs_asset, publish_workflow, release_feature_model as model
+from ingestion.common import release_feature_model as model
+from scripts import compare_releases, gcs_asset, publish_workflow
 from tests.test_compliance_audit import audit, blob_info, download_from
 
 

@@ -7,7 +7,7 @@ from unittest import mock
 
 from ingestion.common import feature_metadata
 from release_streaming_helpers import write_generated_release, synthetic_baseline
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 VALID_HASH_A = "sha256:" + "a" * 64

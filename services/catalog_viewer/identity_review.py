@@ -18,7 +18,7 @@ from google.auth.exceptions import DefaultCredentialsError
 
 from ingestion.common import decision_events as wire, publication as p
 from ingestion.wdpa_monthly import identity_review as evidence
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from services.http_base import (
     authenticated_user_email,
     email_domain_allowed,

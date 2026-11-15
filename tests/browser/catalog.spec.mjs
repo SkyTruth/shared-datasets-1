@@ -1048,7 +1048,17 @@ test('inline dataset examples are short, copyable and execute a real map integra
   await testInfo.attach('generated-python.py', {body: python, contentType: 'text/x-python'});
   await testInfo.attach('generated-typescript.ts', {body: code, contentType: 'text/plain'});
   const compiledCode = ts.transpileModule(code.replace(/^import .*;$/gm, ''), {compilerOptions:{target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext}}).outputText;
-  const generated = await page.evaluate(async code => {
+  let releaseMetadata;
+  const metadataHeld = new Promise(resolve => {releaseMetadata = resolve;});
+  let metadataRequested = false;
+  const holdMetadata = async route => {
+    if (route.request().method() === 'HEAD') return route.fallback();
+    metadataRequested = true;
+    await metadataHeld;
+    return route.fallback();
+  };
+  await page.route(/\.metadata\.ndjson\.gz\?generation=202$/, holdMetadata);
+  const pendingIntegration = page.evaluate(async code => {
     const {showDataset} = await import('/sdk/maplibre.js');
     const container = document.createElement('div'); container.id='map'; container.style.height='400px'; document.body.append(container);
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
@@ -1057,6 +1067,14 @@ test('inline dataset examples are short, copyable and execute a real map integra
     window.generatedIntegration = result;
     return {ids:[...result.records.keys()],tileUrl:result.layer.tileUrl,metadataUrl:result.layer.metadata.url};
   }, compiledCode);
+  try {
+    await expect.poll(() => metadataRequested).toBe(true);
+    await expect(page.locator('#map canvas.maplibregl-canvas')).toBeVisible();
+  } finally {
+    releaseMetadata();
+  }
+  const generated = await pendingIntegration;
+  await page.unroute(/\.metadata\.ndjson\.gz\?generation=202$/, holdMetadata);
   expect(generated.ids).toEqual(['b1', 'b2']);
   expect(generated.tileUrl).toContain('generation=201'); expect(generated.metadataUrl).toContain('generation=202');
   await expect.poll(() => page.evaluate(() => window.generatedIntegration.map.queryRenderedFeatures().map(f => f.properties.feature_id))).toContain('b2');

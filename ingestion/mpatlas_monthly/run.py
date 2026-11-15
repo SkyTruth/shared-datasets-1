@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 import datetime as dt
 import logging
 import os
@@ -18,11 +19,12 @@ from ingestion.common import feature_metadata as fm, vector_pipeline, source_fin
 from ingestion.common import lifecycle, published_baseline
 from ingestion.common.source_quality import MPATLAS as quality, SourceLossError
 from ingestion.common.gcs import GcsPublisher
+from ingestion.common.source_field_publication import SourceFieldPublication
 from ingestion.common.runtime import (
     configure_logging, download_file, parse_run_date, require_binary,
     run_command, run_job_main, sha256_file,
 )
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 LOGGER = logging.getLogger("mpatlas_monthly")
 SOURCE_URL = "https://guide.mpatlas.org/api/public/v4/zone/geojson/"
@@ -144,7 +146,7 @@ def prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
         lambda directory: _prepare_metadata(source, directory, run_date),
         files={"source": source}, result_type=None,
         code=("ingestion/mpatlas_monthly/run.py", "ingestion/common/feature_metadata.py",
-            "ingestion/common/publication_readiness.py", "scripts/release_feature_model.py"))
+            "ingestion/common/publication_readiness.py", "ingestion/common/release_feature_model.py"))
 
 
 def _prepare_metadata(source: Path, workdir: Path, run_date: dt.date):
@@ -201,7 +203,7 @@ def build_outputs(enriched: Path, records: list[dict[str, Any]], workdir: Path, 
         lambda directory: _build_outputs(enriched, records, directory, run_date),
         files={"source": enriched}, result_type=Outputs,
         code=("ingestion/mpatlas_monthly/run.py", "ingestion/common/feature_metadata.py",
-            "ingestion/common/runtime.py", "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py",
+            "ingestion/common/runtime.py", "scripts/pmtiles_zoom.py", "ingestion/common/release_feature_model.py",
             "scripts/vector_asset.py"))
 
 
@@ -233,7 +235,14 @@ class Refresh:
         self.publisher, self.workdir = publisher, workdir
         self.loss_limit = lifecycle.loss_limit(ASSET.slug)
 
+    @cached_property
+    def publication(self):
+        return SourceFieldPublication.from_runtime(self.publisher, ASSET)
+
     def resume(self, attempt: dt.date) -> dict[str, Any] | None:
+        recovered = self.publication.resume()
+        if recovered is not None:
+            return recovered
         existing = self.publisher.load_json(ASSET.run_record_object(attempt))
         if existing is None:
             self.publisher.assert_no_partial_release(ASSET, attempt)
@@ -284,17 +293,14 @@ class Refresh:
     def publish(self, built: lifecycle.Built, record: dict[str, Any]) -> dict[str, Any]:
         self.gate.check_publication()
         release = dt.date.fromisoformat(record["release_date"])
-        bundle = vector_pipeline.publish_vector_bundle(
-            publisher=self.publisher, asset=ASSET, run_date=release, outputs=self.outputs,
+        return self.publication.publish(run_date=release, outputs=self.outputs,
             object_metadata={"asset_slug": ASSET.slug, "run_date": release.isoformat(),
                              "source_sha256": record["source_sha256"],
                              "source_fingerprint_hash": record["source_fingerprint_hash"]},
             source_inputs=[{"uri": SOURCE_URL, "sha256": record["source_sha256"], "size": self.source.stat().st_size,
                             "source_fingerprint_hash": record["source_fingerprint_hash"], "tools": record["tools"]}],
             identity=model.build_identity_metadata(strategy="source_field", source_fields=["zone_id"]),
-        )
-        record.update(release_paths=bundle.release_paths, latest_paths=bundle.latest_paths, sha256=bundle.sha256)
-        return self.check_in(record)
+            record=record, baseline=self.gate.before)
 
     def check_in(self, record: dict[str, Any]) -> dict[str, Any]:
         self.publisher.write_run_record(asset=ASSET, run_date=dt.date.fromisoformat(record["run_date"]), payload=record)

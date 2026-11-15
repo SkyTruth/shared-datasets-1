@@ -65,7 +65,7 @@ module "mpatlas_monthly_job" {
   cpu                   = "4"
   memory                = "8Gi"
   timeout               = "3600s"
-  max_retries           = 0
+  max_retries           = 1
 
   secret_env = {
     SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id

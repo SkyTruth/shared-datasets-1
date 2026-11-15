@@ -18,7 +18,7 @@ from typing import Callable
 
 from ingestion.common.identity_index import DiskIdentityPlan, baseline_digest
 from ingestion.common.runtime import sha256_file
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 SCHEMA = "publication-readiness-v1"
 
@@ -26,7 +26,6 @@ SCHEMA = "publication-readiness-v1"
 def engine_digest():
     root = Path(__file__).resolve().parents[2]
     paths = sorted((root / "ingestion/common").glob("*.py"))
-    paths.append(root / "scripts/release_feature_model.py")
     digest = hashlib.sha256()
     for path in paths:
         digest.update(path.relative_to(root).as_posix().encode() + b"\0" + path.read_bytes())

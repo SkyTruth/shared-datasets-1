@@ -30,6 +30,16 @@ def test_new_cron_has_exact_deployment_scope_and_consumes_tested_image():
     assert "_catalog/releases/mpatlas-zone-assessments.json" in tf
 
 
+def test_deployed_mpatlas_can_resume_once_within_its_original_execution():
+    import hcl2
+    with (ROOT / "terraform/envs/prod/mpatlas_monthly.tf").open() as stream:
+        config = hcl2.load(stream, serialization_options=hcl2.utils.SerializationOptions(strip_string_quotes=True))
+    job = next(module['mpatlas_monthly_job'] for module in config['module'] if 'mpatlas_monthly_job' in module)
+    assert job['max_retries'] == 1
+    readme = (ROOT / 'ingestion/mpatlas_monthly/README.md').read_text()
+    assert 'one task retry' in readme and 'no task retries' not in readme
+
+
 @pytest.mark.parametrize("actions,image,allowed", [
     (["create"], "expected@sha256:abc", True),
     (["update"], "expected@sha256:abc", True),

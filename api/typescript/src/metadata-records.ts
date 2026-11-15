@@ -20,6 +20,7 @@ import {
   SharedDatasetReleaseFile,
   sharedDatasetArtifactUrlFromGsUri
 } from './artifact-url.js';
+import {METADATA_DEFAULT_MAX_COMPRESSED_BYTES} from './snapshot-contract.js';
 
 export type SharedDatasetMetadataRecord = {
   schema_version?: number;
@@ -61,10 +62,22 @@ export type SharedDatasetLayerOptions = SharedDatasetCatalogFetchOptions &
     fetchReleaseIndexJson?: FetchSharedDatasetCatalogJson;
   };
 
-export type FetchSharedDatasetMetadataBytes = (url: string) => Promise<ArrayBuffer>;
+export type FetchSharedDatasetMetadataBytes = (url: string, options?: {signal?: AbortSignal; maxBytes?: number}) => Promise<ArrayBuffer>;
+export const DEFAULT_METADATA_LIMITS = {maxCompressedBytes: METADATA_DEFAULT_MAX_COMPRESSED_BYTES, maxExpandedBytes: 128 * 1024 * 1024, maxRecords: 1_000_000};
+
+function metadataBudgetError(option: keyof typeof DEFAULT_METADATA_LIMITS) {
+  return new SharedDatasetCatalogResolutionError(`Metadata budget exceeded (${option}); increase ${option} or use the feature metadata lookup API`);
+}
 
 export type SharedDatasetMetadataRecordsOptions = {
   fetchBytes?: FetchSharedDatasetMetadataBytes;
+  signal?: AbortSignal;
+  maxCompressedBytes?: number;
+  maxExpandedBytes?: number;
+  maxRecords?: number;
+  expectedSize?: number | null;
+  expectedSha256?: string | null;
+  requireGzip?: boolean;
 };
 
 const defaultFetchJson: FetchSharedDatasetCatalogJson = async url => {
@@ -79,17 +92,47 @@ const defaultFetchJson: FetchSharedDatasetCatalogJson = async url => {
   return response.json();
 };
 
-const defaultFetchBytes: FetchSharedDatasetMetadataBytes = async url => {
-  if (!globalThis.fetch) {
-    throw new Error('No fetch implementation is available');
+const defaultFetchBytes: FetchSharedDatasetMetadataBytes = async (url, options) => {
+  const response = await globalThis.fetch(url, {signal: options?.signal, credentials: 'same-origin', cache: 'no-store'});
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const limit = options?.maxBytes ?? DEFAULT_METADATA_LIMITS.maxCompressedBytes;
+  if (Number(response.headers.get('content-length')) > limit) {
+    await response.body?.cancel();
+    throw metadataBudgetError('maxCompressedBytes');
   }
-
-  const response = await globalThis.fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return response.arrayBuffer();
+  if (!response.body) return new ArrayBuffer(0);
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  await readChunks(response.body, options?.signal, chunk => {
+    length += chunk.byteLength;
+    if (length > limit) throw metadataBudgetError('maxCompressedBytes');
+    chunks.push(chunk);
+  });
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {bytes.set(chunk, offset); offset += chunk.length;}
+  return bytes.buffer;
 };
+
+async function readChunks(stream: ReadableStream<Uint8Array>, signal: AbortSignal | undefined, accept: (chunk: Uint8Array) => void) {
+  signal?.throwIfAborted();
+  const reader = stream.getReader();
+  const cancel = () => {void reader.cancel(signal?.reason).catch(() => {});};
+  signal?.addEventListener('abort', cancel, {once: true});
+  let done = false;
+  try {
+    while (true) {
+      const item = await reader.read();
+      signal?.throwIfAborted();
+      if (item.done) {done = true; break;}
+      accept(item.value);
+    }
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    if (!done) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
 
 const resolveReleaseIndexUrl = (
   ref: SharedDatasetCatalogRef,
@@ -190,74 +233,79 @@ export const resolveSharedDatasetLayer = async (
   };
 };
 
-const isGzipBytes = (bytes: Uint8Array) =>
-  bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+const isGzipBytes = (bytes: Uint8Array) => bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
 
-const gunzipToText = async (bytes: Uint8Array) => {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new SharedDatasetCatalogResolutionError(
-      'Metadata sidecar is gzip-compressed and DecompressionStream is unavailable in this runtime'
-    );
+function addMetadataRecord(line: string, index: number, records: Map<string, SharedDatasetMetadataRecord>, maxRecords = Number.MAX_SAFE_INTEGER) {
+  const trimmedLine = line.trim();
+  if (!trimmedLine) return;
+  let parsed: unknown;
+  try {parsed = JSON.parse(trimmedLine);} catch (error) {
+    throw new SharedDatasetCatalogResolutionError(`Unable to parse metadata sidecar line ${index}: ${getErrorMessage(error)}`);
   }
-  const stream = new Blob([bytes as BlobPart])
-    .stream()
-    .pipeThrough(new DecompressionStream('gzip'));
-  return new Response(stream).text();
-};
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new SharedDatasetCatalogResolutionError(`Unable to parse metadata sidecar line ${index}: record must be a JSON object`);
+  const record = parsed as SharedDatasetMetadataRecord;
+  const featureId = typeof record.feature_id === 'string' ? record.feature_id.trim() : '';
+  if (!featureId) throw new SharedDatasetCatalogResolutionError(`Unable to parse metadata sidecar line ${index}: missing feature_id`);
+  if (records.has(featureId)) throw new SharedDatasetCatalogResolutionError(`Unable to parse metadata sidecar: duplicate feature_id ${featureId}`);
+  if (records.size >= maxRecords) throw metadataBudgetError('maxRecords');
+  records.set(featureId, record);
+}
 
-export const parseSharedDatasetMetadataRecords = (
-  ndjsonText: string
-): Map<string, SharedDatasetMetadataRecord> => {
+export const parseSharedDatasetMetadataRecords = (ndjsonText: string): Map<string, SharedDatasetMetadataRecord> => {
   const records = new Map<string, SharedDatasetMetadataRecord>();
-  ndjsonText.split('\n').forEach((line, index) => {
-    const trimmedLine = line.trim();
-    if (!trimmedLine) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmedLine);
-    } catch (error) {
-      throw new SharedDatasetCatalogResolutionError(
-        `Unable to parse metadata sidecar line ${index + 1}: ${getErrorMessage(error)}`
-      );
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new SharedDatasetCatalogResolutionError(
-        `Unable to parse metadata sidecar line ${index + 1}: record must be a JSON object`
-      );
-    }
-    const record = parsed as SharedDatasetMetadataRecord;
-    const featureId =
-      typeof record.feature_id === 'string' ? record.feature_id.trim() : '';
-    if (!featureId) {
-      throw new SharedDatasetCatalogResolutionError(
-        `Unable to parse metadata sidecar line ${index + 1}: missing feature_id`
-      );
-    }
-    if (records.has(featureId)) {
-      throw new SharedDatasetCatalogResolutionError(
-        `Unable to parse metadata sidecar: duplicate feature_id ${featureId}`
-      );
-    }
-    records.set(featureId, record);
-  });
+  let start = 0, line = 1;
+  for (let end = ndjsonText.indexOf('\n'); end >= 0; end = ndjsonText.indexOf('\n', start)) {
+    addMetadataRecord(ndjsonText.slice(start, end), line++, records);
+    start = end + 1;
+  }
+  addMetadataRecord(ndjsonText.slice(start), line, records);
   return records;
 };
 
-export const fetchSharedDatasetMetadataRecords = async (
-  url: string,
-  { fetchBytes = defaultFetchBytes }: SharedDatasetMetadataRecordsOptions = {}
-): Promise<Map<string, SharedDatasetMetadataRecord>> => {
+/** Bounded download and incremental NDJSON decoding. Custom loaders must honor
+ * their supplied signal/budget; their returned bytes are checked again here. */
+export const fetchSharedDatasetMetadataRecords = async (url: string, options: SharedDatasetMetadataRecordsOptions = {}): Promise<Map<string, SharedDatasetMetadataRecord>> => {
+  const limits = {...DEFAULT_METADATA_LIMITS};
+  for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
+    const value = options[key] ?? limits[key];
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${key} must be a positive safe integer`);
+    limits[key] = value;
+  }
+  options.signal?.throwIfAborted();
+  if (options.expectedSize != null && options.expectedSize > limits.maxCompressedBytes) throw metadataBudgetError('maxCompressedBytes');
   let buffer: ArrayBuffer;
   try {
-    buffer = await fetchBytes(url);
+    buffer = await (options.fetchBytes ?? defaultFetchBytes)(url, {signal: options.signal, maxBytes: limits.maxCompressedBytes});
   } catch (error) {
-    throw new SharedDatasetCatalogResolutionError(
-      `Unable to load shared dataset metadata sidecar: ${getErrorMessage(error)}`
-    );
+    options.signal?.throwIfAborted();
+    throw new SharedDatasetCatalogResolutionError(`Unable to load shared dataset metadata sidecar: ${getErrorMessage(error)}`);
+  }
+  options.signal?.throwIfAborted();
+  if (buffer.byteLength > limits.maxCompressedBytes) throw metadataBudgetError('maxCompressedBytes');
+  if (options.expectedSize != null && buffer.byteLength !== options.expectedSize) throw new SharedDatasetCatalogResolutionError('Metadata size mismatch');
+  if (options.expectedSha256 != null) {
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(x => x.toString(16).padStart(2, '0')).join('');
+    if (hash !== options.expectedSha256) throw new SharedDatasetCatalogResolutionError('Metadata SHA-256 mismatch');
   }
   const bytes = new Uint8Array(buffer);
-  const ndjsonText = isGzipBytes(bytes)
-    ? await gunzipToText(bytes)
-    : new TextDecoder('utf-8').decode(bytes);
-  return parseSharedDatasetMetadataRecords(ndjsonText);
+  const gzip = isGzipBytes(bytes);
+  if (options.requireGzip && !gzip) throw new SharedDatasetCatalogResolutionError('Captured metadata must be gzip NDJSON');
+  let stream = new Blob([bytes]).stream();
+  if (gzip) stream = stream.pipeThrough(new DecompressionStream('gzip'));
+  const records = new Map<string, SharedDatasetMetadataRecord>();
+  const decoder = new TextDecoder('utf-8', {fatal: true});
+  let expanded = 0, pending = '', line = 1;
+  await readChunks(stream, options.signal, chunk => {
+    expanded += chunk.byteLength;
+    if (expanded > limits.maxExpandedBytes) throw metadataBudgetError('maxExpandedBytes');
+    pending += decoder.decode(chunk, {stream: true});
+    let start = 0;
+    for (let end = pending.indexOf('\n'); end >= 0; end = pending.indexOf('\n', start)) {
+      addMetadataRecord(pending.slice(start, end), line++, records, limits.maxRecords);
+      start = end + 1;
+    }
+    pending = pending.slice(start);
+  });
+  addMetadataRecord(pending + decoder.decode(), line, records, limits.maxRecords);
+  return records;
 };

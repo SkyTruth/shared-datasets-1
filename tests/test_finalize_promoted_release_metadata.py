@@ -7,7 +7,7 @@ from unittest import mock
 from google.api_core.exceptions import PreconditionFailed
 
 from scripts import finalize_promoted_release_metadata as finalizer
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 
 ASSET = "example-asset"

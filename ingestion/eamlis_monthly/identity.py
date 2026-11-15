@@ -12,7 +12,7 @@ import re
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 CONTRACT = "eamlis-problem-key-v1"
 KIND_FIELD = "eamlis_record_kind"

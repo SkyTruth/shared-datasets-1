@@ -66,7 +66,8 @@ class FakeBlob:
         self.data = b""
         self.uploads = []
 
-    def reload(self) -> None:
+    def reload(self, *, if_generation_match=None) -> None:
+        self._check_generation(if_generation_match)
         if not self.exists:
             raise NotFound("not found")
 
@@ -84,6 +85,14 @@ class FakeBlob:
         self.reload()
         self._check_generation(if_generation_match)
         Path(filename).write_bytes(self.data)
+
+    def download_to_file(self, handle, *, if_generation_match):
+        handle.write(self.download_as_bytes(if_generation_match=if_generation_match))
+
+    def rewrite(self, source, *, token=None, if_generation_match, if_source_generation_match):
+        data = source.download_as_bytes(if_generation_match=if_source_generation_match)
+        self.upload_from_string(data, content_type=self.content_type, if_generation_match=if_generation_match)
+        return None, len(data), len(data)
 
     def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
         self._check_generation(if_generation_match)
@@ -664,7 +673,7 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
             self.assertEqual(output.identity_metadata["contract_id"], ids.CONTRACT)
             # Read the real ogr2ogr FGB output: integer coordinates become doubles.
             import geopandas as gpd
-            from scripts import release_feature_model as model
+            from ingestion.common import release_feature_model as model
             stored = gpd.read_file(output.fgb).set_index("feature_id")
             for record in output.sidecar_records:
                 row = stored.loc[record["feature_id"]]

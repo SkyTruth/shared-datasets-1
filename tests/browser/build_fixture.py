@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from ingestion.common import decision_events as wire
 from ingestion.wdpa_monthly import identity_review as review
 from services.monitoring_slack import decisions

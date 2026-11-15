@@ -24,7 +24,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts import feature_metadata_document_translate as documents  # noqa: E402
 from scripts import feature_metadata_localization as localization  # noqa: E402
-from scripts import release_feature_model, translation_local_io as local_io  # noqa: E402
+from ingestion.common import release_feature_model
+from scripts import translation_local_io as local_io
 
 MODEL = "jev-1.13.0"
 SCHEMA = "english_label_glossary_v1"

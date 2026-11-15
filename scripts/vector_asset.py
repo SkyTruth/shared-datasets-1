@@ -35,7 +35,7 @@ from scripts.pmtiles_zoom import (  # noqa: E402
     recommend_maxzoom,
     validate_detail_hint,
 )
-from scripts import release_feature_model  # noqa: E402
+from ingestion.common import release_feature_model
 
 WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

@@ -199,7 +199,7 @@ def validate_live(guard, plan):
     )
     # Keep the stored-resource metadata view separate from download headers.
     raw = quality.pinned(guard.bucket.client, evidence)
-    from scripts.release_feature_model import validate_release_manifest
+    from ingestion.common.release_feature_model import validate_release_manifest
 
     validate_release_manifest(
         json.loads(raw),

@@ -20,7 +20,8 @@ from google.api_core.exceptions import GoogleAPIError, NotFound, PreconditionFai
 
 from ingestion.common import release_index
 from ingestion.common.publication import PublicationError, require, split_uri
-from scripts import catalog_csv, compare_releases, feature_metadata_localization as localization, release_feature_model as model, slack_notify
+from ingestion.common import release_feature_model as model
+from scripts import catalog_csv, compare_releases, feature_metadata_localization as localization, slack_notify
 
 LOGGER = logging.getLogger(__name__)
 

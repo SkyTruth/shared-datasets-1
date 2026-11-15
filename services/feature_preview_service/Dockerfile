@@ -11,5 +11,9 @@ RUN python -m pip install --no-cache-dir \
 COPY api/python/src /app/api/python/src
 COPY scripts /app/scripts
 COPY services /app/services
+COPY ingestion/__init__.py /app/ingestion/__init__.py
+COPY ingestion/common/__init__.py ingestion/common/release_feature_model.py /app/ingestion/common/
+
+RUN python -c "import services.feature_preview_service.run"
 
 CMD ["python", "-m", "services.feature_preview_service.run"]

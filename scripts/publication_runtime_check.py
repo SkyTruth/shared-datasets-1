@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common import publication_readiness as readiness
 from ingestion.common.identity_index import DiskIdentityPlan
 from ingestion.common.stage_checkpoints import StageStore
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 
 

@@ -16,7 +16,7 @@ from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecord
 from ingestion.common.process_stream import feature_stream, pipe_commands
 from ingestion.wdpa_monthly.resources import prepare_scratch
 from ingestion.wdpa_monthly import resources
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def feature(key, x=1, **properties):

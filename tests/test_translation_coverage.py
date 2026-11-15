@@ -7,7 +7,8 @@ from unittest import mock
 
 import pytest
 
-from scripts import feature_metadata_localization as loc, release_feature_model as model
+from ingestion.common import release_feature_model as model
+from scripts import feature_metadata_localization as loc
 from scripts import translation_local_io
 from test_feature_metadata_localization import sidecar_record, write_translation_source, VALID_HASH_A
 

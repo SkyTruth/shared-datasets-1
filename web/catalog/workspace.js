@@ -1,4 +1,4 @@
-import {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES} from './workspace-contract.js';
+import {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES, METADATA_DEFAULT_MAX_COMPRESSED_BYTES} from './workspace-contract.js';
 import {captureArtifact, artifactGeneration, metadataFile, releaseFile} from './release-reference.js';
 export {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES};
 const identityKeys = ['strategy', 'source_fields', 'generated_id_type', 'assignment_key', 'feature_id_column', 'geometry_hash_column', 'properties_hash_column'];
@@ -48,6 +48,7 @@ export function typescriptSnippet(snapshot) {
   if (!tiles) return null;
   const metadata = dataset.artifacts.find(a => a.role === 'metadata' && a.requested_locale !== null)
     || dataset.artifacts.find(a => a.role === 'metadata');
+  const oversizedMetadata = metadata?.size > METADATA_DEFAULT_MAX_COMPRESSED_BYTES;
   const options = [];
   if (snapshot.bucket !== 'skytruth-shared-datasets-1') options.push(`bucket: ${JSON.stringify(snapshot.bucket)}`);
   if (dataset.access_tier !== 'public') options.push(`access: ${JSON.stringify(dataset.access_tier)}, authorizationUrl: "/api/snapshot-artifact"`);
@@ -55,7 +56,8 @@ export function typescriptSnippet(snapshot) {
     'import {showDataset} from "@skytruth/shared-datasets/maplibre";',
     'const dataset = await showDataset("map", {',
     `  tiles: ${JSON.stringify(pinnedUri(tiles))},`,
-    `  metadata: ${metadata ? JSON.stringify(pinnedUri(metadata)) : 'null'},`,
+    ...(oversizedMetadata ? ['  // Large attributes: use the feature lookup API (https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/feature-metadata-api.md).'] : []),
+    `  metadata: ${metadata && !oversizedMetadata ? JSON.stringify(pinnedUri(metadata)) : 'null'},`,
     `}${options.length ? `, {${options.join(', ')}}` : ''});`,
   ].join('\n');
 }

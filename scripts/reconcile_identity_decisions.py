@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common import decision_events as wire
 from scripts import dataset_mutation_authorization as auth
 from scripts import deployment_revision as deployment
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from services.monitoring_slack import decisions
 
 REPOSITORY = decisions.REPOSITORY

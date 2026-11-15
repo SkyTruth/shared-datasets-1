@@ -126,7 +126,7 @@ def source_refs(marker):
 
 
 def migration_inputs(client, baseline):
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     release = baseline["release"]
     files = release["files"]
     refs = [f for f in files if f["path"].endswith(".manifest.json")]

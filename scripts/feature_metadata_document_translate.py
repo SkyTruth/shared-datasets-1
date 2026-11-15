@@ -19,7 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import feature_metadata_localization, feature_metadata_machine_translate, release_feature_model, translation_local_io  # noqa: E402
+from ingestion.common import release_feature_model
+from scripts import feature_metadata_localization, feature_metadata_machine_translate, translation_local_io
 
 
 MANIFEST_SCHEMA = "feature_metadata_document_translation_manifest_v2"

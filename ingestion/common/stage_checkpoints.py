@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 
 from ingestion.common.runtime import sha256_file
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 SCHEMA = "publication-stage-v1"
 MARKERS = ("checkpoint.json", "checkpoint.sha256")

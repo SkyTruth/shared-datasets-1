@@ -14,7 +14,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from typer.testing import CliRunner
 
 from scripts import publish_release
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 from scripts.gcs_asset import app
 
 

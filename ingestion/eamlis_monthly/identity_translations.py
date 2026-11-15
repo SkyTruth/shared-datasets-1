@@ -10,7 +10,7 @@ import logging
 from ingestion.eamlis_monthly import identity, identity_state as state
 from ingestion.common.source_quality import EAMLIS as quality
 from scripts import feature_metadata_localization as localization
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def remap(ledger, records, translation_source, destination, *, fields, locales, provenance):

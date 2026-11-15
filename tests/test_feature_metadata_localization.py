@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 from scripts import feature_metadata_localization
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 
 VALID_HASH_A = "sha256:" + "a" * 64

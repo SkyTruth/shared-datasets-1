@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from scripts import compare_releases as compare
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from tests.comparison_fixtures import bundle, record, generated
 
 A, B = "2026-01-01", "2026-02-01"

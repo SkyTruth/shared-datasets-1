@@ -554,7 +554,8 @@ def test_extracted_release_commands_validate_real_serialized_artifacts(tmp_path,
     import gzip
     import struct
     from ingestion.common import feature_metadata
-    from scripts import ingestion_verification as verify, release_feature_model as model
+    from ingestion.common import release_feature_model as model
+    from scripts import ingestion_verification as verify
     target = "eamlis-monthly"
     slug, release = TARGETS[target]["asset_slug"], "2026-11-01"
     monkeypatch.setenv("TARGET", target)

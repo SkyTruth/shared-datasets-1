@@ -24,7 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import feature_metadata_localization as localization, release_feature_model as model, translation_local_io as local_io
+from ingestion.common import release_feature_model as model
+from scripts import feature_metadata_localization as localization, translation_local_io as local_io
 
 COLUMNS = (*localization.REQUIRED_TRANSLATION_COLUMNS, *localization.OPTIONAL_TRANSLATION_COLUMNS)
 
@@ -187,7 +188,7 @@ def index_checkpoint(*, sources, fields, locales, source_key_fields):
             locales=locales, source_key_fields=source_key_fields)
     return StageStore().run("translation-index", inputs, prepare, files=files, code=(
         "scripts/feature_metadata_translation_reuse.py", "scripts/feature_metadata_localization.py",
-        "scripts/release_feature_model.py", "scripts/translation_local_io.py"))
+        "ingestion/common/release_feature_model.py", "scripts/translation_local_io.py"))
 
 
 def open_memory(*, sources, fields, locales, source_key_fields, supplement=None):

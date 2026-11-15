@@ -225,7 +225,7 @@ def test_malformed_image_comparison_fails(paths):
         resolve_selection(paths)["production_image_targets"]
 
 
-@pytest.mark.parametrize("script", ["scripts/catalog_site.py", "scripts/release_feature_model.py", "scripts/compare_releases.py"])
+@pytest.mark.parametrize("script", ["scripts/catalog_site.py", "ingestion/common/release_feature_model.py", "scripts/compare_releases.py"])
 def test_browser_fixture_imports_and_script_calls_keep_browser_coverage(script):
     assert "browser" in resolve_selection([script])["suites"]
 
@@ -1012,7 +1012,7 @@ def test_docs_only_runs_lightweight_checks_through_the_real_runner(tmp_path, mon
     if defect is None:
         # Copy real producer code and inputs once; all three catalog runs share
         # this fixture and one process-owned dependency environment.
-        for directory in ("scripts", "catalog", "docs/assets", "web/catalog"):
+        for directory in ("scripts", "ingestion/common", "catalog", "docs/assets", "web/catalog"):
             shutil.copytree(ROOT / directory, source / directory, dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns("__pycache__"))
         for filename in ("pyproject.toml", "uv.lock", ".gitignore"):

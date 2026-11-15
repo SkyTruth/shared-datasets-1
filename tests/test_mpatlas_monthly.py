@@ -20,6 +20,13 @@ from scripts import slack_notify
 DAY = dt.date(2026, 11, 2)
 
 
+@pytest.fixture(autouse=True)
+def publication_context(monkeypatch):
+    from tests.test_publication import MemoryStore
+    monkeypatch.setattr(job.SourceFieldPublication, 'from_runtime', classmethod(lambda cls, publisher, asset:
+        cls(publisher, asset, execution_id='unit-execution', executor_sha='c' * 40, configuration={}, store=MemoryStore())))
+
+
 def feature(zone=1, geometry=None):
     return {"type": "Feature", "properties": {"zone_id": zone, "assessment_id": 100 + zone,
             "zone_name": "Example", "classes": {"fishing": ["none"]},
@@ -105,7 +112,7 @@ def test_unchanged_ingest_skips_build_and_publish_writing_only_checkin(tmp_path,
          mock.patch.object(job, "download_file", side_effect=download), \
          mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, {"published_rows": 1})) as prepare, \
          mock.patch.object(job, "build_outputs") as build, \
-         mock.patch.object(job.vector_pipeline, "publish_vector_bundle") as publish:
+         mock.patch.object(job.SourceFieldPublication, "publish") as publish:
         result = job.ingest(publisher, DAY, tmp_path)
     assert result["status"] == "skipped"
     assert result["source_fingerprint_hash"] == baseline.fingerprint_hash
@@ -244,7 +251,8 @@ def changed_ingest(tmp_path, published_zones, source_zones):
          mock.patch.object(job, "prepare_metadata", return_value=(tmp_path / "enriched", records, counts)), \
          mock.patch.object(job, "build_outputs", side_effect=lambda *args: fixture_outputs(tmp_path, records)), \
          mock.patch.object(job, "toolchain", return_value=TOOLS), \
-         mock.patch.object(job.vector_pipeline, "publish_vector_bundle", return_value=bundle) as publish, \
+         mock.patch.object(job.SourceFieldPublication, "publish", side_effect=lambda **kwargs:
+             {**kwargs["record"], "release_paths": bundle.release_paths, "latest_paths": bundle.latest_paths, "sha256": bundle.sha256}) as publish, \
          mock.patch.object(slack_notify, "notify"):
         return job.ingest(publisher, DAY, tmp_path), publisher, publish
 
@@ -258,7 +266,7 @@ def test_changed_source_publishes_a_record_with_tools_and_lost_zone_count(tmp_pa
     assert result["release_path"] == f"gs://{job.quality.BUCKET}/{job.ASSET.release_prefix(DAY)}/"
     publish.assert_called_once()
     assert publish.call_args.kwargs["source_inputs"][0]["tools"] == TOOLS
-    publisher.write_run_record.assert_called_once_with(asset=job.ASSET, run_date=DAY, payload=result)
+    publisher.write_run_record.assert_not_called()  # the publication transaction owns run and index writes
 
 
 def test_lost_zones_beyond_the_limit_stop_before_any_publication(tmp_path):

@@ -5,6 +5,8 @@ import io
 import json
 import unittest
 
+import pytest
+
 from services.feature_preview_service import run
 
 
@@ -613,3 +615,72 @@ def test_retained_historical_sidecar_reads_exact_generation_or_fails():
             assert payload["sidecar_generation"] == 1001
             assert payload["items"][0]["properties"]["name"] == "Old retained"
         assert current.download_count == 0
+
+
+def test_sidecar_cache_bounds_retained_records_and_serialized_bytes(monkeypatch):
+    index = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, max_cache_records=2, max_cache_bytes=700)
+    loads = []
+    def load(**kwargs):
+        loads.append(kwargs['feature_ids'])
+        return {key: {'feature_id': key, 'properties': {'text': 'x' * 100}} for key in kwargs['feature_ids']}
+    monkeypatch.setattr(index, '_load_sidecar_records', load)
+    for generation in range(1, 12):
+        result = index.lookup('wdpa-marine', '2026-06-01', ['1', '2', '3'], sidecar_uri=SIDECAR_URI, sidecar_generation=generation)
+        assert set(result.documents) == {'1', '2', '3'}
+        assert len(index._cache) <= 2 and index._cache_bytes <= 700
+    assert len(loads) == 11
+
+
+def test_slow_sidecar_miss_does_not_block_an_unrelated_cached_lookup(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    index = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET)
+    entered, release = Event(), Event()
+    def load(**kwargs):
+        if kwargs['asset_slug'] == 'slow':
+            entered.set()
+            assert release.wait(5)
+        return {key: {'feature_id': key} for key in kwargs['feature_ids']}
+    monkeypatch.setattr(index, '_load_sidecar_records', load)
+    def lookup(slug):
+        return index.lookup(slug, '2026-06-01', ['1'], sidecar_uri=SIDECAR_URI, sidecar_generation=1)
+    lookup('fast')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        slow = pool.submit(lookup, 'slow')
+        try:
+            assert entered.wait(2)
+            assert pool.submit(lookup, 'fast').result(timeout=1).documents['1']['feature_id'] == '1'
+        finally:
+            release.set()
+        slow.result(timeout=2)
+
+
+@pytest.mark.parametrize("fail_first", [False, True])
+def test_concurrent_readers_share_a_generation_load_and_failure_releases_waiters(monkeypatch, fail_first):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    index = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET)
+    entered, release = Event(), Event()
+    loads = []
+    def load(**kwargs):
+        loads.append(kwargs)
+        entered.set()
+        assert release.wait(5)
+        if fail_first and len(loads) == 1:
+            raise RuntimeError("sidecar unavailable")
+        return {key: {'feature_id': key} for key in kwargs['feature_ids']}
+    monkeypatch.setattr(index, '_load_sidecar_records', load)
+    def lookup():
+        return index.lookup('wdpa-marine', '2026-06-01', ['1'], sidecar_uri=SIDECAR_URI, sidecar_generation=1)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        first = pool.submit(lookup)
+        assert entered.wait(2)
+        rest = [pool.submit(lookup) for _ in range(3)]
+        release.set()
+        if fail_first:
+            with pytest.raises(RuntimeError, match="sidecar unavailable"):
+                first.result(timeout=2)
+        else:
+            assert first.result(timeout=2).documents['1']['feature_id'] == '1'
+        assert all(future.result(timeout=2).documents['1']['feature_id'] == '1' for future in rest)
+    assert len(loads) == (2 if fail_first else 1) and not index._loading

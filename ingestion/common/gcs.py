@@ -15,7 +15,7 @@ from google.cloud import storage
 from ingestion.common import release_index
 from ingestion.common.feature_metadata import VECTOR_BUNDLE_SUFFIXES
 from ingestion.common.runtime import content_type_for
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 
 LOGGER = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 
 from scripts import validate_feature_metadata as validator
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 
 def write_sidecar(path: Path, count: int = 3) -> None:

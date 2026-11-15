@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 from ingestion.common import publication as p
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 CONTRACT_ID = "generated-2026-v1"

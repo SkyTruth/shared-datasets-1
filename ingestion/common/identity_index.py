@@ -15,7 +15,7 @@ from contextlib import contextmanager
 import tempfile
 from pathlib import Path
 
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def baseline_digest(baseline, *, match_properties=True):

@@ -12,9 +12,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.ingestion_targets import TARGETS
-from scripts.release_feature_model import (
-    read_metadata_sidecar_bytes, validate_release_manifest, validate_release_schema, validate_sidecar_records,
-)
+from ingestion.common.release_feature_model import read_metadata_sidecar_bytes, validate_release_manifest, validate_release_schema, validate_sidecar_records
 
 
 def release_contract():

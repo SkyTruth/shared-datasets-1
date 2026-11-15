@@ -17,7 +17,8 @@ from ingestion.eamlis_monthly import run as eamlis
 from ingestion.common.source_quality import EAMLIS as quality
 from scripts import compare_releases, dataset_mutation_authorization as auth
 from scripts import eamlis_identity_audit as audit, eamlis_identity_transition as transition
-from scripts import feature_metadata_localization as localization, release_feature_model as model
+from ingestion.common import release_feature_model as model
+from scripts import feature_metadata_localization as localization
 from scripts import reviewed_dataset_plan as plans, slack_notify
 from scripts import eamlis_source_loss_review as source_review, publish_workflow, gcs_asset
 from scripts import finalize_promoted_release_metadata as finalizer

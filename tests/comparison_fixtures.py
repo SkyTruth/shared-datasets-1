@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def record(feature_id, release, *, name="value", geometry=None, extra=None):

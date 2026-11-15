@@ -299,7 +299,7 @@ behavior or create a standing autonomous exception.
 
 ## Sources of truth and worked decisions
 
-- Runtime definitions and safeguards: [release feature model](../../scripts/release_feature_model.py),
+- Runtime definitions and safeguards: [release feature model](../../ingestion/common/release_feature_model.py),
   especially `classify_identity_matches`, `find_identity_ambiguities`,
   `identity_decision_legality`, `validate_identity_resolutions` and
   `assign_generated_feature_ids`; [common feature metadata](../../ingestion/common/feature_metadata.py)

@@ -10,7 +10,7 @@ import zlib
 from google.api_core.exceptions import GoogleAPIError
 
 from ingestion.common import release_index, source_quality
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 class BaselineContractError(ValueError):

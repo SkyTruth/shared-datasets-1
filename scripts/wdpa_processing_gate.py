@@ -43,7 +43,7 @@ def source_paths(inventory):
         "ingestion/wdpa_monthly/Dockerfile",
         ".github/docker/runtime-dependencies/pylock.wdpa.toml",
         ".github/docker/runtime-dependencies/uv.toml",
-        "scripts/release_feature_model.py", "scripts/feature_metadata_translation_reuse.py",
+        "ingestion/common/release_feature_model.py", "scripts/feature_metadata_translation_reuse.py",
         "scripts/feature_metadata_localization.py", "scripts/local_wdpa_sample.py",
         "scripts/local_ingestion_smoke.py", "docs/wdpa-processing-public-inputs.json",
         "scripts/translation_local_io.py",

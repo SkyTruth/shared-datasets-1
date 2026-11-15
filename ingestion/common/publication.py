@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol
 
-from scripts.release_feature_model import validate_identity_contract
+from ingestion.common.release_feature_model import validate_identity_contract
 
 VERSION = 1
 FINALIZATION_VERSION = "finalize-promoted-release-v1"
