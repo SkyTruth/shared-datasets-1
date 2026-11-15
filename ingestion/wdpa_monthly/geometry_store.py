@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ingestion.common import feature_metadata
 from ingestion.common.runtime import sha256_file
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def value_kind(value):

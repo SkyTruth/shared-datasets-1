@@ -87,6 +87,6 @@ def prepare(
             "ingestion/wdpa_monthly/geometry_store.py",
             "ingestion/common/feature_metadata.py",
             "ingestion/common/identity_index.py",
-            "scripts/release_feature_model.py",
+            "ingestion/common/release_feature_model.py",
         ),
     )

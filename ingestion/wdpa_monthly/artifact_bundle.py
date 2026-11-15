@@ -16,7 +16,7 @@ from google.cloud import storage
 from ingestion.common import publication as p
 from ingestion.wdpa_monthly.translations import LOCALES
 from ingestion.wdpa_monthly.source_fingerprint import retained_fingerprint
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 BUCKET = "skytruth-shared-datasets-1"
 PREFIX = "_scratch/wdpa-builds/"

@@ -10,7 +10,7 @@ import tempfile
 from ingestion.common import feature_metadata as fm, publication_readiness as readiness
 from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecords
 from ingestion.common.runtime import sha256_file
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def input_digest(path):

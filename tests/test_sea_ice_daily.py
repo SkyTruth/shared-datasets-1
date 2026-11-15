@@ -368,7 +368,7 @@ def daily(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sea_ice, "download_file", download)
     monkeypatch.setattr(sea_ice, "run_command", gdal)
-    monkeypatch.setattr("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle",
+    monkeypatch.setattr("ingestion.common.publication_bundle.vector_asset.validate_metadata_lookup_bundle",
                         lambda *args: SimpleNamespace(valid=True, errors=()))
 
     def build(**kwargs):

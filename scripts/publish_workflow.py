@@ -388,7 +388,7 @@ def command_promote(args: argparse.Namespace) -> int:
         promote_owned_translations(plan)
         return 0
     if row and row.get("translation_locales"):
-        from scripts import release_feature_model as model
+        from ingestion.common import release_feature_model as model
         # Validate all prepared coverage manifests before the first copy. The
         # reviewed source generations remain the authority for their bytes.
         for promotion in plan["promotions"]:

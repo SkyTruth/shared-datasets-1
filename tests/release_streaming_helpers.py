@@ -15,7 +15,7 @@ from typing import Any, Mapping, Sequence
 from unittest import mock
 
 from ingestion.common import feature_metadata
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def write_generated_release(

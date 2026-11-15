@@ -2,13 +2,15 @@ import maplibregl, {type LayerSpecification, type MapOptions} from 'maplibre-gl'
 import {PMTiles, Protocol} from 'pmtiles';
 import {DEFAULT_SHARED_DATASETS_BUCKET} from './artifact-url.js';
 import {resolveSnapshotLayer, fetchSnapshotMetadata,
-  type SnapshotArtifact, type SnapshotDataset, type SnapshotLayerOptions, type WorkspaceSnapshot} from './snapshot.js';
+  type SnapshotArtifact, type SnapshotDataset, type SnapshotLayer, type SnapshotLayerOptions, type WorkspaceSnapshot} from './snapshot.js';
+import {type SharedDatasetMetadataRecordsOptions} from './metadata-records.js';
 
 export type DatasetMapReference = {tiles: string; metadata?: string | null};
 export type DatasetMapOptions = SnapshotLayerOptions & {
   access?: SnapshotDataset['access_tier'];
   authorizationUrl?: string;
   mapOptions?: Omit<MapOptions, 'container' | 'style'>;
+  metadataOptions?: SharedDatasetMetadataRecordsOptions;
 };
 
 function parseReference(reference: string, role: 'canonical' | 'metadata'): {slug: string; release: string; artifact: SnapshotArtifact} {
@@ -21,7 +23,7 @@ function parseReference(reference: string, role: 'canonical' | 'metadata'): {slu
 }
 
 /** Resolve two exact objects without consulting a mutable catalog or release index. */
-export async function resolveDatasetMap(reference: DatasetMapReference, options: DatasetMapOptions = {}) {
+async function resolveDatasetLayer(reference: DatasetMapReference, options: DatasetMapOptions): Promise<SnapshotLayer> {
   const tiles = parseReference(reference.tiles, 'canonical');
   const metadata = reference.metadata ? parseReference(reference.metadata, 'metadata') : null;
   if (metadata && (metadata.slug !== tiles.slug || metadata.release !== tiles.release)) throw new Error('Tiles and metadata must belong to the same dataset release');
@@ -38,15 +40,21 @@ export async function resolveDatasetMap(reference: DatasetMapReference, options:
     if (!response.ok) throw new Error(`Dataset access failed: HTTP ${response.status}`);
     return response.json();
   } : undefined);
-  const layer = await resolveSnapshotLayer(snapshot, tiles.slug, {...options, bucket, authorizeArtifact});
-  const records = await fetchSnapshotMetadata(layer);
+  return resolveSnapshotLayer(snapshot, tiles.slug, {...options, bucket, authorizeArtifact});
+}
+
+/** Resolve and collect bounded metadata without constructing a map. */
+export async function resolveDatasetMap(reference: DatasetMapReference, options: DatasetMapOptions = {}) {
+  const layer = await resolveDatasetLayer(reference, options);
+  const records = await fetchSnapshotMetadata(layer, options.metadataOptions);
   return {layer, records};
 }
 
 let protocol: Protocol | null = null;
 /** Create a styled MapLibre map, fit its extent, and show matching metadata on click. */
 export async function showDataset(container: string | HTMLElement, reference: DatasetMapReference, options: DatasetMapOptions = {}) {
-  const {layer, records} = await resolveDatasetMap(reference, options);
+  const layer = await resolveDatasetLayer(reference, options);
+  const records = new Map<string, import('./metadata-records.js').SharedDatasetMetadataRecord>();
   const archive = new PMTiles(layer.tileUrl);
   const [metadata, header] = await Promise.all([archive.getMetadata(), archive.getHeader()]);
   const vectorLayers = metadata && typeof metadata === 'object' && 'vector_layers' in metadata ? metadata.vector_layers : null;
@@ -76,5 +84,18 @@ export async function showDataset(container: string | HTMLElement, reference: Da
     }
     new maplibregl.Popup().setLngLat(event.lngLat).setDOMContent(content).addTo(map);
   });
-  return {map, layer, records};
+  // Preserve the resolved return contract while letting MapLibre render tiles
+  // during the bounded metadata transfer instead of waiting to create the map.
+  const controller = new AbortController();
+  map.once('remove', () => controller.abort());
+  const signal = options.metadataOptions?.signal
+    ? AbortSignal.any([controller.signal, options.metadataOptions.signal]) : controller.signal;
+  try {
+    const loaded = await fetchSnapshotMetadata(layer, {...options.metadataOptions, signal});
+    for (const [id, record] of loaded) records.set(id, record);
+    return {map, layer, records};
+  } catch (error) {
+    if (!controller.signal.aborted) map.remove();
+    throw error;
+  }
 }

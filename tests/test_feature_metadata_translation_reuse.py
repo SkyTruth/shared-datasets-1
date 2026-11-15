@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 import unittest
 
-from scripts import feature_metadata_localization as loc, feature_metadata_translation_reuse as reuse, release_feature_model as model
+from ingestion.common import release_feature_model as model
+from scripts import feature_metadata_localization as loc, feature_metadata_translation_reuse as reuse
 from test_publication import publication_temp_directory
 
 

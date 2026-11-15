@@ -22,7 +22,7 @@ from typing import Callable, Mapping
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 POLICY = "feature-id-hashes-v1"
 RESULT_VERSION = 4

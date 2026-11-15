@@ -20,7 +20,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
 from scripts import catalog_csv
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 from scripts import vector_asset
 from scripts.raster_asset import validate_cog
 

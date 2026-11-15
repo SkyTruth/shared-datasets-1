@@ -8,6 +8,9 @@ Start with [AGENTS.md](AGENTS.md) for authority, Git, publication, and approval
 rules. Its [Source Map](AGENTS.md#source-map) identifies authoritative documents,
 and its [skill routing table](AGENTS.md#repo-local-skills) selects the workflow.
 
+See the [runtime architecture](docs/architecture.md) for release-rule, publication,
+validation and consumer boundaries.
+
 ## Repository layout
 
 | Path | Contents |

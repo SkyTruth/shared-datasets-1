@@ -14,7 +14,7 @@ from ingestion.common.publication_readiness import validate_ready_report
 from ingestion.common.publication_sources import input_digest
 from ingestion.common.runtime import sha256_file
 from ingestion.common.stage_checkpoints import REPO, StageStore, implementation, member
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def preflight(plan):

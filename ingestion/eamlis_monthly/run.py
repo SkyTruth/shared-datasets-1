@@ -483,7 +483,7 @@ def build_asset_output(
         extra={} if identity_reservation is None else {"reservation": identity_reservation},
         code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
             "ingestion/common/feature_metadata.py", "ingestion/common/runtime.py",
-            "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py", "scripts/vector_asset.py"))
+            "scripts/pmtiles_zoom.py", "ingestion/common/release_feature_model.py", "scripts/vector_asset.py"))
 
 
 def _prepare_metadata(source, extract, workdir, release_date, identity_reservation):
@@ -518,7 +518,7 @@ def prepare_metadata(source, extract, workdir, release_date, identity_reservatio
         lambda directory: _prepare_metadata(source, extract, directory, release_date, identity_reservation),
         files={"source": extract.geojson}, result_type=None,
         code=("ingestion/eamlis_monthly/run.py", "ingestion/eamlis_monthly/identity.py",
-            "ingestion/common/feature_metadata.py", "scripts/release_feature_model.py"))
+            "ingestion/common/feature_metadata.py", "ingestion/common/release_feature_model.py"))
 
 
 def _build_asset_output(

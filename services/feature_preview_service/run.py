@@ -10,13 +10,14 @@ import os
 import re
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 from services.http_base import (
     FEATURE_ID_RE,
     LOOKUP_RE,
@@ -153,10 +154,16 @@ class CatalogReleaseResolver:
 
 
 class GcsSidecarFeatureIndex:
-    def __init__(self, *, bucket_name: str, client: Any = None) -> None:
+    def __init__(self, *, bucket_name: str, client: Any = None,
+                 max_cache_records: int = 4096, max_cache_bytes: int = 16 * 1024 * 1024) -> None:
+        if any(type(value) is not int or value <= 0 for value in (max_cache_records, max_cache_bytes)):
+            raise ValueError("sidecar cache budgets must be positive integers")
         self.bucket_name = bucket_name
         self._client = client
-        self._cache: dict[tuple[str, str, str, int], dict[str, dict[str, Any] | None]] = {}
+        self._cache: OrderedDict[tuple, tuple[dict[str, Any] | None, int]] = OrderedDict()
+        self._cache_bytes = 0
+        self._max_cache_records, self._max_cache_bytes = max_cache_records, max_cache_bytes
+        self._loading: dict[tuple, threading.Event] = {}
         self._lock = threading.RLock()
 
     @property
@@ -202,20 +209,43 @@ class GcsSidecarFeatureIndex:
             raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not indexed")
         cache_key = (asset_slug, release, sidecar_uri, sidecar_generation)
         unique_ids = list(dict.fromkeys(feature_ids))
-        with self._lock:
-            cached = self._cache.setdefault(cache_key, {})
-            missing_ids = [feature_id for feature_id in unique_ids if feature_id not in cached]
-            if missing_ids:
-                cached.update(
-                    self._load_sidecar_records(
-                        asset_slug=asset_slug,
-                        release=release,
-                        sidecar_uri=sidecar_uri,
-                        sidecar_generation=sidecar_generation,
-                        feature_ids=missing_ids,
-                    )
-                )
-            return {feature_id: cached.get(feature_id) for feature_id in unique_ids}
+        while True:
+            with self._lock:
+                cached = {}
+                for feature_id in unique_ids:
+                    key = (*cache_key, feature_id)
+                    if key in self._cache:
+                        cached[feature_id] = self._cache[key][0]
+                        self._cache.move_to_end(key)
+                missing_ids = [feature_id for feature_id in unique_ids if feature_id not in cached]
+                if not missing_ids:
+                    return cached
+                waiting = self._loading.get(cache_key)
+                if waiting is None:
+                    completed = self._loading[cache_key] = threading.Event()
+                    break
+            # Only another reader of this exact immutable sidecar waits. Cache
+            # hits and unrelated assets never wait behind network IO.
+            waiting.wait()
+        try:
+            loaded = self._load_sidecar_records(asset_slug=asset_slug, release=release,
+                sidecar_uri=sidecar_uri, sidecar_generation=sidecar_generation, feature_ids=missing_ids)
+            with self._lock:
+                for feature_id, record in loaded.items():
+                    key = (*cache_key, feature_id)
+                    size = len(json.dumps(record, ensure_ascii=True).encode()) + sum(len(str(part)) for part in key)
+                    if size > self._max_cache_bytes:
+                        continue  # Return this response without retaining the oversized record.
+                    self._cache[key] = (record, size)
+                    self._cache_bytes += size
+                    while len(self._cache) > self._max_cache_records or self._cache_bytes > self._max_cache_bytes:
+                        _, (_, removed) = self._cache.popitem(last=False)
+                        self._cache_bytes -= removed
+            return {**cached, **loaded}
+        finally:
+            with self._lock:
+                del self._loading[cache_key]
+                completed.set()
 
     def _load_sidecar_records(
         self,

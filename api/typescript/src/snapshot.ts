@@ -1,6 +1,6 @@
 import {parseSnapshotJson, validateSnapshot} from './snapshot-contract.js';
 import {sharedDatasetArtifactUrlFromGsUri, DEFAULT_SHARED_DATASETS_BUCKET} from './artifact-url.js';
-import {parseSharedDatasetMetadataRecords, type SharedDatasetMetadataRecord} from './metadata-records.js';
+import {fetchSharedDatasetMetadataRecords, type SharedDatasetMetadataRecordsOptions, type SharedDatasetMetadataRecord} from './metadata-records.js';
 
 export type SnapshotArtifact = {
   format: 'fgb' | 'csv' | 'geojson' | 'ndgeojson' | 'cog' | 'pmtiles' | 'metadata' | 'schema';
@@ -81,23 +81,10 @@ export async function resolveSnapshotLayers(input: unknown, options: SnapshotLay
   const snapshot = validateWorkspaceSnapshot(input, {bucket: options.bucket});
   return Promise.all(snapshot.datasets.map(d => resolveSnapshotLayer(snapshot, d.asset_slug, options)));
 }
-export async function fetchSnapshotMetadata(layer: SnapshotLayer, {fetchBytes = async (url: string) => {
-  const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store'});
-  if (!response.ok) throw new Error(`Metadata unavailable: HTTP ${response.status}`);
-  return response.arrayBuffer();
-}} = {}): Promise<Map<string, SharedDatasetMetadataRecord>> {
+export async function fetchSnapshotMetadata(layer: SnapshotLayer, options: SharedDatasetMetadataRecordsOptions = {}): Promise<Map<string, SharedDatasetMetadataRecord>> {
   if (!layer.metadata) return new Map();
   const {artifact, url} = layer.metadata;
-  const buffer = await fetchBytes(url);
-  if (artifact.size !== null && buffer.byteLength !== artifact.size) throw new Error('Metadata size mismatch');
-  if (artifact.sha256 !== null) {
-    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))].map(x => x.toString(16).padStart(2, '0')).join('');
-    if (hash !== artifact.sha256) throw new Error('Metadata SHA-256 mismatch');
-  }
-  const bytes = new Uint8Array(buffer);
-  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) throw new Error('Captured metadata must be gzip NDJSON');
-  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));
-  const records = parseSharedDatasetMetadataRecords(await new Response(stream).text());
+  const records = await fetchSharedDatasetMetadataRecords(url, {...options, expectedSize: artifact.size, expectedSha256: artifact.sha256, requireGzip: true});
   for (const record of records.values()) {
     if ((record.asset_slug !== undefined && record.asset_slug !== layer.dataset.asset_slug) || (record.release !== undefined && record.release !== layer.dataset.release)) throw new Error('Metadata record identity mismatch');
   }

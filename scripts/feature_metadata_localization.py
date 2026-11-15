@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import release_feature_model, translation_local_io  # noqa: E402
+from ingestion.common import release_feature_model
+from scripts import translation_local_io
 
 
 TRANSLATION_SOURCE_SCHEMA = "metadata_translation_csv_v1"

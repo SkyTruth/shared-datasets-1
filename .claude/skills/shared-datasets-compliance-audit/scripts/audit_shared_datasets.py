@@ -35,7 +35,7 @@ from scripts.raster_asset import (
     RASTER_SOURCE_EXTENSIONS,
     validate_zarr_manifest_payload,
 )
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 from scripts.operational_safety_check import FRESHNESS_DAYS as SCHEDULE_FRESHNESS_DAYS, fresh_activity
 from ingestion.common.publication import RUN_RECORD_NAME, protocol_path_kind
 

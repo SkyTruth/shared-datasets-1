@@ -7,7 +7,7 @@ from unittest import mock
 
 from ingestion.common import identity_reset as reset
 from ingestion.common import publication as p
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from test_publication import LostResponse, MemoryStore, derive, operation
 
 

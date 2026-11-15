@@ -68,8 +68,19 @@ the index when its release is already current, including reviewed metadata
 updates. A success retry whose release is not current still uses the existing
 index-recovery path. `RUN_DATE` overrides for new attempts must
 be newer than the latest release.
-An incomplete same-date release blocks publication and requires reviewed repair;
-do not delete objects or choose another date merely to evade the failed release.
+New publications use the shared durable executor. The first managed run adopts
+its verified baseline without changing data or IDs. All input bytes are staged
+under the asset's `publications/inputs/` before an immutable intent is captured.
+Task retries in the same `CLOUD_RUN_EXECUTION`, configuration and image-bound
+`SHARED_DATASETS_EXECUTOR_SHA` resume the original receipt before reading source
+data. They use only captured input generations and original destination
+preconditions, even when local files are gone. Foreign destination changes fail.
+Completed reviewed promotions reconcile managed anchors after full verification.
+
+A terminal execution with an incomplete transaction requires reviewed recovery
+of that original receipt; a new execution cannot take it over. Legacy partial
+releases without a managed receipt still require reviewed repair. Do not delete
+objects or choose another date merely to evade an incomplete release.
 
 The [shared fingerprint contract](../../docs/source-fingerprints.md#mpatlas-mpatlas-content-v1)
 defines persisted hash fields and source-specific limitations.
@@ -135,7 +146,9 @@ sidecars or translation-source contract.
 Entrypoint: `python -m ingestion.mpatlas_monthly.run`. Configuration:
 `GOOGLE_CLOUD_PROJECT`, `SHARED_DATASETS_BUCKET`, optional execution-only
 `RUN_DATE`, `SHARED_DATASETS_SLACK_WEBHOOK_URL` from the existing Slack webhook secret, and optional `SHARED_DATASETS_WORKDIR` for temporary files. The
-production job uses 4 CPUs, 8 GiB RAM, a one-hour timeout and no task retries.
+production job uses 4 CPUs, 8 GiB RAM, a one-hour timeout per attempt and one task retry.
+The retry retains its execution identity and resumes a captured publication;
+two failed attempts leave the original receipt for reviewed recovery.
 The one-hour limit leaves over six times the observed 8.6-minute maximum across
 MPAtlas, EAMLIS and sea-ice executions (October–November 2026), while bounding
 stalled executions. WDPA retains its separate multi-hour processing limit.

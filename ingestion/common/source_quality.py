@@ -5,6 +5,7 @@ only an exact immutable reviewed plan can promote its generation-bound bytes.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from contextlib import AbstractContextManager
 import datetime as dt
 import hashlib
@@ -176,7 +177,7 @@ class Guard(AbstractContextManager):
             self.before = self.flow.baseline(self.bucket)
             self.flow.hooks.selected_ledger(self)
         interrupted = self.state["owner"]
-        if interrupted is not None:
+        if interrupted is not None and interrupted != self.owner:
             require(self.flow.execution_completed(interrupted), f"{self.flow.label} has an active or interrupted source-quality claim; inspect it before retrying")
         self.state["owner"] = self.owner
         self.save()
@@ -188,7 +189,7 @@ class Guard(AbstractContextManager):
             self.state["owner"] = None
             self.save()
             raise
-        if interrupted is not None:
+        if interrupted is not None and interrupted != self.owner:
             observation = {"geometry_count": None, "interrupted_execution": interrupted, "checked_at": now()}
             self.block("interrupted_execution", observation)
         return self
@@ -462,6 +463,10 @@ class HoldFlow:
         else:
             guard.__enter__()
         try:
+            if self.SLUG == MPATLAS.SLUG:
+                from ingestion.common.publication_gcs import GcsStore
+                state = GcsStore(client).read_json(f"gs://{BUCKET}/{self.ROOT}/publications/state.json")
+                require(state is None or state.value["active"] is None, "an incomplete publication requires its original execution")
             if guard.held:
                 require("source_loss_review" in plan, f"{self.label} publishing is held; review its exact candidate")
                 self.assert_review(guard, plan["source_loss_review"])
@@ -509,7 +514,7 @@ class HoldFlow:
                 require(str(blob.generation) == str(ref["generation"]) and int(blob.size) == ref["size"],
                         "published release index has stale generations")
             manifest_data, _ = read(guard.bucket, f"{self.ROOT}/latest/{self.SLUG}.manifest.json")
-            from scripts import release_feature_model as model
+            from ingestion.common import release_feature_model as model
             manifest = json.loads(manifest_data)
             model.validate_release_manifest(manifest, expected_asset_slug=self.SLUG, expected_release=value["release"], require_generations=True)
             require(manifest["validation"]["feature_count"] == value["geometry_count"], "published manifest count differs from approval")
@@ -520,6 +525,16 @@ class HoldFlow:
             require(not guard.held, "cannot clear an unreviewed hold")
             if self.hooks and "historical_checksum_repair" in plan:
                 self.hooks.verify_finished(guard, plan)
+        if self.SLUG == MPATLAS.SLUG:
+            from ingestion.common.gcs import GcsPublisher
+            from ingestion.common.publication_gcs import GcsStore
+            from ingestion.common.source_field_publication import adopt_verified_baseline
+            store = GcsStore(client)
+            if store.read_json(f"gs://{BUCKET}/{self.ROOT}/publications/state.json") is not None:
+                asset = SimpleNamespace(slug=self.SLUG, root=self.ROOT,
+                    release_object=lambda day, suffix: f"{self.ROOT}/releases/{day.isoformat()}/{self.SLUG}{suffix}",
+                    latest_object=lambda suffix: f"{self.ROOT}/latest/{self.SLUG}{suffix}")
+                adopt_verified_baseline(GcsPublisher(client, BUCKET), asset, self.baseline(guard.bucket), store=store, replace=True)
         guard.state["owner"] = None
         guard.save()
 

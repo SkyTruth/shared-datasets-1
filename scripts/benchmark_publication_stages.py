@@ -25,7 +25,7 @@ from scripts import (
     feature_metadata_translation_reuse as reuse,
     feature_metadata_localization as loc,
 )
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def benchmark(root, rows, vertices, repeats):

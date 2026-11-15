@@ -134,7 +134,7 @@ def require_run_date(guard, date, record=None):
 
 
 def validate_records(ledger, records):
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     records = tuple(records)
     identity.require(model.validate_sidecar_records(records).valid, "published metadata violates the sidecar contract")
     typed = identity.classify_release(row["properties"] for row in records)
@@ -154,7 +154,7 @@ def validate_records(ledger, records):
 def validate_candidate(guard, candidate):
     """Review cannot replace the installed contract or its reserved assignments."""
     from ingestion.common.source_quality import EAMLIS as quality
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     manifest_ref = next(ref for ref in candidate["files"] if ref["role"] == "manifest")
     manifest = json.loads(quality.pinned(guard.bucket.client, manifest_ref))
     model.validate_release_manifest(manifest, expected_asset_slug=SLUG, expected_release=candidate["release"], require_generations=True)
@@ -183,7 +183,7 @@ def validate_candidate(guard, candidate):
 def require_metadata_only(guard, plan):
     """Admit reviewed metadata operations without allowing feature replacement."""
     from ingestion.common.source_quality import EAMLIS as quality
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     if "historical_checksum_repair" in plan:
         from ingestion.eamlis_monthly import checksum_repair
         checksum_repair.validate_live(guard, plan)
@@ -219,7 +219,7 @@ def require_metadata_only(guard, plan):
 def activate(guard):
     """Confirm complete canonical evidence before marking first publication done."""
     from ingestion.common.source_quality import EAMLIS as quality
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     current = quality.baseline(guard.bucket)
     identity.require(current is not None and current["release"].get("identity_contract") == identity.CONTRACT,
                      "new identity release is not committed in the catalog index")

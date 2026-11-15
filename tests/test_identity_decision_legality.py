@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 from scripts import check_identity_resolutions as checker
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 HASH_A = "sha256:" + "a" * 64

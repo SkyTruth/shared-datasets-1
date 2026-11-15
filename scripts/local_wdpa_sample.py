@@ -20,7 +20,7 @@ from ingestion.common.process_stream import feature_stream
 from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
 from ingestion.wdpa_monthly import identity_review
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from scripts.feature_metadata_translation_reuse import TranslationMemory
 from scripts.wdpa_processing_gate import source_digest
 

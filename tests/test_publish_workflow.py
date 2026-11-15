@@ -34,7 +34,8 @@ def make_promotion(**overrides) -> dict:
 
 class IsSchemaTargetTests(unittest.TestCase):
     def test_invalid_prepared_manifest_refuses_all_generic_copies(self):
-        from scripts import gcs_asset, release_feature_model as model
+        from ingestion.common import release_feature_model as model
+        from scripts import gcs_asset
         root = CANONICAL_PATH.rsplit("/", 1)[0]
         plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=f"{root}/demo-asset{suffix}")
             for suffix in (".metadata-translations.csv", ".metadata.es.ndjson.gz", ".metadata.fr.ndjson.gz", ".manifest.json")]}

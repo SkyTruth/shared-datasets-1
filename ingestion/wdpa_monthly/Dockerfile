@@ -73,7 +73,6 @@ COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localiz
 COPY scripts/feature_metadata_translation_reuse.py ./scripts/feature_metadata_translation_reuse.py
 COPY scripts/translation_local_io.py ./scripts/translation_local_io.py
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
-COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
 RUN python -c "from ingestion.common import translation_notices"

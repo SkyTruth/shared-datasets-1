@@ -11,7 +11,8 @@ import pytest
 
 from ingestion.common import publication_readiness as r, publication_sources as sources
 from ingestion.common.identity_index import DiskIdentityPlan
-from scripts import publication_runtime_check, release_feature_model as model
+from ingestion.common import release_feature_model as model
+from scripts import publication_runtime_check
 
 
 def feature(key):
@@ -369,3 +370,14 @@ def test_resolution_file_filters_decisions_to_requested_release(tmp_path):
         {"release": "2026-01-01", "action": "assign_new_feature_id"}]}))
     config["assets"][0]["decisions"] = str(decisions)
     assert sources.run(config)["state"] == "READY"
+
+
+def test_common_release_model_changes_invalidate_engine_evidence(tmp_path, monkeypatch):
+    common = tmp_path / 'ingestion/common'
+    common.mkdir(parents=True)
+    monkeypatch.setattr(r, '__file__', str(common / 'publication_readiness.py'))
+    model = common / 'release_feature_model.py'
+    model.write_text('VERSION = 1\n')
+    before = r.engine_digest()
+    model.write_text('VERSION = 2\n')
+    assert r.engine_digest() != before

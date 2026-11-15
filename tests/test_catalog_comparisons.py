@@ -10,7 +10,7 @@ import pytest
 
 from services.catalog_viewer import comparisons, run as viewer
 from scripts import compare_releases as engine
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from tests.comparison_fixtures import bundle, record, generated
 
 A, B = "2026-01-01", "2026-02-01"

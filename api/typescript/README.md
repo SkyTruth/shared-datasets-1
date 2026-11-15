@@ -762,3 +762,26 @@ The shared tracker observes native bucket traffic. Consumers do not configure
 reporters, send telemetry, change caches or grant tracking permissions. Cached
 and offline use remains outside that source’s coverage. Ordinary dataset access
 requires no SDK upgrade for tracking.
+
+### Metadata resource limits
+
+`fetchSharedDatasetMetadataRecords`, `fetchSnapshotMetadata` and the map helper's
+`metadataOptions` accept `signal`, `maxCompressedBytes`, `maxExpandedBytes` and
+`maxRecords`. Defaults are 24 MiB downloaded bytes, 128 MiB expanded NDJSON and
+1,000,000 records. Applications with larger known datasets may set explicit
+budgets. Invalid budgets, oversized responses, duplicate feature IDs, corrupt
+captured checksums and cancellation fail rather than returning partial records.
+A custom `fetchBytes` receives `{signal, maxBytes}` as its optional second
+argument and must enforce those transport controls itself; returned bytes are
+checked again before parsing.
+
+Catalog examples omit inline metadata when its advertised size exceeds the
+default download budget and link to the feature metadata lookup API. The tile
+reference remains pinned; applications can fetch individual feature attributes
+through that API or opt into explicit larger budgets.
+
+`showDataset` creates its MapLibre map before loading feature attributes, so tiles
+can render during that transfer. Its promise retains the existing behavior:
+it resolves with `{map, layer, records}` after metadata is ready. Removing the map
+aborts an outstanding metadata read; a loading failure removes the map and rejects
+the promise. Generation, size and SHA-256 checks are preserved.

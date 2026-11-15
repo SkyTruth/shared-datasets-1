@@ -19,7 +19,7 @@ import re
 from ingestion.common import decision_events, publication as p
 from ingestion.common.identity_index import DiskAmbiguities, key_text
 from ingestion.common.runtime import sha256_file
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 CAPTURE_SCHEMA = "wdpa-identity-review-capture-v1"
 BUNDLE_SCHEMA = "wdpa-identity-review-v1"

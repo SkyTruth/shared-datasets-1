@@ -15,6 +15,12 @@ from tests.test_source_loss import Client, copy_transport
 from tests.test_mpatlas_monthly import feature, sidecar, fixture_outputs, TOOLS, DAY
 
 
+@pytest.fixture(autouse=True)
+def runtime_execution(monkeypatch, request):
+    monkeypatch.setenv('CLOUD_RUN_EXECUTION', 'fixture-' + request.node.name)
+    monkeypatch.setenv('SHARED_DATASETS_EXECUTOR_SHA', 'c' * 40)
+
+
 @pytest.mark.parametrize("flow", list(source_quality.FLOWS.values()), ids=lambda f: f.SLUG)
 def test_shared_claim_and_single_notification_with_asset_scoped_paths(flow):
     client = Client()
@@ -84,7 +90,10 @@ def execute(publisher, directory, zones, *, raw=None):
         path = work / "enriched.geojson"
         path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
         return path, records, {"published_rows": len(records)}
-    with mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_bytes(
+    with mock.patch.object(job.SourceFieldPublication, 'from_runtime', side_effect=lambda publisher, asset:
+            job.SourceFieldPublication(publisher, asset, execution_id='fixture-' + str(directory), executor_sha='c' * 40, configuration={})), \
+         mock.patch('ingestion.common.publication_bundle.vector_asset.validate_metadata_lookup_bundle', return_value=mock.Mock(valid=True)), \
+         mock.patch.object(job, "download_file", side_effect=lambda url, path, **kw: path.write_bytes(
             raw if raw is not None else json.dumps(features).encode())), \
          mock.patch.object(job, "prepare_metadata", side_effect=prepare) as prepared, \
          mock.patch.object(job, "build_outputs", side_effect=lambda *args: fixture_outputs(directory, records)) as build, \
@@ -286,12 +295,20 @@ def test_counted_generation_pinned_mpatlas_baseline_needs_no_run_record(tmp_path
     built.assert_not_called()
 
 
-def test_mpatlas_resume_preserves_reviewed_manifest_index(tmp_path):
+@pytest.mark.parametrize("managed", [False, True], ids=["legacy", "managed"])
+def test_mpatlas_resume_preserves_reviewed_manifest_index(tmp_path, managed):
     from ingestion.common import release_index
 
     client = Client()
     publisher, raw = seed(client, tmp_path / "baseline")
     bucket, flow = publisher.bucket, job.quality
+    if managed:
+        from ingestion.common.publication_gcs import GcsStore
+        from ingestion.common.source_field_publication import adopt_verified_baseline
+        store = GcsStore(client)
+        adopt_verified_baseline(publisher, job.ASSET, flow.baseline(bucket), store=store)
+        state_uri = f"gs://{bucket.name}/{job.ASSET.root}/publications/state.json"
+        original_anchor = store.read_json(state_uri).value["current"]["latest_manifest"]
     prior = dt.date(2026, 10, 16)
     manifest = publisher.load_json(job.ASSET.release_object(prior, ".manifest.json"))
     manifest["source_inputs"].append({"uri": "https://example.org/reviewed-metadata"})
@@ -322,6 +339,10 @@ def test_mpatlas_resume_preserves_reviewed_manifest_index(tmp_path):
         current = release_index.load_release_index(bucket, flow.SLUG)
         release_index.write_release_index(bucket, flow.SLUG, rebuilt, generation=current.generation)
         flow.finish_promotion(client, plan)
+    if managed:
+        anchor = store.read_json(state_uri).value["current"]["latest_manifest"]
+        assert anchor != original_anchor
+        assert anchor["generation"] == bucket.blob(job.ASSET.latest_object(".manifest.json")).generation
     index = bucket.blob(flow.INDEX)
     before = (index.generation, index.data)
     with mock.patch.object(publisher, "record_existing_successful_release",

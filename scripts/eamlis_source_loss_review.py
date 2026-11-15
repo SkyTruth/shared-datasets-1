@@ -52,7 +52,7 @@ def download_preview(client, directory, candidate_id, *, asset=loss.SLUG):
     loss.require(value["candidate_id"] == candidate_id, "candidate changed; inspect the current hold")
     releases = []
     if guard.before:
-        from scripts import release_feature_model as model
+        from ingestion.common import release_feature_model as model
         prior = guard.before["release"]
         files = [dict(f) for f in prior.get("files", [])]
         loss.require(any(f["path"].endswith(".manifest.json") for f in files), "baseline lacks complete staging comparison artifacts")

@@ -23,7 +23,7 @@ from ingestion.common import (
 from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecords
 from ingestion.wdpa_monthly import identity_review as review, run as wdpa
 from ingestion.wdpa_monthly.artifact_bundle import BuildStager
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from scripts.wdpa_processing_gate import source_digest
 
 

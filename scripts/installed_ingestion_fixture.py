@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def vector_build(target, fixture, work):
@@ -89,9 +89,14 @@ def hold_fixture(job, output, records, source, work, day, *, state=None):
             return blob
 
     bucket = Bucket()
+    bucket.client = SimpleNamespace(bucket=lambda name: bucket)
     flow.put(bucket, flow.INDEX, flow.encode({"latest_release": {"date": "2026-04-02", "rows": 40}}), generation=0)
     if state is None:
         refresh = job.Refresh(SimpleNamespace(bucket=bucket), work)
+        # Exercise the installed adapter and image-bound executor identity too.
+        import os
+        with mock.patch.dict(os.environ, {"CLOUD_RUN_EXECUTION": "mpatlas-installed-fixture"}):
+            assert refresh.publication.context.trusted_executor_sha == os.environ["SHARED_DATASETS_EXECUTOR_SHA"]
         refresh.source, refresh.outputs = source, output
         content = lifecycle.Content(job.source_fingerprint(records).record_fields(), len(records), lost=3)
         source_info = lifecycle.Source(day, job.SOURCE_URL, job.sha256_file(source))

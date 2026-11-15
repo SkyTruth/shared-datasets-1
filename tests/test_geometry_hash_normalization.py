@@ -8,7 +8,7 @@ import pytest
 
 from ingestion.common import feature_metadata
 from ingestion.eamlis_monthly import identity as ids, identity_state
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from tests.test_eamlis_identity import feature, problem
 
 

@@ -12,7 +12,7 @@ import sys
 import subprocess
 
 sys.path.insert(0, str(Path.cwd()))
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 
 
 def sea_ice_build(workdir):

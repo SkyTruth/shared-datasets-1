@@ -14,7 +14,7 @@ from ingestion.common import release_index
 from ingestion.common import feature_metadata
 from release_streaming_helpers import write_generated_release
 from ingestion.common.gcs import GcsPublisher
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 
 class FakeBlob:

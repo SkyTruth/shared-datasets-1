@@ -45,7 +45,7 @@ from ingestion.common.runtime import (
     run_job_main,
     sha256_file,
 )
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 from scripts.feature_metadata_translation_reuse import TranslationMemory
 
 
@@ -978,7 +978,7 @@ def build_asset_outputs(
                 "tools": native_tools(("ogr2ogr", "ogrinfo"))}
             stage_code = ("ingestion/wdpa_monthly/run.py", "ingestion/common/feature_metadata.py",
                 "ingestion/wdpa_monthly/Dockerfile", "ingestion/common/runtime.py",
-                "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py")
+                "scripts/pmtiles_zoom.py", "ingestion/common/release_feature_model.py")
             cached_file("wdpa-flatgeobuf", stage_inputs, fgb, make_fgb, validate_fgb,
                 files={"normalized": normalized}, code=stage_code)
         with profiler.phase(f"{asset.slug}:pmtiles"):

@@ -20,7 +20,7 @@ from unittest import mock
 from ingestion.common import feature_metadata, decision_events
 from services.monitoring_slack import decisions
 from ingestion.common.runtime import run_job_main
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from scripts.slack_notify import build_slack_payload
 from workflow_helpers import assert_target_apply_caller, load_workflow
 

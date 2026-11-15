@@ -70,7 +70,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   `feature_id`, `geometry_hash`, and `properties_hash`, PMTiles filtered to
   geometry plus `feature_id` only, a canonical `{asset-slug}.metadata.ndjson.gz`
   sidecar, `{asset-slug}.schema.json`, and `{asset-slug}.manifest.json`. Use
-  `scripts/release_feature_model.py` helpers for IDs, hashes, sidecar
+  `ingestion/common/release_feature_model.py` helpers for IDs, hashes, sidecar
   serialization, validation, and manifest creation.
   Use `--metadata-lookup` (or `--pmtiles-feature-id-property feature_id`) with
   `scripts/vector_asset.py` to build lightweight metadata-lookup tiles

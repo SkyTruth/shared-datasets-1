@@ -93,21 +93,38 @@ NATIVE_TESTS = (
     "tests/test_eamlis_monthly.py",
     "tests/test_mpatlas_monthly.py",
 )
-# Hash complete validator/action modules so new imports and nested composites
-# cannot escape evidence invalidation through an omitted hand-maintained entry.
-# Selection remains derived independently from COPY/import consumers below.
-CONTRACT_FILES = tuple(sorted({
-    path.relative_to(ROOT).as_posix()
-    for pattern in ("scripts/*.py", "ingestion/common/*.py", ".github/actions/**/*.yml", ".github/actions/**/*.py", ".github/docker/*Dockerfile")
-    for path in ROOT.glob(pattern)
-} | {
+# Fingerprint the validator programs and their discovered dependencies. Ordinary
+# application/CLI changes are selected by dependency_inputs, not blanket-hashed
+# into the validation protocol. All workflow/action bytes remain conservative
+# roots so a new command or nested composite changes the contract immediately.
+CONTRACT_REQUIRED = {
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json", "tests/browser/package-lock.json",
-    ".github/workflows/ci.yml", ".github/workflows/ingestion-deploy.yml",
-    ".github/workflows/pr-terraform-plan.yml", ".github/workflows/deployment-readiness.yml",
     ".github/terraform-targets.json",
     ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
     "tests/fixtures/terraform_targets/failed-main.json", "tests/fixtures/terraform_targets/shared_bucket_public.failed.tf",
-}))
+}
+
+
+def contract_files(root):
+    sources = {path.relative_to(root).as_posix(): path.read_bytes()
+               for directory in ("scripts", "ingestion/common", ".github")
+               for path in (root / directory).rglob("*")
+               if path.is_file() and (path.suffix in {".py", ".yml", ".yaml"} or path.name.endswith("Dockerfile"))}
+    roots = {name for name in sources if name.startswith(".github/")}
+    roots.update({"scripts/ci_preflight.py", "scripts/ci_contract.py", "scripts/ci_main_reuse.py"})
+    # Follow persisted filenames as well as imports. This covers commands
+    # routed through suite_commands.add and installed probe programs passed as
+    # bytes, whose imports alone cannot describe the validator boundary.
+    import ast
+    graph = dependency_graph(sources)
+    for name, source in sources.items():
+        if name.endswith(".py"):
+            graph[name].update(node.value for node in ast.walk(ast.parse(source, filename=name))
+                               if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in sources)
+    return tuple(sorted(dependency_closure(graph, roots) | CONTRACT_REQUIRED))
+
+
+CONTRACT_FILES = contract_files(ROOT)
 
 
 @lru_cache(maxsize=4)
@@ -503,7 +520,7 @@ def select_deployments(paths, *, base=None, catalog_snapshots=None, registry_sna
 
 def contract_digest(root: Path) -> str:
     digest = hashlib.sha256()
-    for filename in CONTRACT_FILES:
+    for filename in contract_files(root):
         digest.update(filename.encode() + b"\0" + (root / filename).read_bytes() + b"\0")
     return digest.hexdigest()
 

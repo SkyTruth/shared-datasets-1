@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ingestion.common import release_index
-from scripts.release_feature_model import normalize_geometry_exact as normalized_geometry
+from ingestion.common.release_feature_model import normalize_geometry_exact as normalized_geometry
 
 
 def digest(value: Any) -> str:

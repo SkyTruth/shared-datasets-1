@@ -8,7 +8,8 @@ import pytest
 from google.api_core.exceptions import Forbidden, NotFound, PreconditionFailed
 
 from ingestion.common import feature_metadata, translation_notices as notices
-from scripts import feature_metadata_localization as loc, gcs_asset, release_feature_model as model, translation_local_io
+from ingestion.common import release_feature_model as model
+from scripts import feature_metadata_localization as loc, gcs_asset, translation_local_io
 from test_compliance_audit import audit, blob_info
 from test_feature_metadata_localization import sidecar_record, VALID_HASH_A
 

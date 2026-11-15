@@ -52,8 +52,10 @@ COPY ingestion/common ./ingestion/common
 COPY ingestion/mpatlas_monthly ./ingestion/mpatlas_monthly
 COPY catalog/ingestion-quality.json ./catalog/ingestion-quality.json
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
-COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
+
+ARG SHARED_DATASETS_EXECUTOR_SHA
+ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 CMD ["python", "-m", "ingestion.mpatlas_monthly.run"]

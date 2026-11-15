@@ -387,3 +387,12 @@ establishes that the production backfill has happened.
 For maintenance, follow the [translation maintenance workflow](../.claude/skills/update-feature-metadata-translations/SKILL.md).
 The release's `translation-notice.json` record supplies the worklist URIs and
 generations.
+
+## Sidecar lookup cache
+
+The viewer retains at most 4,096 found or missing feature records and 16 MiB of
+serialized cache entries per process. Least-recently-used entries are evicted;
+an oversized individual record may be returned within the existing response
+budget without being retained. Cache keys include asset, release, URI, generation
+and feature ID. Cold reads coordinate per sidecar; network IO never holds the
+cache-wide lock, so a slow asset cannot block an unrelated cached lookup.

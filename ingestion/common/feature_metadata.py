@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
-from scripts import release_feature_model
+from ingestion.common import release_feature_model
 
 LOGGER = logging.getLogger(__name__)
 

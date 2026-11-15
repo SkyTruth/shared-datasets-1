@@ -495,7 +495,7 @@ def build_outputs(
         files={"source": source_tif}, result_type=AssetOutputs,
         code=("ingestion/sea_ice_daily/run.py", "ingestion/common/feature_metadata.py",
             "ingestion/common/identity_index.py", "ingestion/common/runtime.py",
-            "scripts/pmtiles_zoom.py", "scripts/release_feature_model.py", "scripts/vector_asset.py"))
+            "scripts/pmtiles_zoom.py", "ingestion/common/release_feature_model.py", "scripts/vector_asset.py"))
 
 
 def _normalize_source(source_tif, source_date, workdir):

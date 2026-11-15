@@ -52,7 +52,7 @@ class TranslationInputTests(unittest.TestCase):
     def test_monthly_run_builds_and_cleans_all_locales_for_both_assets(self):
         from ingestion.wdpa_monthly import run as wdpa
         from test_wdpa_monthly import fake_asset_outputs
-        from scripts import release_feature_model as model
+        from ingestion.common import release_feature_model as model
         publisher = mock.Mock(spec=wdpa.GcsPublisher)
         publisher.resume.return_value = None
         publisher.successful_run_record.return_value = False

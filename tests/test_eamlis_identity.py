@@ -120,7 +120,7 @@ def test_corrupt_ledger_is_rejected(change):
 
 def test_real_metadata_serialization_excludes_objectid_but_preserves_source_edits(tmp_path):
     from ingestion.common import feature_metadata
-    from scripts import release_feature_model as model
+    from ingestion.common import release_feature_model as model
     original = problem()
     ledger = ids.Ledger.genesis().reserve(ids.classify_release([original]))
     sidecars = []

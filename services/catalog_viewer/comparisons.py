@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from scripts import compare_releases as engine
-from scripts import release_feature_model as model
+from ingestion.common import release_feature_model as model
 from services.catalog_viewer.comparison_store import owner_key, restore_comparison
 from services.http_base import (
     authenticated_user_email,
