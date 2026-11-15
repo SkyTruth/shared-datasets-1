@@ -20,8 +20,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import yaml
-
 from scripts import deployment_emission as emissions
 from scripts import deployment_revision as deployments
 from scripts import workflow_failure_alert as alerts
@@ -128,6 +126,8 @@ def job_targets(root=ROOT, *, revision=None, workflow=None):
     Resolving leaf names alone would conflate IAM bootstrap and sync or different
     ingestion targets. Unregistered jobs retain their own exact job scope.
     """
+    import yaml
+
     # Preserve the exact historical mutating job scope for signed receipt recovery.
     # The retired workflow must not be loaded from today's caller graph.
     require(revision is None or deployments.SHA.fullmatch(revision), "invalid source workflow revision")
@@ -821,7 +821,7 @@ class GitHub(deployments.GitHub):
 
     def archive(self, repository, identifier):
         require(repository == REPOSITORY and positive(identifier), "invalid notification artifact identity")
-        return deployments.read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
+        return github_read(f"repos/{repository}/actions/artifacts/{identifier}/zip")
 
 
 def job_error(identifier, *, step):

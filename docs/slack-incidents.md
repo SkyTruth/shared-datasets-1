@@ -32,9 +32,10 @@ main-push CI delivery jobs and the top-level SDK publisher. Healthy events
 allocate no worker except the terminal observer, which also reconciles recovery.
 The daily safety probe discovers GITHUB_TOKEN-dispatched failures, including
 notification batches, for which GitHub emits no `workflow_run` event. Its rolling
-72-hour replay window dispatches only actionable transitions. Three actual
-consecutive reconciliation dispatches fail health; unchanged health findings never
-enter replay or that counter. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
+72-hour replay window dispatches only actionable transitions. Repeated dispatches
+are routine work, not evidence of failure. Actual batch failures retain normal
+incident replay, and unconfirmed delivery claims older than 24 hours remain health
+findings. Unchanged health findings never enter replay. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
 owns scoped non-red reports, deduplication, reminders and missing-run detection.
 Failed discovery uses the same retained, change-plus-daily health report.
 When notified safety findings clear, its incoming webhook posts one top-level

@@ -60,9 +60,16 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
 def safety_health_only(run, jobs):
     if run["name"] not in WORKFLOW_NAMES["operational-safety-check.yml"]:
         return False
-    # Retained reports own setup/probe findings; dispatch and delivery still alert.
+    # A successful direct fallback owns preceding failures, including timeouts
+    # that prevented the health artifact from being retained.
     for job in jobs:
         steps = job.get("steps", [])
+        failed_indexes = [index for index, step in enumerate(steps) if step.get("conclusion") in FAILED_CONCLUSIONS]
+        if failed_indexes and any(step.get("name") == "Report safety failure directly"
+                and step.get("conclusion") == "success" and max(failed_indexes) < index
+                for index, step in enumerate(steps)):
+            return True
+        # Retained reports own setup/probe findings; dispatch and delivery still alert.
         probe = next((index for index, step in enumerate(steps) if step["name"] == "Check operational work"), 0)
         covered = {step["name"] for step in steps[:probe]} | {"Check operational work", "Check freshness and stalled operations"}
         failed = {step["name"] for step in steps if step.get("conclusion") in FAILED_CONCLUSIONS}

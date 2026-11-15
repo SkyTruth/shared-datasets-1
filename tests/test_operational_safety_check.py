@@ -180,19 +180,6 @@ def test_replay_keeps_three_daily_intervals_with_activation_as_a_floor():
     assert parse_qs(api.calls[-1][1].split('?', 1)[1])['created'] == [stamp(start) + '..' + stamp(end)]
 
 
-def test_daily_stall_inventory_covers_the_previous_two_dispatches():
-    api = OperationalAPI()
-    for identifier, hours in ((298, 48), (299, 24)):
-        source = api.source(identifier, 'operational-safety-check.yml')
-        source['created_at'] = stamp(NOW - timedelta(hours=hours))
-        api.add_source(source)
-        api.jobs[identifier] = [{'name': safety.JOB, 'steps': [
-            {'name': 'Request operational reconciliation', 'status': 'completed', 'conclusion': 'success'}]}]
-    assert safety.reconciliation_stalled(api, api.current)
-    query = next(path for _, path in api.calls if '/operational-safety-check.yml/runs?' in path)
-    assert parse_qs(query.split('?', 1)[1])['created'] == ['>=' + stamp(NOW - timedelta(hours=72))]
-
-
 def test_inventory_is_activation_limited_and_retains_unfinished_or_failed_safety_runs():
     api = OperationalAPI()
     api.add_source(api.source(101, "operational-safety-check.yml"))
@@ -380,6 +367,41 @@ def test_probe_read_failure_never_becomes_unchanged(probe_inputs, failure):
     assert api.posts == []
 
 
+def test_discovery_cli_reuses_identities_but_keeps_live_reads_and_output(probe_inputs, monkeypatch):
+    api, client, directory, _collect, _checks = probe_inputs
+    for identifier in (101, 102):
+        api.add_source(api.source(identifier))
+    for key, value in {
+        "GITHUB_REPOSITORY": safety.REPOSITORY, "GITHUB_REF": "refs/heads/main",
+        "GITHUB_WORKFLOW_REF": safety.REPOSITORY + "/" + safety.WORKFLOW + "@refs/heads/main",
+        "GITHUB_RUN_ID": "300", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_OUTPUT": str(directory / "outputs"),
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(safety.sys, "argv", ["operational_safety_check.py", "--work-dir", str(directory)])
+    monkeypatch.setattr(catalog, "get_client", lambda: client)
+    monkeypatch.setattr(incidents, "Slack", lambda *_: SimpleNamespace(identity=lambda: IDENTITY))
+
+    def read(path, *, paginate=False):
+        if not paginate:
+            return json.dumps(api.get(path)).encode()
+        field = "workflow_runs" if "/actions/runs?" in path else "jobs" if "/jobs?" in path else None
+        rows = api.pages(path, field=field)
+        return json.dumps([{field: rows, "total_count": len(rows)}] if field else [rows]).encode()
+
+    with mock.patch("scripts.dataset_mutation_authorization.read", side_effect=read) as transport:
+        safety.main()
+    paths = [call.args[0] for call in transport.call_args_list]
+    assert paths.count(PREFIX) == 1
+    assert paths.count(PREFIX + "/actions/workflows/15") == 1
+    for identifier in (101, 102):
+        assert paths.count(PREFIX + f"/actions/runs/{identifier}") == 1
+        assert paths.count(PREFIX + f"/actions/runs/{identifier}/attempts/1/jobs?per_page=100") == 1
+    assert json.loads((directory / "result.json").read_text()) == {
+        "catalog": False, "reconcile": True, "verify": False}
+    assert (directory / "outputs").read_text() == "catalog=false\nreconcile=true\nverify=false\n"
+    assert api.posts == []
+
+
 @pytest.fixture(params=["catalog-web-deploy.yml", "unattended-workflow-alert.yml"])
 def dispatch_context(request):
     api = OperationalAPI()
@@ -492,15 +514,34 @@ def test_pending_checks_back_off_unchanged_success_but_not_failure(age, conclusi
     assert safety.verification_due(api, [], [], now=NOW)
 
 
-@pytest.mark.parametrize('count', [0, 1, 2])
-@pytest.mark.parametrize('previous', ['success', 'failure', 'skipped'])
-def test_reconciliation_escalates_on_third_consecutive_probe_only(count, previous):
-    api = OperationalAPI()
-    for identifier in range(100, 100+count):
-        run = api.source(identifier, 'operational-safety-check.yml')
-        api.add_source(run)
-        api.jobs[identifier][0].update(name=safety.JOB, steps=[{'name':'Request operational reconciliation', 'status':'completed', 'conclusion':previous}])
-    assert safety.reconciliation_stalled(api, api.current) is (count == 2 and previous != 'skipped')
+def test_successful_batches_do_not_turn_repeated_wakeups_into_health_findings(probe_inputs, monkeypatch):
+    api, client, directory, _, _ = probe_inputs
+    worker = api.source(99, 'unattended-workflow-alert.yml', conclusion='success')
+    worker['event'] = 'workflow_dispatch'
+    api.add_source(worker)
+    for identifier in (101, 102):
+        source = api.source(identifier, 'operational-safety-check.yml', conclusion='success')
+        api.add_source(source)
+        api.jobs[identifier][0].update(name=safety.JOB, steps=[{
+            'name': 'Request operational reconciliation', 'status': 'completed', 'conclusion': 'success'}])
+    (directory / 'result.json').write_text('{"reconcile":true}')
+    (directory / 'claims.json').write_text('[]')
+    for key, value in {
+        'GITHUB_REPOSITORY': safety.REPOSITORY, 'GITHUB_REF': 'refs/heads/main',
+        'GITHUB_WORKFLOW_REF': safety.REPOSITORY + '/' + safety.WORKFLOW + '@refs/heads/main',
+        'GITHUB_RUN_ID': '300', 'GITHUB_RUN_ATTEMPT': '1',
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(safety, 'GitHub', lambda: api)
+    monkeypatch.setattr(catalog, 'get_client', lambda: client)
+    monkeypatch.setattr(safety, 'freshness', lambda *_a, **_k: [])
+    monkeypatch.setattr(safety, 'policy_warnings', lambda *_: ([], []))
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: {'problems': [], 'warnings': [], 'notified_at': None})
+    monkeypatch.setattr(safety.sys, 'argv', ['safety', '--health', '--work-dir', str(directory)])
+    safety.main()
+    assert json.loads((directory / 'health/cache.json').read_text())['problems'] == []
+    slack_notify.notify.assert_not_called()
+    assert api.posts == []
 
 
 @pytest.mark.parametrize('age', [1, 25])
