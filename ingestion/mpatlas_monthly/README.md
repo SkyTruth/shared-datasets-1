@@ -149,6 +149,11 @@ sidecars or translation-source contract.
 
 ## Runtime and protected deployment
 
+After both attempts fail, the [reviewed terminal recovery procedure](../../.claude/skills/publish-shared-dataset/references/partial-publication-recovery.md#mpatlas-after-both-task-attempts-fail)
+can resume the original captured transaction with its original executor and
+fixed generation expectations. It requires a paused/drained job and a new
+immutable reviewed recovery PR; a new scheduled execution cannot take over.
+
 Entrypoint: `python -m ingestion.mpatlas_monthly.run`. Configuration:
 `GOOGLE_CLOUD_PROJECT`, `SHARED_DATASETS_BUCKET`, optional execution-only
 `RUN_DATE`, `SHARED_DATASETS_SLACK_WEBHOOK_URL` from the existing Slack webhook secret, and optional `SHARED_DATASETS_WORKDIR` for temporary files. The

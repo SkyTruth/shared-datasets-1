@@ -32,6 +32,8 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2
   compatibility, but in localized sidecars it should be read as the active-locale display name, effectively name_localized.
   The release preserves 2,661 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release
   history, source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
 row_count: 304572
 data_profile:
   field_count: 33
@@ -199,6 +201,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** Automated freshness checks
 - **Update cadence:** monthly
 - **Canonical file:** `latest/wdpa-terrestrial.fgb`
 - **Available formats:** `fgb`, `pmtiles`

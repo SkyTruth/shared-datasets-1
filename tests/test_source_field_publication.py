@@ -31,14 +31,14 @@ def published(tmp_path, monkeypatch):
     return publisher, store, source_quality.MPATLAS.baseline(publisher.bucket)
 
 
-def attempt(publisher, store, baseline, directory):
+def attempt(publisher, store, baseline, directory, *, execution_id='mpatlas-fixture', executor_sha='c' * 40):
     directory.mkdir()
     features = [feature(n) for n in range(1, 41)]
     features[0]['properties']['zone_name'] = 'Updated name'
     records = sidecar(features, DAY.isoformat())
     outputs = fixture_outputs(directory, records)
-    publication = source.SourceFieldPublication(publisher, job.ASSET, execution_id='mpatlas-fixture',
-        executor_sha='c' * 40, configuration={}, store=store)
+    publication = source.SourceFieldPublication(publisher, job.ASSET, execution_id=execution_id,
+        executor_sha=executor_sha, configuration={}, store=store)
     record = {'schema_version': 1, 'asset_slug': job.ASSET.slug, 'status': 'success',
         'run_date': DAY.isoformat(), 'release_date': DAY.isoformat(), 'source': job.SOURCE_URL,
         'source_version': 'new', 'row_count': len(records), 'tools': TOOLS,

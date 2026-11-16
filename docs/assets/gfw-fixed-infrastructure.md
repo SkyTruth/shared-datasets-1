@@ -33,6 +33,9 @@ notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows
   pmtiles sha256 f877b80f3a1bb835c7749a4563162a15f9b4f2dffcfcdbb760ab8601f4aab1db; metadata sha256 2510a2524e855d86562d0ca821c358871fdf6dd437196294df5b73d38078df8b;
   schema sha256 1fb57139a5ce0ac3fbc35d9c9f13bbea9691827ec1d3a2468d1c398d2b77a1e7; manifest sha256 b2beab3e0ff85f8a7a79af40399b7c9b0cedc0c1d88607c11508d75d854ed1bc
   after same-release manifest-generation repair
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 row_count: 57681
 data_profile:
   field_count: 10
@@ -116,6 +119,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-fixed-infrastructure.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -1,4 +1,5 @@
 import { PNG } from 'pngjs';
+import AxeBuilder from '@axe-core/playwright';
 import ts from '../../api/typescript/node_modules/typescript/lib/typescript.js';
 import { test as base, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
@@ -60,7 +61,7 @@ const test = base.extend({
         get: () => library,
         set(value) {
           value.Map = class extends value.Map {
-            constructor(options) { super(options); window.catalogTestMap = this; }
+            constructor(options) { super(options); window.catalogTestMap = this; window.catalogTestMapCount = (window.catalogTestMapCount || 0) + 1; }
           };
           library = value;
         },
@@ -356,6 +357,8 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   await page.locator('#feature-id-input').fill('a1');
   await page.locator('#feature-id-input').press('Enter');
   await expect(page.locator('#feature-inspector')).toContainText('Old footprint 1');
+  expect(new URL(page.url()).searchParams.has('feature_id')).toBe(false);
+  expect(new URL(page.url()).searchParams.has('metadata_generation')).toBe(false);
   // The other point must disappear from real map pixels and hit testing.
   const canvas = page.locator('#map-preview canvas.maplibregl-canvas');
   const point = await upperRightPointPosition(canvas);
@@ -370,6 +373,7 @@ test('find a feature by ID and copy a historical source-attribute link', async (
   await expect(page.locator('#feature-inspector')).toBeHidden();
   await expect(page.locator('#color-legend')).toContainText('feature_id = a1');
   await page.locator('#feature-lookup-clear').click();
+  expect(new URL(page.url()).searchParams.has('feature_id')).toBe(false);
   await expect.poll(async () => nearColor(await upperPointPixels(), [216,79,42], 40)).toBe(true);
   await clickPoint(page, true, testInfo);
   await expect(page.locator('#feature-lookup-status')).toBeEmpty();
@@ -380,10 +384,11 @@ test('feature links reject changed generations, missing releases and malformed h
   for (const [key, value] of [['metadata_generation','999'], ['release','2020-01-01'], ['feature_id','bad/id'], ['asset','absent']]) {
     const bad = new URLSearchParams(params); bad.set(key, value);
     await page.goto(`${baseURL}/?${bad}`);
-    await expect(page.locator('#detail-empty h2')).toHaveText('Feature link unavailable');
+    await expect(page.locator('#detail-empty h2')).toHaveText('Catalog link unavailable');
     await expect(page.locator('#detail-view')).toBeHidden();
     await expect(page.locator('#feature-inspector')).toBeHidden();
   }
+  await expect(page.locator('#asset-list [aria-pressed="true"]')).toHaveCount(0);
   expect(transport.requests.filter(entry => entry.url.endsWith(':lookup'))).toEqual([]);
   await page.locator('#asset-list [data-slug="smoke-public"]').click();
   await expect(page.locator('#feature-lookup')).toBeVisible();
@@ -1339,8 +1344,8 @@ test('feature preview includes published datasets without merging duplicate slug
   await expect(page.locator('#docs-body')).toContainText('Published source documentation');
   await page.locator('#docs-close').click();
   await preview.click({modifiers:['ControlOrMeta']});
-  await expect(preview).toHaveAttribute('aria-selected', 'true');
-  await expect(published).toHaveAttribute('aria-selected', 'true');
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
+  await expect(published).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#selection-legend')).toContainText('Preview');
   await expect(page.locator('#selection-legend')).toContainText('Published');
   await expect(page.locator('#map-status')).toBeHidden();
@@ -1351,7 +1356,7 @@ test('feature preview includes published datasets without merging duplicate slug
   await testInfo.attach('preview-published.png', {body:await page.screenshot(), contentType:'image/png'});
   await page.getByLabel('Include published datasets').uncheck();
   await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveCount(0);
-  await expect(preview).toHaveAttribute('aria-selected', 'true');
+  await expect(preview).toHaveAttribute('aria-pressed', 'true');
   await page.getByLabel('Include published datasets').check();
   await published.click();
   await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
@@ -1364,7 +1369,7 @@ test('feature preview includes published datasets without merging duplicate slug
   await testInfo.attach('preview-mobile.png', {body:await page.screenshot(), contentType:'image/png'});
   await page.goto(`${baseURL}/?asset=published%3Asmoke-public&release=2026-01-01&feature_id=a2&metadata_generation=102`);
   await expect(page.getByLabel('Include published datasets')).toBeChecked();
-  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#asset-list [data-slug="published:smoke-public"]')).toHaveAttribute('aria-pressed', 'true');
   await expectMetadata(page, true);
 });
 
@@ -1521,4 +1526,126 @@ test('catalog SRI rejects changed bytes from an approved CDN URL', async ({page,
   }), url);
   expect(result).toBe('blocked');
   expect(await page.evaluate(() => window.catalogInjected)).toBeUndefined();
+});
+
+
+test('dataset links restore latest or a dated release and selection writes shareable state', async ({page, transport}) => {
+  await page.goto(`${baseURL}/?asset=does-not-exist`);
+  await expect(page.locator('#detail-empty h2')).toHaveText('Catalog link unavailable');
+  await expect(page.locator('#asset-list [aria-pressed="true"]')).toHaveCount(0);
+  await page.goto(`${baseURL}/?asset=smoke-private`);
+  await expect(page.locator('#asset-list [data-slug="smoke-private"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#version-select')).toHaveValue('latest');
+  await page.goto(`${baseURL}/?asset=smoke-public&release=2026-01-01`);
+  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
+  await page.locator('#asset-list [data-slug="smoke-private"]').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('asset')).toBe('smoke-private');
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await expect.poll(() => new URL(page.url()).searchParams.get('release')).toBe('2026-01-01');
+  await page.locator('#version-select').selectOption('latest');
+  await expect.poll(() => new URL(page.url()).searchParams.has('release')).toBe(false);
+  await page.locator('#search-input').fill('no-dataset-matches-this-query');
+  await expect(page.locator('#detail-empty')).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.has('asset')).toBe(false);
+});
+
+test('typing search preserves an unchanged selection map camera and feature lookup', async ({page, transport}) => {
+  await page.goto(`${baseURL}/?asset=smoke-public&release=2026-01-01`);
+  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
+  await page.locator('#feature-id-input').fill('a2');
+  await page.locator('#feature-id-input').press('Enter');
+  await expectMetadata(page, true);
+  await mapIdle(page);
+  const before = await viewport(page);
+  const count = await page.evaluate(() => window.catalogTestMapCount);
+  await page.locator('#search-input').pressSequentially('smoke');
+  await expect(page.locator('#feature-id-input')).toHaveValue('a2');
+  await expect(page.locator('#color-legend')).toContainText('feature_id = a2');
+  expect(await page.evaluate(() => window.catalogTestMapCount)).toBe(count);
+  expect(await viewport(page)).toEqual(before);
+});
+
+test('catalog and docs modal expose accessible states and contain keyboard focus', async ({page, transport}) => {
+  await select(page, 'public');
+  await expect(page.locator('#version-select')).toHaveValue('latest');
+  await expect(page.locator('.maplibregl-canvas')).toBeVisible();
+  await mapIdle(page);
+  const audit = async () => {
+    const result = await new AxeBuilder({page}).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+    expect(result.violations, JSON.stringify(result.violations)).toEqual([]);
+  };
+  await expect(page.locator('#detail-steward')).toHaveText('Jonathan Raphael (@jonaraphael), SkyTruth');
+  await expect(page.locator('#detail-review')).toHaveText('2027-11-15');
+  await audit();
+  await page.locator('#detail-docs').click();
+  await expect(page.locator('#docs-copy-markdown')).toBeEnabled();
+  await audit();
+  for (const button of ['right', 'middle']) {
+    await page.mouse.click(2, 2, {button});
+    await expect(page.locator('#docs-viewer')).toBeVisible();
+  }
+  for (const key of ['Tab', 'Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab']) {
+    await page.keyboard.press(key);
+    expect(await page.evaluate(() => document.querySelector('#docs-viewer').contains(document.activeElement))).toBe(true);
+  }
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.locator('.docs-table-wrap')).toHaveAttribute('tabindex', '0');
+  await expect(page.locator('#docs-body pre')).toHaveAttribute('tabindex', '0');
+  const scrolling = await new AxeBuilder({page}).withRules(['scrollable-region-focusable']).analyze();
+  expect(scrolling.violations).toEqual([]);
+  // A drag across the article/backdrop boundary must preserve the modal.
+  await page.locator('#docs-body h1').scrollIntoViewIfNeeded();
+  const article = await page.locator('#docs-body h1').boundingBox();
+  const inside = {x:article.x + 15, y:article.y + 10};
+  for (const [from,to] of [[inside,{x:2,y:2}],[{x:2,y:2},inside]]) {
+    await page.mouse.move(from.x,from.y); await page.mouse.down();
+    await page.mouse.move(to.x,to.y,{steps:5}); await page.mouse.up();
+    await expect(page.locator('#docs-viewer')).toBeVisible();
+  }
+  await page.mouse.click(2,2);
+  await expect(page.locator('#docs-viewer')).not.toBeVisible();
+  await page.locator('#detail-docs').click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#docs-viewer')).not.toBeVisible();
+  await expect(page.locator('#detail-docs')).toBeFocused();
+});
+
+test.describe('touch docs dialog', () => {
+  test.use({hasTouch: true});
+  test('touch backdrop dismissal preserves selection and respects captured touch endpoints', async ({page, transport}) => {
+    await select(page, 'public');
+    // Choose a backdrop point that would activate another card if tapped through.
+    const point = await page.evaluate(() => {
+      for (let y = 160; y < 960; y += 12) {
+        const card = document.elementFromPoint(100, y)?.closest('.asset-card');
+        if (card && card.getAttribute('aria-pressed') !== 'true') return {x:100, y};
+      }
+      return null;
+    });
+    expect(point).not.toBeNull();
+    await page.locator('#detail-docs').click();
+    await expect(page.locator('#docs-copy-markdown')).toBeEnabled();
+    expect(await page.evaluate(point => document.elementFromPoint(point.x,point.y)?.id, point)).toBe('docs-viewer');
+    const waitForClick = () => page.evaluate(() => {
+      window.touchClickDelivered = new Promise(resolve => document.addEventListener('click', () => queueMicrotask(resolve), {once:true}));
+    });
+    // Four pixels crosses the article edge without cancelling the touch gesture.
+    const article = await page.locator('.docs-dialog').boundingBox();
+    const client = await page.context().newCDPSession(page);
+    await waitForClick();
+    await client.send('Input.dispatchTouchEvent', {type:'touchStart', touchPoints:[{id:1,x:article.x-2,y:article.y+20}]});
+    await client.send('Input.dispatchTouchEvent', {type:'touchMove', touchPoints:[{id:1,x:article.x+2,y:article.y+20}]});
+    await client.send('Input.dispatchTouchEvent', {type:'touchEnd', touchPoints:[]});
+    await page.evaluate(() => window.touchClickDelivered);
+    await client.detach();
+    await expect(page.locator('#docs-viewer')).toBeVisible();
+    await waitForClick();
+    await page.touchscreen.tap(point.x,point.y);
+    await page.evaluate(() => window.touchClickDelivered);
+    await expect(page.locator('#docs-viewer')).not.toBeVisible();
+    await expect(page.locator('#asset-list [data-slug="smoke-public"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#asset-list [aria-pressed="true"]')).toHaveCount(1);
+    await expect(page.locator('#detail-title')).toHaveText('Smoke public');
+    expect(new URL(page.url()).searchParams.get('asset')).toBe('smoke-public');
+  });
 });

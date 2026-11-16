@@ -24,6 +24,8 @@ notes: Daily job publishes raw IMS class 3 as FGB, PMTiles, a feature metadata s
   2026-06-08 revision promotes a full metadata-contract bundle from the current upstream source date and replaces the pre-v2
   latest metadata that was generated from 2026-06-03. Earlier releases remain unchanged; this is not a backfill. Release history,
   source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
 row_count: 1391
 data_profile:
   field_count: 5
@@ -100,6 +102,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** Automated freshness checks
 - **Update cadence:** daily
 - **Canonical file:** `latest/ims-sea-ice-extent.fgb`
 - **Available formats:** `fgb`, `pmtiles`

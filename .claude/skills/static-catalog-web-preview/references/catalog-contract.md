@@ -75,6 +75,16 @@ meaningful skip recorded by the cron job. Both values come from the release
 index when present. WDPA uses these same release/check-in fields; there is no
 separate live execution card or background observer polling in the catalog.
 
+`steward` and `review_by` come from the authoritative asset doc and generated CSV;
+they describe [maintenance accountability](../../../../docs/standards/dataset-stewardship.md),
+not the age of the source release. The selected dataset shows these fields when
+recorded. Dataset links accept `?asset=<slug>` with an optional dated `release`.
+Feature links still require their feature ID, exact release and metadata
+generation together. An unavailable feature snapshot never falls back to latest.
+Changing selection updates the dataset link; search filtering that retains the
+selection preserves its map, camera and feature lookup. The docs viewer is a
+native modal dialog with contained Tab navigation and focus return to Open docs.
+
 The runtime `catalog.json` includes the CSV catalog fields, including
 `citation`, so browser and service consumers can cite the original source
 publication or authoritative dataset release. Optional discovery fields in

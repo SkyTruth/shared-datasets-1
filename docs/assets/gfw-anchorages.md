@@ -28,6 +28,9 @@ notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-
   0 for all 166496 points; full attributes are served from the FGB and metadata sidecar. Releases dated before 2026-06-10
   contain only FGB and full-property PMTiles. Rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles to PMTiles
   conversion path.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 row_count: 166496
 data_profile:
   field_count: 13
@@ -108,6 +111,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-anchorages.fgb`
 - **Available formats:** `fgb`, `pmtiles`

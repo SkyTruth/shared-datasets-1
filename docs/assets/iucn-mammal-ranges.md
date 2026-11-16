@@ -29,6 +29,9 @@ notes: Initial private upload from local MAMMALS.zip; release 2026-05-02; source
   PMTiles display artifact uses maxzoom 6 and tile-simplify 0.01; future rebuilds must use the repo-standard GeoJSONSeq to
   Tippecanoe MBTiles to PMTiles conversion path; canonical FGB preserves source fields and adds source_part; raw zip not uploaded
   because zip is not an approved source/archive format and IUCN terms restrict reposting/redistribution
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 bounds:
 - -179.999
 - -85.582764
@@ -73,6 +76,8 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/iucn-mammal-ranges.fgb`
 - **Available formats:** `fgb`, `pmtiles`

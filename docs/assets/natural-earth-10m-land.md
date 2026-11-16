@@ -31,6 +31,9 @@ notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1
   pmtiles daaa24c56134df90de6ecf8d67149d7a3628e0c9ebba69faa813800b102f79cd; metadata 91479e53f4ad0acef7844ae7e2b819765bfc54b7a0ebb691d79076b1fcf3a62d;
   schema 2818348d1f84425f328c7c056d989b8234cc45cb531d01fbccf3b619e3b0999e; manifest 70e69ffd7259b8b5c1277c23bb75fc9d08094f6fbe9d54cf83096d01c44e4e7c.
   Release history, source generations, row counts, and hashes are recorded in the bucket release index and per-run records.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 row_count: 11
 data_profile:
   field_count: 6
@@ -106,6 +109,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/natural-earth-10m-land.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -35,7 +35,7 @@ admission:
   - SkyTruth internal DRC conflict, risk, security, extractives, and humanitarian context analyses
   shared_rationale: Provides a reusable, documented private snapshot of ACLED event-level DRC conflict data in canonical geospatial
     formats, avoiding repeated spreadsheet handling and inconsistent DRC filtering across internal projects.
-  steward: SkyTruth
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refreshes from authorized ACLED exports when internal consumers need a newer DRC snapshot.
   estimated_published_size_gb: 0.12
   alternatives_considered: Project-specific scratch storage, direct ACLED download by each consumer, and keeping the source
@@ -43,6 +43,7 @@ admission:
     IDs, metadata sidecar support, and catalog discovery.
   deprecation_policy: Keep dated releases readable; mark deprecated or superseded if ACLED terms, schema, DRC source coverage,
     or a future scheduled ingestion replaces this manual snapshot.
+review_by: '2027-11-15'
 bounds:
 - 12.3715
 - -13.1758
@@ -151,6 +152,8 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/acled-drc-historic-events.fgb`
 - **Available formats:** `fgb`, `pmtiles`

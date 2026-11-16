@@ -22,6 +22,9 @@ status: active
 access_tier: public
 owner: SkyTruth
 update_cadence: manual
+review_by: "2027-11-15"
+admission:
+  steward: Jonathan Raphael (@jonaraphael)
 canonical_format: fgb
 canonical_file: latest/example-asset.fgb
 available_formats:
@@ -203,7 +206,7 @@ class CatalogSiteTests(unittest.TestCase):
             self._write_categories(categories_path)
             catalog_path = root / "catalog.csv"
             with catalog_path.open("w", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=catalog_site.REQUIRED_FIELDS + ["feature_identity"])
+                writer = csv.DictWriter(handle, fieldnames=catalog_site.REQUIRED_FIELDS + ["feature_identity", "steward", "review_by"])
                 writer.writeheader()
                 writer.writerow(
                     {
@@ -223,6 +226,8 @@ class CatalogSiteTests(unittest.TestCase):
                         "license": "Example license",
                         "citation": "Example citation",
                         "feature_identity": "source_field:WDPAID",
+                        "steward": "Jonathan Raphael (@jonaraphael)",
+                        "review_by": "2027-11-15",
                     }
                 )
 
@@ -237,6 +242,8 @@ class CatalogSiteTests(unittest.TestCase):
 
         self.assertEqual(payload["assets"][0]["feature_identity"]["strategy"], "source_field")
         self.assertEqual(payload["assets"][0]["feature_identity"]["source_fields"], ["WDPAID"])
+        self.assertEqual(payload['assets'][0]['steward'], 'Jonathan Raphael (@jonaraphael)')
+        self.assertEqual(payload['assets'][0]['review_by'], '2027-11-15')
 
     def test_doc_declared_feature_metadata_emits_latest_files_without_release_index(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,5 +1,12 @@
 # Reviewed dataset mutation documents
 
+The `mpatlas-source-field-v1` publication-recovery subtype is a narrow exception
+to nonempty promotions. Its publish payload has no new promotions, index
+rebuilds, breaking changes or delete plan. It binds a terminal MPAtlas execution,
+its immutable image/executor, original receipt and state snapshots, and the
+source-quality control generation. The existing protected reviewed-control
+installer resumes only that original intent. See the [recovery procedure](../../.claude/skills/publish-shared-dataset/references/partial-publication-recovery.md#mpatlas-after-both-task-attempts-fail).
+
 Canonical mutation authority is a checked-in JSON document added by a same-repo
 PR merged to `main`. The readable PR fences are generated review copies; editing
 a PR body never changes executed mutations.

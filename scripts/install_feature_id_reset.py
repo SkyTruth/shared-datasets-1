@@ -19,6 +19,7 @@ from ingestion.common.reset_installation import install_reset, validate_reset_pl
 from scripts import dataset_mutation_authorization as auth
 from ingestion.eamlis_monthly import identity_installation as eamlis
 from ingestion.wdpa_monthly import checkin_recovery
+from ingestion.mpatlas_monthly import publication_recovery as mpatlas_recovery
 
 
 def authorized_plan(directory: Path, digest: str, *, api, env):
@@ -28,7 +29,10 @@ def authorized_plan(directory: Path, digest: str, *, api, env):
               "reset requires one immutable publish plan")
     plan = envelope["document"]["publish"]
     if "publication_recovery" in plan:
-        checkin_recovery.validate_plan(plan)
+        if plan["publication_recovery"].get("kind") == mpatlas_recovery.KIND:
+            mpatlas_recovery.validate_plan(plan)
+        else:
+            checkin_recovery.validate_plan(plan)
     elif "identity_transition" in plan:
         eamlis.validate_plan(plan)
     else:
@@ -45,6 +49,7 @@ def main(argv=None):
     api = auth.GitHub()
     envelope, plan = authorized_plan(args.directory, args.expected_sha256, api=api, env=dict(os.environ))
     if args.check_only:
+        auth.write_outputs({"requires_image_evidence": plan.get("publication_recovery", {}).get("kind") == mpatlas_recovery.KIND}, os.environ.get("GITHUB_OUTPUT"))
         print("Reviewed control plan verified; paused/drained job checks still required.")
         return 0
 
@@ -65,13 +70,20 @@ def main(argv=None):
 
     def guard():
         auth.revalidate(api, envelope)
-        if "identity_transition" in plan:
+        if plan.get("publication_recovery", {}).get("kind") == mpatlas_recovery.KIND:
+            reader.check_job_quiescent("mpatlas-monthly")
+        elif "identity_transition" in plan:
             reader.check_job_quiescent("eamlis-monthly")
         else:
             reader.check_quiescent(plan["asset_slug"])
 
     client = storage.Client(project=PROJECT, credentials=credentials)
     if "publication_recovery" in plan:
+        if plan["publication_recovery"].get("kind") == mpatlas_recovery.KIND:
+            from scripts.mpatlas_publication_recovery import run_original
+            guard()
+            run_original(plan, directory=args.directory, digest=args.expected_sha256)
+            return 0
         result = checkin_recovery.recover(GcsStore(client), plan, check_authority_and_jobs=guard)
     elif "identity_transition" in plan:
         from ingestion.common.publication_gcs import work_root

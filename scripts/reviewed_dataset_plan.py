@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import pathlib
@@ -329,6 +330,15 @@ def normalize_publish_plan(
         label="publish plan",
     )
     asset_slug, proposal_id = require_slug_and_proposal(plan)
+    recovery = plan.get("publication_recovery")
+    if isinstance(recovery, dict) and recovery.get("kind") == "mpatlas-source-field-v1":
+        from ingestion.mpatlas_monthly.publication_recovery import validate_plan
+        from ingestion.common.publication import PublicationError
+        try:
+            validate_plan(plan)
+        except (PublicationError, KeyError, TypeError, ValueError) as exc:
+            raise PlanValidationError(f"invalid MPAtlas publication recovery: {exc}") from exc
+        return copy.deepcopy(plan)
     promotions = plan.get("promotions")
     if not isinstance(promotions, list) or not promotions:
         raise PlanValidationError("promotions must be a nonempty list")

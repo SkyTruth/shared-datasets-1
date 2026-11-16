@@ -398,6 +398,9 @@ Required fields:
 - Title.
 - Status.
 - Owner.
+- Named steward with a GitHub handle or email in `admission.steward`.
+- Explicit `review_by` deadline for active assets without daily/monthly automated
+  freshness checks; see [dataset stewardship](dataset-stewardship.md).
 - Update cadence.
 - Canonical file.
 - Source.

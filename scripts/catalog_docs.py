@@ -56,6 +56,8 @@ CATALOG_COLUMNS = [
     "notes",
     "translation_locales",
     "translation_fields",
+    "steward",
+    "review_by",
 ]
 
 FRONTMATTER_KEYS = [
@@ -83,6 +85,7 @@ FRONTMATTER_KEYS = [
     "license_flags",
     "notes",
     "admission",
+    "review_by",
     "bounds",
     "geometry_type",
     "row_count",
@@ -101,6 +104,7 @@ FRONTMATTER_KEYS = [
 ]
 
 OPTIONAL_DISCOVERY_FIELDS = [
+    "review_by",
     "source_url",
     "license_flags",
     "bounds",
@@ -375,11 +379,13 @@ def normalize_metadata(
                 metadata[key] = text
 
     if "admission" in raw:
+        if not isinstance(raw["admission"], dict):
+            raise CatalogDocsError(f"{path}: admission must be a mapping")
         metadata["admission"] = raw["admission"]
 
     for key in OPTIONAL_DISCOVERY_FIELDS:
         if key in raw:
-            metadata[key] = raw[key]
+            metadata[key] = as_text(raw[key]).strip() if key == "review_by" else raw[key]
 
     available_formats = normalize_list(raw.get("available_formats"))
     metadata["available_formats"] = available_formats
@@ -410,6 +416,14 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
     if metadata.get("access_tier") not in ACCESS_TIERS:
         raise CatalogDocsError(f"{path}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
     validate_lifecycle_metadata(path, metadata)
+    if metadata["status"] == "active":
+        from scripts.dataset_stewardship import validate
+        admission = metadata.get("admission", {})
+        steward = admission.get("steward") if isinstance(admission, dict) else None
+        try:
+            validate(steward, metadata["update_cadence"], metadata.get("review_by"))
+        except ValueError as exc:
+            raise CatalogDocsError(f"{path}: {exc}") from exc
     if DISALLOWED_CADENCE_DETAIL_RE.search(metadata["update_cadence"]):
         raise CatalogDocsError(
             f"{path}: update_cadence must describe schedule only; unchanged-source skip behavior is the default for cron jobs"
@@ -811,6 +825,8 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "consumer_guidance": metadata.get("consumer_guidance", ""),
         "access_tier": metadata["access_tier"],
         "owner": metadata["owner"],
+        "steward": metadata.get("admission", {}).get("steward", ""),
+        "review_by": metadata.get("review_by", ""),
         "update_cadence": metadata["update_cadence"],
         "canonical_path": canonical_gs_uri(metadata, bucket),
         "canonical_format": metadata["canonical_format"],
@@ -886,7 +902,10 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
 
 
 def summary_block(metadata: dict[str, Any]) -> str:
+    from scripts.dataset_stewardship import FRESHNESS_DAYS
     formats = ", ".join(f"`{format_name}`" for format_name in metadata["available_formats"])
+    review = metadata.get("review_by") or ("Automated freshness checks" if metadata["status"] == "active"
+        and metadata["update_cadence"] in FRESHNESS_DAYS else "Not scheduled")
     lines = [
         "<!-- BEGIN GENERATED asset-summary -->",
         f"- **Status:** {metadata['status']}",
@@ -905,6 +924,8 @@ def summary_block(metadata: dict[str, Any]) -> str:
         [
             f"- **Access tier:** {metadata['access_tier']}",
             f"- **Owner:** {metadata['owner']}",
+            f"- **Steward:** {metadata.get('admission', {}).get('steward', '')}",
+            f"- **Next stewardship review:** {review}",
             f"- **Update cadence:** {metadata['update_cadence']}",
             f"- **Canonical file:** `{metadata['canonical_file']}`",
             f"- **Available formats:** {formats}",

@@ -133,6 +133,8 @@ def build(work: Path) -> None:
             if tier in {"comparison", "polygons", "overlap", "colors", "colorizer", "tile-colorizer"}
             else tier,
             owner="SkyTruth",
+            steward="Jonathan Raphael (@jonaraphael), SkyTruth" if slug == "smoke-public" else "",
+            review_by="2027-11-15" if slug == "smoke-public" else "",
             update_cadence="manual",
             canonical_path=f"{root}/latest/{slug}.fgb",
             canonical_format="fgb",
@@ -175,6 +177,7 @@ def build(work: Path) -> None:
             metadata.pop("feature_metadata")
         (docs / f"{slug}.md").write_text(
             f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release {'polygons' if tier == 'polygons' else 'points'}.\n"
+            + ("\n| Field | Description |\n|---|---|\n| feature_id | " + "Wide documentation content " * 16 + "|\n\n```text\n" + "wide_example_" * 45 + "\n```\n" if slug == "smoke-public" else "")
         )
         index = json.loads(json.dumps(contract["index"]))
         if slug.startswith("wdpa-"):

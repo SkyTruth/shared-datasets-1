@@ -28,6 +28,7 @@ from scripts.dataset_mutation_authorization import IdentityGitHub
 from scripts import workflow_failure_alert as alerts
 from scripts.workflow_failure_alert import API_ROOT, REPOSITORY, source_inventory
 from scripts.catalog_refresh_check import catalog_changed
+from scripts.dataset_stewardship import FRESHNESS_DAYS, review_problems
 
 ROOT = Path(__file__).resolve().parents[1]
 with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
@@ -35,7 +36,6 @@ with (ROOT / "catalog/shared-datasets-catalog.csv").open() as stream:
 CRON_ASSETS = {job: tuple(slug for slug in CATALOG if slug == config["asset_slug"] or
                (not config["asset_slug"] and slug.startswith(config["selection"] + "-")))
                for job, config in TARGETS.items()} | {"dataset-usage": ()}
-FRESHNESS_DAYS = {"daily": 2, "monthly": 31 + 7}
 SAFETY_INTERVAL = timedelta(days=1)
 HEARTBEAT_WINDOW = 2 * SAFETY_INTERVAL + timedelta(hours=1)
 REPLAY_WINDOW = 3 * SAFETY_INTERVAL
@@ -405,6 +405,7 @@ def main():
                 if now - native.timestamp(claim["since"]) >= timedelta(hours=24)]
 
         readers = [
+            ("stewardship_reviews", lambda: ([], review_problems(CATALOG.values(), today=now.date()))),
             ("policy_warnings", lambda: policy_warnings(now)),
             ("audit_freshness", lambda: ([], audit_freshness(api, now=now))),
             ("deployed_image_lag", lambda: ([], deployed_image_lag(api, now=now))),
