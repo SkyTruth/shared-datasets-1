@@ -185,10 +185,13 @@ def evidence_from_asset_doc(path: Path) -> tuple[dict[str, Any], list[str]]:
 
 
 def validate_admission_evidence(evidence: dict[str, Any], *, label: str) -> list[str]:
+    from scripts.dataset_stewardship import named_contact
     errors: list[str] = []
     for key, display in REQUIRED_TEXT_FIELDS.items():
         if is_missing_text(evidence.get(key)):
             errors.append(f"{label}: missing {display}")
+    if not is_missing_text(evidence.get("steward")) and not named_contact(evidence["steward"]):
+        errors.append(f"{label}: admission.steward must name a person with a GitHub handle or email")
 
     footprint = parse_footprint_gb(evidence.get("estimated_published_size_gb"))
     if footprint is None:

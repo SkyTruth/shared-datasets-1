@@ -35,11 +35,12 @@ admission:
     traceability, qualification, and armed-actor observations in eastern DRC.
   alternatives_considered: Direct upstream CSV use requires repeat geometry conversion and does not provide shared release
     metadata; project-local storage would duplicate a broadly reusable public dataset.
-  steward: SkyTruth shared-datasets maintainers; upstream steward IPIS
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refresh from IPIS open-data downloads unless a scheduled ingestion is added later.
   estimated_published_size_gb: 1
   deprecation_policy: If IPIS withdraws or supersedes the table, mark this asset deprecated or superseded, retain existing
     releases for citation, and point consumers to the successor source or service.
+review_by: '2027-11-15'
 bounds:
 - 23.2714776
 - -12.08436
@@ -155,6 +156,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/ipis-drc-artisanal-mining-sites.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -53,6 +53,9 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   Prior releases 2026-04-29, 2026-05-04, 2026-06-05, and 2026-06-06 remain unchanged and readable. On 2026-06-11, the asset
   access tier was updated from private to public after verifying the current UNEP-WCMC GIS Portal item has access public and
   CC-BY-SA 4.0 licenseInfo with ISO metadata date 2026-03-23.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 row_count: 18429
 data_profile:
   field_count: 22
@@ -198,6 +201,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/global-coral-reefs.fgb`
 - **Available formats:** `fgb`, `pmtiles`

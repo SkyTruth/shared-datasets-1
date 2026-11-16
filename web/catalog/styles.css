@@ -184,7 +184,7 @@ select {
 select:focus,
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid rgba(31, 122, 89, 0.25);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -245,12 +245,12 @@ a:focus-visible {
 }
 
 .asset-card:hover,
-.asset-card[aria-selected="true"] {
+.asset-card[aria-pressed="true"] {
   border-color: var(--line-strong);
   background: var(--field);
 }
 
-.asset-card[aria-selected="true"] {
+.asset-card[aria-pressed="true"] {
   box-shadow: inset 4px 0 0 var(--selection-color, var(--accent));
 }
 
@@ -444,17 +444,24 @@ a:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 20;
-  display: grid;
-  place-items: center;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
   padding: 24px;
 }
 
-.docs-backdrop {
-  position: absolute;
-  inset: 0;
-  border: 0;
+.docs-viewer[open] {
+  display: grid;
+  place-items: center;
+}
+
+.docs-viewer::backdrop {
   background: rgba(23, 33, 27, 0.46);
-  cursor: pointer;
 }
 
 .docs-dialog {
@@ -1020,7 +1027,7 @@ h3 {
 }
 
 .color-legend-item:focus-visible {
-  outline: 2px solid rgba(31, 111, 178, 0.42);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1458,4 +1465,9 @@ h3 {
   .identity-review-dialog h2 { font-size: 1.15rem; }
   .identity-review-dialog select { display: block; margin: 6px 0; width: 100%; }
   .identity-review-dialog th, .identity-review-dialog td { padding: 6px; font-size: .82rem; }
+}
+@media (min-width: 621px) {
+  #detail-steward-card {
+    grid-column: span 2;
+  }
 }

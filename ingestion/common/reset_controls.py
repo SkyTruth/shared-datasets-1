@@ -32,7 +32,7 @@ class GoogleControlReader:
         self.check_job_quiescent(ASSET_JOBS[asset_slug])
 
     def check_job_quiescent(self, job):
-        p.require(job in {"wdpa-monthly", "sea-ice-daily", "eamlis-monthly"}, "job is outside identity installation scope")
+        p.require(job in {"wdpa-monthly", "sea-ice-daily", "eamlis-monthly", "mpatlas-monthly"}, "job is outside reviewed control scope")
         parent = f"projects/{PROJECT}/locations/{REGION}/jobs/{job}"
         scheduler = self.read(f"https://cloudscheduler.googleapis.com/v1/{parent}")
         p.require(scheduler.get("state") == "PAUSED", f"pause the {job} schedule before installing its reset")

@@ -39,7 +39,7 @@ admission:
     gives consumers a stable FGB, lightweight PMTiles, and release metadata without repeated service extraction.
   source_license_citation_status: Source and citation are identified; explicit reuse terms were not found in available ArcGIS
     service metadata, so the first proposal keeps access internal pending review.
-  steward: SkyTruth shared-datasets maintainers; upstream source producer CAMI and publisher WRI Forest Atlas DRC
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refresh unless a future consumer needs scheduled monitoring
   estimated_published_size_gb: 0.05
   alternatives_considered: Direct ArcGIS REST queries require batching and are less reproducible. A future CAMI-direct asset
@@ -48,6 +48,7 @@ admission:
   deprecation_policy: If CAMI or WRI publishes a clearer successor, withdraws access, or changes terms incompatibly, mark
     this asset deprecated or superseded, retain existing releases where allowed, and point consumers to the successor source
     or direct upstream service.
+review_by: '2027-11-15'
 bounds:
 - 6.6666667
 - -21.1
@@ -144,6 +145,8 @@ files:
 - **Status:** active
 - **Access tier:** internal
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/wri-forest-atlas-drc-mining-permits.fgb`
 - **Available formats:** `fgb`, `pmtiles`

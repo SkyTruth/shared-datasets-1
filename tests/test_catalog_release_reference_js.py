@@ -65,7 +65,10 @@ for (const [key, value] of [['asset', '../other'], ['release', 'latest'], ['rele
   assert.throws(() => api.parseFeatureLink(bad.href));
 }
 assert.throws(() => api.parseFeatureLink(link + '&feature_id=other'), /duplicate/);
-assert.throws(() => api.parseFeatureLink('https://viewer.test/?asset=example-layer'), /incomplete/);
+assert.deepEqual(api.parseFeatureLink('https://viewer.test/?asset=example-layer'), {asset:'example-layer', release:null, featureId:null, generation:null});
+assert.deepEqual(api.parseFeatureLink('https://viewer.test/?asset=example-layer&release=2026-01-01'), {asset:'example-layer', release:'2026-01-01', featureId:null, generation:null});
+assert.throws(() => api.parseFeatureLink('https://viewer.test/?release=2026-01-01'), /incomplete/);
+assert.throws(() => api.parseFeatureLink('https://viewer.test/?asset=example-layer&feature_id=old1'), /incomplete/);
 assert.throws(() => api.featureLinkUrl(old, 'bad/id', link), /valid feature ID/);
 assert.throws(() => api.featureLinkUrl(bareRef, 'old1', link), /no source metadata/);
 

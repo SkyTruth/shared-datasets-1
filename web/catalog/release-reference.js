@@ -79,12 +79,17 @@ const FEATURE_LINK_PARAMS = ["asset", "release", "feature_id", "metadata_generat
 export function parseFeatureLink(href) {
   const params = new URL(href).searchParams;
   if (!FEATURE_LINK_PARAMS.some(key => params.has(key))) return null;
-  if (FEATURE_LINK_PARAMS.some(key => params.getAll(key).length !== 1)) throw new Error("Feature link is incomplete or contains duplicate parameters.");
-  const [asset, release, featureId, generation] = FEATURE_LINK_PARAMS.map(key => params.get(key));
-  if (!/^(?:published:)?[a-z0-9]+(?:-[a-z0-9]+)*$/.test(asset) || !validDate(release) || !/^[A-Za-z0-9]{1,64}$/.test(featureId)) {
-    throw new Error("Feature link must identify a dataset, a dated release, and a valid feature ID.");
+  const feature = params.has("feature_id") || params.has("metadata_generation");
+  if (params.getAll("asset").length !== 1 || FEATURE_LINK_PARAMS.some(key => params.getAll(key).length > 1) ||
+      (feature && FEATURE_LINK_PARAMS.some(key => params.getAll(key).length !== 1))) {
+    throw new Error("Catalog link is incomplete or contains duplicate parameters.");
   }
-  return {asset, release, featureId, generation: artifactGeneration(generation)};
+  const [asset, release, featureId, generation] = FEATURE_LINK_PARAMS.map(key => params.get(key));
+  if (!/^(?:published:)?[a-z0-9]+(?:-[a-z0-9]+)*$/.test(asset) ||
+      (params.has("release") && !validDate(release)) || (feature && !/^[A-Za-z0-9]{1,64}$/.test(featureId))) {
+    throw new Error("Catalog link must identify a valid dataset, dated release, and valid feature ID when provided.");
+  }
+  return {asset, release, featureId, generation: feature ? artifactGeneration(generation) : null};
 }
 
 export function featureLinkUrl(reference, featureId, href) {

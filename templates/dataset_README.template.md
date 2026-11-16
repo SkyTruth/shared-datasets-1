@@ -11,6 +11,7 @@ status: "active" # active | deprecated | superseded | retired
 access_tier: "public" # public | private | internal
 owner: "{person-or-team}"
 update_cadence: "static" # static | manual | daily | weekly | monthly | ad hoc
+review_by: "{YYYY-MM-DD}" # Required without daily/monthly automated freshness; reviewed explicitly, never advanced by regeneration
 canonical_format: "fgb" # fgb | cog | zarr | pmtiles | geojson | ndgeojson | csv
 canonical_file: "latest/{asset-slug}.{ext}"
 available_formats:
@@ -31,7 +32,7 @@ admission:
     - "{project-or-user}"
   shared_rationale: "{why this belongs in shared-datasets}"
   source_license_citation_status: "{optional: confirmation status of source, license, and citation}"
-  steward: "{person-or-team}"
+  steward: "{named person with GitHub handle or email}"
   update_expectations: "{manual/static/scheduled expectation and freshness notes}"
   estimated_published_size_gb: "{number or unknown}"
   large_data_exception: "{required when estimated footprint is >= 10 GB}"

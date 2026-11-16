@@ -7,8 +7,8 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="catalog-panel" aria-label="Dataset catalog">
+    <main class="app-shell">
+      <section class="catalog-panel" aria-label="Dataset catalog">
         <header class="catalog-header">
           <div>
             <p class="eyebrow">SkyTruth data plane</p>
@@ -56,8 +56,8 @@
           </div>
         </section>
 
-        <main id="asset-list" class="asset-list" aria-label="Dataset results"></main>
-      </aside>
+        <section id="asset-list" class="asset-list" aria-label="Dataset results"></section>
+      </section>
 
       <section class="detail-panel" aria-label="Selected dataset">
         <div id="detail-empty" class="empty-state">
@@ -189,6 +189,14 @@
               <span>Owner</span>
               <strong id="detail-owner"></strong>
             </div>
+            <div id="detail-steward-card" hidden>
+              <span>Steward</span>
+              <strong id="detail-steward"></strong>
+            </div>
+            <div id="detail-review-card" hidden>
+              <span>Next stewardship review</span>
+              <strong id="detail-review"></strong>
+            </div>
             <div>
               <span>Status</span>
               <strong id="detail-status"></strong>
@@ -248,8 +256,8 @@
                 </div>
                 <button id="use-copy-code" class="icon-button" type="button">Copy code</button>
               </div>
-              <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python"></pre>
-              <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" hidden></pre>
+              <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python" tabindex="0"></pre>
+              <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" tabindex="0" hidden></pre>
               <p id="use-error" role="status" hidden></p>
               <div class="use-footer">
                 <a class="use-help" href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/consumer-guide.md#use-this-dataset" target="_blank" rel="noopener">SDK setup</a>
@@ -329,10 +337,9 @@
           </section>
         </article>
       </section>
-    </div>
+    </main>
 
-    <div id="docs-viewer" class="docs-viewer" role="dialog" aria-modal="true" aria-labelledby="docs-title" hidden>
-      <button class="docs-backdrop" type="button" data-docs-close aria-label="Close docs"></button>
+    <dialog id="docs-viewer" class="docs-viewer" aria-labelledby="docs-title">
       <article class="docs-dialog">
         <header class="docs-header">
           <div>
@@ -346,7 +353,7 @@
         </header>
         <div id="docs-body" class="docs-body" tabindex="0"></div>
       </article>
-    </div>
+    </dialog>
 
     <template id="asset-card-template">
       <button class="asset-card" type="button">

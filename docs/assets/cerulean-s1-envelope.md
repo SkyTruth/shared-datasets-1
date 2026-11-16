@@ -26,6 +26,9 @@ notes: Cerulean analysis envelope, not a complete Sentinel-1 footprint catalog. 
   containing 35,114 coordinate positions. Geometry is preserved exactly in FGB; metadata-lookup PMTiles retain zooms 0-6.
   No source attributes or translations are present; source generation method and redistribution terms remain unconfirmed.
   Existing generated-ID sequence state remains at next-ID 2.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 bounds:
 - -179.3667585675504
 - -78.65518002892276
@@ -108,6 +111,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/cerulean-s1-envelope.fgb`
 - **Available formats:** `fgb`, `pmtiles`

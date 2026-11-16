@@ -38,13 +38,14 @@ admission:
   - SkyTruth internal regional conflict, risk, and exposure analyses
   shared_rationale: Provides a reusable, curated private snapshot of ACLED weekly Admin 1 conflict and demonstration aggregates
     for Europe and Central Asia, avoiding repeated local spreadsheet handling across internal projects.
-  steward: SkyTruth
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refreshes from ACLED weekly aggregated exports when internal consumers need a newer snapshot.
   estimated_published_size_gb: 0.08
   alternatives_considered: Project-specific scratch storage, direct ACLED download by each consumer, and keeping the XLSX
     only. Shared-datasets is preferred for reviewed private reuse, documented schema, and canonical geospatial formats.
   deprecation_policy: Keep dated releases readable; mark deprecated or superseded if ACLED changes terms, schema, geography,
     or a scheduled ingestion replaces this manual snapshot.
+review_by: '2027-11-15'
 bounds:
 - -51.0801
 - 28.2931
@@ -129,6 +130,8 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/acled-europe-central-asia-aggregated-weekly-admin1.fgb`
 - **Available formats:** `fgb`, `pmtiles`

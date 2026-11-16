@@ -5,6 +5,7 @@ import {captureWorkspace, pythonSnippet, typescriptSnippet} from "./workspace.js
 
 const state = {
   catalog: null,
+  ready: false,
   referenceCache: new Map(),
   assets: [],
   publishedLoaded: false,
@@ -80,6 +81,10 @@ const elements = {
   lastRun: document.querySelector("#detail-last-run"),
   cadenceValue: document.querySelector("#detail-cadence"),
   owner: document.querySelector("#detail-owner"),
+  stewardCard: document.querySelector("#detail-steward-card"),
+  steward: document.querySelector("#detail-steward"),
+  reviewCard: document.querySelector("#detail-review-card"),
+  review: document.querySelector("#detail-review"),
   statusValue: document.querySelector("#detail-status"),
   accessTierValue: document.querySelector("#detail-access-tier"),
   geometryCard: document.querySelector("#detail-geometry-card"),
@@ -215,8 +220,9 @@ async function init() {
     populateFilters();
     wireEvents();
     applyFilters();
-    await restoreFeatureLink();
+    await restoreCatalogLink();
     await restoreIdentityReviewLink();
+    state.ready = true;
   } catch (error) {
     renderFatalError(error);
   }
@@ -438,15 +444,43 @@ function wireEvents() {
     }
   });
   elements.docsClose.addEventListener("click", closeDocs);
-  for (const closer of document.querySelectorAll("[data-docs-close]")) {
-    closer.addEventListener("click", closeDocs);
-  }
+  elements.docsViewer.addEventListener("keydown", event => {
+    if (event.key !== "Tab") return;
+    const controls = [...elements.docsViewer.querySelectorAll('button:not([disabled]), a[href], [tabindex="0"]')]
+      .filter(control => control.getClientRects().length);
+    const first = controls[0], last = controls[controls.length - 1];
+    if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    }
+  });
+  let docsBackdropPointerDown = false, docsBackdropGesture = false;
+  elements.docsViewer.addEventListener("pointerdown", event => {
+    docsBackdropPointerDown = event.button === 0 && event.target === elements.docsViewer;
+    docsBackdropGesture = false;
+  });
+  elements.docsViewer.addEventListener("pointerup", event => {
+    // Touch capture retargets pointerup; use the actual release position.
+    docsBackdropGesture = docsBackdropPointerDown && document.elementFromPoint(event.clientX, event.clientY) === elements.docsViewer;
+    docsBackdropPointerDown = false;
+  });
+  elements.docsViewer.addEventListener("pointercancel", () => { docsBackdropPointerDown = docsBackdropGesture = false; });
+  elements.docsViewer.addEventListener("click", event => {
+    // Keep the modal open until the compatibility click is delivered to it.
+    if (docsBackdropGesture && event.target === elements.docsViewer) closeDocs();
+    docsBackdropGesture = false;
+  });
+  elements.docsViewer.addEventListener("close", () => {
+    state.docsRequestSerial += 1;
+    elements.docsCopyMarkdown.disabled = true;
+    delete elements.docsCopyMarkdown.dataset.markdown;
+    document.body.classList.remove("docs-open");
+    elements.docsBody.replaceChildren();
+    elements.docs.focus({preventScroll: true});
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      if (!elements.docsViewer.hidden) {
-        closeDocs();
-      }
-      clearFeatureInspector();
+      if (!elements.docsViewer.open) clearFeatureInspector();
     }
   });
   elements.versionSelect.addEventListener("change", () => {
@@ -454,6 +488,7 @@ function wireEvents() {
     if (!asset) return;
     state.versionBySlug[assetKey(asset)] = elements.versionSelect.value;
     renderSelection();
+    syncSelectionLink();
   });
   elements.basemap.addEventListener("change", () => {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
@@ -513,6 +548,7 @@ function unique(values) {
 }
 
 function applyFilters() {
+  const previousSelection = state.selectedSlugs.join("\0");
   const query = normalize(elements.search.value);
   const category = elements.category.value;
   const format = elements.format.value;
@@ -548,7 +584,10 @@ function applyFilters() {
       clearDetail();
     }
   } else {
-    renderSelection();
+    if (state.selectedSlugs.join("\0") !== previousSelection) {
+      renderSelection();
+      syncSelectionLink();
+    }
     markSelected();
   }
 }
@@ -631,7 +670,7 @@ function subcategoryGroupKey(asset) {
 }
 
 function renderSubcategoryHeading(asset) {
-  const heading = document.createElement("div");
+  const heading = document.createElement("h2");
   heading.className = "asset-group-heading";
   const subcategory = document.createElement("span");
   subcategory.textContent = asset.subcategory || "Uncategorized";
@@ -644,7 +683,7 @@ function renderSubcategoryHeading(asset) {
 function renderAssetCard(asset, selectedSet) {
   const node = elements.template.content.firstElementChild.cloneNode(true);
   node.dataset.slug = assetKey(asset);
-  node.setAttribute("aria-selected", selectedSet.has(assetKey(asset)) ? "true" : "false");
+  node.setAttribute("aria-pressed", selectedSet.has(assetKey(asset)) ? "true" : "false");
   node.style.setProperty("--selection-color", colorForSlug(assetKey(asset)));
   node.querySelector(".asset-title").textContent = asset.title;
   node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
@@ -686,6 +725,7 @@ function selectAsset(slug, options = {}) {
   }
   renderSelection();
   markSelected();
+  syncSelectionLink();
   if (options.scroll !== false) {
     document.querySelector(".detail-panel").scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -694,9 +734,21 @@ function selectAsset(slug, options = {}) {
 function markSelected() {
   const selected = new Set(state.selectedSlugs);
   for (const card of elements.list.querySelectorAll(".asset-card")) {
-    card.setAttribute("aria-selected", selected.has(card.dataset.slug) ? "true" : "false");
+    card.setAttribute("aria-pressed", selected.has(card.dataset.slug) ? "true" : "false");
     card.style.setProperty("--selection-color", colorForSlug(card.dataset.slug));
   }
+}
+
+function syncSelectionLink() {
+  if (!state.ready) return;
+  const url = new URL(window.location.href);
+  for (const key of ["asset", "release", "feature_id", "metadata_generation"]) url.searchParams.delete(key);
+  if (state.selectedSlugs.length === 1) {
+    const key = state.selectedSlugs[0];
+    url.searchParams.set("asset", key);
+    if (state.versionBySlug[key] && state.versionBySlug[key] !== "latest") url.searchParams.set("release", state.versionBySlug[key]);
+  }
+  history.replaceState(null, "", url);
 }
 
 function renderSelection() {
@@ -739,6 +791,10 @@ function renderDetail(asset) {
   renderLastRun(asset);
   elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
   elements.owner.textContent = asset.owner || "Unknown";
+  elements.stewardCard.hidden = !asset.steward;
+  elements.steward.textContent = asset.steward || "";
+  elements.reviewCard.hidden = !asset.review_by;
+  elements.review.textContent = asset.review_by || "";
   elements.statusValue.textContent = asset.status || "Unknown";
   elements.accessTierValue.textContent = asset.access_tier || "Unknown";
   elements.source.textContent = asset.source || "Unknown";
@@ -1434,9 +1490,10 @@ function clearFeatureSearch() {
   state.featureFilterId = "";
   state.mapModule?.setFeatureFilter("");
   clearFeatureInspector();
+  syncSelectionLink();
 }
 
-async function restoreFeatureLink() {
+async function restoreCatalogLink() {
   try {
     const link = parseFeatureLink(window.location.href);
     if (!link) return;
@@ -1446,19 +1503,26 @@ async function restoreFeatureLink() {
     }
     const asset = state.assets.find(candidate => assetKey(candidate) === link.asset);
     if (!asset) throw new Error("The linked dataset is unavailable in this catalog.");
-    const reference = selectReleaseReference(asset, link.release, {bucket: asset.catalog_bucket || state.catalog.bucket});
-    const file = metadataFile(reference.files);
-    if (!file || artifactGeneration(file.generation) !== link.generation) {
-      throw new Error("The linked metadata snapshot has changed or is unavailable. Select the dataset to inspect an available release.");
+    if (link.release) {
+      const reference = selectReleaseReference(asset, link.release, {bucket: asset.catalog_bucket || state.catalog.bucket});
+      if (link.featureId) {
+        const file = metadataFile(reference.files);
+        if (!file || artifactGeneration(file.generation) !== link.generation) {
+          throw new Error("The linked metadata snapshot has changed or is unavailable. Select the dataset to inspect an available release.");
+        }
+      }
+      state.versionBySlug[link.asset] = link.release;
     }
-    state.versionBySlug[link.asset] = link.release;
     selectAsset(link.asset, {scroll: false});
-    elements.featureIdInput.value = link.featureId;
-    elements.featureLookupClear.hidden = false;
-    await findFeatureById(link.featureId);
+    if (link.featureId) {
+      elements.featureIdInput.value = link.featureId;
+      elements.featureLookupClear.hidden = false;
+      await findFeatureById(link.featureId);
+    }
   } catch (error) {
     clearDetail();
-    elements.empty.querySelector("h2").textContent = "Feature link unavailable";
+    markSelected();
+    elements.empty.querySelector("h2").textContent = "Catalog link unavailable";
     elements.empty.querySelector("p:last-child").textContent = error.message;
   }
 }
@@ -1466,6 +1530,7 @@ async function restoreFeatureLink() {
 async function findFeatureById(id) {
   const assets = selectedAssets();
   if (assets.length !== 1 || comparisonController.isOpen()) return;
+  syncSelectionLink();
   clearFeatureInspector();
   state.featureFilterId = "";
   state.mapModule?.setFeatureFilter("");
@@ -2728,7 +2793,7 @@ function formatFeatureValue(value) {
 
 async function openDocs(asset) {
   const requestSerial = ++state.docsRequestSerial;
-  elements.docsViewer.hidden = false;
+  elements.docsViewer.showModal();
   document.body.classList.add("docs-open");
   elements.docsTitle.textContent = asset.title;
   elements.docsCopyMarkdown.disabled = true;
@@ -2795,12 +2860,7 @@ function cacheBustedUrl(url, key) {
 }
 
 function closeDocs() {
-  state.docsRequestSerial += 1;
-  elements.docsCopyMarkdown.disabled = true;
-  delete elements.docsCopyMarkdown.dataset.markdown;
-  elements.docsViewer.hidden = true;
-  document.body.classList.remove("docs-open");
-  elements.docsBody.replaceChildren();
+  elements.docsViewer.close();
 }
 
 function renderDocsMessage(message) {
@@ -2884,6 +2944,7 @@ function appendCodeBlock(container, lines, start) {
     index += 1;
   }
   const pre = document.createElement("pre");
+  pre.tabIndex = 0;
   const code = document.createElement("code");
   if (language) {
     code.dataset.language = language;
@@ -2923,6 +2984,7 @@ function appendMarkdownTable(container, lines, start) {
 
   const scroller = document.createElement("div");
   scroller.className = "docs-table-wrap";
+  scroller.tabIndex = 0;
   scroller.append(table);
   container.append(scroller);
   return index;
@@ -3053,6 +3115,7 @@ function clearDetail() {
   setZoomSelectionEnabled(false);
   clearFeatureInspector();
   elements.empty.querySelector("h2").textContent = "No matching datasets";
+  syncSelectionLink();
   elements.empty.querySelector("p:last-child").textContent =
     "Adjust search or filters to bring assets back into view.";
 }

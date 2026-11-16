@@ -32,7 +32,7 @@ admission:
   intended_consumers:
   - Monitor
   shared_rationale: Shared reference layer for repeatable analysis.
-  steward: SkyTruth data team
+  steward: Jonathan Raphael (@jonaraphael)
   update_expectations: Manual refresh when the source publishes a material update.
   estimated_published_size_gb: 1.5
   large_data_exception: ""
@@ -61,6 +61,13 @@ def check(root: Path, changes, exists_at_base=None):
 
 
 class AdmissionCheckTests(unittest.TestCase):
+    def test_new_pipeline_rejects_an_organization_only_steward(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = write_doc(root, FULL_ADMISSION.replace('Jonathan Raphael (@jonaraphael)', 'SkyTruth'))
+            result = check(root, [admission_check.ChangedFile('A', 'ingestion/example_monthly/run.py'), admission_check.ChangedFile('M', path)])
+        self.assertIn('require complete admission evidence', '\n'.join(result.errors))
+
     def test_non_publishing_telemetry_does_not_waive_new_publisher_admission(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -153,7 +160,7 @@ class ParseFootprintGbTests(unittest.TestCase):
             "citation": "c",
             "intended_consumers": ["x"],
             "shared_rationale": "r",
-            "steward": "s",
+            "steward": "@jonaraphael",
             "update_expectations": "u",
             "alternatives_considered": "a",
             "deprecation_policy": "d",

@@ -79,14 +79,70 @@ original context, executor, captured input generations and destination
 preconditions. `SourceFieldPublication.resume()` is the supported transaction
 operation; a new Cloud Run execution deliberately cannot adopt that context.
 
-There is currently **no protected operator entry point for resuming a terminal
-MPAtlas execution**. Report that specific blocker and prepare a reviewed,
-constrained recovery PR using the original receipt; include the original context,
-remaining operations, current generations and synthetic recovery proof. The
-protected deployment procedure and exact-head owner acceptance still apply.
-Do not dispatch the generic publish-plan workflow over an active transaction,
-forge `CLOUD_RUN_EXECUTION`, delete `state.json`, change the date, or refresh
-preconditions. Conflicting generations require a new human decision.
+Use the constrained `mpatlas-source-field-v1` recovery plan after pausing and
+draining the job through `ingestion-schedule-control.yml`. This pause is a
+separate protected operation; preparation and recovery never pause, cancel or
+resume a schedule themselves. Inspect all original evidence listed above first.
+Then prepare an **unapproved**, read-only proposal in the task workspace:
+
+```bash
+uv run python scripts/mpatlas_publication_recovery.py prepare \
+  --execution "$EXECUTION" --proposal-id "$PROPOSAL_ID" \
+  --output "$WORK_DIR/recovery-publish.json"
+uv run python scripts/reviewed_dataset_plan.py prepare \
+  --publish "$WORK_DIR/recovery-publish.json" > "$WORK_DIR/pr-body.md"
+```
+
+Preparation checks the original terminal unsuccessful execution and immutable
+image. The receipt's executor SHA must match that image's signed, tested GitHub
+deployment record; Cloud Run's execution environment omits image-baked defaults
+and cannot supply this proof. Preparation requires the repository-pinned GitHub
+receipt verifier (`gh 2.96.0`); the protected installer sets it up automatically.
+For local preparation, download the official v2.96.0 release for your platform,
+verify its SHA-256 against the release checksums, and put that binary first on
+`PATH`. The Linux Actions installer does not install workstation binaries.
+Outside Actions, preparation creates its verifier workspace under the repository
+temporary root; an existing `RUNNER_TEMP` is preserved.
+It captures the exact state/receipt/control generations and receipt contents,
+and inventories discoverable missing inputs and foreign destination generations
+together. Missing or expired execution evidence, a source-quality hold, missing
+inputs, another owner or conflicting generations block recovery. Resolve that
+specific problem; never refresh the original destination expectations.
+
+Review the captured intent's complete operation list, not just its remaining
+files. This special plan has `promotions: []`: it adds no replacement artifact
+bytes or independent effects. Only the existing captured operations may resume.
+Preparation refuses a rendered plan body above 60,000 characters, leaving room
+for review text below GitHub's PR body limit. The complete captured receipt
+includes historical release-index entries and recorded results, which can make
+it too large. In that case, retain the original evidence and stop: a separate
+reviewed code PR must introduce a bounded-reference recovery contract before a
+recovery plan can be prepared. Do not truncate the receipt, prune release history,
+omit the matching fence, or use a generic promotion as a fallback.
+Commit its immutable document and matching publish fence in a PR and obtain
+exact-head owner acceptance. After merge, the existing protected reviewed-control
+installer in `publish-dataset.yml` executes it using the approved publisher and
+read-only observer. No new IAM grant or standalone replay dispatch is needed.
+
+Before importing original code, the worker verifies the signed image/executor
+binding with trusted current code. It archives the **original** executor commit, uses its frozen dependency
+lock and Python 3.12.12, and runs its publication engine with the reviewed recovery
+adapter. It retains the original context, transaction, captured inputs and CAS
+expectations. A separate trusted current-code check revalidates the immutable
+authorization and paused/drained job before every mutation. No global execution
+environment variable is forged. Recovery itself can resume after interrupted
+writes; already recorded results cannot be replaced. The source-quality owner
+is cleared by CAS only after the original receipt and publication state are
+complete; a later run's claim is never cleared.
+The current validator must still accept the original receipt format; archiving
+the old executor does not bypass that authorization boundary.
+
+Verify the terminal worker result and release/latest/index contracts before
+using the protected schedule-control workflow to resume normal operation.
+No ingestion execution is relabelled successful and no Slack request is resent.
+Reconcile any original incident through its own documented route. Do not delete
+`state.json`, change the date, launch a new transaction or use generic promotions
+over this active receipt. Conflicting bytes require a new human decision.
 
 A replacement plan's document and fence must be reviewed at their new exact head.
 Do not edit the original merged document or authorization artifact. Report the
