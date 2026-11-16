@@ -220,6 +220,12 @@ Dataset metadata and local files:
 - `docs/assets/{asset-slug}.md` is the local metadata source for asset catalog
   rows and bucket README content, including the required citation for the
   original source publication or authoritative dataset release.
+- Every active asset must name an accountable person with a GitHub handle or
+  email in `admission.steward`. Assets outside daily/monthly automated freshness
+  checks require an explicit `review_by: YYYY-MM-DD`. Manual assets are reviewed
+  annually by default. The date is a stewardship deadline, not a claim of source
+  freshness; advance it only after an explicit review. Catalog regeneration must
+  never extend it. The daily safety report flags missing or overdue stewardship.
 - New canonical datasets and new ingestion pipelines require admission evidence
   in the PR. A single-consumer asset is allowed, but multi-project reuse is
   preferred. The PR must identify source/license/citation status, a named

@@ -32,6 +32,9 @@ notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles 
   schema sha256 8405208e3be1c45b8a220976c8e81d799b9b15c6d46a2def965eeac5f1015414; manifest sha256 ba7c51a2a8cf01c8bf75eff69a15d6625be8a0953e17a257a5f779f7e38d7da5;
   PMTiles maxzoom 9 resolved by auto maxzoom from FGB sampled geometry detail, matching the previously published PETRODATA
   maxzoom
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 geometry_type: MultiPolygon
 row_count: 1273
 data_profile:
@@ -146,6 +149,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/petrodata.fgb`
 - **Available formats:** `fgb`, `pmtiles`

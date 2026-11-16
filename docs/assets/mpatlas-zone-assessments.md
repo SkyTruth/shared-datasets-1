@@ -167,6 +167,8 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** Automated freshness checks
 - **Update cadence:** monthly
 - **Canonical file:** `latest/mpatlas-zone-assessments.fgb`
 - **Available formats:** `fgb`, `pmtiles`

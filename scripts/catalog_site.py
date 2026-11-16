@@ -141,6 +141,8 @@ class CatalogAsset:
     sort_key: str
     translation_locales: list[str] = field(default_factory=list)
     translation_fields: list[str] = field(default_factory=list)
+    steward: str = ""
+    review_by: str = ""
 
 
 def load_categories(path: Path) -> dict[str, dict[str, str]]:
@@ -992,6 +994,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         consumer_guidance=row.get("consumer_guidance", "").strip(),
         access_tier=access_tier,
         owner=row["owner"].strip(),
+        steward=row.get("steward", "").strip(),
+        review_by=row.get("review_by", "").strip(),
         update_cadence=row["update_cadence"].strip(),
         canonical_path=canonical_path,
         canonical_format=canonical_format,

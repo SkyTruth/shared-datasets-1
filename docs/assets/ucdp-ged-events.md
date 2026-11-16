@@ -36,7 +36,7 @@ admission:
   - SkyTruth conflict, risk, event, and exposure analysis workflows
   shared_rationale: Provides a reusable, citable, geospatially indexed global event-level organized-violence dataset in shared-datasets
     formats, avoiding repeated handling of the large source CSV archive across projects.
-  steward: SkyTruth
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual annual refresh after UCDP publishes new GED global releases.
   estimated_published_size_gb: 1.1
   alternatives_considered: Project-specific scratch storage, repeated direct UCDP downloads by each consumer, and preserving
@@ -44,6 +44,7 @@ admission:
     feature identity, metadata sidecars, and catalog discovery.
   deprecation_policy: Keep dated releases readable; mark deprecated or superseded if UCDP changes terms, schema, scope, or
     a scheduled ingestion replaces the manual snapshot.
+review_by: '2027-11-15'
 bounds:
 - -117.9145
 - -37.813611
@@ -152,6 +153,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** annual
 - **Canonical file:** `latest/ucdp-ged-events.fgb`
 - **Available formats:** `fgb`, `pmtiles`

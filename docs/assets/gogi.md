@@ -29,6 +29,9 @@ notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip s
   wells are published as geometry only; pmtiles sha256 9fe9a4705b06ae08327e59b769b06ffe16d1d7f6932b0b318bbe92055be8ab31; PMTiles
   rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties and low-zoom point retention;
   future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles to PMTiles conversion path
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 geometry_type: mixed
 row_count: 411521
 data_profile:
@@ -215,6 +218,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/gogi-pipelines.fgb`
 - **Available formats:** `fgb`, `csv`, `pmtiles`

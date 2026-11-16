@@ -23,7 +23,8 @@ responses and sample limitations. The native-produced JSON fixture is synthetic;
 no real WDPA records or cloud credentials are included. The new UI module is
 permitted only in explicit review scenarios, so ordinary startup still proves
 compatibility with the previously deployed viewer module allowlist. The full
-count gate requires all 44 scenarios, including the CSP/SRI negative controls,
+count gate requires all 48 scenarios, including the CSP/SRI negative controls
+and touch-backdrop dismissal without activating a covered dataset card,
 with no skips or retries.
 
 From the repository root, after following the repository Python environment

@@ -296,7 +296,7 @@ def test_eamlis_pause_drain_checks_use_fixed_job_and_every_page():
     reset_controls.GoogleControlReader(session).check_job_quiescent("eamlis-monthly")
     assert len(session.get.call_args_list) == 3
     assert "/jobs/eamlis-monthly" in session.get.call_args_list[0].args[0]
-    with pytest.raises(PublicationError, match="outside identity installation"):
+    with pytest.raises(PublicationError, match="outside reviewed control"):
         reset_controls.GoogleControlReader(session).check_job_quiescent("other")
 
 

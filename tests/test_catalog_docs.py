@@ -20,6 +20,9 @@ status: active
 access_tier: public
 owner: SkyTruth
 update_cadence: manual
+review_by: "2027-11-15"
+admission:
+  steward: Jonathan Raphael (@jonaraphael)
 canonical_format: fgb
 canonical_file: latest/example-asset.fgb
 available_formats:
@@ -95,6 +98,14 @@ def test_maintained_translation_contract_rejects_ambiguous_declarations(tmp_path
         catalog_docs.read_asset_docs(docs_dir=tmp_path, categories={"100-geographic-reference": {"110-boundaries"}})
 
 
+@pytest.mark.parametrize('change', ['organization', 'missing_review'])
+def test_active_asset_docs_require_a_named_steward_and_review_horizon(tmp_path, change):
+    text = DOC.replace('Jonathan Raphael (@jonaraphael)', 'SkyTruth') if change == 'organization' else DOC.replace('review_by: "2027-11-15"\n', '')
+    (tmp_path / 'example-asset.md').write_text(text)
+    with pytest.raises(catalog_docs.CatalogDocsError, match='steward|review_by'):
+        catalog_docs.read_asset_docs(docs_dir=tmp_path, categories={"100-geographic-reference": {"110-boundaries"}})
+
+
 def test_maintained_translation_contract_survives_catalog_and_sdk(tmp_path):
     from scripts import catalog_csv
     from skytruth_shared_datasets import Catalog
@@ -133,6 +144,10 @@ class CatalogDocsTests(unittest.TestCase):
         rendered = catalog_docs.render_asset_doc(docs[0])
         self.assertEqual(row["feature_identity"], "source_field:WDPAID")
         self.assertIn("geometry_hash_column: geometry_hash", rendered)
+        self.assertEqual(row['steward'], 'Jonathan Raphael (@jonaraphael)')
+        self.assertEqual(row['review_by'], '2027-11-15')
+        self.assertIn('**Steward:** Jonathan Raphael (@jonaraphael)', rendered)
+        self.assertIn('**Next stewardship review:** 2027-11-15', rendered)
 
     def test_feature_metadata_requires_split_hash_columns(self):
         bad = DOC.replace("  geometry_hash_column: geometry_hash\n", "")

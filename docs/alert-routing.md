@@ -146,6 +146,12 @@ recovery](slack-incidents.md) for polling, signing and uncertain-delivery contra
 
 ## Scheduled freshness and capacity
 
+The daily operational safety report also checks [dataset stewardship](standards/dataset-stewardship.md).
+Active assets require a named contact. Manual, annual and other cadences without
+daily/monthly freshness automation require an explicit review deadline. An
+overdue review names the steward; it does not claim that unchanged historical
+data has become invalid. Regenerating metadata cannot extend a deadline.
+
 Every daily (16:17 UTC, after the 15:00 UTC sea-ice publish) probe reads generation-pinned release indexes and known Scheduler jobs. Daily assets need a successful release or meaningful unchanged-source check within two days;
 monthly assets within 38 days (31-day cadence plus seven days of grace). Monthly jobs run on day 2; WDPA checks days 1–10. An old release with a recent confirmed unchanged check is healthy.
 Missing-source/decision skips and metadata-only rewrites cannot reset freshness. The weekly bucket audit uses the same rule.

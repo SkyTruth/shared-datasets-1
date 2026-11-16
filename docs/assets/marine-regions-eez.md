@@ -40,13 +40,14 @@ admission:
   - Shared catalog map previews and reusable marine-boundary spatial lookups
   shared_rationale: Reusable global marine-boundary reference with a versioned shared copy so consumers do not maintain divergent
     project-local copies of EEZ, overlapping-claim, joint-regime, and high-seas boundaries.
-  steward: SkyTruth
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refreshes when Marine Regions publishes newer EEZ or High Seas releases needed by shared consumers.
   estimated_published_size_gb: 0.7
   alternatives_considered: Direct Marine Regions downloads by each consumer, project-local storage, and scratch-only staging.
     Shared-datasets is preferred for reviewed reuse, stable shared paths, documented metadata, and canonical geospatial formats.
   deprecation_policy: Keep dated releases readable; supersede with newer Marine Regions EEZ or High Seas releases; retire
     or make private if upstream terms change.
+review_by: '2027-11-15'
 row_count: 286
 data_profile:
   field_count: 39
@@ -201,6 +202,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/marine-regions-eez.fgb`
 - **Available formats:** `fgb`, `pmtiles`

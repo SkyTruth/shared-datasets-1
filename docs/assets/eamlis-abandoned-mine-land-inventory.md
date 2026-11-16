@@ -26,6 +26,8 @@ notes: Monthly job publishes FGB plus PMTiles. From the 2026-10-29 release, eaml
   generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup tiles with feature_id only. Release
   history, source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records.
   Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
 row_count: 63168
 data_profile:
   field_count: 57
@@ -144,6 +146,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** Automated freshness checks
 - **Update cadence:** monthly
 - **Canonical file:** `latest/eamlis-abandoned-mine-land-inventory.fgb`
 - **Available formats:** `fgb`, `pmtiles`

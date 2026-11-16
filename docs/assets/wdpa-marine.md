@@ -31,6 +31,8 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2
   source field retained for source-schema compatibility, but in localized sidecars it should be read as the active-locale
   display name, effectively name_localized. Release history, source versions, row counts, and file hashes are recorded in
   the bucket release index and per-run records.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
 row_count: 17657
 data_profile:
   field_count: 33
@@ -197,6 +199,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** Automated freshness checks
 - **Update cadence:** monthly
 - **Canonical file:** `latest/wdpa-marine.fgb`
 - **Available formats:** `fgb`, `pmtiles`

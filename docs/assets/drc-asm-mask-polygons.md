@@ -39,11 +39,12 @@ admission:
     requiring every consumer to repeat raster polygonization.
   alternatives_considered: Direct Zenodo access is available but requires a 606 MB download and custom mask polygonization.
     Project-local storage would duplicate a broadly reusable label layer and would not provide shared release metadata.
-  steward: SkyTruth shared-datasets maintainers; upstream steward Pasanisi et al.
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
   update_expectations: Manual refresh if the Zenodo dataset publishes a new version or the polygonization rules change.
   estimated_published_size_gb: 0.03
   deprecation_policy: Keep this release readable and citable. Deprecate or supersede only if a corrected upstream release,
     a stronger official label set, or a new reviewed polygonization pipeline replaces it.
+review_by: '2027-11-15'
 bounds:
 - 23.65964245103379
 - -11.51746878164369
@@ -130,6 +131,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/drc-asm-mask-polygons.fgb`
 - **Available formats:** `fgb`, `pmtiles`

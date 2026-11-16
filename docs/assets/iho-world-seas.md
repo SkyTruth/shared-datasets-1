@@ -27,6 +27,9 @@ notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29. The
   are removed. Existing machine translations were carried forward re-keyed to the v2 feature_ids. PMTiles are metadata-lookup
   tiles with feature_id only. Prior releases remain readable and unchanged. Release history, source generations, row counts,
   and hashes are recorded in the bucket release index and per-run record.
+admission:
+  steward: Jonathan Raphael (@jonaraphael), SkyTruth
+review_by: '2027-11-15'
 row_count: 101
 data_profile:
   field_count: 13
@@ -178,6 +181,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
+- **Steward:** Jonathan Raphael (@jonaraphael), SkyTruth
+- **Next stewardship review:** 2027-11-15
 - **Update cadence:** manual
 - **Canonical file:** `latest/iho-world-seas.fgb`
 - **Available formats:** `fgb`, `pmtiles`
