@@ -65,14 +65,25 @@ def test_premerge_acceptance_is_in_gate_and_binds_real_head():
     assert 'python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"' in step['run']
 
 
+# download-artifact extracts a single pattern match directly into its path and
+# nests multiple matches by artifact name.
+PLAN_LAYOUTS = {'single-attempt': ['plan.json'],
+                'retried': ['ci-validation-plan-attempt1/plan.json', 'ci-validation-plan-attempt2/plan.json']}
+
+
+@pytest.mark.parametrize('layout', PLAN_LAYOUTS)
 @pytest.mark.parametrize('selection,approval,expected', [([], 9, 0), (['sea_ice'], 0, 0),
-    (['sea_ice'], 1, 1), (['sea_ice'], 2, 2), ('malformed', 0, None), (None, 0, 2)])
-def test_premerge_acceptance_shell_rejects_missing_plan_or_approval(tmp_path, selection, approval, expected):
+    (['sea_ice'], 1, 1), (['sea_ice'], 2, 2), ('malformed', 0, None), (None, 0, None)])
+def test_premerge_acceptance_shell_rejects_missing_plan_or_approval(tmp_path, selection, approval, expected, layout):
     step = next(s for s in load_workflow(ROOT / '.github/workflows/ci.yml')['jobs']['ci-ready']['steps']
                 if s.get('name') == 'Owner approval of this exact head required before merge')
     if selection is not None:
-        plan = tmp_path / 'ci-plans/ci-validation-plan-attempt1/plan.json'
-        plan.parent.mkdir(parents=True)
+        *earlier, latest = PLAN_LAYOUTS[layout]
+        for relative in earlier:
+            (tmp_path / 'ci-plans' / relative).parent.mkdir(parents=True)
+            (tmp_path / 'ci-plans' / relative).write_text(json.dumps({'deployments': []}))
+        plan = tmp_path / 'ci-plans' / latest
+        plan.parent.mkdir(parents=True, exist_ok=True)
         plan.write_text('{' if selection == 'malformed' else json.dumps({'deployments': selection}))
     binary = tmp_path / 'bin'
     binary.mkdir()

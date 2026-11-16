@@ -297,7 +297,7 @@ class ReceiptContractTests(unittest.TestCase):
             "second checkout": lambda steps: steps.append(copy.deepcopy(steps[1])),
             "shadowed checkout ID": lambda steps: steps[1].update(id="prepare"),
             "shadowed setup ID": lambda steps: steps[2].update(id="deliver"),
-            "untrusted artifact": lambda steps: steps.append({"uses": pinned('actions/download-artifact@v4')}),
+            "untrusted artifact": lambda steps: steps.append({"uses": pinned('actions/download-artifact@v8')}),
             "GCP auth": lambda steps: steps.append({"uses": "google-github-actions/auth@v3"}),
             "production command": lambda steps: steps.append({"run": "terraform apply saved.tfplan"}),
             "changed command": lambda steps: steps[6].update(run=steps[6]["run"] + "\npython arbitrary.py"),

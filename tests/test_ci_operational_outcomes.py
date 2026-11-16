@@ -108,7 +108,7 @@ def test_main_announcement_allocation_requires_complete_range_detection_and_vali
     assert "github.event_name == 'push'" in delivery and "github.ref == 'refs/heads/main'" in delivery
     assert selection['outputs']['has_repo_alert'] == '${{ steps.repo_alert_selection.outputs.has_repo_alert }}'
     steps = workflow_steps_by_name(workflow, 'dataset-mutation-selection')
-    checkout = next(step for step in selection['steps'] if step.get('uses') == pinned('actions/checkout@v4'))
+    checkout = next(step for step in selection['steps'] if step.get('uses') == pinned('actions/checkout@v7'))
     assert checkout['with']['fetch-depth'] == 0
     scanner = steps['Inspect every commit for repository announcements']
     assert scanner['env']['BASE_SHA'] == '${{ github.event.before }}'

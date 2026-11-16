@@ -45,7 +45,7 @@ jobs:
     steps:
     - &trusted-checkout
       name: Check out trusted verifier
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: {ref: "${{ github.workflow_sha }}", fetch-depth: 0, persist-credentials: false}
     - &trusted-bootstrap
       name: Authorize tested executor and retain trusted receipt policy
@@ -71,8 +71,7 @@ jobs:
       with: {service-account: shared-datasets-runtime@shared-datasets-1.iam.gserviceaccount.com}
       if: steps.replay.outputs.proceed == 'true'
     - name: Set up uv
-      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
-      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+      uses: ./.github/actions/ci-python
       if: steps.replay.outputs.proceed == 'true'
     - name: Verify feature-ID publication state
       if: steps.replay.outputs.proceed == 'true' && env.ROLLOUT_GATE == 'true'
@@ -169,8 +168,7 @@ jobs:
     - *trusted-bootstrap
     - *target-policy
     - name: Set up uv for plan validation
-      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
-      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+      uses: ./.github/actions/ci-python
     - name: Install locked plan parsers before authentication
       run: |
         if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi
@@ -186,7 +184,7 @@ jobs:
     - *defer
     - *defer-receipt
     - name: Set up Terraform
-      uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
       with: {terraform_version: 1.8.5}
       if: steps.window.outputs.ready == 'true'
     - name: Terraform init
@@ -259,8 +257,7 @@ jobs:
       uses: ./.github/actions/deployment-auth
       with: {service-account: shared-datasets-observer@shared-datasets-1.iam.gserviceaccount.com}
     - name: Set up uv
-      uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
-      with: {version: 0.11.8, python-version: 3.12.12, enable-cache: true}
+      uses: ./.github/actions/ci-python
     - name: Confirm deployed digest
       run: |
         set -euo pipefail

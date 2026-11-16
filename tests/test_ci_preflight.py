@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from functools import lru_cache
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -790,10 +791,14 @@ def test_queue_extension_validation_preserves_other_syntax_for_actionlint():
 
 def test_hosted_and_linux_image_pins_match_shared_toolchain():
     action = (ROOT / ".github/actions/ci-tools/action.yml").read_text()
+    action += (ROOT / ".github/actions/ci-python/action.yml").read_text()
     image = (ROOT / ".github/docker/preflight.Dockerfile").read_text()
     native = (ROOT / ".github/docker/geospatial-ci.Dockerfile").read_text()
     for tool in ("python", "uv", "node22", "node24"):
         assert TOOLCHAIN[tool] in action
+    # setup-uv's selection and the bare-python install must name the same runtime.
+    python_versions = re.findall(r"\b3\.\d+\.\d+\b", (ROOT / ".github/actions/ci-python/action.yml").read_text())
+    assert python_versions == [TOOLCHAIN["python"]] * 2
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in image
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in native
     assert f"astral-sh/uv:{TOOLCHAIN['uv']}" in image
