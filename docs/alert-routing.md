@@ -104,8 +104,12 @@ reconciler identity. Ingestion verification and **Deployments / Completion check
 request a sweep only after signing a verified outcome; **Operations / Safety check**
 requests one daily after its independent health report. No incident or deployment
 IDs are accepted in automatic mode: the same verifier discovers the latest signed
-proof once per managed job per sweep. The daily sweep covers Monitoring's one-hour
-closure timer and a dispatch that never started; no runner waits for closure.
+proof once per managed job per sweep. Cloud Run execution and Scheduler dispatch
+failure policies close after 30 minutes without a repeated matching failure,
+the [minimum log-policy auto-close duration](https://docs.cloud.google.com/monitoring/alerts/log-based-incidents).
+Closure alone never proves recovery. The daily sweep covers recovery verified
+before that quiet period ends and a dispatch that never started; no runner waits
+for closure.
 Request failures are tolerated, preserving the deployment and safety job outcomes;
 the next daily request provides another opportunity.
 
