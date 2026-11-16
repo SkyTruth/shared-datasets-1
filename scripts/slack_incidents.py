@@ -302,7 +302,7 @@ def source_observations(api, event, targets=None):
     if targets is None:
         targets = job_targets(revision=run["head_sha"], workflow=alerts.WORKFLOW_PATHS[run["name"]])
     if (alerts.safety_health_only(run, jobs) or alerts.catalog_probe_only(run, jobs)
-            or alerts.supervised_resolver_failure(run, jobs)):
+            or alerts.supervised_resolver_run(run, jobs)):
         return []  # Neither a deployment failure nor evidence of recovery.
     if alerts.WORKFLOW_PATHS[run["name"]] == "ci.yml":
         if run["event"] != "push":

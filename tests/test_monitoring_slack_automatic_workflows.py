@@ -139,3 +139,36 @@ def test_owner_dispatched_resolver_failures_stay_supervised(manual):
         api.pages.return_value = []
         assert alerts.alert_for_run(event, jobs=[]) is not None
         assert [item['kind'] for item in incidents.source_observations(api, event, {})] == ['workflow']
+
+
+def test_only_a_successful_automatic_job_recovers_a_resolver_startup_failure():
+    from unittest.mock import Mock, patch
+    resolver = load_workflow(WORKFLOWS / 'resolve-workflow-alert.yml')
+    identity = {'team': 'T1', 'user': 'U1', 'channel': 'C1'}
+    failed = {'id': 100, 'run_attempt': 1, 'head_sha': 'a' * 40, 'name': resolver['name'], 'event': 'workflow_dispatch',
+              'status': 'completed', 'conclusion': 'startup_failure', 'updated_at': '2026-11-16T18:00:00Z',
+              'head_branch': 'main', 'head_repository': {'full_name': alerts.REPOSITORY}}
+    later = {**failed, 'id': 101, 'conclusion': 'success', 'updated_at': '2026-11-16T18:05:00Z'}
+    api = Mock()
+
+    def observe(run, outcomes):
+        api.pages.return_value = [{'id': index, 'name': name, 'status': 'completed', 'conclusion': conclusion,
+                                   'completed_at': run['updated_at']}
+                                  for index, (name, conclusion) in enumerate(outcomes.items(), 1)]
+        return incidents.source_observations(api, {'repository': {'full_name': alerts.REPOSITORY}, 'workflow_run': run}, {})
+
+    with patch.object(incidents.alerts, 'verify_source_event', return_value=True):
+        opened = observe(failed, {})
+        assert [item['kind'] for item in opened] == ['workflow']
+        state = incidents.fold(None, opened[0], identity, ancestor=lambda *_: True)
+        assert state['incident']['resolution'] is None
+        # Neither an owner-dispatched success nor an all-skipped run proves the sweep recovered.
+        assert observe(later, {'resolve': 'skipped', 'monitoring': 'success', 'automatic': 'skipped'}) == []
+        assert observe(later, {'resolve': 'success', 'monitoring': 'skipped', 'automatic': 'skipped'}) == []
+        assert observe(later, {'resolve': 'skipped', 'monitoring': 'skipped', 'automatic': 'skipped'}) == []
+        assert observe(later, {}) == []
+        recovered = observe(later, {'resolve': 'skipped', 'monitoring': 'skipped', 'automatic': 'success'})
+        workflow = [item for item in recovered if item['scope'] == state['scope']]
+        assert len(workflow) == 1
+        assert incidents.fold(state, workflow[0], identity, ancestor=lambda *_: True)['incident']['resolution'] is not None
+        assert ('automatic', 'success') in [(item['job_name'], item['conclusion']) for item in recovered]

@@ -123,11 +123,14 @@ Open or expired (Monitoring 404) incidents, older/nonterminal evidence and pendi
 identity requests wait quietly; jobs outside managed ingestion targets are ignored.
 Every new failure must pass the shared verifier. A resolved receipt acknowledges
 wording drift or interrupted delivery using its first recorded proof, without
-Monitoring/GitHub reads; new failures never replace that proof. Acknowledged views
+Monitoring/GitHub reads; new failures never replace that proof. A failure the owner closes
+with Monitoring-only reconciliation is not re-verified, so beside a recorded proof
+it renders resolved. Acknowledged views
 make no Slack call. Corruption, other read errors, generation conflicts and Slack
 errors fail the resolver through the existing workflow-health observer, without
 retriggering it. Only the `automatic` job is unattended: a failed owner-dispatched
-resolver job stays in GitHub. Legacy/nonexecution parents and recovery on a later scheduled
+resolver job stays in GitHub, and only a successful `automatic` job resolves a
+resolver incident. Legacy/nonexecution parents and recovery on a later scheduled
 execution without a redeploy are outside this proof type. The manual owner path
 still rejects unmanaged jobs and unavailable incidents.
 
