@@ -182,7 +182,7 @@ def matches(path, inputs):
 def classify_change(path: str, inputs=None, *, root=ROOT) -> tuple[str, set[str]]:
     """Runtime selection follows generated dependencies; unknown paths stay broad."""
     if (path in {
-            "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml",
+            "pyproject.toml", "uv.lock", ".github/actions/ci-tools/action.yml", ".github/actions/ci-python/action.yml",
             ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
             "scripts/production_image_contracts.py", "scripts/tested_image_bundle.py",
         }):

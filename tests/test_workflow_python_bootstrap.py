@@ -229,7 +229,7 @@ def test_hosted_selectors_execute_with_actual_workflow_dependency_flags(isolated
         result = subprocess.run([str(isolated_python(flags)), "-I", *arguments[python + 1:]], cwd=selector_repository,
             env={**os.environ, "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
-    bootstrap = next(step for step in workflow["jobs"]["geospatial-changes"]["steps"]
+    bootstrap = next(step for step in steps(workflow["jobs"]["geospatial-changes"])
                      if step.get("uses", "").startswith("astral-sh/setup-uv@"))
     assert bootstrap["with"] == {"version": TOOLCHAIN["uv"], "python-version": TOOLCHAIN["python"], "enable-cache": True}
     payload = json.loads(plan.read_text())

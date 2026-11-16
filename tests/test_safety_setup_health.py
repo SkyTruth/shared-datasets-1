@@ -255,7 +255,7 @@ def test_safety_job_caches_only_the_checksum_verified_verifier_archive():
     caches = [step for step in steps if str(step.get('uses', '')).startswith('actions/cache')]
     assert [step['name'] for step in caches] == ['Restore pinned verifier archive']
     cache, = caches
-    assert cache['uses'] == pinned('actions/cache@v4')
+    assert cache['uses'] == pinned('actions/cache@v6')
     # Setup actions trust tool-cache hits without verification; only the installer re-checks its SHA-256.
     assert cache['with']['path'] == '${{ runner.temp }}/deployment-receipts/tools/' + installer.ASSET
     assert cache['with']['key'] == f'safety-gh-verifier-{installer.VERSION}-linux-amd64'

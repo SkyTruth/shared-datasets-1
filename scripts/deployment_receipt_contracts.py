@@ -127,9 +127,9 @@ fi'''
     # One ordered declaration replaces parallel command, action, phase, signer
     # and artifact tables. Names are presentation; every authority field is exact.
     expected = [
-        {"uses": pinned('actions/checkout@v4'), "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
-        {"uses": pinned('actions/setup-python@v5'), "with": {"python-version": "3.12.12"}},
-        {"uses": pinned('astral-sh/setup-uv@v6'), "with": {"version": "0.11.8", "enable-cache": False}},
+        {"uses": pinned('actions/checkout@v7'), "with": {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}},
+        {"uses": pinned('actions/setup-python@v7'), "with": {"python-version": "3.12.12"}},
+        {"uses": pinned('astral-sh/setup-uv@v10'), "with": {"version": "0.11.8", "enable-cache": False}},
         {"run": "uv sync --locked --no-dev"},
         {"run": "python scripts/install_deployment_verifier.py"},
         {"id": "prepare", "env": environment, "run": command.format("prepare")},
@@ -384,8 +384,8 @@ def readiness_boundary(root):
                         'uv run --no-sync python scripts/deployment_readiness.py check' + arguments,
                         'python scripts/deployment_readiness.py verify' + arguments,
                         'uv sync --locked --only-group ci-plan', 'python scripts/install_deployment_verifier.py'}
-    allowed_actions = {pinned('actions/checkout@v4'), './.github/actions/ci-tools', pinned('google-github-actions/auth@v2'),
-                       NOTIFICATION_ATTEST, pinned('actions/upload-artifact@v4')}
+    allowed_actions = {pinned('actions/checkout@v7'), './.github/actions/ci-tools', pinned('google-github-actions/auth@v3'),
+                       NOTIFICATION_ATTEST, pinned('actions/upload-artifact@v7')}
     if any(step.get('uses') not in allowed_actions if 'uses' in step else step.get('run', '').strip() not in allowed_commands
            for step in job['steps']):
         errors.append('readiness has an unregistered executable step')

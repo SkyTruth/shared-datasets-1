@@ -391,8 +391,8 @@ class RepoGuardrailsTests(unittest.TestCase):
                     '  exit 1',
                     'fi',
                 ])},
-                {"uses": pinned('actions/checkout@v4'), "with": {"ref": "${{ github.workflow_sha }}"}},
-                {"uses": pinned('google-github-actions/auth@v2')},
+                {"uses": pinned('actions/checkout@v7'), "with": {"ref": "${{ github.workflow_sha }}"}},
+                {"uses": pinned('google-github-actions/auth@v3')},
             ]}},
         }
 

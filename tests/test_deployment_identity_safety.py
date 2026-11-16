@@ -47,7 +47,7 @@ def test_production_authenticated_jobs_never_check_out_selected_source():
                              for step in steps)
             if production:
                 for step in steps:
-                    if step.get("uses") == pinned('actions/checkout@v4'):
+                    if step.get("uses") == pinned('actions/checkout@v7'):
                         ref = step.get("with", {}).get("ref", "")
                         assert ref == "${{ github.workflow_sha }}", (path.name, ref)
                         assert "preview-source" not in step.get("with", {}).get("path", "")
@@ -106,7 +106,7 @@ def test_new_scoped_advisory_grant_excludes_state(name, allowed):
 
 def test_cleanup_has_no_canonical_publisher_authority():
     workflow = load_workflow(ROOT / ".github/workflows/scratch-cleanup-audit.yml")
-    auth = next(step for step in workflow["jobs"]["cleanup"]["steps"] if step.get("uses") == pinned('google-github-actions/auth@v2'))
+    auth = next(step for step in workflow["jobs"]["cleanup"]["steps"] if step.get("uses") == pinned('google-github-actions/auth@v3'))
     assert auth["with"]["service_account"] == "shared-datasets-cleanup@shared-datasets-1.iam.gserviceaccount.com"
     registry = json.loads((PROD / "github-workflow-identities.json").read_text())
     assert registry["cleanup"] == ["scratch-cleanup-audit.yml"]
@@ -167,7 +167,7 @@ def test_hosted_approval_gate_uses_clean_stdlib_and_exact_merged_pr(tmp_path, ca
     action = load_workflow(ROOT / ".github/actions/deployment-bootstrap/action.yml")
     steps = action["runs"]["steps"]
     index = next(i for i, step in enumerate(steps) if step.get("name") == "Verify owner acceptance before candidate checkout")
-    assert index < next(i for i, step in enumerate(steps) if step.get("uses") == pinned('actions/checkout@v4'))
+    assert index < next(i for i, step in enumerate(steps) if step.get("uses") == pinned('actions/checkout@v7'))
     # No site packages, dev venv, user imports or PYTHONPATH: exactly the gate's declared stdlib environment.
     command = steps[index]["run"].split()
     assert command[:3] == ["python", "-I", "-S"]

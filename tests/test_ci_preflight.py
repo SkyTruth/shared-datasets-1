@@ -790,6 +790,7 @@ def test_queue_extension_validation_preserves_other_syntax_for_actionlint():
 
 def test_hosted_and_linux_image_pins_match_shared_toolchain():
     action = (ROOT / ".github/actions/ci-tools/action.yml").read_text()
+    action += (ROOT / ".github/actions/ci-python/action.yml").read_text()
     image = (ROOT / ".github/docker/preflight.Dockerfile").read_text()
     native = (ROOT / ".github/docker/geospatial-ci.Dockerfile").read_text()
     for tool in ("python", "uv", "node22", "node24"):
