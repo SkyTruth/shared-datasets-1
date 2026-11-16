@@ -228,9 +228,13 @@ def test_heartbeat_writer_is_dedicated_and_metric_deletion_is_not_granted():
 
 def test_reconcilers_keep_state_writes_separate_from_observer():
     expected = 'shared-datasets-reconciler@shared-datasets-1.iam.gserviceaccount.com'
-    for filename in ('identity-decision-reconcile.yml', 'resolve-workflow-alert.yml'):
+    # The resolver authenticates in its owner-dispatched Monitoring job and its automatic sweep only.
+    for filename, jobs in (('identity-decision-reconcile.yml', None), ('resolve-workflow-alert.yml', {'monitoring', 'automatic'})):
         value = workflow(filename)
-        assert [account for job in value['jobs'].values() for _, account in auth_accounts(value, job)] == [expected]
+        accounts = {name: [account for _, account in auth_accounts(value, job)] for name, job in value['jobs'].items()}
+        authenticated = {name: found for name, found in accounts.items() if found}
+        assert all(found == [expected] for found in authenticated.values())
+        assert len(authenticated) == 1 if jobs is None else set(authenticated) == jobs
     grant = attributes('monitoring_slack.tf', 'google_storage_bucket_iam_member', 'monitoring_slack_reconciler')
     assert 'github_job["reconciler"]' in grant['member']
     assert grant['role'] == 'roles/storage.objectUser'
