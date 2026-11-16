@@ -190,7 +190,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                     else:
                         self.assertIn("local.shared_bucket_folder_resource_prefix", block)
 
-    def test_scheduled_ingestion_log_alerts_autoclose_after_quiet_hour(self):
+    def test_scheduled_ingestion_log_alerts_autoclose_after_quiet_half_hour(self):
         monitoring_tf = (PROD_TF_DIR / "monitoring.tf").read_text()
         for resource_name in (
             "scheduled_ingestion_cloud_run_failure",
@@ -202,7 +202,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                     "google_monitoring_alert_policy",
                     resource_name,
                 )
-                self.assertIn('auto_close           = "3600s"', block)
+                self.assertIn('auto_close           = "1800s"', block)
 
     def test_github_readonly_identity_is_bucket_viewer_only(self):
         readonly_tf = (PROD_TF_DIR / "github_readonly_iam.tf").read_text()
