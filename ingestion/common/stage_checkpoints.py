@@ -47,22 +47,27 @@ def implementation(paths):
 
 
 def native_tools(names):
-    result = {}
+    """Bind native executables to successful version probes for their installed suite."""
+    paths = {}
     for name in names:
         path = shutil.which(name)
         if path is None:
-            result[name] = (
-                None  # The producer still fails if its native tool is missing.
-            )
-        else:
-            completed = subprocess.run(
-                [path, "--version"], capture_output=True, text=True, timeout=15
-            )
-            result[name] = {
-                "path": str(Path(path).resolve()),
-                "version": (completed.stdout + completed.stderr).strip(),
-                "sha256": sha256_file(Path(path)),
-            }
+            raise RuntimeError(f"Required executable not found on PATH: {name}")
+        paths[name] = Path(path).resolve(strict=True)
+    result = {}
+    for name, path in paths.items():
+        # Python GDAL utilities and the decoder use their sibling suite reporter;
+        # importing the utilities just to obtain a version is unnecessary.
+        reporter = {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
+                    "tippecanoe-decode": "tippecanoe"}.get(name, name)
+        completed = subprocess.run(
+            [str(path.with_name(reporter)), "version" if reporter == "pmtiles" else "--version"],
+            check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15,
+        )
+        version = completed.stdout.strip()
+        if not version:
+            raise RuntimeError(f"Native tool returned no version: {path}")
+        result[name] = {"path": str(path), "version": version, "sha256": sha256_file(path)}
     return result
 
 

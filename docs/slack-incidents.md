@@ -78,6 +78,15 @@ requires its exact signed failed-worker proof and newer signed success for that
 runtime target. Legacy resolution uses the same verifier. Invalid signatures,
 unknown outcomes and mixed unresolved failures retain alerts.
 
+Native Cloud Run failures use the owner-only Monitoring resolver's optional
+`recovery_deployment_id` after authoritative closure. It reuses the shared latest
+signed terminal verifier, binds the original execution parent, and requires the
+replacement deployment and its verified outcome to postdate the incident. The
+original error and identity requests survive the green update; outstanding
+identity requests or other open failures keep the parent unresolved. See
+[editable Monitoring messages](alert-routing.md#editable-monitoring-messages)
+for the receiver rollout and receipt-version requirements.
+
 SDK `candidate`/retired WDPA `readiness` require the actual read-only verification
 step. Migration verifies all historical failures and skipped mutating siblings while
 preserving ID, parent, claims and history. A completed publication with failed PR

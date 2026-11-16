@@ -98,6 +98,19 @@ incident to be `CLOSED` and updates its recorded parent; it neither polls nor
 accepts arbitrary timestamps. Closure/log expiry cannot establish deployment or
 publication recovery. Historical WDPA metric incidents retain their receipts.
 
+To resolve an execution failure after a verified replacement, supply both
+`monitoring_incident_id` and `recovery_deployment_id` to that owner-only workflow.
+The incident must be `CLOSED`, match its original project/job/execution receipt,
+and have a later deployment for the same managed ingestion job. The shared
+terminal verifier requires the latest signed `verified` outcome; a pending,
+failed, applied-only, unsigned, older or unrelated deployment cannot resolve it.
+The command edits the original parent green with the original error and recovery
+link. Unresolved identity requests remain visible and prevent a green parent.
+Deploy the updated Monitoring Slack receiver before using this option: recovered
+execution receipts use `execution-slack-v2`; the reader retains v1 support, and a
+rollback must retain the v2 reader once a recovery is recorded. A push or merge
+alone never establishes recovery. No resource, data or Monitoring state is mutated.
+
 The protected cron sync uses exact CI-tested image bytes, passes the bot secret
 through stdin (never Terraform state), and validates bot auth/receipt permissions
 before listening. Terraform waits for service, authenticated subscription and

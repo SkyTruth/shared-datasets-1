@@ -349,7 +349,6 @@ def daily(tmp_path, monkeypatch):
     monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
     monkeypatch.setattr(sea_ice.storage, "Client", lambda **kwargs: client)
     monkeypatch.setattr(sea_ice.GcsPublisher, "from_runtime", lambda *args, **kwargs: state.publisher)
-    monkeypatch.setattr(sea_ice, "require_binary", mock.Mock())
     monkeypatch.setattr(sea_ice, "toolchain", mock.Mock(return_value=TOOLS), raising=False)
     lookup = mock.Mock(side_effect=lambda *args, **kwargs: sea_ice.SourceLookupResult(state.source, state.warnings))
     monkeypatch.setattr(sea_ice, "find_latest_available_source", lookup)

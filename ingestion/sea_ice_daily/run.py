@@ -8,7 +8,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import urllib.request
 from dataclasses import dataclass
@@ -34,7 +33,6 @@ from ingestion.common.runtime import (
     parse_positive_int,
     parse_run_date as parse_run_date,
     remove_if_exists,
-    require_binary,
     run_job_main,
     sha256_file,
 )
@@ -660,24 +658,10 @@ def metadata_for_source(
 
 def toolchain() -> dict[str, dict[str, str]]:
     """Resolve every native executable before an owned transaction can resume."""
-    paths = {}
-    for name in NATIVE_TOOLS:
-        require_binary(name)
-        paths[name] = str(Path(shutil.which(name)).resolve())
-    tools = {}
-    for name, path in paths.items():
-        # GDAL's Python utilities and the decoder report their installed suite's
-        # version through a sibling binary; they have no usable version flag.
-        reporter = {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
-                    "tippecanoe-decode": "tippecanoe"}.get(name, name)
-        version_path = str(Path(path).with_name(reporter))
-        completed = subprocess.run([version_path, "version" if reporter == "pmtiles" else "--version"],
-                                   check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        version = completed.stdout.strip()
-        if not version:
-            raise RuntimeError(f"Native tool returned no version: {path}")
-        tools[name] = {"path": path, "version": version}
-    return tools
+    from ingestion.common.stage_checkpoints import native_tools
+
+    return {name: {"path": tool["path"], "version": tool["version"]}
+            for name, tool in native_tools(NATIVE_TOOLS).items()}
 
 
 def source_description(source: DownloadedSource | AvailableSource) -> lifecycle.Source:
