@@ -104,6 +104,18 @@ def test_native_script_hash_and_suite_version_invalidate_completed_stage(tmp_pat
     assert build() not in {first, changed_script}
 
 
+def test_python_utilities_resolve_suite_reporters_from_a_separate_path_entry(tmp_path, native_suite, monkeypatch):
+    scripts = tmp_path / "venv-bin"
+    scripts.mkdir()
+    for name in ("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"):
+        (native_suite / name).rename(scripts / name)
+    monkeypatch.setenv("PATH", str(scripts) + ":" + str(native_suite))
+    tools = checkpoints.native_tools(("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"))
+    for name in ("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"):
+        assert tools[name]["path"] == str(scripts / name)
+        assert tools[name]["version"] == ("tippecanoe v2.52.0" if name == "tippecanoe-decode" else "GDAL 3.6.2")
+
+
 def output(directory):
     (directory / "data.csv").write_text("id\n1\n")
     return {"rows": 1}

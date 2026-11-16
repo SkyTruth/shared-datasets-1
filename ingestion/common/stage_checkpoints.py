@@ -48,20 +48,21 @@ def implementation(paths):
 
 def native_tools(names):
     """Bind native executables to successful version probes for their installed suite."""
+    reporters = {name: {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
+                       "tippecanoe-decode": "tippecanoe"}.get(name, name) for name in names}
     paths = {}
-    for name in names:
+    for name in dict.fromkeys((*reporters, *reporters.values())):
         path = shutil.which(name)
         if path is None:
             raise RuntimeError(f"Required executable not found on PATH: {name}")
         paths[name] = Path(path).resolve(strict=True)
     result = {}
-    for name, path in paths.items():
-        # Python GDAL utilities and the decoder use their sibling suite reporter;
-        # importing the utilities just to obtain a version is unnecessary.
-        reporter = {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
-                    "tippecanoe-decode": "tippecanoe"}.get(name, name)
+    for name, reporter in reporters.items():
+        path = paths[name]
+        # Python utilities can live in a virtualenv while native suite binaries
+        # live in another PATH entry. Resolve both from the child process PATH.
         completed = subprocess.run(
-            [str(path.with_name(reporter)), "version" if reporter == "pmtiles" else "--version"],
+            [str(paths[reporter]), "version" if reporter == "pmtiles" else "--version"],
             check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15,
         )
         version = completed.stdout.strip()
