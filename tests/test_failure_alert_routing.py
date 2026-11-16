@@ -380,7 +380,7 @@ def test_legacy_resolution_workflow_is_owner_only_main_and_read_only():
     assert set(workflow_triggers(workflow)) == {"workflow_dispatch"}
     assert workflow["permissions"] == {"contents": "read", "actions": "read", "deployments": "read", "attestations": "read"}
     job = workflow["jobs"]["resolve"]
-    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id == ''"
+    assert job["if"] == "github.actor == 'jonaraphael' && github.ref == 'refs/heads/main' && inputs.monitoring_incident_id == '' && !inputs.automatic"
     checkout = job["steps"][0]
     assert checkout["with"] == {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0, "persist-credentials": False}
     step = job["steps"][-1]

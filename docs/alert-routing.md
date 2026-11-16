@@ -98,6 +98,39 @@ incident to be `CLOSED` and updates its recorded parent; it neither polls nor
 accepts arbitrary timestamps. Closure/log expiry cannot establish deployment or
 publication recovery. Historical WDPA metric incidents retain their receipts.
 
+Execution failures also reconcile automatically through **Alerts / Legacy workflow
+resolution** on trusted main in `shared-datasets-production`, using the existing
+reconciler identity. Ingestion verification and **Deployments / Completion check**
+request a sweep only after signing a verified outcome; **Operations / Safety check**
+requests one daily after its independent health report. No incident or deployment
+IDs are accepted in automatic mode: the same verifier discovers the latest signed
+proof once per managed job per sweep. The daily sweep covers Monitoring's one-hour
+closure timer and a dispatch that never started; no runner waits for closure.
+Request failures are tolerated, preserving the deployment and safety job outcomes;
+the next daily request provides another opportunity.
+
+Each stateless sweep lists `executions/` once with update times (listing may
+paginate), then reads at most 200 parents, newest first. It evaluates at most 100
+failures, makes at most 100 Monitoring GETs and 400 direct GitHub GETs, and attempts
+at most 25 parent edits. Failure/edit budget exhaustion defers remaining work
+quietly. Parents outside the 200-parent window remain available to the owner path.
+At most two attestation-verifier invocations per managed job are additional to
+the direct GET budget. Discovery/application uses at most 325 receipt reads
+(200 parents, 100 aliases, 25 generation-checked reporter reloads), each up to two
+GCS metadata/download RPCs; listing pages depend on historical object count.
+
+Open or expired (Monitoring 404) incidents, older/nonterminal evidence and pending
+identity requests wait quietly; jobs outside managed ingestion targets are ignored.
+Every new failure must pass the shared verifier. A resolved receipt acknowledges
+wording drift or interrupted delivery using its first recorded proof, without
+Monitoring/GitHub reads; new failures never replace that proof. Acknowledged views
+make no Slack call. Corruption, other read errors, generation conflicts and Slack
+errors fail the resolver through the existing workflow-health observer, without
+retriggering it. Only the `automatic` job is unattended: a failed owner-dispatched
+resolver job stays in GitHub. Legacy/nonexecution parents and recovery on a later scheduled
+execution without a redeploy are outside this proof type. The manual owner path
+still rejects unmanaged jobs and unavailable incidents.
+
 To resolve an execution failure after a verified replacement, supply both
 `monitoring_incident_id` and `recovery_deployment_id` to that owner-only workflow.
 The incident must be `CLOSED`, match its original project/job/execution receipt,

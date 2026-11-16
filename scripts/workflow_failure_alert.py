@@ -57,6 +57,15 @@ def catalog_probe_only(run: dict, jobs: list[dict]) -> bool:
             and all(job["name"] == probes[0]["name"] or job["conclusion"] not in FAILED_CONCLUSIONS for job in jobs))
 
 
+def supervised_resolver_failure(run, jobs):
+    """Owner-dispatched resolver jobs are supervised; only the automatic sweep is unattended."""
+    if run["name"] not in WORKFLOW_NAMES["resolve-workflow-alert.yml"]:
+        return False
+    failed = [job for job in jobs if job.get("conclusion") in FAILED_CONCLUSIONS]
+    # A run with no failed job (startup failure, no allocated jobs) still alerts.
+    return bool(failed) and all(job["name"] != "automatic" for job in failed)
+
+
 def safety_health_only(run, jobs):
     if run["name"] not in WORKFLOW_NAMES["operational-safety-check.yml"]:
         return False
@@ -96,7 +105,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
         return None
     if type(run.get("id")) is not int or run["id"] <= 0:
         raise ValueError("workflow run ID must be a positive integer")
-    if catalog_probe_only(run, jobs or []):
+    if catalog_probe_only(run, jobs or []) or supervised_resolver_failure(run, jobs or []):
         return None
     if run["name"] in WORKFLOW_NAMES["ci.yml"]:
         # CI now owns reusable publication/catalog jobs. A validation failure

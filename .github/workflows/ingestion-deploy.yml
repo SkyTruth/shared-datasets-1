@@ -234,6 +234,13 @@ jobs:
         bash "$GITHUB_WORKSPACE/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/ingestion.tfplan"
   verify:
     name: Verify ingestion canary
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+      deployments: write
+      id-token: write
+      attestations: write
     needs:
     - prepare
     - apply
@@ -357,6 +364,17 @@ jobs:
         python scripts/deployment_revision.py "${args[@]}"
       if: ${{ always() }}
     - name: Attest terminal deployment outcome
+      id: terminal-receipt
       uses: ./.github/actions/deployment-receipt
       with: {mode: receipt, receipt-path: "${{ steps.deployment-outcome.outputs.receipt_path }}"}
       if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+    - name: Request automatic execution recovery
+      timeout-minutes: 1
+      if: ${{ success() && env.PLAN_GUARD != 'usage' && steps.terminal-receipt.outcome == 'success' }}
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [[ "${DEPLOYMENT_PHASE:-}" == verified ]]; then
+          gh workflow run resolve-workflow-alert.yml --ref main -f automatic=true
+        fi

@@ -178,6 +178,19 @@ or exact historical worker proof; runtime targets require `verified`. Update onl
 that parent, without replacement/reply/activation/mutation. Managed parents retain
 normal signed closure. Native incidents supply only `monitoring_incident_id` after
 [authoritative closure](alert-routing.md#editable-monitoring-messages).
+Exact managed execution parents additionally use the
+[automatic Monitoring recovery path](alert-routing.md#editable-monitoring-messages):
+signed deployment verification requests a separate bounded sweep, and the daily
+safety check requests another after its own health report, tolerating dispatch
+failures. Each stateless sweep examines up to 200 parents by newest object update,
+verifies the latest signed proof once per job, and attempts at most 25 parent
+edits. New failures require Monitoring closure and a signed verified deployment
+later than the failure; pending identity work prevents resolution. Resolved-state
+acknowledgements use the first recorded proof without Monitoring/GitHub reads.
+Open/expired incidents, unmanaged jobs and budget deferrals are quiet; corruption
+and other transport faults reach the workflow-health observer. It never posts a
+replacement or resolves solely from the next scheduled run. Dispatch alone does
+not establish recovery: read back the original parent or its acknowledged receipt.
 Feature decisions follow [their typed lifecycle](alert-routing.md#identity-decision-threads):
 preserve requests and reply in the original thread without broadcast. Acceptance
 cannot establish publication, execution or Monitoring recovery.

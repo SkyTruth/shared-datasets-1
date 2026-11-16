@@ -130,3 +130,10 @@ jobs:
           curl --fail-with-body --silent --show-error -H 'Content-Type: application/json' \
             --data "{\"text\":\"Operational safety infrastructure failed: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
             "$SHARED_DATASETS_SLACK_WEBHOOK_URL"
+      - name: Request automatic execution recovery
+        timeout-minutes: 1
+        continue-on-error: true
+        if: ${{ always() && !cancelled() && steps.trust.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run resolve-workflow-alert.yml --ref main -f automatic=true

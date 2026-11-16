@@ -51,6 +51,7 @@ def test_safety_probe_is_readonly_except_fixed_workflow_scheduling():
 @pytest.mark.parametrize("step_name,expected", [
     ("Request catalog refresh", ["workflow", "run", "catalog-web-deploy.yml", "--ref", "main",
                                  "-f", "safety_run_id=123", "-f", "safety_run_attempt=2"]),
+    ("Request automatic execution recovery", ["workflow", "run", "resolve-workflow-alert.yml", "--ref", "main", "-f", "automatic=true"]),
     ("Request execution verification", ["workflow", "run", "deployment-verification.yml", "--ref", "main"]),
     ("Request operational reconciliation", ["workflow", "run", "unattended-workflow-alert.yml", "--ref", "main",
          "-f", "incident_id=operational-batch", "-f", "delivery_result=batch", "-f", "operation=safety:123/2"]),
@@ -169,7 +170,7 @@ def test_privileged_token_is_step_scoped_and_probe_failure_uses_health_deduplica
     assert 'GH_TOKEN' not in job.get('env', {})
     steps = workflow_steps_by_name({'jobs': {'safety': job}}, 'safety')
     expected = {'Check operational work', 'Check freshness and stalled operations', 'Request catalog refresh',
-                'Request execution verification', 'Request operational reconciliation'}
+                'Request execution verification', 'Request operational reconciliation', 'Request automatic execution recovery'}
     assert {step.get('name') for step in job['steps'] if 'GH_TOKEN' in step.get('env', {})} == expected
     health = steps['Check freshness and stalled operations']
     assert 'always()' in health['if']

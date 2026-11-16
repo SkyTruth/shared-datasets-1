@@ -526,7 +526,7 @@ jobs:
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').mpatlas }}
     permissions: &deployment-permissions
       contents: read
-      actions: read
+      actions: write
       pull-requests: read
       deployments: write
       id-token: write
@@ -554,7 +554,13 @@ jobs:
   sea-ice:
     needs: *ingestion-prerequisites
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').sea-ice }}
-    permissions: *terraform-permissions
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+      deployments: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/sea-ice-daily-deploy.yml
     with: *deployment-source
     secrets: inherit
@@ -583,7 +589,13 @@ jobs:
   catalog-viewer:
     needs: [ci-ready, artifact-registry-iam]
     if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && fromJSON(needs.ci-ready.outputs.delivery || '{}').catalog-viewer }}
-    permissions: *deployment-permissions
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      deployments: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/catalog-viewer-deploy.yml
     with:
       sync_iam: ${{ contains(fromJSON(needs.ci-ready.outputs.bootstrap || '[]'), 'catalog_viewer') }}
