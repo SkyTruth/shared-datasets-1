@@ -416,6 +416,7 @@
     "deployment-recovery.yml": {"events": ["schedule", "workflow_run", "workflow_dispatch"]},
     "deployment-verification.yml": {"events": ["schedule", "workflow_run", "workflow_dispatch"]},
     "operational-safety-check.yml": {"events": ["schedule", "workflow_run", "workflow_dispatch"]},
+    "resolve-workflow-alert.yml": {"events": ["workflow_dispatch"]},
     "unattended-workflow-alert.yml": {"events": ["schedule", "workflow_run", "workflow_dispatch"]},
     "ingestion-deploy.yml": {"publication_jobs": ["Build image and apply", "Prepare publication image and apply"]}
   },

@@ -35,6 +35,12 @@ def path(source):
 
 def load(store, source, identity):
     value, generation = store.read(path(source))
+    validate(value, source, identity)
+    return value, generation
+
+
+def validate(value, source, identity):
+    """Validate a loaded parent without fetching the same receipt twice."""
     if value is not None:
         fields = {"schema", "source", "identity", "ts", "failures", "reviews", "decisions", "view"}
         wire.require((set(value) == fields and value["schema"] == SCHEMA
@@ -55,7 +61,6 @@ def load(store, source, identity):
         for decision in value["decisions"].values():
             wire.require(set(decision) == {"text", "resolved"} and isinstance(decision["text"], str)
                          and type(decision["resolved"]) is bool, "invalid execution decision view")
-    return value, generation
 
 
 def recovery_proof(value):
@@ -116,7 +121,7 @@ def render(value):
     return payload
 
 
-def report(store, slack, identity, ctx, *, failure=None, review=None, decision=None, parent_ts=None, recovery=None):
+def report(store, slack, identity, ctx, *, failure=None, review=None, decision=None, parent_ts=None, recovery=None, closed_failures=()):
     ctx = context(ctx)
     value, generation = load(store, ctx, identity)
     new = value is None
@@ -133,6 +138,9 @@ def report(store, slack, identity, ctx, *, failure=None, review=None, decision=N
         previous = value["failures"].get(key)
         value["failures"][key] = {"closed": closed or bool(previous and previous["closed"]),
                                   "cause": cause or (previous["cause"] if previous else "Execution failed; inspect the linked error logs.")}
+    for key in closed_failures:
+        wire.require(key in value["failures"], "closure requires an original execution failure")
+        value["failures"][key]["closed"] = True
     if review is not None:
         key, request = review
         wire.require(key not in value["reviews"] or value["reviews"][key] == request, "execution review changed")

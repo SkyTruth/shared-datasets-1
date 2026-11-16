@@ -30,7 +30,10 @@ def test_every_workflow_dispatch_producer_has_an_alert_and_replay_route():
                 payload['workflow_run']['updated_at'] = '2026-11-05T01:00:00Z'
                 assert incidents.source_observations(api, json.loads(json.dumps(payload)), {})
     assert ('ci.yml', 'publish-typescript-sdk.yml') in edges
-    assert len(edges) == 4
+    # Signed verification and the daily safety check request the automatic recovery sweep.
+    assert {producer for producer, target in edges if target == 'resolve-workflow-alert.yml'} == {
+        'deployment-verification.yml', 'ingestion-deploy.yml', 'operational-safety-check.yml'}
+    assert len(edges) == 7
 
 
 @pytest.mark.parametrize('name', alerts.WORKFLOW_NAMES['publish-typescript-sdk.yml'])

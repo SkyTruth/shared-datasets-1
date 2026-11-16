@@ -41,7 +41,7 @@ jobs:
     environment: shared-datasets-production
     permissions:
       contents: read
-      actions: read
+      actions: write
       deployments: write
       id-token: write
       attestations: write
@@ -71,8 +71,16 @@ jobs:
           DEPLOYMENT_ID: ${{ matrix.record }}
         run: python scripts/deployment_revision.py observe --deployment-id "$DEPLOYMENT_ID"
       - name: Attest verified execution outcome
+        id: terminal-receipt
         if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
         uses: ./.github/actions/deployment-receipt
         with:
           mode: receipt
           receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}
+      - name: Request automatic execution recovery
+        timeout-minutes: 1
+        if: ${{ success() && steps.terminal-receipt.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run resolve-workflow-alert.yml --ref main -f automatic=true

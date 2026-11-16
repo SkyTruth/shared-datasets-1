@@ -11,6 +11,7 @@ on:
       - "Catalog / Viewer deploy"
       - "Catalog / Web deploy"
       - "Data / Scratch cleanup audit"
+      - "Alerts / Legacy workflow resolution"
       - "Deployments / Completion check"
       - "Deployments / Read-only reconciliation"
     branches: [main]

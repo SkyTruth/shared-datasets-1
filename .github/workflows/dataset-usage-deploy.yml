@@ -1,6 +1,6 @@
 name: Data / Usage collector deploy
 permissions:
-  actions: read
+  actions: write
   pull-requests: read
   deployments: write
   contents: read

@@ -37,6 +37,13 @@ original alert reconciled as distinct milestones.
    [Slack recovery contract](slack-incidents.md#recovery-contract) to resolve the
    original parent; native incidents require
    [authoritative Monitoring closure](alert-routing.md#editable-monitoring-messages).
+   After a manual resolver dispatch, confirm within about two minutes that its
+   exact run/attempt has at least one started job (`gh run view RUN_ID --json
+   status,jobs`, or the run's jobs API). A run still `queued` with zero jobs is
+   not a resolution. Dispatch once more, confirm that attempt started, then
+   report the blocker if it did not; do not keep redispatching. Dispatch alone
+   is never success: read back the original Slack parent or its receipt and
+   confirm the acknowledged resolved view. Automatic sweeps do not poll runners.
    Report changed paths/generations, proof, owner/blocker and retained evidence.
    Do not create schedules or claim automatic retries without authorization and
    verified configuration.

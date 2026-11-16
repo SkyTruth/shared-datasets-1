@@ -161,8 +161,8 @@ class ReceiptContractTests(unittest.TestCase):
             "guard ignored": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Require successful signed apply").update({"continue-on-error": True}),
             "canary bypass": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("name") == "Execute ingestion canary").update({"if": "always()"}),
             "outcome missing": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("id") == "deployment-outcome")),
-            "outcome signature missing": lambda jobs: jobs["verify"]["steps"].pop(),
-            "outcome signature disabled": lambda jobs: jobs["verify"]["steps"][-1].update({"if": False}),
+            "outcome signature missing": lambda jobs: jobs["verify"]["steps"].remove(next(step for step in jobs["verify"]["steps"] if step.get("id") == "terminal-receipt")),
+            "outcome signature disabled": lambda jobs: next(step for step in jobs["verify"]["steps"] if step.get("id") == "terminal-receipt").update({"if": False}),
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label):

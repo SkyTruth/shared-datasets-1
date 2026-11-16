@@ -14,7 +14,7 @@ name: Ingestion / Sea ice daily deploy
       source_run_id: {"description": "Main-push CI run that tested executor_sha", "required": true, "type": "string"}
       source_run_attempt: {"description": "Exact successful ci-ready attempt", "required": true, "type": "string"}
 permissions:
-  actions: read
+  actions: write
   pull-requests: read
   deployments: write
   contents: read

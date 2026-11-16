@@ -307,7 +307,8 @@ def test_only_apply_holds_state_lock_and_each_target_serializes_its_entire_rollo
         assert 'secrets' not in job
         assert job['with']['target'] == target
         for key, requested in workflow['permissions'].items():
-            assert wrapper['permissions'].get(key) == requested, 'a reusable workflow cannot elevate its caller token'
+            assert {'none': 0, 'read': 1, 'write': 2}[wrapper['permissions'].get(key, 'none')] >= {'none': 0, 'read': 1, 'write': 2}[requested], 'a reusable workflow cannot elevate its caller token'
+        assert wrapper['permissions']['actions'] == workflow['jobs']['verify']['permissions']['actions'] == 'write'
         triggers = wrapper['on']
         for key in ('executor_sha', 'source_run_id', 'source_run_attempt'):
             assert job['with'][key] == '${{ inputs.' + key + ' }}'

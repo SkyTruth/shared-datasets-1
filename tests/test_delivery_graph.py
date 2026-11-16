@@ -150,7 +150,7 @@ def test_registry_migration_preserves_all_signed_and_historical_routing_facts():
     expected = json.loads((ROOT / 'tests/fixtures/deployment-registry-contract.json').read_text())
     assert revisions.TARGET_WORKFLOWS == expected['records']
     assert {key: sorted(value) for key, value in alerts.WORKFLOW_EVENTS.items()} == {
-        **expected['events'], 'python-sdk.yml': ['workflow_run']}
+        **expected['events'], 'python-sdk.yml': ['workflow_run'], 'resolve-workflow-alert.yml': ['workflow_dispatch']}
     assert sorted(alerts.PUBLICATION_JOBS) == expected['publication_jobs']
     assert {name: row['prerequisites'] for name, row in registry().items()} == expected['prerequisites']
     # Preserve the historical retirements and recognize the rejected reader's

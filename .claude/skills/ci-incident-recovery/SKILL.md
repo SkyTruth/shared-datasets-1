@@ -20,7 +20,11 @@ those surfaces are involved.
 
 Keep code merged, operation completed, observer verified and original incident
 reconciled as separate facts. An asynchronous launch or healthy observer alone
-cannot establish completion. Do not invent automatic retries or schedules.
+cannot establish completion. After a manual resolver dispatch, confirm within
+about two minutes that the exact run has at least one started job. A queued run
+with zero jobs is not resolution: redispatch once, check it started, then report
+if still blocked. Dispatch alone is never success; read back the original parent
+or its acknowledged receipt. Do not invent further retries or schedules.
 
 Use [Slack persistence/delivery](../../../docs/slack-incidents.md#persistence-and-delivery)
 for uncertain claims and original parents, and
