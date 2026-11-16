@@ -10,6 +10,7 @@ from scripts.slack_incident_api import TIMESTAMP
 from services.monitoring_slack import messages
 
 SCHEMA = "execution-slack-v1"
+RECOVERED_SCHEMA = "execution-slack-v2"
 RECEIPT_SCHEMA = "monitoring-slack-execution-v1"
 FAILURE_POLICY = "Scheduled ingestion Cloud Run execution failed"
 
@@ -35,9 +36,13 @@ def path(source):
 def load(store, source, identity):
     value, generation = store.read(path(source))
     if value is not None:
-        wire.require(set(value) == {"schema", "source", "identity", "ts", "failures", "reviews", "decisions", "view"}
-                     and value["schema"] == SCHEMA and value["source"] == context(source)
+        fields = {"schema", "source", "identity", "ts", "failures", "reviews", "decisions", "view"}
+        wire.require((set(value) == fields and value["schema"] == SCHEMA
+                      or set(value) == fields | {"recovery"} and value["schema"] == RECOVERED_SCHEMA)
+                     and value["source"] == context(source)
                      and value["identity"] == identity, "incompatible execution receipt")
+        if value["schema"] == RECOVERED_SCHEMA:
+            recovery_proof(value["recovery"])
         wire.require(isinstance(value["ts"], str) and TIMESTAMP.fullmatch(value["ts"]),
                      "unconfirmed execution parent; repair its receipt before retrying")
         wire.require(all(isinstance(value[key], dict) for key in ("failures", "reviews", "decisions"))
@@ -53,21 +58,34 @@ def load(store, source, identity):
     return value, generation
 
 
+def recovery_proof(value):
+    wire.require(isinstance(value, dict) and set(value) == {"deployment_id", "status_id", "run_id", "attempt"}
+                 and all(type(item) is int and item > 0 for item in value.values()), "invalid execution recovery proof")
+    return value
+
+
 def render(value):
     ctx = value["source"]
     pending = [key for key in value["reviews"] | value["decisions"]
                if not value["decisions"].get(key, {}).get("resolved", False)]
     failures = value["failures"]
+    recovery = value.get("recovery")
+    resolved = False
     if failures:
         closed = all(item["closed"] for item in failures.values())
-        title = f"{'Closed by Monitoring' if closed else 'Open'} · {ctx['job']} execution failed"
+        resolved = closed and recovery is not None and not pending
+        state = "Resolved" if resolved else "Closed by Monitoring" if closed else "Open"
+        title = f"{state} · {ctx['job']} execution failed"
         causes = list(dict.fromkeys(item["cause"] for item in failures.values() if item["cause"]))
         details = causes if len(causes) <= 2 else [causes[0], causes[-1]]
         if len(causes) > 2:
             details.append(f"{len(causes) - 2} additional errors in the execution logs.")
         if closed:
-            details.append("Monitoring condition cleared; publication remains unverified.")
+            details.append("Replacement execution and publication checks verified."
+                           if recovery is not None else "Monitoring condition cleared; publication remains unverified.")
         action = "Verify publication before retrying; inspect the exact execution logs."
+        if resolved:
+            action = "None; verified recovery recorded."
         if pending:
             action = "Review the identity requests below; verify publication before retrying."
     else:
@@ -87,20 +105,29 @@ def render(value):
     query = (f'resource.type="cloud_run_job" resource.labels.job_name="{ctx["job"]}" '
              f'labels."run.googleapis.com/execution_name"="{ctx["execution"]}"')
     logs = "https://console.cloud.google.com/logs/query?" + urlencode({"project": wire.PROJECT, "query": query})
+    links = [(logs, "Exact execution logs"), (url, ctx["execution"])]
+    if recovery is not None:
+        links.append((f"https://github.com/SkyTruth/shared-datasets-1/actions/runs/{recovery['run_id']}/attempts/{recovery['attempt']}",
+                      "Verified recovery"))
     payload = messages.card(title, details=details, action=action,
-                            links=[(logs, "Exact execution logs"), (url, ctx["execution"])],
-                            status="warning" if failures and closed else "error" if failures else "decision" if pending else "success")
+                            links=links,
+                            status="success" if resolved else "warning" if failures and closed else "error" if failures else "decision" if pending else "success")
     payload["text"] += requests
     return payload
 
 
-def report(store, slack, identity, ctx, *, failure=None, review=None, decision=None, parent_ts=None):
+def report(store, slack, identity, ctx, *, failure=None, review=None, decision=None, parent_ts=None, recovery=None):
     ctx = context(ctx)
     value, generation = load(store, ctx, identity)
     new = value is None
     if new:
         value = {"schema": SCHEMA, "source": ctx, "identity": identity, "ts": parent_ts,
                  "failures": {}, "reviews": {}, "decisions": {}, "view": None}
+    if recovery is not None:
+        wire.require(not new and value["failures"], "recovery requires an original failure parent")
+        recovery_proof(recovery)
+        wire.require("recovery" not in value or value["recovery"] == recovery, "recorded execution recovery changed")
+        value = {**value, "schema": RECOVERED_SCHEMA, "recovery": recovery}
     if failure is not None:
         key, closed, cause = failure
         previous = value["failures"].get(key)

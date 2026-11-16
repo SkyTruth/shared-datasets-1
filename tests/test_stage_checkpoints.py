@@ -18,6 +18,104 @@ from test_feature_metadata_translation_reuse import record, row, source_bundle
 CODE = ("ingestion/common/feature_metadata.py",)
 
 
+@pytest.fixture
+def native_suite(tmp_path, monkeypatch):
+    specifications = {
+        "gdalinfo": ("--version", "GDAL 3.6.2"),
+        "ogr2ogr": ("--version", "GDAL 3.6.2"),
+        "tippecanoe": ("--version", "tippecanoe v2.52.0"),
+        "pmtiles": ("version", "pmtiles 1.30.1"),
+    }
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    for name in (*specifications, "gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"):
+        path = directory / name
+        body = "exit 99\n"
+        if name in specifications:
+            argument, version = specifications[name]
+            redirect = " >&2" if name == "tippecanoe" else ""
+            body = f'[ "$#" = 1 ] && [ "$1" = "{argument}" ] || exit 98\necho "{version}"{redirect}\n'
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o755)
+    monkeypatch.setenv("PATH", str(directory))
+    return directory
+
+
+@pytest.mark.parametrize("names", [(), ("gdal_calc.py",),
+    ("gdalinfo", "gdal_calc.py", "gdal_polygonize.py", "ogr2ogr", "tippecanoe", "tippecanoe-decode", "pmtiles")])
+def test_native_suite_identity_survives_checkpoint_serialization(tmp_path, native_suite, names):
+    tools = checkpoints.native_tools(names)
+    versions = {"gdalinfo": "GDAL 3.6.2", "gdal_calc.py": "GDAL 3.6.2",
+        "gdal_polygonize.py": "GDAL 3.6.2", "ogr2ogr": "GDAL 3.6.2",
+        "tippecanoe": "tippecanoe v2.52.0", "tippecanoe-decode": "tippecanoe v2.52.0",
+        "pmtiles": "pmtiles 1.30.1"}
+    expected = {name: {"path": str(native_suite / name), "version": versions[name],
+        "sha256": hashlib.sha256((native_suite / name).read_bytes()).hexdigest()} for name in names}
+    assert tools == expected
+    store = checkpoints.StageStore(tmp_path / "cache")
+    path, _ = store.run("native-build", {"tools": tools}, output, code=CODE)
+    assert checkpoints.verify(path / "checkpoint.json")["binding"]["inputs"]["tools"] == expected
+    resumed, _ = store.run("native-build", {"tools": checkpoints.native_tools(names)},
+        lambda _: pytest.fail("unchanged tool identities must reuse the stage"), code=CODE)
+    assert resumed == path
+
+
+@pytest.mark.parametrize("failure", ["missing-tool", "missing-reporter", "failed-version", "empty-version"])
+def test_invalid_native_identity_fails_before_checkpoint_producer(tmp_path, native_suite, failure):
+    if failure == "missing-tool":
+        (native_suite / "gdal_calc.py").unlink()
+    elif failure == "missing-reporter":
+        (native_suite / "gdalinfo").unlink()
+    else:
+        (native_suite / "gdalinfo").write_text("#!/bin/sh\n" + (
+            "echo 'broken version probe'\nexit 1\n" if failure == "failed-version" else "exit 0\n"))
+    with pytest.raises((RuntimeError, OSError, subprocess.CalledProcessError)):
+        checkpoints.StageStore(tmp_path / "cache").run("native-build",
+            {"tools": checkpoints.native_tools(("gdal_calc.py",))},
+            lambda _: pytest.fail("invalid tool identity cannot reach the producer"), code=CODE)
+    assert not (tmp_path / "cache").exists()
+
+
+def test_native_version_timeout_remains_a_failure(native_suite, monkeypatch):
+    def timeout(command, **kwargs):
+        assert command == [str(native_suite / "gdalinfo"), "--version"]
+        assert kwargs["timeout"] == 15
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(checkpoints.subprocess, "run", timeout)
+    with pytest.raises(subprocess.TimeoutExpired):
+        checkpoints.native_tools(("gdal_calc.py",))
+
+
+def test_native_script_hash_and_suite_version_invalidate_completed_stage(tmp_path, native_suite):
+    store = checkpoints.StageStore(tmp_path / "cache")
+
+    def build():
+        return store.run("native-build", {"tools": checkpoints.native_tools(("gdal_calc.py",))},
+            output, code=CODE)[0]
+
+    first = build()
+    script = native_suite / "gdal_calc.py"
+    script.write_text(script.read_text() + "# updated utility implementation\n")
+    changed_script = build()
+    assert changed_script != first
+    reporter = native_suite / "gdalinfo"
+    reporter.write_text(reporter.read_text().replace("3.6.2", "3.6.3"))
+    assert build() not in {first, changed_script}
+
+
+def test_python_utilities_resolve_suite_reporters_from_a_separate_path_entry(tmp_path, native_suite, monkeypatch):
+    scripts = tmp_path / "venv-bin"
+    scripts.mkdir()
+    for name in ("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"):
+        (native_suite / name).rename(scripts / name)
+    monkeypatch.setenv("PATH", str(scripts) + ":" + str(native_suite))
+    tools = checkpoints.native_tools(("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"))
+    for name in ("gdal_calc.py", "gdal_polygonize.py", "tippecanoe-decode"):
+        assert tools[name]["path"] == str(scripts / name)
+        assert tools[name]["version"] == ("tippecanoe v2.52.0" if name == "tippecanoe-decode" else "GDAL 3.6.2")
+
+
 def output(directory):
     (directory / "data.csv").write_text("id\n1\n")
     return {"rows": 1}

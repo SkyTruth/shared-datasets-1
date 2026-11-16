@@ -47,22 +47,28 @@ def implementation(paths):
 
 
 def native_tools(names):
-    result = {}
-    for name in names:
+    """Bind native executables to successful version probes for their installed suite."""
+    reporters = {name: {"gdal_calc.py": "gdalinfo", "gdal_polygonize.py": "gdalinfo",
+                       "tippecanoe-decode": "tippecanoe"}.get(name, name) for name in names}
+    paths = {}
+    for name in dict.fromkeys((*reporters, *reporters.values())):
         path = shutil.which(name)
         if path is None:
-            result[name] = (
-                None  # The producer still fails if its native tool is missing.
-            )
-        else:
-            completed = subprocess.run(
-                [path, "--version"], capture_output=True, text=True, timeout=15
-            )
-            result[name] = {
-                "path": str(Path(path).resolve()),
-                "version": (completed.stdout + completed.stderr).strip(),
-                "sha256": sha256_file(Path(path)),
-            }
+            raise RuntimeError(f"Required executable not found on PATH: {name}")
+        paths[name] = Path(path).resolve(strict=True)
+    result = {}
+    for name, reporter in reporters.items():
+        path = paths[name]
+        # Python utilities can live in a virtualenv while native suite binaries
+        # live in another PATH entry. Resolve both from the child process PATH.
+        completed = subprocess.run(
+            [str(paths[reporter]), "version" if reporter == "pmtiles" else "--version"],
+            check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15,
+        )
+        version = completed.stdout.strip()
+        if not version:
+            raise RuntimeError(f"Native tool returned no version: {path}")
+        result[name] = {"path": str(path), "version": version, "sha256": sha256_file(path)}
     return result
 
 

@@ -26,6 +26,11 @@ from release_streaming_helpers import write_generated_release, synthetic_baselin
 from ingestion.common import release_feature_model as model
 
 
+def synthetic_native_tools(names):
+    """Tool identities for builders whose native conversion boundary is mocked."""
+    return {name: {"path": f"/fixture/{name}", "version": "synthetic", "sha256": "a" * 64} for name in names}
+
+
 class TrackedGeometry(dict):
     """A dict that supports weak references, so tests can observe retention."""
 
@@ -473,6 +478,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
         build_memory(database=tmp_path / "memory.sqlite", sources=[bundle], fields=["NAME_ENG"], locales=wdpa.translations.LOCALES, source_key_fields=["SITE_PID"])
         with (
             closing(TranslationMemory(tmp_path / "memory.sqlite")) as memory,
+            mock.patch("ingestion.common.stage_checkpoints.native_tools", side_effect=synthetic_native_tools),
             mock.patch.object(wdpa, "expected_feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "build_filtered_gpkg", fake_build_filtered_gpkg),
             mock.patch.object(wdpa, "feature_stream", side_effect=lambda *a, **kw: __import__("contextlib").nullcontext(source_features())),
@@ -562,6 +568,8 @@ class SeaIceSequenceBuilderTests(unittest.TestCase):
             Path(output).write_text(json.dumps(feature)+'\n')
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as patches:
             (Path(tmp) / "source.tif").write_bytes(b"frozen raster fixture")
+            patches.enter_context(mock.patch("ingestion.common.stage_checkpoints.native_tools",
+                                             side_effect=synthetic_native_tools))
             for name in ('build_ice_mask_raster', 'polygonize_ice_mask', 'filter_ice_polygons', 'convert_gpkg_to_fgb', 'convert_geojsonseq_to_fgb', 'build_pmtiles'):
                 patches.enter_context(mock.patch.object(sea_ice, name, touch_output))
             patches.enter_context(mock.patch.object(sea_ice, 'convert_fgb_to_geojsonseq', source_stream))
