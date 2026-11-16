@@ -17,7 +17,6 @@ import yaml
 
 from scripts import ci_preflight
 from scripts.ci_contract import SUITES, TOOLCHAIN, expected_tools
-from scripts.deployment_receipt_contracts import expanded_steps
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -72,15 +71,49 @@ def test_hosted_python_bootstrap_exports_the_real_default_interpreter(tmp_path, 
     assert not (tmp_path / ".venv").exists()
 
 
-@pytest.mark.parametrize("job", ["geospatial-changes", "lint", "tests", "tests-control-plane",
-                                 "production-images", "sdk-validation", "browser", "ci-ready"])
-def test_hosted_validation_installs_default_python_before_bare_python_commands(job):
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-    steps = list(expanded_steps(ROOT, workflow["jobs"][job]))
-    install = next(i for i, step in enumerate(steps) if "uv python install --default" in step.get("run", ""))
-    first_python = next(i for i, step in enumerate(steps)
-                        if re.search(r"\bpython (?:-[IS] )*scripts/", step.get("run", "")))
-    assert install < first_python
+# A shell command whose program is the PATH `python`, not `uv run` or a container.
+BARE_PYTHON = re.compile(r"(?m)(?:^\s*(?:\w+=\S*\s+)*|\$\(\s*|[|&;]\s*)python3?\s")
+
+
+def local_steps(steps):
+    for step in steps:
+        action = step.get("uses", "")
+        if action.startswith("./.github/actions/"):
+            yield from local_steps(yaml.safe_load((ROOT / action / "action.yml").read_text())["runs"]["steps"])
+        else:
+            yield step
+
+
+def installs_default_python(step):
+    return "uv python install --default" in step.get("run", "")
+
+
+def puts_python_on_path(step):
+    return installs_default_python(step) or step.get("uses", "").startswith("actions/setup-python@")
+
+
+def workflow_jobs():
+    for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        for job_id, job in yaml.safe_load(path.read_text())["jobs"].items():
+            yield pytest.param(path.name, list(local_steps(job.get("steps", []))), id=f"{path.name}/{job_id}")
+
+
+@pytest.mark.parametrize("workflow,steps", [case for case in workflow_jobs() if case.values[0] == "ci.yml"])
+def test_hosted_validation_installs_default_python_before_bare_python_commands(workflow, steps):
+    bare = [i for i, step in enumerate(steps) if BARE_PYTHON.search(step.get("run", ""))]
+    if bare:
+        assert any(installs_default_python(step) for step in steps[:bare[0]])
+
+
+@pytest.mark.parametrize("workflow,steps", workflow_jobs())
+def test_setup_uv_never_stands_in_for_the_bare_python_pin(workflow, steps):
+    """setup-uv >= 6 selects uv's interpreter without activating a venv on PATH."""
+    uv_installed = False
+    for step in steps:
+        if puts_python_on_path(step):
+            return
+        uv_installed = uv_installed or step.get("uses", "").startswith("astral-sh/setup-uv@")
+        assert not (uv_installed and BARE_PYTHON.search(step.get("run", ""))), step.get("name")
 
 
 @pytest.mark.parametrize("actual,success", [(TOOLCHAIN["python"], True), ("3.13.1", False)])

@@ -363,7 +363,15 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXECUTOR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          selected="$(jq -sr 'any(.[]; (.deployments | length > 0) or (.readiness_targets | length > 0))' "$RUNNER_TEMP"/ci-plans/*/plan.json)"
+          # One downloaded attempt lands flat; retried attempts nest by artifact name.
+          shopt -s nullglob
+          plans=("$RUNNER_TEMP"/ci-plans/*/plan.json)
+          if [[ -f "$RUNNER_TEMP/ci-plans/plan.json" ]]; then plans+=("$RUNNER_TEMP/ci-plans/plan.json"); fi
+          if (( ${#plans[@]} == 0 )); then
+            echo "::error::No validation plan was downloaded"
+            exit 1
+          fi
+          selected="$(jq -sr 'any(.[]; (.deployments | length > 0) or (.readiness_targets | length > 0))' "${plans[@]}")"
           if [[ "$selected" == true ]]; then
             python -I -S scripts/deployment_revision.py accept --pr-number "$PR_NUMBER"
           fi
@@ -427,6 +435,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - *validation-python
       - name: Enumerate immutable merged mutation plans
         id: discover
         env:
@@ -438,7 +447,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/catalog_web_changes.py
-      - *validation-python
       - name: Inspect every commit for repository announcements
         id: repo_alert_selection
         env:
