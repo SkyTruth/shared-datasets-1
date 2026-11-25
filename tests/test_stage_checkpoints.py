@@ -76,15 +76,33 @@ def test_invalid_native_identity_fails_before_checkpoint_producer(tmp_path, nati
     assert not (tmp_path / "cache").exists()
 
 
-def test_native_version_timeout_remains_a_failure(native_suite, monkeypatch):
-    def timeout(command, **kwargs):
-        assert command == [str(native_suite / "gdalinfo"), "--version"]
-        assert kwargs["timeout"] == 15
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+def test_native_tools_probe_shared_reporter_once_per_inventory(native_suite):
+    reporter = native_suite / "gdalinfo"
+    calls = native_suite / "gdalinfo.calls"
+    reporter.write_text(f'#!/bin/sh\necho "$1" >> "{calls}"\necho "GDAL 3.6.2"\n')
+    names = ("gdalinfo", "gdal_calc.py", "gdal_polygonize.py")
+    for expected_calls in (1, 2):
+        tools = checkpoints.native_tools(names)
+        assert all(tools[name]["version"] == "GDAL 3.6.2" for name in names)
+        assert calls.read_text().splitlines() == ["--version"] * expected_calls
 
-    monkeypatch.setattr(checkpoints.subprocess, "run", timeout)
-    with pytest.raises(subprocess.TimeoutExpired):
-        checkpoints.native_tools(("gdal_calc.py",))
+
+@pytest.mark.parametrize("seconds", [16, 121])
+def test_slow_native_reporter_has_a_bounded_startup_window(native_suite, monkeypatch, seconds):
+    run = subprocess.run
+
+    def slow_reporter(command, **kwargs):
+        assert command == [str(native_suite / "gdalinfo"), "--version"]
+        if seconds > kwargs["timeout"]:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(checkpoints.subprocess, "run", slow_reporter)
+    if seconds == 16:
+        assert checkpoints.native_tools(("gdal_calc.py",))["gdal_calc.py"]["version"] == "GDAL 3.6.2"
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            checkpoints.native_tools(("gdal_calc.py",))
 
 
 def test_native_script_hash_and_suite_version_invalidate_completed_stage(tmp_path, native_suite):

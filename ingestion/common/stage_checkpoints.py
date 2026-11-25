@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 
 from ingestion.common.runtime import sha256_file
 from ingestion.common import release_feature_model as model
@@ -22,6 +23,8 @@ SCHEMA = "publication-stage-v1"
 MARKERS = ("checkpoint.json", "checkpoint.sha256")
 LOGGER = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[2]
+# Loading GDAL on a cold Cloud Run instance can exceed 15 seconds.
+NATIVE_VERSION_TIMEOUT_SECONDS = 120
 
 
 def digest(value):
@@ -56,20 +59,23 @@ def native_tools(names):
         if path is None:
             raise RuntimeError(f"Required executable not found on PATH: {name}")
         paths[name] = Path(path).resolve(strict=True)
-    result = {}
-    for name, reporter in reporters.items():
-        path = paths[name]
-        # Python utilities can live in a virtualenv while native suite binaries
-        # live in another PATH entry. Resolve both from the child process PATH.
+    versions = {}
+    for reporter in dict.fromkeys(reporters.values()):
+        started = time.monotonic()
         completed = subprocess.run(
             [str(paths[reporter]), "version" if reporter == "pmtiles" else "--version"],
-            check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15,
+            check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            timeout=NATIVE_VERSION_TIMEOUT_SECONDS,
         )
+        LOGGER.info("%s version check took %.2fs", paths[reporter], time.monotonic() - started)
         version = completed.stdout.strip()
         if not version:
-            raise RuntimeError(f"Native tool returned no version: {path}")
-        result[name] = {"path": str(path), "version": version, "sha256": sha256_file(path)}
-    return result
+            raise RuntimeError(f"Native tool returned no version: {paths[reporter]}")
+        versions[reporter] = version
+    return {
+        name: {"path": str(paths[name]), "version": versions[reporter], "sha256": sha256_file(paths[name])}
+        for name, reporter in reporters.items()
+    }
 
 
 def member(directory, name):

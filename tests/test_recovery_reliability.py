@@ -175,26 +175,42 @@ def test_recovery_identity_health_uses_signed_manual_provisioning_and_latest_aut
     import hashlib
     target = 'terraform-' + hashlib.sha256(b'PR plan identity provisioning').hexdigest()[:16]
     record = {'id': 42, 'environment': 'production-' + target}
-    run = {'id': 90, 'run_attempt': 2}
+    run = {'id': 90, 'run_attempt': 2, 'status': 'completed'}
     api = Mock()
     api.pages.side_effect = lambda path, **_: ([] if state == 'missing' else [record]) if '/deployments?' in path else [
         {'steps': [{'name': 'Authenticate read-only recovery', 'conclusion': 'failure' if state == 'auth_failed' else 'success'}]}]
-    # One page is enough for the latest completed run; paginating would fetch every historical run.
-    api.get.side_effect = lambda path: {'workflow_runs': [run, {'id': 1, 'run_attempt': 1}]} if '/runs?' in path else {}
+    api.get.return_value = {'workflow_runs': [
+        {'id': 91, 'run_attempt': 1, 'status': 'in_progress'}, run,
+        {'id': 89, 'run_attempt': 1, 'status': 'completed'}]}
     status = {'state': 'success' if state in {'applied', 'auth_failed', 'untrusted'} else 'failure',
               'description': 'applied' if state in {'applied', 'auth_failed', 'untrusted'} else state}
     with patch.object(deployment, 'verify_record', return_value={'target': target}), \
          patch.object(deployment, 'verified_statuses', return_value=[status]), \
-         patch.object(safety.alerts, 'verify_source_event', side_effect=ValueError('untrusted') if state == 'untrusted' else None, return_value=True):
+         patch.object(safety.alerts, 'verify_source_event', side_effect=ValueError('untrusted') if state == 'untrusted' else None, return_value=True) as verify:
         if state != 'applied':
             with pytest.raises((ValueError, RuntimeError), match='untrusted' if state == 'untrusted' else '[Rr]ecovery'):
                 safety.recovery_identity(api)
         else:
             findings = safety.recovery_identity(api)
             assert findings == []
-            assert all('recovery' in finding.lower() for finding in findings)
+        if state in {'applied', 'auth_failed', 'untrusted'}:
+            verify.assert_called_once_with(api, run)
+            api.get.assert_called_once()
+            assert 'status=' not in api.get.call_args.args[0]
     api.post.assert_not_called()
     assert not any('/runs?' in call.args[0] for call in api.pages.call_args_list)
+
+
+@pytest.mark.parametrize('older_runs', [[], [{'id': 90, 'status': 'completed'}]])
+def test_unfinished_recoveries_do_not_hide_a_prior_page(older_runs):
+    api = Mock()
+    api.get.side_effect = [
+        {'workflow_runs': [{'status': 'queued'}] * 100},
+        {'workflow_runs': older_runs},
+    ]
+    assert safety.latest_completed_recovery(api) == next(iter(older_runs), None)
+    path = f'{safety.API_ROOT}/actions/workflows/deployment-recovery.yml/runs?branch=main&per_page=100'
+    assert [call.args[0] for call in api.get.call_args_list] == [path + '&page=1', path + '&page=2']
 
 
 def test_heartbeat_doc_matches_delivered_reader_failure_contract():
