@@ -38,9 +38,9 @@ incident replay, and unconfirmed delivery claims older than 24 hours remain heal
 findings. Unchanged health findings never enter replay. The [health/heartbeat contract](alert-routing.md#scheduled-freshness-and-capacity)
 owns scoped non-red reports, deduplication, reminders and missing-run detection.
 Failed discovery uses the same retained, change-plus-daily health report.
-When notified safety findings clear, its incoming webhook posts one top-level
-success with the health scope and resolving run link; subsequent clean runs stay
-quiet. This separate health report does not use the workflow incident bot lifecycle.
+The bot edits the original safety alert when findings change or clear. Its channel,
+message timestamp and opening run ID are stored in the safety health report.
+Subsequent clean runs stay quiet.
 Infrastructure failures that prevent reporting retain a direct webhook signal.
 
 Each safety probe cheaply inspects the exact pending WDPA execution for terminal
@@ -148,8 +148,8 @@ Set secret `SHARED_DATASETS_SLACK_BOT_TOKEN`, exact channel variable
 and `SHARED_DATASETS_SLACK_INCIDENTS_ENABLED=true` to admit incident workers.
 Never log/commit tokens or put them in arguments. The bot is the sole workflow
 incident transport; disabling admission does not switch to webhooks. Retain the
-incoming webhook for safety findings and other operational summaries. Missing bot
-configuration fails visibly.
+incoming webhook for missing bot configuration, infrastructure failures and other
+operational summaries.
 Workspace/bot/channel changes require registry migration. Observe real recovery;
 never fail production or post synthetic production messages to test delivery.
 

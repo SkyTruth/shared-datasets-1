@@ -46,7 +46,7 @@ All-job main reruns deliberately disable PR reuse and execute the full selection
 
 ## Holds, failures and retries
 
-Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push; historical bare hold lists are comparison baselines only. Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation. The independent safety health report also deduplicates a disabled incident switch or missing bot token through its webhook, including changed findings and daily reminders.
+Holds retain validation/images while blocking deployment; [alert routing](alert-routing.md#scheduled-freshness-and-capacity) owns hold/pause schema, expiry and health checks. Clock expiry does not change selection or fail `ci-ready`. Reviewed hold removal selects its deployment/image on the next main push; historical bare hold lists are comparison baselines only. Follow [recovery](ci-recovery.md) for bounded hosted retries and [deployment contracts](deployment-contracts.md#serialization-and-protected-execution) for pre-mutation lock/plan-read retries. Neither authorizes replay of an uncertain mutation. The independent safety health report also detects a disabled incident switch. Its webhook can report a missing bot token.
 
 
 ## GitHub Action revisions

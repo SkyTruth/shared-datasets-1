@@ -221,11 +221,19 @@ Expired holds still block deployment while permitting selection and `ci-ready`; 
 
 Disabled incidents or missing activation timestamp/bot token skip incident discovery; catalog/execution checks continue and health reports include configuration findings.
 Setup, probe and reader failures share one retained report with change-plus-daily reminders.
-When previously notified findings clear, one success post names
-`health:operational-safety-check` and links the resolving run. Clean runs afterward
-stay quiet. Safety uses an incoming webhook, which returns no message timestamp,
-so resolution is a top-level post rather than a threaded reply; old cached reports
-need no migration. Delivery failures fail the run before retaining the transition. Health reporting works without probe dependencies or the pinned verifier.
+Shared Dataset Alerts posts the first finding and saves the channel, Slack message
+timestamp and opening run ID in the health report. Changed findings and daily
+refreshes edit that message. When all findings clear, the bot marks it ✅ and
+includes the last findings and links to the opening and resolving runs. Later
+clean runs stay quiet. A new incident gets a new message.
+
+The incoming webhook can still report missing bot configuration. Previously
+notified findings with only a webhook post receive a separate resolution because
+those reports have no editable message timestamp. Delivery failures fail the run
+before retaining the transition. If Slack accepts the first post but its response
+or the artifact upload is lost, inspect the channel before retrying. The workflow
+needs the retained timestamp to edit that post. Health reporting works without
+probe dependencies or the pinned verifier.
 A first-attempt setup failure directly after an authenticated successful safety run sends no Slack message: the run stays red, logs the cause as a warning annotation and carries the previous report forward, so a second consecutive failure or a re-run that fails is a new finding and alerts. Probe and reader failures alert at once. The quiet run skips health readers, so other new findings and due reminders wait one run (24 h). A previous success older than 25 hours cannot qualify for quiet setup handling, so a missing run followed by a setup failure alerts.
 The safety job restores only the checksum-verified `gh` verifier archive from a main-scoped Actions cache. Python and uv still download from GitHub releases, because `setup-python` and `setup-uv` trust tool-cache hits without verification and this job holds production credentials; release-download 504s on 2026-11-08..09 failed 3 of 194 hourly runs.
 Setup/probe failures stay red; authenticated reports suppress duplicate replay.

@@ -17,7 +17,7 @@ import test_deployment_revision as deployment_fixtures
 from scripts import catalog_drift_guard as catalog, collect_release_indexes as indexes
 from scripts import deployment_emission as emissions, deployment_revision as deployments
 from scripts import operational_safety_check as safety
-from scripts import slack_incidents as incidents, slack_notify
+from scripts import slack_incident_api, slack_incidents as incidents, slack_notify
 from scripts.workflow_identity import WORKFLOW_NAMES
 from test_deployment_emission import run as emitter_run, verified
 from test_slack_incidents import IDENTITY, signed_record
@@ -40,6 +40,7 @@ def receipt_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(incidents, "datetime", FixtureClock)
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_ENABLED", "true")
     monkeypatch.setenv("SHARED_DATASETS_SLACK_BOT_TOKEN", "test-bot-token")
+    monkeypatch.delenv("SHARED_DATASETS_SLACK_CHANNEL_ID", raising=False)
     monkeypatch.setenv("SHARED_DATASETS_SLACK_INCIDENTS_SINCE", stamp(START))
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(slack_notify, "notify", mock.Mock())
@@ -663,17 +664,76 @@ def test_daily_absence_uses_checkin_timestamp_at_exact_two_cadences():
 
 
 
-def test_health_report_posts_changes_and_daily_reminders_without_changing_problem_identity(tmp_path, monkeypatch):
+def test_health_bot_edits_the_same_message_until_recovery(tmp_path, monkeypatch):
+    channel = 'C123456789'
+    timestamps = iter(['1795624287.297689', '1795800000.000001'])
+    calls = []
+    def slack_call(self, method, payload):
+        assert payload['channel'] == channel
+        ts = next(timestamps) if method == 'chat.postMessage' else payload['ts']
+        calls.append((method, ts, payload))
+        return {'ok': True, 'channel': channel, 'ts': ts}
+    monkeypatch.setenv('SHARED_DATASETS_SLACK_CHANNEL_ID', channel)
+    monkeypatch.setattr(slack_incident_api.Slack, 'call', slack_call)
     previous = {'problems': [], 'warnings': [], 'notified_at': None}
     monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
-    for hour, problems, sends in [(0, ['paused'], 1), (3, ['paused'], 1), (24, ['paused'], 2),
-                                  (25, ['expired', 'paused'], 3), (26, [], 4), (27, [], 4), (28, ['paused'], 5)]:
-        safety.report_health(None, {'id': 300}, tmp_path, problems, [], NOW + timedelta(hours=hour))
+    for hour, problems, warnings, sends in [(0, [], ['paused'], 1), (3, [], ['paused'], 1),
+            (24, [], ['paused'], 2), (25, ['expired'], ['paused'], 3),
+            (26, [], [], 4), (27, [], [], 4), (28, ['new failure'], [], 5)]:
+        safety.report_health(None, {'id': 300 + hour}, tmp_path, problems, warnings, NOW + timedelta(hours=hour))
         previous = json.loads((tmp_path / 'health/cache.json').read_text())
-        assert previous['problems'] == sorted(problems)
-        assert slack_notify.notify.call_count == sends
-    assert 'paused' in slack_notify.notify.call_args.kwargs['body']
-    assert previous['scope'] == slack_notify.notify.call_args.kwargs['fields']['Incident scope'] == safety.HEALTH_SCOPE
+        assert len(calls) == sends
+        assert previous['problems'] == problems and previous['warnings'] == warnings
+    first = '1795624287.297689'
+    assert [(op, ts) for op, ts, _ in calls] == [
+        ('chat.postMessage', first), ('chat.update', first), ('chat.update', first),
+        ('chat.update', first), ('chat.postMessage', '1795800000.000001')]
+    assert [p['blocks'][0]['text']['text'][0] for _, _, p in calls] == ['⚠', '⚠', '❌', '✅', '❌']
+    recovered = calls[3][2]['text']
+    assert all(value in recovered for value in ('expired', 'paused', '/runs/300', '/runs/326'))
+    slack_notify.notify.assert_not_called()
+
+
+@pytest.mark.parametrize('failure', ['slack', 'channel'])
+def test_failed_health_edit_retries_the_original_parent(tmp_path, monkeypatch, failure):
+    channel = 'C123456789'
+    parent = {'channel': channel, 'ts': '1795624287.297689', 'run_id': 299}
+    previous = {'scope': safety.HEALTH_SCOPE, 'problems': ['paused'], 'warnings': [],
+                'notified_at': NOW.isoformat(), 'slack_parent': parent}
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    monkeypatch.setenv('SHARED_DATASETS_SLACK_CHANNEL_ID', 'C987654321' if failure == 'channel' else channel)
+    update = mock.Mock(side_effect=slack_incident_api.SlackError('edit rejected'))
+    monkeypatch.setattr(slack_incident_api.Slack, 'update', update)
+    post = mock.Mock(side_effect=AssertionError('unexpected replacement alert'))
+    monkeypatch.setattr(slack_incident_api.Slack, 'post', post)
+    with pytest.raises(RuntimeError, match='edit rejected|configured Slack channel'):
+        safety.report_health(None, {'id': 300}, tmp_path, [], [], NOW)
+    assert update.call_count == (failure == 'slack')
+    assert not (tmp_path / 'health/cache.json').exists()
+    monkeypatch.setenv('SHARED_DATASETS_SLACK_CHANNEL_ID', channel)
+    update.side_effect = None
+    safety.report_health(None, {'id': 301}, tmp_path, [], [], NOW)
+    assert update.call_args.args[0] == parent['ts']
+    assert 'slack_parent' not in json.loads((tmp_path / 'health/cache.json').read_bytes())
+    slack_notify.notify.assert_not_called()
+
+
+def test_missing_bot_token_preserves_open_message_for_recovery(tmp_path, monkeypatch):
+    parent = {'channel': 'C123456789', 'ts': '1795624287.297689', 'run_id': 299}
+    previous = {'scope': safety.HEALTH_SCOPE, 'problems': ['paused'], 'warnings': [],
+                'notified_at': NOW.isoformat(), 'slack_parent': parent}
+    monkeypatch.setattr(safety, 'previous_health', lambda *_: previous)
+    monkeypatch.setenv('SHARED_DATASETS_SLACK_CHANNEL_ID', parent['channel'])
+    monkeypatch.delenv('SHARED_DATASETS_SLACK_BOT_TOKEN')
+    safety.report_health(None, {'id': 300}, tmp_path, ['bot token missing'], [], NOW)
+    slack_notify.notify.assert_called_once()
+    previous = json.loads((tmp_path / 'health/cache.json').read_bytes())
+    assert previous['slack_parent'] == parent
+    monkeypatch.setenv('SHARED_DATASETS_SLACK_BOT_TOKEN', 'restored-token')
+    with mock.patch.object(slack_incident_api.Slack, 'update') as update:
+        safety.report_health(None, {'id': 301}, tmp_path, [], [], NOW)
+    assert update.call_args.args[0] == parent['ts']
+    assert 'slack_parent' not in json.loads((tmp_path / 'health/cache.json').read_bytes())
 
 
 @pytest.mark.parametrize('failure', [RuntimeError('scheduled asset inventory differs from catalog'), safety.subprocess.CalledProcessError(1, ['gcloud', 'scheduler', 'jobs', 'describe', 'wdpa-monthly'])])
@@ -836,7 +896,7 @@ def test_health_delivery_failure_does_not_retain_transition(tmp_path, monkeypatc
 
 
 def test_first_clean_health_run_without_retained_report(tmp_path, monkeypatch):
-    monkeypatch.setattr(safety, 'prior_runs', lambda *_: [])
+    monkeypatch.setattr(safety, 'recent_safety_runs', lambda *_: [])
     safety.report_health(None, {'id': 300}, tmp_path, [], [], NOW)
     slack_notify.notify.assert_not_called()
     assert json.loads((tmp_path / 'health/cache.json').read_text()) == {
@@ -846,19 +906,19 @@ def test_first_clean_health_run_without_retained_report(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('scoped', [False, True])
 def test_retained_old_health_report_can_resolve(tmp_path, monkeypatch, scoped):
-    producer = {'id': 299, 'run_attempt': 1, 'event': 'schedule'}
+    api = OperationalAPI()
+    producer = api.source(299, 'operational-safety-check.yml')
+    api.add_source(producer)
     previous = {'problems': ['failed'], 'warnings': [], 'notified_at': NOW.isoformat()}
     if scoped:
         previous['scope'] = safety.HEALTH_SCOPE
-    monkeypatch.setattr(safety, 'prior_runs', lambda *_: [producer])
-    monkeypatch.setattr(safety.alerts, 'verify_source_event', lambda *_: True)
     monkeypatch.setattr(safety.native, 'artifact_payload', lambda *_: previous)
-    api = mock.Mock()
-    api.pages.side_effect = [
+    api.pages = mock.Mock(side_effect=[
+        [producer],
         [{'name': 'safety-health-299-1', 'expired': False}],
         [{'name': safety.JOB, 'started_at': stamp(NOW), 'completed_at': stamp(NOW),
           'steps': [{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'success'}]}],
-    ]
+    ])
     safety.report_health(api, {'id': 300}, tmp_path, [], [], NOW)
     slack_notify.notify.assert_called_once()
     assert slack_notify.notify.call_args.kwargs['status'] == 'success'

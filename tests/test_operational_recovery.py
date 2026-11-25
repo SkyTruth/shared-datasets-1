@@ -57,6 +57,7 @@ assert json.loads((Path(sys.argv[-1]) / "result.json").read_text()) == {"catalog
 
 
 def health_cli(tmp_path, monkeypatch):
+    monkeypatch.delenv("SHARED_DATASETS_SLACK_CHANNEL_ID", raising=False)
     api = OperationalAPI()
     monkeypatch.setattr(safety, "GitHub", lambda: api)
     monkeypatch.setattr(safety.alerts, "context", lambda *_a, **_k: api.current)
