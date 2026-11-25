@@ -17,6 +17,7 @@ from test_operational_safety_check import NOW, OperationalAPI
     ("true", "", 1), ("true", " \t", 1), ("false", "", 2),
 ])
 def test_alerting_configuration_is_reported_and_deduplicated(tmp_path, monkeypatch, no_ambient_credentials, enabled, token, findings):
+    monkeypatch.delenv("SHARED_DATASETS_SLACK_CHANNEL_ID", raising=False)
     monkeypatch.setattr('scripts.catalog_drift_guard.get_client', lambda: None)
     api = OperationalAPI()
     monkeypatch.setattr(safety, "GitHub", lambda: api)
@@ -61,4 +62,5 @@ def test_independent_health_step_receives_kill_switch_and_bot_availability():
     assert "SHARED_DATASETS_SLACK_INCIDENTS_ENABLED" not in job.get("if", "")
     assert health["env"]["SHARED_DATASETS_SLACK_INCIDENTS_ENABLED"] == "${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED }}"
     assert health["env"]["SHARED_DATASETS_SLACK_BOT_TOKEN"] == "${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}"
+    assert health["env"]["SHARED_DATASETS_SLACK_CHANNEL_ID"] == "${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}"
     assert health["env"]["SHARED_DATASETS_SLACK_WEBHOOK_URL"] == "${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}"

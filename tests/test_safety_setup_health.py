@@ -21,6 +21,7 @@ from workflow_helpers import load_workflow, workflow_steps_by_name
 
 @pytest.mark.parametrize('failure', ['dependencies', 'verifier', 'authentication'])
 def test_setup_outages_deduplicate_changes_and_daily_reminders_without_probe_dependencies(tmp_path, monkeypatch, no_ambient_credentials, failure):
+    monkeypatch.delenv('SHARED_DATASETS_SLACK_CHANNEL_ID', raising=False)
     monkeypatch.setattr('scripts.catalog_drift_guard.get_client', lambda: None)
     monkeypatch.setattr(safety, 'freshness', lambda *_args, **_kwargs: [])
     api = OperationalAPI()
@@ -105,17 +106,24 @@ import io,json,os,runpy,sys,urllib.request
 class Response(io.BytesIO):
     status=200
     def getcode(self): return 200
-def webhook(request, **kwargs):
-    assert request.full_url == 'https://example.invalid/webhook'
+def slack(request, **kwargs):
     with open(os.environ['MESSAGES'],'a') as stream: stream.write(request.data.decode()+'\n')
-    return Response(b'ok')
-urllib.request.urlopen=webhook
+    if request.full_url == 'https://example.invalid/webhook':
+        return Response(b'ok')
+    payload = json.loads(request.data)
+    method = 'chat.update' if 'ts' in payload else 'chat.postMessage'
+    assert request.full_url == 'https://slack.com/api/' + method
+    assert request.get_header('Authorization') == 'Bearer fixture-token'
+    assert payload['channel'] == 'C123456789'
+    assert payload.get('ts', '1795624287.297689') == '1795624287.297689'
+    return Response(b'{"ok":true,"channel":"C123456789","ts":"1795624287.297689"}')
+urllib.request.urlopen=slack
 sys.argv=[os.environ['SAFETY_SCRIPT'],'--health','--work-dir',os.environ['HEALTH_DIR']]
 runpy.run_path(sys.argv[0],run_name='__main__')
 '''
 
 
-def run_health_cli(tmp_path, api, identifier, cause, prior):
+def run_health_cli(tmp_path, api, identifier, cause, prior, *, bot=False):
     """Run the real health CLI with no site packages against gh JSON/ZIP routes.
 
     The prior run, when given, publishes the current health/cache.json as its artifact.
@@ -149,6 +157,7 @@ def run_health_cli(tmp_path, api, identifier, cause, prior):
         raw = output.getvalue()
         (tmp_path / 'health/cache.json').unlink()  # The run under test must write its own report.
         routes[prefix + '/actions/runs/' + str(prior['id'])] = prior
+        routes[prefix + '/actions/runs/' + str(prior['id']) + '/attempts/1'] = prior
         routes[prefix + '/actions/runs/' + str(prior['id']) + '/attempts/1/jobs'] = {'total_count': 1, 'jobs': [
             {'name': safety.JOB, 'started_at': prior['created_at'], 'completed_at': prior['updated_at'],
              'steps': [{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'success'}]}]}
@@ -164,22 +173,28 @@ def run_health_cli(tmp_path, api, identifier, cause, prior):
              'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_WORKFLOW_REF': safety.REPOSITORY + '/' + safety.WORKFLOW + '@refs/heads/main',
              'SAFETY_PROBE_OUTCOME': 'skipped', 'SAFETY_SETUP_OUTCOMES': cause, 'RESPONSES': str(responses),
              'SAFETY_SCRIPT': safety.__file__, 'HEALTH_DIR': str(tmp_path), 'MESSAGES': str(messages),
+             'SHARED_DATASETS_SLACK_CHANNEL_ID': 'C123456789' if bot else '',
+             'SHARED_DATASETS_SLACK_BOT_TOKEN': 'fixture-token' if bot else '',
              'SHARED_DATASETS_SLACK_WEBHOOK_URL': 'https://example.invalid/webhook'})
     sent = len(messages.read_text().splitlines()) if messages.exists() else 0
     return result, current, sent
 
 
-def test_dependency_free_health_cli_restores_authenticated_failed_setup_report_before_resending(tmp_path):
-    """The real CLI traverses gh JSON/ZIP and webhook bytes, with no site packages."""
+def test_dependency_free_health_cli_restores_bot_parent_from_authenticated_artifact(tmp_path):
+    """The real CLI traverses gh JSON/ZIP and the bot API, with no site packages."""
     api = OperationalAPI()
     prior = None
     for identifier, cause, sends in ((300, 'dependencies=failure', 1), (301, 'dependencies=failure', 1), (302, 'authentication=failure', 2)):
-        result, current, sent = run_health_cli(tmp_path, api, identifier, cause, prior)
+        result, current, sent = run_health_cli(tmp_path, api, identifier, cause, prior, bot=True)
         assert result.returncode == 0, result.stderr
         assert sent == sends
         report = json.loads((tmp_path / 'health/cache.json').read_bytes())
+        assert report['slack_parent'] == {'channel': 'C123456789', 'ts': '1795624287.297689', 'run_id': 300}
+        assert 'fixture-token' not in json.dumps(report)
         assert any(cause in problem for problem in report['problems'])
         prior = {**current, 'status': 'completed', 'conclusion': 'failure'}
+    opened, changed = map(json.loads, (tmp_path / 'messages.jsonl').read_text().splitlines())
+    assert 'ts' not in opened and changed['ts'] == report['slack_parent']['ts']
 
 
 def test_setup_outage_after_a_successful_run_stays_quiet_until_the_next_run_also_fails(tmp_path):

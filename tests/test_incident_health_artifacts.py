@@ -28,7 +28,8 @@ def test_catalog_change_during_comparison_requests_refresh(probe_inputs):  # noq
 
 
 @pytest.mark.parametrize('defect', [None, 'digest', 'attempt', 'upload', 'metadata-size', 'archive-size',
-    'member-size', 'member', 'extra-member', 'noncanonical', 'producer', 'sha', 'branch', 'created-before', 'created-after'])
+    'member-size', 'member', 'extra-member', 'noncanonical', 'producer', 'sha', 'branch', 'created-before', 'created-after',
+    'parent-channel', 'parent-timestamp', 'parent-run', 'parent-on-clean-report'])
 def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(defect, monkeypatch):
     import hashlib
     import io
@@ -40,7 +41,17 @@ def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(def
     job = api.jobs[101][0]
     job.update(name=safety.JOB, started_at=producer['created_at'], completed_at=producer['updated_at'],
                steps=[{'name': 'Retain safety health report', 'status': 'completed', 'conclusion': 'failure' if defect == 'upload' else 'success'}])
-    report = {'problems': ['paused'], 'warnings': [], 'notified_at': NOW.isoformat()}
+    parent = {'channel': 'C123456789', 'ts': '1795624287.297689', 'run_id': 101}
+    report = {'scope': safety.HEALTH_SCOPE, 'problems': ['paused'], 'warnings': [], 'notified_at': NOW.isoformat(),
+              'slack_parent': parent}
+    if defect == 'parent-channel':
+        parent['channel'] = '#channel-name'
+    if defect == 'parent-timestamp':
+        parent['ts'] = 1795624287.297689
+    if defect == 'parent-run':
+        parent['run_id'] = 0
+    if defect == 'parent-on-clean-report':
+        report['problems'] = []
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, 'w') as stream:
         stream.writestr('cache.json', canonical(report))
@@ -81,6 +92,18 @@ def test_health_history_authenticates_exact_attempt_and_actual_archive_bytes(def
             safety.previous_health(api, api.current)
     else:
         assert safety.previous_health(api, api.current) == report
+
+
+def test_rerun_reads_the_last_completed_health_attempt_even_after_a_newer_run(monkeypatch):
+    api = OperationalAPI()
+    original = api.source(300, 'operational-safety-check.yml')
+    retry = {**original, 'run_attempt': 2, 'status': 'in_progress', 'conclusion': None}
+    newer = {**original, 'id': 301, 'updated_at': stamp(NOW)}
+    monkeypatch.setattr(safety, 'recent_safety_runs', lambda _: [newer, retry])
+    monkeypatch.setattr(api, 'get', lambda path: original if path.endswith('/300/attempts/1') else pytest.fail(path))
+    assert safety.health_report_attempts(api, retry) == [newer, original]
+    monkeypatch.setattr(safety, 'recent_safety_runs', lambda _: [retry])
+    assert safety.health_report_attempts(api, retry) == [original]
 
 
 

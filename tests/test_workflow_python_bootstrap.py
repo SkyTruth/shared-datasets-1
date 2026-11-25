@@ -198,7 +198,8 @@ s.subprocess.check_call.assert_not_called()
 '''
     result = subprocess.run([str(isolated_python(None)), '-I', '-c', program, str(ROOT),
         '--health', '--work-dir', str(tmp_path)], cwd=ROOT,
-        env={**os.environ, 'SAFETY_PROBE_OUTCOME': 'skipped', 'PREVIOUS': previous}, capture_output=True, text=True)
+        env={**os.environ, 'SAFETY_PROBE_OUTCOME': 'skipped', 'PREVIOUS': previous,
+             'SHARED_DATASETS_SLACK_CHANNEL_ID': ''}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
 

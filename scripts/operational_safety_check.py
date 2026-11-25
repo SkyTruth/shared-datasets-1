@@ -22,6 +22,7 @@ JOB = "Check for operational work"
 HEALTH_SCOPE = "health:operational-safety-check"
 
 from scripts import incident_health_artifacts as native
+from scripts import slack_incident_api, slack_notify
 from scripts.ingestion_targets import TARGETS, DEPLOY_TARGETS
 from scripts.ci_contract import INGESTION_ROLLOUT_HOLDS, ROLLOUT_HOLD_TARGETS, rollout_holds as validate_suspensions
 from scripts.dataset_mutation_authorization import IdentityGitHub
@@ -305,11 +306,16 @@ def recovery_identity(api):
     return []
 
 
+def recent_safety_runs(api):
+    query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
+    rows = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
+    return [row for row in rows if row.get("path") == WORKFLOW]
+
+
 def prior_runs(api, run):
     """Completed earlier safety runs on main within report retention, newest first."""
-    query = urlencode({"branch": "main", "created": ">=" + (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100})
-    prior = api.pages(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}/runs?{query}", field="workflow_runs")
-    return sorted((row for row in prior if row["id"] < run["id"] and row.get("status") == "completed" and row.get("path") == WORKFLOW), key=lambda row: row["id"], reverse=True)
+    return sorted((row for row in recent_safety_runs(api) if row["id"] < run["id"] and row.get("status") == "completed"),
+                  key=lambda row: row["id"], reverse=True)
 
 
 def isolated_setup_failure(api, run):
@@ -323,38 +329,100 @@ def isolated_setup_failure(api, run):
             and previous.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, previous))
 
 
+def health_report_attempts(api, run):
+    """Reruns keep their run ID. Restore reports in completion order, including earlier attempts."""
+    rows = {row["id"]: row for row in recent_safety_runs(api)}
+    if run.get("run_attempt", 1) > 1:
+        rows[run["id"]] = run
+    attempts = []
+    for row in rows.values():
+        if row["id"] != run["id"] and row["status"] == "completed":
+            attempts.append(row)
+        for number in range(1, row["run_attempt"]):
+            earlier = api.get(f"{API_ROOT}/actions/runs/{row['id']}/attempts/{number}")
+            require((earlier["id"], earlier["run_attempt"], earlier["status"]) == (row["id"], number, "completed"),
+                    "invalid historical safety attempt")
+            attempts.append(earlier)
+    return sorted(attempts, key=lambda row: (row["updated_at"], row["id"], row["run_attempt"]), reverse=True)
+
+
 def previous_health(api, run):
-    for producer in prior_runs(api, run):
-        artifacts = api.pages(f"{API_ROOT}/actions/runs/{producer['id']}/artifacts?per_page=100", field="artifacts")
-        selected = [row for row in artifacts if row["name"] == f"safety-health-{producer['id']}-{producer['run_attempt']}" and not row["expired"]]
+    for row in health_report_attempts(api, run):
+        identifier, attempt = row["id"], row["run_attempt"]
+        artifacts = api.pages(f"{API_ROOT}/actions/runs/{identifier}/artifacts?per_page=100", field="artifacts")
+        selected = [a for a in artifacts if a["name"] == f"safety-health-{identifier}-{attempt}" and not a["expired"]]
         if not selected:
             continue
-        require(len(selected) == 1 and producer.get("event") in {"schedule", "workflow_dispatch"} and alerts.verify_source_event(api, producer), "untrusted safety health report")
-        jobs = api.pages(f"{API_ROOT}/actions/runs/{producer['id']}/attempts/{producer['run_attempt']}/jobs?per_page=100", field="jobs")
+        attempt_path = f"{API_ROOT}/actions/runs/{identifier}/attempts/{attempt}"
+        producer = api.get(attempt_path)
+        require(len(selected) == 1 and (producer["id"], producer["run_attempt"], producer["status"]) == (identifier, attempt, "completed")
+                and producer.get("event") in {"schedule", "workflow_dispatch"}, "untrusted safety health report")
+        definition = api.get(f"{API_ROOT}/actions/workflows/{WORKFLOW.rsplit('/', 1)[-1]}")
+        alerts.source_identity(api, producer, WORKFLOW, definition)
+        jobs = api.pages(f"{attempt_path}/jobs?per_page=100", field="jobs")
         job, = [row for row in jobs if row["name"] == JOB]
         require(any(step["name"] == "Retain safety health report" and step.get("status") == "completed" and step["conclusion"] == "success" for step in job["steps"]), "health report upload did not succeed")
         report = native.artifact_payload(api, {**producer, "cache_job_started_at": job["started_at"], "cache_job_completed_at": job["completed_at"]}, selected[0])
-        require(set(report) in ({"problems", "warnings", "notified_at"}, {"scope", "problems", "warnings", "notified_at"})
+        fields = {"problems", "warnings", "notified_at"}
+        require(set(report) in (fields, fields | {"scope"}, fields | {"scope", "slack_parent"})
                 and report.get("scope", HEALTH_SCOPE) == HEALTH_SCOPE
                 and all(isinstance(report[key], list) and all(isinstance(item, str) for item in report[key]) for key in ("problems", "warnings")), "invalid safety health report")
+        if "slack_parent" in report:
+            parent = report["slack_parent"]
+            require(isinstance(parent, dict) and set(parent) == {"channel", "ts", "run_id"}
+                    and isinstance(parent["channel"], str) and slack_incident_api.CHANNEL.fullmatch(parent["channel"])
+                    and isinstance(parent["ts"], str) and slack_incident_api.TIMESTAMP.fullmatch(parent["ts"])
+                    and type(parent["run_id"]) is int and parent["run_id"] > 0
+                    and report["notified_at"] and (report["problems"] or report["warnings"]), "invalid safety Slack parent")
         return report
     return {"problems": [], "warnings": [], "notified_at": None}
 
 
+def deliver_health_message(report, run_id, message, *, resolving):
+    parent = report.get("slack_parent")
+    token = os.environ.get("SHARED_DATASETS_SLACK_BOT_TOKEN", "").strip()
+    channel = os.environ.get("SHARED_DATASETS_SLACK_CHANNEL_ID", "")
+    if not token or not channel or (resolving and not parent):
+        # Webhook-only alerts have no editable parent. Missing bot configuration is itself reportable.
+        require(not (parent and resolving), "bot configuration required to resolve the open health alert")
+        slack_notify.notify(**message, strict=True)
+        return
+
+    slack = slack_incident_api.Slack(token, channel)
+    payload = slack_notify.build_slack_payload(**message)
+    if parent:
+        require(channel == parent["channel"], "configured Slack channel differs from open health alert")
+        slack.update(parent["ts"], payload)
+        if resolving:
+            del report["slack_parent"]
+    else:
+        report["slack_parent"] = {"channel": channel, "ts": slack.post(payload), "run_id": run_id}
+
+
 def report_health(api, run, directory, problems, warnings, now):
-    from scripts.slack_notify import notify
     previous = previous_health(api, run)
-    report = {"scope": HEALTH_SCOPE, "problems": sorted(set(problems)), "warnings": sorted(set(warnings)), "notified_at": previous["notified_at"]}
+    report = {**previous, "scope": HEALTH_SCOPE, "problems": sorted(set(problems)), "warnings": sorted(set(warnings))}
     findings = report["problems"] + report["warnings"]
     due = findings and (any(report[key] != previous[key] for key in ("problems", "warnings")) or not report["notified_at"] or
-                        now - datetime.fromisoformat(report["notified_at"]) >= timedelta(days=1))
-    if due:
-        notify(title="Operational safety findings", body="\n".join(findings) + f"\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
-               status="error" if problems else "warning", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
-        report["notified_at"] = now.isoformat()
-    elif not findings and previous["notified_at"] and (previous["problems"] or previous["warnings"]):
-        notify(title="Operational safety findings resolved", body=f"{HEALTH_SCOPE}: all findings cleared.\nhttps://github.com/{REPOSITORY}/actions/runs/{run['id']}",
-               status="success", fields={"Incident scope": HEALTH_SCOPE}, strict=True)
+                        now - datetime.fromisoformat(report["notified_at"]) >= SAFETY_INTERVAL)
+    resolving = not findings and previous["notified_at"] and (previous["problems"] or previous["warnings"])
+    if due or resolving:
+        parent = report.get("slack_parent")
+        runs_url = f"https://github.com/{REPOSITORY}/actions/runs"
+        evidence = f"<{runs_url}/{run['id']}|{'Resolving' if resolving else 'Safety'} run>"
+        if parent and parent["run_id"] != run["id"]:
+            evidence = f"<{runs_url}/{parent['run_id']}|Opening run> · " + evidence
+        details = findings
+        if resolving:
+            details = [f"{HEALTH_SCOPE}: all findings cleared.", *previous["problems"], *previous["warnings"]]
+        message = {
+            "title": "Operational safety findings resolved" if resolving else "Operational safety findings",
+            "status": "success" if resolving else "error" if problems else "warning",
+            "body": "\n".join([evidence, *details]),
+            "fields": {"Incident scope": HEALTH_SCOPE},
+        }
+        deliver_health_message(report, run["id"], message, resolving=resolving)
+        report["notified_at"] = now.isoformat() if findings else None
     retain_health(directory, report)
     for finding in findings:
         print("::warning::" + finding)
