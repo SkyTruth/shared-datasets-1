@@ -259,7 +259,7 @@ def deployed_image_lag(api, *, now):
 def audit_freshness(api, *, now):
     """Require successful weekly audits within nine days."""
     problems = []
-    # GitHub's status=success filter can omit completed runs. Check conclusions locally.
+    # GitHub's status filters can omit completed runs. Check conclusions locally.
     query = urlencode({"branch": "main", "per_page": 100,
                        "created": ">=" + (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")})
     for filename in ("bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"):
@@ -270,6 +270,20 @@ def audit_freshness(api, *, now):
                    for run in runs):
             problems.append(f"{filename}: no successful main completion within 9 days")
     return problems
+
+
+def latest_completed_recovery(api):
+    """Read main runs newest first, stopping at the first completed run."""
+    path = f"{API_ROOT}/actions/workflows/deployment-recovery.yml/runs"
+    page = 1
+    while True:
+        runs = api.get(f"{path}?branch=main&per_page=100&page={page}")["workflow_runs"]
+        for run in runs:
+            if run["status"] == "completed":
+                return run
+        if len(runs) < 100:
+            return None
+        page += 1
 
 
 def recovery_identity(api):
@@ -283,11 +297,11 @@ def recovery_identity(api):
     statuses = deployments.verified_statuses(api, REPOSITORY, record)
     require(statuses and (statuses[0].get("state"), statuses[0].get("description")) == ("success", "applied"),
             "Recovery identity provisioning has no signed successful apply")
-    runs = api.get(f"{API_ROOT}/actions/workflows/deployment-recovery.yml/runs?branch=main&status=completed&per_page=1")["workflow_runs"][:1]
-    if runs and alerts.verify_source_event(api, runs[0]):
+    run = latest_completed_recovery(api)
+    if run and alerts.verify_source_event(api, run):
         require(not any(step.get("name") == "Authenticate read-only recovery" and step.get("conclusion") == "failure"
-            for job in api.pages(f"{API_ROOT}/actions/runs/{runs[0]['id']}/attempts/{runs[0]['run_attempt']}/jobs?per_page=100", field="jobs")
-            for step in job.get("steps", [])), "Recovery authentication failed: " + deployments.emissions.invocation(REPOSITORY, runs[0]['id'], runs[0]['run_attempt']))
+            for job in api.pages(f"{API_ROOT}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100", field="jobs")
+            for step in job.get("steps", [])), "Recovery authentication failed: " + deployments.emissions.invocation(REPOSITORY, run['id'], run['run_attempt']))
     return []
 
 

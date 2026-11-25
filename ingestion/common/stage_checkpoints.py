@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 
 from ingestion.common.runtime import sha256_file
 from ingestion.common import release_feature_model as model
@@ -60,11 +61,13 @@ def native_tools(names):
         paths[name] = Path(path).resolve(strict=True)
     versions = {}
     for reporter in dict.fromkeys(reporters.values()):
+        started = time.monotonic()
         completed = subprocess.run(
             [str(paths[reporter]), "version" if reporter == "pmtiles" else "--version"],
             check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             timeout=NATIVE_VERSION_TIMEOUT_SECONDS,
         )
+        LOGGER.info("%s version check took %.2fs", paths[reporter], time.monotonic() - started)
         version = completed.stdout.strip()
         if not version:
             raise RuntimeError(f"Native tool returned no version: {paths[reporter]}")
