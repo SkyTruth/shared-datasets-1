@@ -1,5 +1,6 @@
 """Weekly audit health uses successful, authenticated completion age."""
 from datetime import timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -22,7 +23,18 @@ def test_audits_use_last_successful_completion_with_two_day_grace(hours, stale):
     expected = ['bucket-hygiene-audit.yml: no successful main completion within 9 days'] if stale else []
     assert safety.audit_freshness(api, now=NOW) == expected
     assert api.posts == []
-    assert any('status=success' in path and 'created=%3E%3D' in path for _, path in api.calls)
+
+
+def test_audit_discovery_reads_all_conclusions_and_verifies_the_recent_success():
+    api = audit_api()
+    api.add_source(api.source(103, 'scratch-cleanup-audit.yml', conclusion='failure'))
+    api.sources.reverse()  # GitHub lists the newer failed run first.
+    assert safety.audit_freshness(api, now=NOW) == []
+    queries = [parse_qs(urlsplit(path).query) for method, path in api.calls if method == 'pages']
+    expected_query = {'branch': ['main'], 'per_page': ['100'], 'created': ['>=' + stamp(NOW - timedelta(days=10))]}
+    assert queries == [expected_query, expected_query]
+    assert ('get', f'{safety.API_ROOT}/actions/runs/102') in api.calls
+    assert ('get', f'{safety.API_ROOT}/actions/runs/103') not in api.calls
 
 
 @pytest.mark.parametrize('conclusion', ['failure', 'cancelled', 'skipped', None])

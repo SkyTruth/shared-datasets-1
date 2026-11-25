@@ -259,9 +259,10 @@ def deployed_image_lag(api, *, now):
 def audit_freshness(api, *, now):
     """Require successful weekly audits within nine days."""
     problems = []
+    # GitHub's status=success filter can omit completed runs. Check conclusions locally.
+    query = urlencode({"branch": "main", "per_page": 100,
+                       "created": ">=" + (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")})
     for filename in ("bucket-hygiene-audit.yml", "scratch-cleanup-audit.yml"):
-        query = urlencode({"branch": "main", "status": "success", "per_page": 100,
-                           "created": ">=" + (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")})
         runs = api.pages(f"{API_ROOT}/actions/workflows/{filename}/runs?{query}", field="workflow_runs")
         if not any(run.get("path") == ".github/workflows/" + filename and run.get("conclusion") == "success"
                    and alerts.verify_source_event(api, run)
